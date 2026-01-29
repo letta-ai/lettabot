@@ -302,6 +302,7 @@ Ask the bot owner to approve with:
             chatId: remoteJid,
             userId,
             userName: pushName || undefined,
+            messageId: m.key?.id || undefined,
             text,
             timestamp: new Date(m.messageTimestamp * 1000),
             isGroup,

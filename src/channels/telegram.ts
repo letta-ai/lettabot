@@ -161,6 +161,7 @@ export class TelegramAdapter implements ChannelAdapter {
           chatId: String(chatId),
           userId: String(userId),
           userName: ctx.from.username || ctx.from.first_name,
+          messageId: String(ctx.message.message_id),
           text,
           timestamp: new Date(),
         });

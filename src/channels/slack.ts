@@ -72,6 +72,7 @@ export class SlackAdapter implements ChannelAdapter {
           chatId: channelId,
           userId: userId || '',
           userHandle: userId || '',  // Slack user ID serves as handle
+          messageId: message.ts || undefined,
           text: text || '',
           timestamp: new Date(Number(message.ts) * 1000),
           threadId: threadTs,
@@ -104,6 +105,7 @@ export class SlackAdapter implements ChannelAdapter {
           chatId: channelId,
           userId: userId || '',
           userHandle: userId || '',  // Slack user ID serves as handle
+          messageId: event.ts || undefined,
           text: text || '',
           timestamp: new Date(Number(event.ts) * 1000),
           threadId: threadTs,

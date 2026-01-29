@@ -6,7 +6,8 @@
   "bin": {
     "lettabot": "./dist/cli.js",
     "lettabot-schedule": "./dist/cron/cli.js",
-    "lettabot-message": "./dist/cli/message.js"
+    "lettabot-message": "./dist/cli/message.js",
+    "lettabot-react": "./dist/cli/react.js"
   },
   "scripts": {
     "setup": "tsx src/setup.ts",

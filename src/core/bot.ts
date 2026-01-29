@@ -156,6 +156,7 @@ export class LettaBot {
     this.store.lastMessageTarget = {
       channel: msg.channel,
       chatId: msg.chatId,
+      messageId: msg.messageId,
       updatedAt: new Date().toISOString(),
     };
     

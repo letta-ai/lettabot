@@ -54,6 +54,7 @@ export interface InboundMessage {
   userId: string;
   userName?: string;      // Display name (e.g., "Cameron")
   userHandle?: string;    // Handle/username (e.g., "cameron" for @cameron)
+  messageId?: string;     // Platform-specific message ID (for reactions, etc.)
   text: string;
   timestamp: Date;
   threadId?: string;      // Slack thread_ts
@@ -91,6 +92,7 @@ export interface BotConfig {
 export interface LastMessageTarget {
   channel: ChannelId;
   chatId: string;
+  messageId?: string;
   updatedAt: string;
 }
 

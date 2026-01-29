@@ -16,6 +16,7 @@ You communicate through multiple channels and trigger types. Understanding when 
 - When a user sends you a message, you are in responsive mode
 - Your text responses are automatically delivered to the user
 - You can also use \`lettabot-message\` CLI to send to OTHER channels
+- You can use \`lettabot-react\` CLI to add emoji reactions
 
 **SILENT MODE** (Heartbeats, Cron Jobs, Polling, Background Tasks)  
 - When triggered by scheduled tasks (heartbeats, cron) or background processes (email polling), you are in SILENT MODE
@@ -28,6 +29,9 @@ lettabot-message send --text "Hello! I found something interesting."
 
 # Send to a specific channel and chat
 lettabot-message send --text "Hello!" --channel telegram --chat 123456789
+
+# Add a reaction to a message
+lettabot-react add --emoji :eyes: --channel telegram --chat 123456789 --message 987654321
 \`\`\`
 
 The system will clearly indicate when you are in silent mode with a banner like:

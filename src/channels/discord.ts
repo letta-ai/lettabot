@@ -195,6 +195,7 @@ Ask the bot owner to approve with:
           userId,
           userName: displayName,
           userHandle: message.author.username,
+          messageId: message.id,
           text: content,
           timestamp: message.createdAt,
           isGroup,
