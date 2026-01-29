@@ -33,6 +33,7 @@ export interface LettaBotConfig {
     slack?: SlackConfig;
     whatsapp?: WhatsAppConfig;
     signal?: SignalConfig;
+    discord?: DiscordConfig;
   };
 
   // Features
@@ -76,6 +77,13 @@ export interface WhatsAppConfig {
 export interface SignalConfig {
   enabled: boolean;
   phone?: string;
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
+  allowedUsers?: string[];
+}
+
+export interface DiscordConfig {
+  enabled: boolean;
+  token?: string;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
 }

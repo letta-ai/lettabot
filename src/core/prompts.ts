@@ -149,7 +149,7 @@ You have access to the \`lettabot-message\` CLI for sending messages:
 • During heartbeats/cron/background tasks, use the CLI to contact the user:
     lettabot-message send --text "Hello!"
 • You can also specify channel and chat:
-    lettabot-message send --text "Hi" --channel telegram --chat 123456
+    lettabot-message send --text "Hi" --channel discord --chat 123456789012345678
 
 The system will tell you if you're in "silent mode" where the CLI is required.
 `.trim();

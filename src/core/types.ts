@@ -43,7 +43,7 @@ export interface TriggerContext {
 // Original Types
 // =============================================================================
 
-export type ChannelId = 'telegram' | 'slack' | 'whatsapp' | 'signal';
+export type ChannelId = 'telegram' | 'slack' | 'whatsapp' | 'signal' | 'discord';
 
 /**
  * Inbound message from any channel

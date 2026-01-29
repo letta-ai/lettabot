@@ -42,6 +42,7 @@ async function configure() {
     ['Model', config.agent.model],
     ['Telegram', config.channels.telegram?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Slack', config.channels.slack?.enabled ? '✓ Enabled' : '✗ Disabled'],
+    ['Discord', config.channels.discord?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Cron', config.features?.cron ? '✓ Enabled' : '✗ Disabled'],
     ['Heartbeat', config.features?.heartbeat?.enabled ? `✓ ${config.features.heartbeat.intervalMin}min` : '✗ Disabled'],
     ['BYOK Providers', config.providers?.length ? config.providers.map(p => p.name).join(', ') : 'None'],
@@ -177,6 +178,8 @@ Environment:
   LETTA_API_KEY           API key from app.letta.com
   TELEGRAM_BOT_TOKEN      Bot token from @BotFather
   TELEGRAM_DM_POLICY      DM access policy (pairing, allowlist, open)
+  DISCORD_BOT_TOKEN       Discord bot token
+  DISCORD_DM_POLICY       DM access policy (pairing, allowlist, open)
   SLACK_BOT_TOKEN         Slack bot token (xoxb-...)
   SLACK_APP_TOKEN         Slack app token (xapp-...)
   HEARTBEAT_INTERVAL_MIN  Heartbeat interval in minutes

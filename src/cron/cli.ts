@@ -171,7 +171,7 @@ function createJob(args: string[]): void {
     } else if (arg === '--disabled') {
       enabled = false;
     } else if ((arg === '--deliver' || arg === '-d') && next) {
-      // Format: channel:chatId (e.g., telegram:123456789)
+      // Format: channel:chatId (e.g., telegram:123456789 or discord:123456789012345678)
       const [ch, id] = next.split(':');
       deliverChannel = ch;
       deliverChatId = id;

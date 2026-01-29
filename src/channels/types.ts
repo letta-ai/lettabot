@@ -1,7 +1,7 @@
 /**
  * Channel Adapter Interface
  * 
- * Each channel (Telegram, Slack, WhatsApp) implements this interface.
+ * Each channel (Telegram, Slack, Discord, WhatsApp, Signal) implements this interface.
  */
 
 import type { ChannelId, InboundMessage, OutboundMessage } from '../core/types.js';

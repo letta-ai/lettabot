@@ -131,6 +131,30 @@ async function sendWhatsApp(chatId: string, text: string): Promise<void> {
   throw new Error('WhatsApp sending via CLI not yet supported (requires active session)');
 }
 
+async function sendDiscord(chatId: string, text: string): Promise<void> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    throw new Error('DISCORD_BOT_TOKEN not set');
+  }
+
+  const response = await fetch(`https://discord.com/api/v10/channels/${chatId}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bot ${token}`,
+    },
+    body: JSON.stringify({ content: text }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Discord API error: ${error}`);
+  }
+
+  const result = await response.json() as { id?: string };
+  console.log(`✓ Sent to discord:${chatId} (id: ${result.id || 'unknown'})`);
+}
+
 async function sendToChannel(channel: string, chatId: string, text: string): Promise<void> {
   switch (channel.toLowerCase()) {
     case 'telegram':
@@ -141,8 +165,10 @@ async function sendToChannel(channel: string, chatId: string, text: string): Pro
       return sendSignal(chatId, text);
     case 'whatsapp':
       return sendWhatsApp(chatId, text);
+    case 'discord':
+      return sendDiscord(chatId, text);
     default:
-      throw new Error(`Unknown channel: ${channel}. Supported: telegram, slack, signal`);
+      throw new Error(`Unknown channel: ${channel}. Supported: telegram, slack, signal, whatsapp, discord`);
   }
 }
 
@@ -186,7 +212,7 @@ async function sendCommand(args: string[]): Promise<void> {
   
   if (!channel) {
     console.error('Error: --channel is required (no default available)');
-    console.error('Specify: --channel telegram|slack|signal');
+    console.error('Specify: --channel telegram|slack|signal|discord');
     process.exit(1);
   }
   
@@ -213,7 +239,7 @@ Commands:
 
 Send options:
   --text, -t <text>       Message text (required)
-  --channel, -c <name>    Channel: telegram, slack, signal (default: last used)
+  --channel, -c <name>    Channel: telegram, slack, signal, discord (default: last used)
   --chat, --to <id>       Chat/conversation ID (default: last messaged)
 
 Examples:
@@ -229,6 +255,7 @@ Examples:
 Environment variables:
   TELEGRAM_BOT_TOKEN      Required for Telegram
   SLACK_BOT_TOKEN         Required for Slack
+  DISCORD_BOT_TOKEN       Required for Discord
   SIGNAL_PHONE_NUMBER     Required for Signal
   SIGNAL_CLI_REST_API_URL Signal API URL (default: http://localhost:8080)
 `);

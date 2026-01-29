@@ -36,6 +36,7 @@ interface OnboardConfig {
   slack: { enabled: boolean; appToken?: string; botToken?: string; allowedUsers?: string[] };
   whatsapp: { enabled: boolean; selfChat?: boolean; dmPolicy?: 'pairing' | 'allowlist' | 'open'; allowedUsers?: string[] };
   signal: { enabled: boolean; phone?: string; dmPolicy?: 'pairing' | 'allowlist' | 'open'; allowedUsers?: string[] };
+  discord: { enabled: boolean; token?: string; dmPolicy?: 'pairing' | 'allowlist' | 'open'; allowedUsers?: string[] };
   gmail: { enabled: boolean; account?: string };
   
   // Features
@@ -471,6 +472,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
   const channelOptions: Array<{ value: string; label: string; hint: string }> = [
     { value: 'telegram', label: 'Telegram', hint: 'Recommended - easiest to set up' },
     { value: 'slack', label: 'Slack', hint: 'Socket Mode app' },
+    { value: 'discord', label: 'Discord', hint: 'Bot token + Message Content intent' },
     { value: 'whatsapp', label: 'WhatsApp', hint: 'QR code pairing' },
     { 
       value: 'signal', 
@@ -509,6 +511,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
   // Update enabled states
   config.telegram.enabled = channels.includes('telegram');
   config.slack.enabled = channels.includes('slack');
+  config.discord.enabled = channels.includes('discord');
   config.whatsapp.enabled = channels.includes('whatsapp');
   
   // Handle Signal - warn if selected but not installed
@@ -598,6 +601,48 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       });
       if (!p.isCancel(users) && users) {
         config.slack.allowedUsers = users.split(',').map(s => s.trim()).filter(Boolean);
+      }
+    }
+  }
+
+  if (config.discord.enabled) {
+    p.note(
+      'Create a bot at discord.com/developers/applications.\n' +
+      'Enable "Message Content Intent" for reading messages.\n' +
+      'Invite the bot to your server with Send Messages permission.',
+      'Discord Setup'
+    );
+
+    const token = await p.text({
+      message: 'Discord Bot Token',
+      placeholder: 'Bot token',
+      initialValue: config.discord.token || '',
+    });
+    if (!p.isCancel(token) && token) config.discord.token = token;
+
+    const dmPolicy = await p.select({
+      message: 'Discord: Who can message the bot?',
+      options: [
+        { value: 'pairing', label: 'Pairing (recommended)', hint: 'Requires CLI approval' },
+        { value: 'allowlist', label: 'Allowlist only', hint: 'Specific user IDs' },
+        { value: 'open', label: 'Open', hint: 'Anyone (not recommended)' },
+      ],
+      initialValue: config.discord.dmPolicy || 'pairing',
+    });
+    if (!p.isCancel(dmPolicy)) {
+      config.discord.dmPolicy = dmPolicy as 'pairing' | 'allowlist' | 'open';
+
+      if (dmPolicy === 'pairing') {
+        p.log.info('Users will get a code. Approve with: lettabot pairing approve discord CODE');
+      } else if (dmPolicy === 'allowlist') {
+        const users = await p.text({
+          message: 'Allowed Discord user IDs (comma-separated)',
+          placeholder: '123456789012345678,987654321098765432',
+          initialValue: config.discord.allowedUsers?.join(',') || '',
+        });
+        if (!p.isCancel(users) && users) {
+          config.discord.allowedUsers = users.split(',').map(s => s.trim()).filter(Boolean);
+        }
       }
     }
   }
@@ -751,6 +796,7 @@ function showSummary(config: OnboardConfig): void {
   const channels: string[] = [];
   if (config.telegram.enabled) channels.push('Telegram');
   if (config.slack.enabled) channels.push('Slack');
+  if (config.discord.enabled) channels.push('Discord');
   if (config.whatsapp.enabled) channels.push(config.whatsapp.selfChat ? 'WhatsApp (self)' : 'WhatsApp');
   if (config.signal.enabled) channels.push('Signal');
   lines.push(`Channels:  ${channels.length > 0 ? channels.join(', ') : 'None'}`);
@@ -862,6 +908,12 @@ export async function onboard(): Promise<void> {
       botToken: existingConfig.channels.slack?.botToken,
       allowedUsers: existingConfig.channels.slack?.allowedUsers,
     },
+    discord: {
+      enabled: existingConfig.channels.discord?.enabled || false,
+      token: existingConfig.channels.discord?.token,
+      dmPolicy: existingConfig.channels.discord?.dmPolicy,
+      allowedUsers: existingConfig.channels.discord?.allowedUsers,
+    },
     whatsapp: { 
       enabled: existingConfig.channels.whatsapp?.enabled || false,
       selfChat: existingConfig.channels.whatsapp?.selfChat,
@@ -939,6 +991,20 @@ export async function onboard(): Promise<void> {
     delete env.SLACK_BOT_TOKEN;
     delete env.SLACK_ALLOWED_USERS;
   }
+
+  if (config.discord.enabled && config.discord.token) {
+    env.DISCORD_BOT_TOKEN = config.discord.token;
+    if (config.discord.dmPolicy) env.DISCORD_DM_POLICY = config.discord.dmPolicy;
+    if (config.discord.allowedUsers?.length) {
+      env.DISCORD_ALLOWED_USERS = config.discord.allowedUsers.join(',');
+    } else {
+      delete env.DISCORD_ALLOWED_USERS;
+    }
+  } else {
+    delete env.DISCORD_BOT_TOKEN;
+    delete env.DISCORD_DM_POLICY;
+    delete env.DISCORD_ALLOWED_USERS;
+  }
   
   if (config.whatsapp.enabled) {
     env.WHATSAPP_ENABLED = 'true';
@@ -999,6 +1065,7 @@ export async function onboard(): Promise<void> {
     'Channels:',
     config.telegram.enabled ? `  ✓ Telegram (${formatAccess(config.telegram.dmPolicy, config.telegram.allowedUsers)})` : '  ✗ Telegram',
     config.slack.enabled ? `  ✓ Slack ${config.slack.allowedUsers?.length ? `(${config.slack.allowedUsers.length} allowed users)` : '(workspace access)'}` : '  ✗ Slack',
+    config.discord.enabled ? `  ✓ Discord (${formatAccess(config.discord.dmPolicy, config.discord.allowedUsers)})` : '  ✗ Discord',
     config.whatsapp.enabled ? `  ✓ WhatsApp (${formatAccess(config.whatsapp.dmPolicy, config.whatsapp.allowedUsers)})` : '  ✗ WhatsApp',
     config.signal.enabled ? `  ✓ Signal (${formatAccess(config.signal.dmPolicy, config.signal.allowedUsers)})` : '  ✗ Signal',
     '',
@@ -1036,6 +1103,14 @@ export async function onboard(): Promise<void> {
           appToken: config.slack.appToken,
           botToken: config.slack.botToken,
           allowedUsers: config.slack.allowedUsers,
+        }
+      } : {}),
+      ...(config.discord.enabled ? {
+        discord: {
+          enabled: true,
+          token: config.discord.token,
+          dmPolicy: config.discord.dmPolicy,
+          allowedUsers: config.discord.allowedUsers,
         }
       } : {}),
       ...(config.whatsapp.enabled ? {

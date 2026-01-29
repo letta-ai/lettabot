@@ -13,6 +13,7 @@ import type { InboundMessage } from './types.js';
  */
 const CHANNEL_FORMATS: Record<string, string> = {
   slack: 'mrkdwn: bold/italic/code/links - NO: headers, tables',
+  discord: 'Discord Markdown: bold/italic/code/links/quotes/code fences - NO: headers, tables',
   telegram: 'MarkdownV2: bold/italic/code/links/quotes - NO: headers, tables',
   whatsapp: 'bold/italic/code - NO: headers, code fences, links, tables',
   signal: 'ONLY: bold/italic/code - NO: headers, code fences, links, quotes, tables',
@@ -65,6 +66,10 @@ function formatSender(msg: InboundMessage): string {
   switch (msg.channel) {
     case 'slack':
       // Add @ prefix for Slack usernames/IDs
+      return msg.userHandle ? `@${msg.userHandle}` : `@${msg.userId}`;
+
+    case 'discord':
+      // Add @ prefix for Discord usernames/IDs
       return msg.userHandle ? `@${msg.userHandle}` : `@${msg.userId}`;
     
     case 'whatsapp':
@@ -159,8 +164,8 @@ export function formatMessageEnvelope(
   
   // Group name (if group chat and enabled)
   if (opts.includeGroup !== false && msg.isGroup && msg.groupName?.trim()) {
-    // Format group name with # for Slack channels
-    if (msg.channel === 'slack' && !msg.groupName.startsWith('#')) {
+    // Format group name with # for Slack/Discord channels
+    if ((msg.channel === 'slack' || msg.channel === 'discord') && !msg.groupName.startsWith('#')) {
       parts.push(`#${msg.groupName}`);
     } else {
       parts.push(msg.groupName);

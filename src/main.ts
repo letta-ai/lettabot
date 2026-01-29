@@ -113,6 +113,7 @@ import { TelegramAdapter } from './channels/telegram.js';
 import { SlackAdapter } from './channels/slack.js';
 import { WhatsAppAdapter } from './channels/whatsapp.js';
 import { SignalAdapter } from './channels/signal.js';
+import { DiscordAdapter } from './channels/discord.js';
 import { CronService } from './cron/service.js';
 import { HeartbeatService } from './cron/heartbeat.js';
 import { PollingService } from './polling/service.js';
@@ -126,7 +127,7 @@ if (!existsSync(configPath)) {
   process.exit(1);
 }
 
-// Parse heartbeat target (format: "telegram:123456789" or "slack:C1234567890")
+// Parse heartbeat target (format: "telegram:123456789", "slack:C1234567890", or "discord:123456789012345678")
 function parseHeartbeatTarget(raw?: string): { channel: string; chatId: string } | undefined {
   if (!raw || !raw.includes(':')) return undefined;
   const [channel, chatId] = raw.split(':');
@@ -172,6 +173,12 @@ const config = {
     allowedUsers: process.env.SIGNAL_ALLOWED_USERS?.split(',').filter(Boolean) || [],
     selfChatMode: process.env.SIGNAL_SELF_CHAT_MODE !== 'false', // Default true
   },
+  discord: {
+    enabled: !!process.env.DISCORD_BOT_TOKEN,
+    token: process.env.DISCORD_BOT_TOKEN || '',
+    dmPolicy: (process.env.DISCORD_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
+    allowedUsers: process.env.DISCORD_ALLOWED_USERS?.split(',').filter(Boolean) || [],
+  },
   
   // Cron
   cronEnabled: process.env.CRON_ENABLED === 'true',
@@ -196,9 +203,9 @@ const config = {
 };
 
 // Validate at least one channel is configured
-if (!config.telegram.enabled && !config.slack.enabled && !config.whatsapp.enabled && !config.signal.enabled) {
+if (!config.telegram.enabled && !config.slack.enabled && !config.whatsapp.enabled && !config.signal.enabled && !config.discord.enabled) {
   console.error('\n  Error: No channels configured.');
-  console.error('  Set TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN+SLACK_APP_TOKEN, WHATSAPP_ENABLED=true, or SIGNAL_PHONE_NUMBER\n');
+  console.error('  Set TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN+SLACK_APP_TOKEN, WHATSAPP_ENABLED=true, SIGNAL_PHONE_NUMBER, or DISCORD_BOT_TOKEN\n');
   process.exit(1);
 }
 
@@ -284,6 +291,15 @@ async function main() {
       selfChatMode: config.signal.selfChatMode,
     });
     bot.registerChannel(signal);
+  }
+
+  if (config.discord.enabled) {
+    const discord = new DiscordAdapter({
+      token: config.discord.token,
+      dmPolicy: config.discord.dmPolicy,
+      allowedUsers: config.discord.allowedUsers.length > 0 ? config.discord.allowedUsers : undefined,
+    });
+    bot.registerChannel(discord);
   }
   
   // Start cron service if enabled

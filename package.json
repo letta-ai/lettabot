@@ -57,6 +57,7 @@
   },
   "optionalDependencies": {
     "@slack/bolt": "^4.6.0",
-    "@whiskeysockets/baileys": "^6.7.21"
+    "@whiskeysockets/baileys": "^6.7.21",
+    "discord.js": "^14.18.0"
   }
 }

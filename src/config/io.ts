@@ -130,6 +130,15 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.channels.signal?.phone) {
     env.SIGNAL_PHONE_NUMBER = config.channels.signal.phone;
   }
+  if (config.channels.discord?.token) {
+    env.DISCORD_BOT_TOKEN = config.channels.discord.token;
+    if (config.channels.discord.dmPolicy) {
+      env.DISCORD_DM_POLICY = config.channels.discord.dmPolicy;
+    }
+    if (config.channels.discord.allowedUsers?.length) {
+      env.DISCORD_ALLOWED_USERS = config.channels.discord.allowedUsers.join(',');
+    }
+  }
   
   // Features
   if (config.features?.cron) {
