@@ -253,6 +253,7 @@ export class LettaBot {
       let response = '';
       let lastUpdate = Date.now();
       let messageId: string | null = null;
+      let streamCount = 0;
       
       // Keep typing indicator alive
       const typingInterval = setInterval(() => {
@@ -261,6 +262,7 @@ export class LettaBot {
       
       try {
         for await (const streamMsg of session.stream()) {
+          streamCount++;
           if (streamMsg.type === 'assistant') {
             response += streamMsg.content;
             
