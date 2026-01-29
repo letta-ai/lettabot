@@ -1,6 +1,6 @@
 # LettaBot
 
-Your personal AI assistant that remembers everything across **Telegram, Slack, WhatsApp, and Signal**. Powered by [Letta Code](https://github.com/letta-ai/letta-code).
+Your personal AI assistant that remembers everything across **Telegram, Slack, WhatsApp, and Signal**. Powered by the [Letta Code SDK](https://github.com/letta-ai/letta-code-sdk).
 
 <img width="750" alt="lettabot-preview" src="https://github.com/user-attachments/assets/9f01b845-d5b0-447b-927d-ae15f9ec7511" />
 
@@ -64,6 +64,32 @@ lettabot server
 
 That's it! Message your bot on Telegram.
 
+## Skills
+LettaBot is compatible with [skills.sh](https://skills.sh) and [Clawdhub](https://clawdhub.com/). 
+
+```bash
+# from Clawdhub
+npx molthub@latest install sonoscli
+
+# from skills.sh
+npm run skills:add supabase/agent-skills
+
+# connect to LettaBot
+lettabot skills
+
+◆  Enable skills (space=toggle, enter=confirm):
+│  ◻ ── ClawdHub Skills ── (~/clawd/skills)
+│  ◻ 🦞 sonoscli
+│  ◻ ── Vercel Skills ── (~/.agents/skills)
+│  ◻ 🔼 supabase/agent-skills
+│  ◻ ── Built-in Skills ──
+│  ◻ 📦 1password
+│  ◻ ...
+
+# View LettaBot skills
+lettabot skills status
+```
+
 ## CLI Commands
 
 | Command | Description |
@@ -109,48 +135,11 @@ At least one channel is required. Telegram is the easiest to start with.
 | `/status` | Show current session info |
 | `/heartbeat` | Manually trigger a heartbeat check-in |
 
-## Skills
-LettaBot is compatible with [skills.sh](https://skills.sh) and [Clawdhub](https://clawdhub.com/). 
-
-```bash
-# Interactive search
-npm run skills:find
-
-# Install skill packs
-npm run skills:add supabase/agent-skills
-npm run skills:add anthropics/skills
+## Connect to Letta Code 
+Any LettaBot agent can also be directly chatted with through [Letta Code](https://github.com/letta-ai/letta-code). Use the `/status` command to find your `agent_id`, and run: 
+```sh
+letta --agent <agent_id>
 ```
-
-Once you install a skill, you need to import it to your agent with `lettabot skills`.
-
-### View Skills
-
-```bash
-lettabot skills status
-```
-
-Shows enabled skills and skills available to import:
-
-```
-Enabled (3):
-  ✓ gog
-  ✓ google
-  ✓ scheduling
-
-Available to import (20):
-  obsidian
-  weather
-  ...
-```
-
-### Feature-Gated Skills
-
-Some skills are automatically enabled based on your configuration:
-
-| Feature | Config | Skills Enabled |
-|---------|--------|----------------|
-| Scheduling | `CRON_ENABLED=true` | `scheduling` |
-| Gmail | `GMAIL_ACCOUNT=...` | `gog`, `google` |
 
 ## Security
 
@@ -227,6 +216,9 @@ lettabot destroy
 - [Slack Setup](docs/slack-setup.md)
 - [WhatsApp Setup](docs/whatsapp-setup.md)
 - [Signal Setup](docs/signal-setup.md)
+
+## Acknowledgement
+Some skills were adapted from [Moltbot](https://github.com/moltbot/moltbot). 
 
 ## License
 

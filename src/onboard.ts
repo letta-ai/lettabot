@@ -567,40 +567,89 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
   }
   
   if (config.slack.enabled) {
+    const hasExistingTokens = config.slack.appToken || config.slack.botToken;
+    
+    // Show what's needed
     p.note(
-      'See docs/slack-setup.md for full instructions.\n\n' +
-      'Quick reference at api.slack.com/apps:\n' +
-      '• Enable Socket Mode first\n' +
-      '• App Token: Basic Information → App-Level Tokens\n' +
-      '• Bot Token: OAuth & Permissions → Bot User OAuth Token',
-      'Slack Setup'
+      'Requires two tokens from api.slack.com/apps:\n' +
+      '  • App Token (xapp-...) - Socket Mode\n' +
+      '  • Bot Token (xoxb-...) - Bot permissions',
+      'Slack Requirements'
     );
     
-    const appToken = await p.text({
-      message: 'Slack App Token (xapp-...)',
-      initialValue: config.slack.appToken || '',
+    const wizardChoice = await p.select({
+      message: 'Slack setup',
+      options: [
+        { value: 'wizard', label: 'Guided setup', hint: 'Step-by-step instructions with validation' },
+        { value: 'manual', label: 'Manual entry', hint: 'I already have tokens' },
+      ],
+      initialValue: hasExistingTokens ? 'manual' : 'wizard',
     });
-    if (!p.isCancel(appToken) && appToken) config.slack.appToken = appToken;
     
-    const botToken = await p.text({
-      message: 'Slack Bot Token (xoxb-...)',
-      initialValue: config.slack.botToken || '',
-    });
-    if (!p.isCancel(botToken) && botToken) config.slack.botToken = botToken;
+    if (p.isCancel(wizardChoice)) {
+      p.cancel('Setup cancelled');
+      process.exit(0);
+    }
     
-    // Slack access control (workspace already provides some isolation)
-    const restrictSlack = await p.confirm({
-      message: 'Slack: Restrict to specific users? (workspace already limits access)',
-      initialValue: (config.slack.allowedUsers?.length || 0) > 0,
-    });
-    if (!p.isCancel(restrictSlack) && restrictSlack) {
-      const users = await p.text({
-        message: 'Allowed Slack user IDs (comma-separated)',
-        placeholder: 'U01234567,U98765432',
-        initialValue: config.slack.allowedUsers?.join(',') || '',
+    if (wizardChoice === 'wizard') {
+      const { runSlackWizard } = await import('./setup/slack-wizard.js');
+      const result = await runSlackWizard({
+        appToken: config.slack.appToken,
+        botToken: config.slack.botToken,
+        allowedUsers: config.slack.allowedUsers,
       });
-      if (!p.isCancel(users) && users) {
-        config.slack.allowedUsers = users.split(',').map(s => s.trim()).filter(Boolean);
+      
+      if (result) {
+        config.slack.appToken = result.appToken;
+        config.slack.botToken = result.botToken;
+        config.slack.allowedUsers = result.allowedUsers;
+      } else {
+        // Wizard was cancelled, disable Slack
+        config.slack.enabled = false;
+      }
+    } else {
+      // Manual token entry with validation
+      const { validateSlackTokens, stepAccessControl, validateAppToken, validateBotToken } = await import('./setup/slack-wizard.js');
+      
+      p.note(
+        'Get tokens from api.slack.com/apps:\n' +
+        '• Enable Socket Mode → App-Level Token (xapp-...)\n' +
+        '• Install App → Bot User OAuth Token (xoxb-...)\n\n' +
+        'See docs/slack-setup.md for detailed instructions',
+        'Slack Setup'
+      );
+      
+      const appToken = await p.text({
+        message: 'Slack App Token (xapp-...)',
+        initialValue: config.slack.appToken || '',
+        validate: validateAppToken,
+      });
+      if (p.isCancel(appToken)) {
+        config.slack.enabled = false;
+      } else {
+        config.slack.appToken = appToken;
+      }
+      
+      const botToken = await p.text({
+        message: 'Slack Bot Token (xoxb-...)',
+        initialValue: config.slack.botToken || '',
+        validate: validateBotToken,
+      });
+      if (p.isCancel(botToken)) {
+        config.slack.enabled = false;
+      } else {
+        config.slack.botToken = botToken;
+      }
+      
+      // Validate tokens if both provided
+      if (config.slack.appToken && config.slack.botToken) {
+        await validateSlackTokens(config.slack.appToken, config.slack.botToken);
+      }
+      
+      // Slack access control (reuse wizard step)
+      const allowedUsers = await stepAccessControl(config.slack.allowedUsers);
+      if (allowedUsers !== undefined) {
+        config.slack.allowedUsers = allowedUsers;
       }
     }
   }
@@ -1180,5 +1229,5 @@ export async function onboard(): Promise<void> {
     p.log.success(`Agent ID saved: ${config.agentId} (${baseUrl})`);
   }
   
-  p.outro('🎉 Setup complete! Run `lettabot server` to start.');
+  p.outro('🎉 Setup complete! Run `npx lettabot server` to start.');
 }

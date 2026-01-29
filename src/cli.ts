@@ -318,7 +318,7 @@ async function main() {
         p.log.info('Nothing to delete');
       }
       
-      p.outro('✨ Done! Run `lettabot server` to create a fresh agent.');
+      p.outro('✨ Done! Run `npx lettabot server` to create a fresh agent.');
       break;
     }
       

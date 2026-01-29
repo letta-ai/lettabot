@@ -12,11 +12,11 @@ import type { InboundMessage } from './types.js';
  * Each channel has different markdown support - hints help agent format appropriately.
  */
 const CHANNEL_FORMATS: Record<string, string> = {
-  slack: 'mrkdwn: bold/italic/code/links - NO: headers, tables',
+  slack: 'mrkdwn: *bold* _italic_ `code` - NO: headers, tables',
   discord: '**bold** *italic* `code` [links](url) ```code blocks``` - NO: headers, tables',
-  telegram: 'MarkdownV2: bold/italic/code/links/quotes - NO: headers, tables',
-  whatsapp: 'bold/italic/code - NO: headers, code fences, links, tables',
-  signal: 'ONLY: bold/italic/code - NO: headers, code fences, links, quotes, tables',
+  telegram: 'MarkdownV2: *bold* _italic_ `code` [links](url) - NO: headers, tables',
+  whatsapp: '*bold* _italic_ `code` - NO: headers, code fences, links, tables',
+  signal: 'ONLY: *bold* _italic_ `code` - NO: headers, code fences, links, quotes, tables',
 };
 
 export interface EnvelopeOptions {
@@ -184,7 +184,7 @@ export function formatMessageEnvelope(
   // Build envelope
   const envelope = `[${parts.join(' ')}]`;
   
-  // Add format hint as a separate note (not cluttering the main envelope)
+  // Add format hint so agent knows what formatting syntax to use
   const formatHint = CHANNEL_FORMATS[msg.channel];
   const hint = formatHint ? `\n(Format: ${formatHint})` : '';
   

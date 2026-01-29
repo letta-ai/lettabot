@@ -259,12 +259,8 @@ export class LettaBot {
         adapter.sendTypingIndicator(msg.chatId).catch(() => {});
       }, 4000);
       
-      let streamCount = 0;
       try {
-        console.log('[Bot] Entering stream loop...');
         for await (const streamMsg of session.stream()) {
-          streamCount++;
-          console.log(`[Bot] Stream msg #${streamCount}: type=${streamMsg.type}, content=${streamMsg.type === 'assistant' ? streamMsg.content?.slice(0, 50) + '...' : '(n/a)'}`);
           if (streamMsg.type === 'assistant') {
             response += streamMsg.content;
             
