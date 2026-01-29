@@ -11,10 +11,14 @@ const HOME = process.env.HOME || process.env.USERPROFILE || '';
 const WORKING_DIR = process.env.WORKING_DIR || '/tmp/lettabot';
 const TARGET_DIR = join(WORKING_DIR, '.skills');
 
+// Skill source directories
+const CLAWDHUB_DIR = join(HOME, 'clawd', 'skills');      // ~/clawd/skills (ClawdHub)
+const VERCEL_DIR = join(HOME, '.agents', 'skills');      // ~/.agents/skills (Vercel)
+
 interface SkillInfo {
   name: string;
   description: string;
-  source: 'builtin' | 'clawdhub' | 'skills.sh';
+  source: 'builtin' | 'clawdhub' | 'vercel';
   sourcePath: string;
   installed: boolean;
 }
@@ -66,8 +70,8 @@ function discoverSkills(): SkillInfo[] {
   
   // Discover from all sources
   addFromDir(PROJECT_SKILLS_DIR, 'builtin');
-  addFromDir(GLOBAL_SKILLS_DIR, 'clawdhub');
-  addFromDir(SKILLS_SH_DIR, 'skills.sh');
+  addFromDir(CLAWDHUB_DIR, 'clawdhub');
+  addFromDir(VERCEL_DIR, 'vercel');
   
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -96,22 +100,53 @@ export async function runSkillsSync(): Promise<void> {
   
   p.log.info(`Target: ${TARGET_DIR}`);
   p.log.info(`Found ${skills.length} skills (${installedCount} installed)`);
-  p.log.info('Legend: 📦 builtin  🐾 ClawdHub  ⚡ skills.sh\n');
   
-  // Build options for multiselect with descriptions as hints
-  const options = skills.map(skill => {
-    const sourceIcon = skill.source === 'builtin' ? '📦' : skill.source === 'clawdhub' ? '🐾' : '⚡';
-    
-    // Truncate description if too long
-    const desc = skill.description || '';
-    const hint = desc.length > 60 ? desc.slice(0, 57) + '...' : desc;
-    
-    return {
-      value: skill.name,
-      label: `${sourceIcon} ${skill.name}`,
-      hint,
-    };
-  });
+  // Check which sources exist
+  const hasBuiltin = skills.some(s => s.source === 'builtin');
+  const hasClawdhub = existsSync(CLAWDHUB_DIR) && skills.some(s => s.source === 'clawdhub');
+  const hasVercel = existsSync(VERCEL_DIR) && skills.some(s => s.source === 'vercel');
+  
+  // Build options grouped by source with headers
+  const options: Array<{ value: string; label: string; hint: string }> = [];
+  
+  // Add built-in skills section
+  if (hasBuiltin) {
+    options.push({ value: '__header_builtin__', label: '── Built-in Skills ──', hint: '' });
+    for (const skill of skills.filter(s => s.source === 'builtin')) {
+      const desc = skill.description || '';
+      options.push({
+        value: skill.name,
+        label: `📦 ${skill.name}`,
+        hint: desc.length > 60 ? desc.slice(0, 57) + '...' : desc,
+      });
+    }
+  }
+  
+  // Add ClawdHub skills section
+  if (hasClawdhub) {
+    options.push({ value: '__header_clawdhub__', label: '── ClawdHub Skills ── (~/clawd/skills)', hint: '' });
+    for (const skill of skills.filter(s => s.source === 'clawdhub')) {
+      const desc = skill.description || '';
+      options.push({
+        value: skill.name,
+        label: `🦞 ${skill.name}`,
+        hint: desc.length > 60 ? desc.slice(0, 57) + '...' : desc,
+      });
+    }
+  }
+  
+  // Add Vercel skills section
+  if (hasVercel) {
+    options.push({ value: '__header_vercel__', label: '── Vercel Skills ── (~/.agents/skills)', hint: '' });
+    for (const skill of skills.filter(s => s.source === 'vercel')) {
+      const desc = skill.description || '';
+      options.push({
+        value: skill.name,
+        label: `🔼 ${skill.name}`,
+        hint: desc.length > 60 ? desc.slice(0, 57) + '...' : desc,
+      });
+    }
+  }
   
   // Start with no skills selected (user must explicitly enable)
   const selected = await p.multiselect({
@@ -126,7 +161,9 @@ export async function runSkillsSync(): Promise<void> {
     return;
   }
   
-  const selectedSet = new Set(selected as string[]);
+  // Filter out header items
+  const selectedSkills = (selected as string[]).filter(s => !s.startsWith('__header_'));
+  const selectedSet = new Set(selectedSkills);
   
   // Determine what to add and remove
   const toAdd = skills.filter(s => selectedSet.has(s.name) && !s.installed);
