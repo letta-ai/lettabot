@@ -13,7 +13,7 @@ import type { InboundMessage } from './types.js';
  */
 const CHANNEL_FORMATS: Record<string, string> = {
   slack: 'mrkdwn: bold/italic/code/links - NO: headers, tables',
-  discord: 'Discord Markdown: bold/italic/code/links/quotes/code fences - NO: headers, tables',
+  discord: '**bold** *italic* `code` [links](url) ```code blocks``` - NO: headers, tables',
   telegram: 'MarkdownV2: bold/italic/code/links/quotes - NO: headers, tables',
   whatsapp: 'bold/italic/code - NO: headers, code fences, links, tables',
   signal: 'ONLY: bold/italic/code - NO: headers, code fences, links, quotes, tables',

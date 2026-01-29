@@ -138,7 +138,12 @@ Ask the bot owner to approve with:
 
       const access = await this.checkAccess(userId);
       if (access === 'blocked') {
-        await message.channel.send("Sorry, you're not authorized to use this bot.");
+        const ch = message.channel;
+        if (ch.isTextBased() && 'send' in ch) {
+          await (ch as { send: (content: string) => Promise<unknown> }).send(
+            "Sorry, you're not authorized to use this bot."
+          );
+        }
         return;
       }
 
@@ -235,14 +240,23 @@ Ask the bot owner to approve with:
     }
 
     const message = await channel.messages.fetch(messageId);
+    const botUserId = this.client.user?.id;
+    if (!botUserId || message.author.id !== botUserId) {
+      console.warn('[Discord] Cannot edit message not sent by bot');
+      return;
+    }
     await message.edit(text);
   }
 
   async sendTypingIndicator(chatId: string): Promise<void> {
     if (!this.client) return;
-    const channel = await this.client.channels.fetch(chatId);
-    if (!channel || !channel.isTextBased() || !('sendTyping' in channel)) return;
-    await (channel as { sendTyping: () => Promise<void> }).sendTyping();
+    try {
+      const channel = await this.client.channels.fetch(chatId);
+      if (!channel || !channel.isTextBased() || !('sendTyping' in channel)) return;
+      await (channel as { sendTyping: () => Promise<void> }).sendTyping();
+    } catch {
+      // Ignore typing indicator failures
+    }
   }
 
   supportsEditing(): boolean {
