@@ -265,8 +265,8 @@ Ask the bot owner to approve with:
         const isGroup = remoteJid.endsWith('@g.us');
         const pushName = m.pushName;
         
-        // Check access control (for DMs only, groups are open)
-        if (!isGroup) {
+        // Check access control (for DMs only, groups are open, self-chat always allowed)
+        if (!isGroup && !isSelfChat) {
           const access = await this.checkAccess(userId, pushName);
           
           if (access === 'blocked') {
