@@ -30,7 +30,10 @@ lettabot-message send --text "Hello! I found something interesting."
 # Send to a specific channel and chat
 lettabot-message send --text "Hello!" --channel telegram --chat 123456789
 
-# Add a reaction to a message
+# Add a reaction to the most recent message (uses last stored message ID)
+lettabot-react add --emoji :eyes:
+
+# Add a reaction to a specific message
 lettabot-react add --emoji :eyes: --channel telegram --chat 123456789 --message 987654321
 \`\`\`
 

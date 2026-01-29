@@ -143,14 +143,14 @@ function formatTimestamp(date: Date, options: EnvelopeOptions): string {
 /**
  * Format a message with metadata envelope
  * 
- * Format: [Channel:ChatId Sender Timestamp] Message
+ * Format: [Channel:ChatId msg:MessageId Sender Timestamp] Message
  * 
  * The Channel:ChatId format allows the agent to reply using:
  *   lettabot-message send --text "..." --channel telegram --chat 123456789
  * 
  * Examples:
- * - [telegram:123456789 Sarah Wednesday, Jan 28, 4:30 PM PST] Hello!
- * - [slack:C1234567 @cameron Monday, Jan 27, 4:30 PM PST] Hello!
+ * - [telegram:123456789 msg:123 Sarah Wednesday, Jan 28, 4:30 PM PST] Hello!
+ * - [slack:C1234567 msg:1737685.1234 @cameron Monday, Jan 27, 4:30 PM PST] Hello!
  */
 export function formatMessageEnvelope(
   msg: InboundMessage,
@@ -161,6 +161,10 @@ export function formatMessageEnvelope(
   
   // Channel:ChatId (for lettabot-message CLI)
   parts.push(`${msg.channel}:${msg.chatId}`);
+
+  if (msg.messageId) {
+    parts.push(`msg:${msg.messageId}`);
+  }
   
   // Group name (if group chat and enabled)
   if (opts.includeGroup !== false && msg.isGroup && msg.groupName?.trim()) {
