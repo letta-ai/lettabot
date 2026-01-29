@@ -165,11 +165,12 @@ export class LettaBot {
     // Create or resume session
     let session: Session;
     const baseOptions = {
-      permissionMode: 'bypassPermissions' as const,
+      permissionMode: 'bypassPermissions' as const,  // --yolo: bypass all permission checks
       allowedTools: this.config.allowedTools,
       cwd: this.config.workingDir,
       model: this.config.model,
       systemPrompt: SYSTEM_PROMPT,
+      defaultConversation: true,  // Use single conversation per agent
     };
     
     console.log('[Bot] Session options:', JSON.stringify(baseOptions, null, 2));
@@ -303,11 +304,12 @@ export class LettaBot {
     _context?: TriggerContext
   ): Promise<string> {
     const baseOptions = {
-      permissionMode: 'bypassPermissions' as const,
+      permissionMode: 'bypassPermissions' as const,  // --yolo: bypass all permission checks
       allowedTools: this.config.allowedTools,
       cwd: this.config.workingDir,
       model: this.config.model,
       systemPrompt: SYSTEM_PROMPT,
+      defaultConversation: true,  // Use single conversation per agent
     };
     
     let session: Session;
