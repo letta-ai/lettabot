@@ -143,14 +143,13 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
 }
 
 /**
- * Apply config to process.env
+ * Apply config to process.env (YAML config takes priority over .env)
  */
 export function applyConfigToEnv(config: LettaBotConfig): void {
   const env = configToEnv(config);
   for (const [key, value] of Object.entries(env)) {
-    if (!process.env[key]) {
-      process.env[key] = value;
-    }
+    // YAML config always takes priority
+    process.env[key] = value;
   }
 }
 

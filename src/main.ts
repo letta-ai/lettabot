@@ -5,13 +5,15 @@
  * Chat continues seamlessly between Telegram, Slack, and WhatsApp.
  */
 
+// Load .env first for backwards compatibility
 import 'dotenv/config';
+
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
-// Load YAML config and apply to process.env (before other imports)
+// Load YAML config and apply to process.env (overrides .env values)
 import { loadConfig, applyConfigToEnv, syncProviders, resolveConfigPath } from './config/index.js';
 const yamlConfig = loadConfig();
 console.log(`[Config] Loaded from ${resolveConfigPath()}`);
