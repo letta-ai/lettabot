@@ -664,20 +664,39 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
 
   if (config.discord.enabled) {
     p.note(
-      '1. Create app at discord.com/developers/applications\n' +
-      '2. Go to Bot → Reset Token → copy the token\n' +
-      '3. Bot → Privileged Gateway Intents → enable MESSAGE CONTENT INTENT\n' +
-      '4. OAuth2 → URL Generator → select "bot" scope + "Send Messages" permission\n' +
-      '5. Copy the generated URL and open it to invite the bot to your server',
+      '1. Go to discord.com/developers/applications\n' +
+      '2. Click "New Application" (or select existing)\n' +
+      '3. Go to "Bot" → Copy the Bot Token\n' +
+      '4. Enable "Message Content Intent" (under Privileged Gateway Intents)\n' +
+      '5. Go to "OAuth2" → "URL Generator"\n' +
+      '   • Scopes: bot\n' +
+      '   • Permissions: Send Messages, Read Message History, View Channels\n' +
+      '6. Copy the generated URL and open it to invite the bot to your server',
       'Discord Setup'
     );
 
     const token = await p.text({
       message: 'Discord Bot Token',
-      placeholder: 'From Bot → Reset Token',
+      placeholder: 'Bot → Reset Token → Copy',
       initialValue: config.discord.token || '',
     });
-    if (!p.isCancel(token) && token) config.discord.token = token;
+    if (!p.isCancel(token) && token) {
+      config.discord.token = token;
+      
+      // Extract application ID from token and show invite URL
+      // Token format: base64(app_id).timestamp.hmac
+      try {
+        const appId = Buffer.from(token.split('.')[0], 'base64').toString();
+        if (/^\d+$/.test(appId)) {
+          // permissions=68608 = Send Messages (2048) + Read Message History (65536) + View Channels (1024)
+          const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${appId}&permissions=68608&scope=bot`;
+          p.log.info(`Invite URL: ${inviteUrl}`);
+          p.log.message('Open this URL in your browser to add the bot to your server.');
+        }
+      } catch {
+        // Token parsing failed, skip showing URL
+      }
+    }
 
     const dmPolicy = await p.select({
       message: 'Discord: Who can message the bot?',
