@@ -253,7 +253,6 @@ export class LettaBot {
       let response = '';
       let lastUpdate = Date.now();
       let messageId: string | null = null;
-      let streamCount = 0;
       
       // Keep typing indicator alive
       const typingInterval = setInterval(() => {
@@ -262,7 +261,6 @@ export class LettaBot {
       
       try {
         for await (const streamMsg of session.stream()) {
-          streamCount++;
           if (streamMsg.type === 'assistant') {
             response += streamMsg.content;
             
@@ -307,7 +305,7 @@ export class LettaBot {
         clearInterval(typingInterval);
       }
       
-      console.log(`[Bot] Stream complete. Total messages: ${streamCount}, Response length: ${response.length}`);
+      console.log(`[Bot] Stream complete. Response length: ${response.length}`);
       console.log(`[Bot] Response preview: ${response.slice(0, 100)}...`);
       
       // Send final response
