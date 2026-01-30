@@ -183,12 +183,18 @@ export class TchapAdapter implements ChannelAdapter {
 					);
 					if (created && code) {
 						console.log(`[Tchap] New pairing request from ${sender}: ${code}`);
-						await this.sendTextToRoom(roomId, formatPairingMessage(code));
+						const message =
+							`Bonjour ! Ce bot nécessite un appairage.\n\n` +
+							`Votre code : **${code}**\n\n` +
+							`Demandez à l'administrateur d'exécuter :\n` +
+							`\`lettabot pairing approve tchap ${code}\`\n\n` +
+							`Ce code expire dans 1 heure.`;
+						await this.sendTextToRoom(roomId, message);
 					}
 				} else {
 					await this.sendTextToRoom(
 						roomId,
-						"Sorry, you're not authorized to use this bot.",
+						"Désolé, vous n'êtes pas autorisé à utiliser ce bot.",
 					);
 				}
 				return;

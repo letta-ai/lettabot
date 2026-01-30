@@ -1,6 +1,6 @@
 /**
  * LettaBot Configuration Types
- * 
+ *
  * Two modes:
  * 1. Self-hosted: Uses baseUrl (e.g., http://localhost:8283), no API key
  * 2. Letta Cloud: Uses apiKey, optional BYOK providers
@@ -34,6 +34,7 @@ export interface LettaBotConfig {
     whatsapp?: WhatsAppConfig;
     signal?: SignalConfig;
     discord?: DiscordConfig;
+    tchap?: TchapConfig;
   };
 
   // Features
@@ -92,6 +93,19 @@ export interface DiscordConfig {
   token?: string;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
+}
+
+export interface TchapConfig {
+  enabled: boolean;
+  homeserverUrl?: string;
+  accessToken?: string;
+  storagePath?: string;
+  cryptoStoragePath?: string;
+  encryptionEnabled?: boolean;
+  autoJoinRooms?: boolean;
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
+  allowedUsers?: string[];
+  messagePrefix?: string;
 }
 
 export interface GoogleConfig {

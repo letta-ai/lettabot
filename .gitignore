@@ -43,6 +43,9 @@ letta-code-sdk/
 # WhatsApp session (contains credentials)
 data/whatsapp-session/
 
+# Tchap session (contains credentials)
+data/tchap/
+
 # Config with secrets
 lettabot.yaml
 lettabot.yml

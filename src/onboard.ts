@@ -19,28 +19,30 @@ interface OnboardConfig {
   apiKey?: string;
   baseUrl?: string;
   billingTier?: string;
-  
-  // Agent  
+
+  // Agent
   agentChoice: 'new' | 'existing' | 'env' | 'skip';
   agentId?: string;
   agentName?: string;
-  
+
   // Model (only for new agents)
   model?: string;
-  
+
   // BYOK Providers (for free tier)
   providers?: Array<{ id: string; name: string; apiKey: string }>;
-  
+
   // Channels (with access control)
   telegram: { enabled: boolean; token?: string; dmPolicy?: 'pairing' | 'allowlist' | 'open'; allowedUsers?: string[] };
   slack: { enabled: boolean; appToken?: string; botToken?: string; allowedUsers?: string[] };
   whatsapp: { enabled: boolean; selfChat?: boolean; dmPolicy?: 'pairing' | 'allowlist' | 'open'; allowedUsers?: string[] };
   signal: { enabled: boolean; phone?: string; selfChat?: boolean; dmPolicy?: 'pairing' | 'allowlist' | 'open'; allowedUsers?: string[] };
   discord: { enabled: boolean; token?: string; dmPolicy?: 'pairing' | 'allowlist' | 'open'; allowedUsers?: string[] };
-  
+  tchap: { enabled: boolean; homeserverUrl?: string; accessToken?: string; encryptionEnabled?: boolean; autoJoinRooms?: boolean; dmPolicy?: 'pairing' | 'allowlist' | 'open'; allowedUsers?: string[]; messagePrefix?: string };
+
+
   // Google Workspace (via gog CLI)
   google: { enabled: boolean; account?: string; services?: string[] };
-  
+
   // Features
   heartbeat: { enabled: boolean; interval?: string };
   cron: boolean;
@@ -55,24 +57,24 @@ const isPlaceholder = (val?: string) => !val || /^(your_|sk-\.\.\.|placeholder|e
 async function stepAuth(config: OnboardConfig, env: Record<string, string>): Promise<void> {
   const { requestDeviceCode, pollForToken, LETTA_CLOUD_API_URL } = await import('./auth/oauth.js');
   const { saveTokens, loadTokens, getOrCreateDeviceId, getDeviceName } = await import('./auth/tokens.js');
-  
+
   const baseUrl = config.baseUrl || env.LETTA_BASE_URL || process.env.LETTA_BASE_URL;
   const isLettaCloud = !baseUrl || baseUrl === LETTA_CLOUD_API_URL || baseUrl === 'https://api.letta.com';
-  
+
   const existingTokens = loadTokens();
   // Check both env and config for existing API key
   const realApiKey = config.apiKey || (isPlaceholder(env.LETTA_API_KEY) ? undefined : env.LETTA_API_KEY);
   const validOAuthToken = isLettaCloud ? existingTokens?.accessToken : undefined;
   const hasExistingAuth = !!realApiKey || !!validOAuthToken;
   const displayKey = realApiKey || validOAuthToken;
-  
+
   // Determine label based on credential type
   const getAuthLabel = () => {
     if (validOAuthToken) return 'Use existing OAuth';
     if (realApiKey?.startsWith('sk-let-')) return 'Use API key';
     return 'Use existing';
   };
-  
+
   const authOptions = [
     ...(hasExistingAuth ? [{ value: 'keep', label: getAuthLabel(), hint: displayKey?.slice(0, 20) + '...' }] : []),
     ...(isLettaCloud ? [{ value: 'oauth', label: 'Login to Letta Platform', hint: 'Opens browser' }] : []),
@@ -80,38 +82,38 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
     { value: 'selfhosted', label: 'Enter self-hosted URL', hint: 'Local Letta server' },
     { value: 'skip', label: 'Skip', hint: 'Continue without auth' },
   ];
-  
+
   const authMethod = await p.select({
     message: 'Authentication',
     options: authOptions,
   });
   if (p.isCancel(authMethod)) { p.cancel('Setup cancelled'); process.exit(0); }
-  
+
   config.authMethod = authMethod as OnboardConfig['authMethod'];
-  
+
   if (authMethod === 'oauth') {
     const spinner = p.spinner();
     spinner.start('Requesting authorization...');
-    
+
     try {
       const deviceData = await requestDeviceCode();
       spinner.stop('Authorization requested');
-      
+
       p.note(
         `Code: ${deviceData.user_code}\n` +
         `URL: ${deviceData.verification_uri_complete}`,
         'Open in Browser'
       );
-      
+
       try {
         const open = (await import('open')).default;
         await open(deviceData.verification_uri_complete, { wait: false });
       } catch {}
-      
+
       spinner.start('Waiting for authorization...');
       const deviceId = getOrCreateDeviceId();
       const deviceName = getDeviceName();
-      
+
       const tokens = await pollForToken(
         deviceData.device_code,
         deviceData.interval,
@@ -119,9 +121,9 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
         deviceId,
         deviceName,
       );
-      
+
       spinner.stop('Authorized!');
-      
+
       const now = Date.now();
       saveTokens({
         accessToken: tokens.access_token,
@@ -130,17 +132,17 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
         deviceId,
         deviceName,
       });
-      
+
       config.apiKey = tokens.access_token;
       env.LETTA_API_KEY = tokens.access_token;
-      
+
     } catch (err) {
       spinner.stop('Authorization failed');
       throw err;
     }
-    
+
   } else if (authMethod === 'apikey') {
-    const apiKey = await p.text({ 
+    const apiKey = await p.text({
       message: 'API Key',
       placeholder: 'sk-...',
     });
@@ -150,18 +152,18 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
       env.LETTA_API_KEY = apiKey;
     }
   } else if (authMethod === 'selfhosted') {
-    const serverUrl = await p.text({ 
+    const serverUrl = await p.text({
       message: 'Letta server URL',
       placeholder: 'http://localhost:8283',
       initialValue: config.baseUrl || 'http://localhost:8283',
     });
     if (p.isCancel(serverUrl)) { p.cancel('Setup cancelled'); process.exit(0); }
-    
+
     const url = serverUrl || 'http://localhost:8283';
     config.baseUrl = url;
     env.LETTA_BASE_URL = url;
     process.env.LETTA_BASE_URL = url; // Set immediately so model listing works
-    
+
     // Clear any cloud API key since we're using self-hosted
     delete env.LETTA_API_KEY;
     delete process.env.LETTA_API_KEY;
@@ -170,7 +172,7 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
     if (existingTokens?.refreshToken) {
       const { isTokenExpired } = await import('./auth/tokens.js');
       const { refreshAccessToken } = await import('./auth/oauth.js');
-      
+
       if (isTokenExpired(existingTokens)) {
       const spinner = p.spinner();
       spinner.start('Refreshing token...');
@@ -180,7 +182,7 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
           existingTokens.deviceId,
           getDeviceName(),
         );
-        
+
         const now = Date.now();
         saveTokens({
           accessToken: newTokens.access_token,
@@ -189,7 +191,7 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
           deviceId: existingTokens.deviceId,
           deviceName: existingTokens.deviceName,
         });
-        
+
         config.apiKey = newTokens.access_token;
         env.LETTA_API_KEY = newTokens.access_token;
         spinner.stop('Token refreshed');
@@ -208,14 +210,14 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
       env.LETTA_API_KEY = realApiKey;
     }
   }
-  
+
   // Validate connection (skip if 'skip' was chosen)
   if (config.authMethod !== 'skip') {
     const keyToValidate = config.apiKey || env.LETTA_API_KEY;
     if (keyToValidate) {
       process.env.LETTA_API_KEY = keyToValidate;
     }
-    
+
     const spinner = p.spinner();
     const serverLabel = config.baseUrl || 'Letta Cloud';
     spinner.start(`Checking connection to ${serverLabel}...`);
@@ -223,7 +225,7 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
       const { testConnection } = await import('./tools/letta-api.js');
       const ok = await testConnection();
       spinner.stop(ok ? `Connected to ${serverLabel}` : 'Connection issue');
-      
+
       if (!ok && config.authMethod === 'selfhosted') {
         p.log.warn(`Could not connect to ${config.baseUrl}. Make sure the server is running.`);
       }
@@ -236,37 +238,37 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
 async function stepAgent(config: OnboardConfig, env: Record<string, string>): Promise<void> {
   const { listAgents } = await import('./tools/letta-api.js');
   const envAgentId = process.env.LETTA_AGENT_ID;
-  
+
   const agentOptions: Array<{ value: string; label: string; hint: string }> = [
     { value: 'new', label: 'Create new agent', hint: 'Start fresh' },
     { value: 'existing', label: 'Select existing', hint: 'From server' },
   ];
-  
+
   if (envAgentId) {
     agentOptions.push({ value: 'env', label: 'Use LETTA_AGENT_ID', hint: envAgentId.slice(0, 15) + '...' });
   }
   agentOptions.push({ value: 'skip', label: 'Skip', hint: 'Keep current' });
-  
+
   const agentChoice = await p.select({
     message: 'Agent',
     options: agentOptions,
   });
   if (p.isCancel(agentChoice)) { p.cancel('Setup cancelled'); process.exit(0); }
-  
+
   config.agentChoice = agentChoice as OnboardConfig['agentChoice'];
-  
+
   if (agentChoice === 'existing') {
     const searchQuery = await p.text({
       message: 'Search by name (Enter for all)',
       placeholder: 'my-agent',
     });
     if (p.isCancel(searchQuery)) { p.cancel('Setup cancelled'); process.exit(0); }
-    
+
     const spinner = p.spinner();
     spinner.start('Fetching agents...');
     const agents = await listAgents(searchQuery || undefined);
     spinner.stop(`Found ${agents.length}`);
-    
+
     if (agents.length > 0) {
       const selectedAgent = await p.select({
         message: 'Select agent',
@@ -280,12 +282,12 @@ async function stepAgent(config: OnboardConfig, env: Record<string, string>): Pr
         ],
       });
       if (p.isCancel(selectedAgent)) { p.cancel('Setup cancelled'); process.exit(0); }
-      
+
       if (selectedAgent === '__back__') {
         // Re-run agent step from the beginning
         return stepAgent(config, env);
       }
-      
+
       config.agentId = selectedAgent as string;
       const agent = agents.find(a => a.id === config.agentId);
       config.agentName = agent?.name;
@@ -294,10 +296,10 @@ async function stepAgent(config: OnboardConfig, env: Record<string, string>): Pr
       // Re-run agent step
       return stepAgent(config, env);
     }
-    
+
   } else if (agentChoice === 'env') {
     config.agentId = envAgentId!;
-    
+
   } else if (agentChoice === 'new') {
     const agentName = await p.text({
       message: 'Agent name',
@@ -323,7 +325,7 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
   // Only for free tier users on Letta Cloud (not self-hosted, not paid)
   if (config.authMethod === 'selfhosted') return;
   if (config.billingTier !== 'free') return;
-  
+
   const selectedProviders = await p.multiselect({
     message: 'Add LLM provider keys (optional - for BYOK models)',
     options: BYOK_PROVIDERS.map(provider => ({
@@ -333,34 +335,34 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
     })),
     required: false,
   });
-  
+
   if (p.isCancel(selectedProviders)) { p.cancel('Setup cancelled'); process.exit(0); }
-  
+
   // If no providers selected, skip
   if (!selectedProviders || selectedProviders.length === 0) {
     return;
   }
-  
+
   config.providers = [];
   const apiKey = config.apiKey || env.LETTA_API_KEY || process.env.LETTA_API_KEY;
-  
+
   // Collect API keys for each selected provider
   for (const providerId of selectedProviders as string[]) {
     const provider = BYOK_PROVIDERS.find(p => p.id === providerId);
     if (!provider) continue;
-    
+
     const providerKey = await p.text({
       message: `${provider.displayName} API Key`,
       placeholder: 'sk-...',
     });
-    
+
     if (p.isCancel(providerKey)) { p.cancel('Setup cancelled'); process.exit(0); }
-    
+
     if (providerKey) {
       // Create or update provider via Letta API
       const spinner = p.spinner();
       spinner.start(`Connecting ${provider.displayName}...`);
-      
+
       try {
         // First check if provider already exists
         const listResponse = await fetch('https://api.letta.com/v1/providers', {
@@ -369,13 +371,13 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
             'Authorization': `Bearer ${apiKey}`,
           },
         });
-        
+
         let existingProvider: { id: string; name: string } | undefined;
         if (listResponse.ok) {
           const providers = await listResponse.json() as Array<{ id: string; name: string }>;
           existingProvider = providers.find(p => p.name === provider.name);
         }
-        
+
         let response: Response;
         if (existingProvider) {
           // Update existing provider
@@ -404,7 +406,7 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
             }),
           });
         }
-        
+
         if (response.ok) {
           spinner.stop(`Connected ${provider.displayName}`);
           config.providers.push({ id: provider.id, name: provider.name, apiKey: providerKey });
@@ -422,14 +424,14 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
 async function stepModel(config: OnboardConfig, env: Record<string, string>): Promise<void> {
   // Only for new agents
   if (config.agentChoice !== 'new') return;
-  
+
   const { buildModelOptions, handleModelSelection, getBillingTier } = await import('./utils/model-selection.js');
-  
+
   const spinner = p.spinner();
-  
+
   // Determine if self-hosted (not Letta Cloud)
   const isSelfHosted = config.authMethod === 'selfhosted';
-  
+
   // Fetch billing tier for Letta Cloud users (if not already fetched)
   let billingTier: string | null = config.billingTier || null;
   if (!isSelfHosted && !billingTier) {
@@ -439,17 +441,17 @@ async function stepModel(config: OnboardConfig, env: Record<string, string>): Pr
     config.billingTier = billingTier ?? undefined;
     spinner.stop(billingTier === 'free' ? 'Free plan' : `Plan: ${billingTier || 'unknown'}`);
   }
-  
+
   spinner.start('Fetching models...');
   const apiKey = config.apiKey || env.LETTA_API_KEY || process.env.LETTA_API_KEY;
   const modelOptions = await buildModelOptions({ billingTier, isSelfHosted, apiKey });
   spinner.stop('Models loaded');
-  
+
   // Show appropriate message for free tier
   if (billingTier === 'free') {
     p.log.info('Free plan: GLM and MiniMax models are free. Other models require BYOK (Bring Your Own Key).');
   }
-  
+
   let selectedModel: string | null = null;
   while (!selectedModel) {
     const modelChoice = await p.select({
@@ -458,31 +460,32 @@ async function stepModel(config: OnboardConfig, env: Record<string, string>): Pr
       maxItems: 12,
     });
     if (p.isCancel(modelChoice)) { p.cancel('Setup cancelled'); process.exit(0); }
-    
+
     selectedModel = await handleModelSelection(modelChoice, p.text);
     // If null (e.g., header selected), loop again
   }
-  
+
   config.model = selectedModel;
 }
 
 async function stepChannels(config: OnboardConfig, env: Record<string, string>): Promise<void> {
   // Check if signal-cli is installed
   const signalInstalled = spawnSync('which', ['signal-cli'], { stdio: 'pipe' }).status === 0;
-  
+
   // Build channel options - show all channels, disabled ones have explanatory hints
   const channelOptions: Array<{ value: string; label: string; hint: string }> = [
     { value: 'telegram', label: 'Telegram', hint: 'Recommended - easiest to set up' },
     { value: 'slack', label: 'Slack', hint: 'Socket Mode app' },
     { value: 'discord', label: 'Discord', hint: 'Bot token + Message Content intent' },
     { value: 'whatsapp', label: 'WhatsApp', hint: 'QR code pairing' },
-    { 
-      value: 'signal', 
-      label: 'Signal', 
-      hint: signalInstalled ? 'signal-cli daemon' : '⚠️ signal-cli not installed' 
+    {
+      value: 'signal',
+      label: 'Signal',
+      hint: signalInstalled ? 'signal-cli daemon' : '⚠️ signal-cli not installed'
     },
+    { value: 'tchap', label: 'Tchap / Matrix', hint: 'French gov messaging (E2EE)' },
   ];
-  
+
   // Pre-select channels that are already enabled (preserves existing config)
   const initialChannels: string[] = [];
   if (config.telegram.enabled) initialChannels.push('telegram');
@@ -490,9 +493,10 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
   if (config.discord.enabled) initialChannels.push('discord');
   if (config.whatsapp.enabled) initialChannels.push('whatsapp');
   if (config.signal.enabled) initialChannels.push('signal');
-  
+  if (config.tchap.enabled) initialChannels.push('tchap');
+
   let channels: string[] = [];
-  
+
   while (true) {
     const selectedChannels = await p.multiselect({
       message: 'Select channels (space to toggle, enter to confirm)',
@@ -501,9 +505,9 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       required: false,
     });
     if (p.isCancel(selectedChannels)) { p.cancel('Setup cancelled'); process.exit(0); }
-    
+
     channels = selectedChannels as string[];
-    
+
     // Confirm if no channels selected
     if (channels.length === 0) {
       const skipChannels = await p.confirm({
@@ -517,13 +521,14 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       break;
     }
   }
-  
+
   // Update enabled states
   config.telegram.enabled = channels.includes('telegram');
   config.slack.enabled = channels.includes('slack');
   config.discord.enabled = channels.includes('discord');
   config.whatsapp.enabled = channels.includes('whatsapp');
-  
+  config.tchap.enabled = channels.includes('tchap');
+
   // Handle Signal - warn if selected but not installed
   if (channels.includes('signal') && !signalInstalled) {
     p.log.warn('Signal selected but signal-cli is not installed. Install with: brew install signal-cli');
@@ -531,7 +536,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
   } else {
     config.signal.enabled = channels.includes('signal');
   }
-  
+
   // Configure each selected channel
   if (config.telegram.enabled) {
     p.note(
@@ -540,14 +545,14 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       '3. Copy the bot token',
       'Telegram Setup'
     );
-    
+
     const token = await p.text({
       message: 'Telegram Bot Token',
       placeholder: '123456:ABC-DEF...',
       initialValue: config.telegram.token || '',
     });
     if (!p.isCancel(token) && token) config.telegram.token = token;
-    
+
     // Access control
     const dmPolicy = await p.select({
       message: 'Telegram: Who can message the bot?',
@@ -560,7 +565,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
     });
     if (!p.isCancel(dmPolicy)) {
       config.telegram.dmPolicy = dmPolicy as 'pairing' | 'allowlist' | 'open';
-      
+
       if (dmPolicy === 'pairing') {
         p.log.info('Users will get a code. Approve with: lettabot pairing approve telegram CODE');
       } else if (dmPolicy === 'allowlist') {
@@ -575,10 +580,10 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       }
     }
   }
-  
+
   if (config.slack.enabled) {
     const hasExistingTokens = config.slack.appToken || config.slack.botToken;
-    
+
     // Show what's needed
     p.note(
       'Requires two tokens from api.slack.com/apps:\n' +
@@ -586,7 +591,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       '  • Bot Token (xoxb-...) - Bot permissions',
       'Slack Requirements'
     );
-    
+
     const wizardChoice = await p.select({
       message: 'Slack setup',
       options: [
@@ -595,12 +600,12 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       ],
       initialValue: hasExistingTokens ? 'manual' : 'wizard',
     });
-    
+
     if (p.isCancel(wizardChoice)) {
       p.cancel('Setup cancelled');
       process.exit(0);
     }
-    
+
     if (wizardChoice === 'wizard') {
       const { runSlackWizard } = await import('./setup/slack-wizard.js');
       const result = await runSlackWizard({
@@ -608,7 +613,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
         botToken: config.slack.botToken,
         allowedUsers: config.slack.allowedUsers,
       });
-      
+
       if (result) {
         config.slack.appToken = result.appToken;
         config.slack.botToken = result.botToken;
@@ -620,7 +625,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
     } else {
       // Manual token entry with validation
       const { validateSlackTokens, stepAccessControl, validateAppToken, validateBotToken } = await import('./setup/slack-wizard.js');
-      
+
       p.note(
         'Get tokens from api.slack.com/apps:\n' +
         '• Enable Socket Mode → App-Level Token (xapp-...)\n' +
@@ -628,7 +633,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
         'See docs/slack-setup.md for detailed instructions',
         'Slack Setup'
       );
-      
+
       const appToken = await p.text({
         message: 'Slack App Token (xapp-...)',
         initialValue: config.slack.appToken || '',
@@ -639,7 +644,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       } else {
         config.slack.appToken = appToken;
       }
-      
+
       const botToken = await p.text({
         message: 'Slack Bot Token (xoxb-...)',
         initialValue: config.slack.botToken || '',
@@ -650,12 +655,12 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       } else {
         config.slack.botToken = botToken;
       }
-      
+
       // Validate tokens if both provided
       if (config.slack.appToken && config.slack.botToken) {
         await validateSlackTokens(config.slack.appToken, config.slack.botToken);
       }
-      
+
       // Slack access control (reuse wizard step)
       const allowedUsers = await stepAccessControl(config.slack.allowedUsers);
       if (allowedUsers !== undefined) {
@@ -684,7 +689,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
     });
     if (!p.isCancel(token) && token) {
       config.discord.token = token;
-      
+
       // Extract application ID from token and show invite URL
       // Token format: base64(app_id).timestamp.hmac
       try {
@@ -726,7 +731,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       }
     }
   }
-  
+
   if (config.whatsapp.enabled) {
     p.note(
       'QR code will appear on first run - scan with your phone.\n' +
@@ -736,7 +741,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       'Consider using a dedicated number for better isolation.',
       'WhatsApp'
     );
-    
+
     const selfChat = await p.select({
       message: 'WhatsApp: Whose number is this?',
       options: [
@@ -746,7 +751,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       initialValue: config.whatsapp.selfChat ? 'personal' : 'dedicated',
     });
     if (!p.isCancel(selfChat)) config.whatsapp.selfChat = selfChat === 'personal';
-    
+
     // Access control (important since WhatsApp has full account access)
     const dmPolicy = await p.select({
       message: 'WhatsApp: Who can message the bot?',
@@ -759,7 +764,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
     });
     if (!p.isCancel(dmPolicy)) {
       config.whatsapp.dmPolicy = dmPolicy as 'pairing' | 'allowlist' | 'open';
-      
+
       if (dmPolicy === 'pairing') {
         p.log.info('Users will get a code. Approve with: lettabot pairing approve whatsapp CODE');
       } else if (dmPolicy === 'allowlist') {
@@ -774,7 +779,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       }
     }
   }
-  
+
   if (config.signal.enabled) {
     p.note(
       'See docs/signal-setup.md for detailed instructions.\n' +
@@ -783,14 +788,14 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       'Can see all messages and send as you.',
       'Signal Setup'
     );
-    
+
     const phone = await p.text({
       message: 'Signal phone number',
       placeholder: '+1XXXXXXXXXX',
       initialValue: config.signal.phone || '',
     });
     if (!p.isCancel(phone) && phone) config.signal.phone = phone;
-    
+
     const selfChat = await p.select({
       message: 'Signal: Whose number is this?',
       options: [
@@ -800,7 +805,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       initialValue: config.signal.selfChat ? 'personal' : 'dedicated',
     });
     if (!p.isCancel(selfChat)) config.signal.selfChat = selfChat === 'personal';
-    
+
     // Access control
     const dmPolicy = await p.select({
       message: 'Signal: Who can message the bot?',
@@ -813,7 +818,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
     });
     if (!p.isCancel(dmPolicy)) {
       config.signal.dmPolicy = dmPolicy as 'pairing' | 'allowlist' | 'open';
-      
+
       if (dmPolicy === 'pairing') {
         p.log.info('Users will get a code. Approve with: lettabot pairing approve signal CODE');
       } else if (dmPolicy === 'allowlist') {
@@ -828,6 +833,63 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       }
     }
   }
+
+  if (config.tchap.enabled) {
+    p.note(
+      'Requires a Tchap account (usually *.gouv.fr).\n' +
+      'Get access token via Element Web (F12 -> Network -> access_token)\n' +
+      'Test Server: https://matrix.i.tchap.gouv.fr\n' +
+      'See docs/tchap-setup.md for details.',
+      'Tchap Setup'
+    );
+
+    const homeserver = await p.text({
+      message: 'Homeserver URL',
+      placeholder: 'https://matrix.agent.dinum.tchap.gouv.fr',
+      initialValue: config.tchap.homeserverUrl || 'https://matrix.agent.dinum.tchap.gouv.fr',
+    });
+    if (!p.isCancel(homeserver) && homeserver) config.tchap.homeserverUrl = homeserver;
+
+    const token = await p.text({
+      message: 'Access Token',
+      placeholder: 'syt_...',
+      initialValue: config.tchap.accessToken || '',
+    });
+    if (!p.isCancel(token) && token) config.tchap.accessToken = token;
+
+    const encryption = await p.confirm({
+      message: 'Enable End-to-End Encryption?',
+      initialValue: config.tchap.encryptionEnabled ?? true,
+    });
+    if (!p.isCancel(encryption)) config.tchap.encryptionEnabled = encryption;
+
+    // Access control
+    const dmPolicy = await p.select({
+      message: 'Tchap: Who can message the bot?',
+      options: [
+        { value: 'pairing', label: 'Pairing (recommended)', hint: 'Requires CLI approval' },
+        { value: 'allowlist', label: 'Allowlist only', hint: 'Specific user IDs' },
+        { value: 'open', label: 'Open', hint: 'Anyone (not recommended)' },
+      ],
+      initialValue: config.tchap.dmPolicy || 'pairing',
+    });
+    if (!p.isCancel(dmPolicy)) {
+      config.tchap.dmPolicy = dmPolicy as 'pairing' | 'allowlist' | 'open';
+
+      if (dmPolicy === 'pairing') {
+        p.log.info('Users will get a code. Approve with: lettabot pairing approve tchap CODE');
+      } else if (dmPolicy === 'allowlist') {
+        const users = await p.text({
+          message: 'Allowed Tchap user IDs (comma-separated)',
+          placeholder: '@user:agent.dinum.tchap.gouv.fr',
+          initialValue: config.tchap.allowedUsers?.join(',') || '',
+        });
+        if (!p.isCancel(users) && users) {
+          config.tchap.allowedUsers = users.split(',').map(s => s.trim()).filter(Boolean);
+        }
+      }
+    }
+  }
 }
 
 async function stepFeatures(config: OnboardConfig): Promise<void> {
@@ -838,7 +900,7 @@ async function stepFeatures(config: OnboardConfig): Promise<void> {
   });
   if (p.isCancel(setupHeartbeat)) { p.cancel('Setup cancelled'); process.exit(0); }
   config.heartbeat.enabled = setupHeartbeat;
-  
+
   if (setupHeartbeat) {
     const interval = await p.text({
       message: 'Interval (minutes)',
@@ -847,7 +909,7 @@ async function stepFeatures(config: OnboardConfig): Promise<void> {
     });
     if (!p.isCancel(interval)) config.heartbeat.interval = interval || '30';
   }
-  
+
   // Cron
   const setupCron = await p.confirm({
     message: 'Enable cron jobs?',
@@ -869,37 +931,37 @@ async function stepGoogle(config: OnboardConfig): Promise<void> {
     initialValue: config.google.enabled,
   });
   if (p.isCancel(setupGoogle)) { p.cancel('Setup cancelled'); process.exit(0); }
-  
+
   if (!setupGoogle) {
     config.google.enabled = false;
     return;
   }
-  
+
   // Check if gog is installed
   const gogInstalled = spawnSync('which', ['gog'], { stdio: 'pipe' }).status === 0;
-  
+
   if (!gogInstalled) {
     p.log.warning('gog CLI is not installed.');
-    
+
     // Check if brew is available (macOS)
     const brewInstalled = spawnSync('which', ['brew'], { stdio: 'pipe' }).status === 0;
-    
+
     if (brewInstalled) {
       const installGog = await p.confirm({
         message: 'Install gog via Homebrew?',
         initialValue: true,
       });
       if (p.isCancel(installGog)) { p.cancel('Setup cancelled'); process.exit(0); }
-      
+
       if (installGog) {
         const spinner = p.spinner();
         spinner.start('Installing gog...');
-        
-        const result = spawnSync('brew', ['install', 'steipete/tap/gogcli'], { 
+
+        const result = spawnSync('brew', ['install', 'steipete/tap/gogcli'], {
           stdio: 'pipe',
           timeout: 300000, // 5 min timeout
         });
-        
+
         if (result.status === 0) {
           spinner.stop('gog installed successfully');
         } else {
@@ -919,13 +981,13 @@ async function stepGoogle(config: OnboardConfig): Promise<void> {
       return;
     }
   }
-  
+
   // Check for existing credentials
   const credentialsResult = spawnSync('gog', ['auth', 'list'], { stdio: 'pipe' });
-  const hasCredentials = credentialsResult.status === 0 && 
+  const hasCredentials = credentialsResult.status === 0 &&
     credentialsResult.stdout.toString().trim().length > 0 &&
     !credentialsResult.stdout.toString().includes('No accounts');
-  
+
   if (!hasCredentials) {
     // Check if credentials.json exists
     const configDir = process.env.XDG_CONFIG_HOME || `${process.env.HOME}/.config`;
@@ -933,9 +995,9 @@ async function stepGoogle(config: OnboardConfig): Promise<void> {
       `${configDir}/gogcli/credentials.json`,
       `${process.env.HOME}/Library/Application Support/gogcli/credentials.json`,
     ];
-    
+
     const hasCredFile = credPaths.some(p => existsSync(p));
-    
+
     if (!hasCredFile) {
       p.note(
         'To use Google Workspace, you need OAuth credentials:\n\n' +
@@ -947,13 +1009,13 @@ async function stepGoogle(config: OnboardConfig): Promise<void> {
         '6. Run: gog auth credentials /path/to/credentials.json',
         'Google OAuth Setup'
       );
-      
+
       const hasCredentials = await p.confirm({
         message: 'Have you already set up OAuth credentials with gog?',
         initialValue: false,
       });
       if (p.isCancel(hasCredentials)) { p.cancel('Setup cancelled'); process.exit(0); }
-      
+
       if (!hasCredentials) {
         p.log.info('Run `gog auth credentials /path/to/client_secret.json` after downloading credentials.');
         config.google.enabled = false;
@@ -961,7 +1023,7 @@ async function stepGoogle(config: OnboardConfig): Promise<void> {
       }
     }
   }
-  
+
   // List existing accounts or add new one
   let accounts: string[] = [];
   if (hasCredentials) {
@@ -981,9 +1043,9 @@ async function stepGoogle(config: OnboardConfig): Promise<void> {
       }
     }
   }
-  
+
   let selectedAccount: string | undefined;
-  
+
   if (accounts.length > 0) {
     const accountChoice = await p.select({
       message: 'Google account',
@@ -994,7 +1056,7 @@ async function stepGoogle(config: OnboardConfig): Promise<void> {
       initialValue: config.google.account || accounts[0],
     });
     if (p.isCancel(accountChoice)) { p.cancel('Setup cancelled'); process.exit(0); }
-    
+
     if (accountChoice === '__new__') {
       selectedAccount = await addGoogleAccount();
     } else {
@@ -1003,19 +1065,19 @@ async function stepGoogle(config: OnboardConfig): Promise<void> {
   } else {
     selectedAccount = await addGoogleAccount();
   }
-  
+
   if (!selectedAccount) {
     config.google.enabled = false;
     return;
   }
-  
+
   // Select services
   const selectedServices = await p.multiselect({
     message: 'Which Google services do you want to enable?',
     options: GOG_SERVICES.map(s => ({
       value: s,
       label: s.charAt(0).toUpperCase() + s.slice(1),
-      hint: s === 'gmail' ? 'Read/send emails' : 
+      hint: s === 'gmail' ? 'Read/send emails' :
             s === 'calendar' ? 'View/create events' :
             s === 'drive' ? 'Access files' :
             s === 'contacts' ? 'Look up contacts' :
@@ -1026,11 +1088,11 @@ async function stepGoogle(config: OnboardConfig): Promise<void> {
     required: true,
   });
   if (p.isCancel(selectedServices)) { p.cancel('Setup cancelled'); process.exit(0); }
-  
+
   config.google.enabled = true;
   config.google.account = selectedAccount;
   config.google.services = selectedServices as string[];
-  
+
   p.log.success(`Google Workspace configured: ${selectedAccount}`);
 }
 
@@ -1040,7 +1102,7 @@ async function addGoogleAccount(): Promise<string | undefined> {
     placeholder: 'you@gmail.com',
   });
   if (p.isCancel(email) || !email) return undefined;
-  
+
   const services = await p.multiselect({
     message: 'Services to authorize',
     options: GOG_SERVICES.map(s => ({
@@ -1051,25 +1113,25 @@ async function addGoogleAccount(): Promise<string | undefined> {
     required: true,
   });
   if (p.isCancel(services)) return undefined;
-  
+
   p.note(
     'A browser window will open for Google authorization.\n' +
     'Sign in with your Google account and grant permissions.',
     'Authorization'
   );
-  
+
   const spinner = p.spinner();
   spinner.start('Authorizing...');
-  
+
   // Run gog auth add (this will open browser)
   const result = spawnSync('gog', [
     'auth', 'add', email,
     '--services', (services as string[]).join(','),
-  ], { 
+  ], {
     stdio: 'inherit', // Let it interact with terminal for browser auth
     timeout: 300000, // 5 min timeout
   });
-  
+
   if (result.status === 0) {
     spinner.stop('Account authorized');
     return email;
@@ -1086,7 +1148,7 @@ async function addGoogleAccount(): Promise<string | undefined> {
 
 function showSummary(config: OnboardConfig): void {
   const lines: string[] = [];
-  
+
   // Auth
   const authLabel = {
     keep: 'Keep existing',
@@ -1096,20 +1158,20 @@ function showSummary(config: OnboardConfig): void {
     skip: 'None',
   }[config.authMethod];
   lines.push(`Auth:      ${authLabel}`);
-  
+
   // Agent
-  const agentLabel = config.agentId 
+  const agentLabel = config.agentId
     ? `${config.agentName || 'Selected'} (${config.agentId.slice(0, 12)}...)`
-    : config.agentName 
+    : config.agentName
       ? `New: ${config.agentName}`
       : config.agentChoice === 'skip' ? 'Keep current' : 'None';
   lines.push(`Agent:     ${agentLabel}`);
-  
+
   // Model
   if (config.model) {
     lines.push(`Model:     ${config.model}`);
   }
-  
+
   // Channels
   const channels: string[] = [];
   if (config.telegram.enabled) channels.push('Telegram');
@@ -1117,19 +1179,20 @@ function showSummary(config: OnboardConfig): void {
   if (config.discord.enabled) channels.push('Discord');
   if (config.whatsapp.enabled) channels.push(config.whatsapp.selfChat ? 'WhatsApp (self)' : 'WhatsApp');
   if (config.signal.enabled) channels.push(config.signal.selfChat ? 'Signal (self)' : 'Signal');
+  if (config.tchap.enabled) channels.push(config.tchap.encryptionEnabled ? 'Tchap (E2EE)' : 'Tchap');
   lines.push(`Channels:  ${channels.length > 0 ? channels.join(', ') : 'None'}`);
-  
+
   // Features
   const features: string[] = [];
   if (config.heartbeat.enabled) features.push(`Heartbeat (${config.heartbeat.interval}m)`);
   if (config.cron) features.push('Cron');
   lines.push(`Features:  ${features.length > 0 ? features.join(', ') : 'None'}`);
-  
+
   // Google
   if (config.google.enabled) {
     lines.push(`Google:    ${config.google.account} (${config.google.services?.join(', ') || 'all'})`);
   }
-  
+
   p.note(lines.join('\n'), 'Configuration');
 }
 
@@ -1138,7 +1201,7 @@ type Section = 'auth' | 'agent' | 'channels' | 'features' | 'save';
 async function reviewLoop(config: OnboardConfig, env: Record<string, string>): Promise<void> {
   while (true) {
     showSummary(config);
-    
+
     const choice = await p.select({
       message: 'What would you like to do?',
       options: [
@@ -1151,9 +1214,9 @@ async function reviewLoop(config: OnboardConfig, env: Record<string, string>): P
       ],
     });
     if (p.isCancel(choice)) { p.cancel('Setup cancelled'); process.exit(0); }
-    
+
     if (choice === 'save') break;
-    
+
     // Re-run the selected section
     if (choice === 'auth') await stepAuth(config, env);
     else if (choice === 'agent') {
@@ -1176,24 +1239,24 @@ async function reviewLoop(config: OnboardConfig, env: Record<string, string>): P
 export async function onboard(): Promise<void> {
   // Temporary storage for wizard values
   const env: Record<string, string> = {};
-  
+
   // Load existing config if available
   const { loadConfig, resolveConfigPath } = await import('./config/index.js');
   const existingConfig = loadConfig();
   const configPath = resolveConfigPath();
   const hasExistingConfig = existsSync(configPath);
-  
+
   p.intro('🤖 LettaBot Setup');
-  
+
   if (hasExistingConfig) {
     p.log.info(`Loading existing config from ${configPath}`);
   }
-  
+
   // Pre-populate from existing config
   const baseUrl = existingConfig.server.baseUrl || process.env.LETTA_BASE_URL || 'https://api.letta.com';
   const isLocal = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
   p.note(`${baseUrl}\n${isLocal ? 'Local Docker' : 'Letta Cloud'}`, 'Server');
-  
+
   // Test server connection
   const spinner = p.spinner();
   spinner.start('Testing connection...');
@@ -1214,20 +1277,20 @@ export async function onboard(): Promise<void> {
       process.exit(1);
     }
   }
-  
+
   // Initialize config from existing env
   // Pre-populate from existing YAML config
   const config: OnboardConfig = {
     authMethod: hasExistingConfig ? 'keep' : 'skip',
     apiKey: existingConfig.server.apiKey,
     baseUrl: existingConfig.server.baseUrl,
-    telegram: { 
+    telegram: {
       enabled: existingConfig.channels.telegram?.enabled || false,
       token: existingConfig.channels.telegram?.token,
       dmPolicy: existingConfig.channels.telegram?.dmPolicy,
       allowedUsers: existingConfig.channels.telegram?.allowedUsers?.map(String),
     },
-    slack: { 
+    slack: {
       enabled: existingConfig.channels.slack?.enabled || false,
       appToken: existingConfig.channels.slack?.appToken,
       botToken: existingConfig.channels.slack?.botToken,
@@ -1239,23 +1302,31 @@ export async function onboard(): Promise<void> {
       dmPolicy: existingConfig.channels.discord?.dmPolicy,
       allowedUsers: existingConfig.channels.discord?.allowedUsers,
     },
-    whatsapp: { 
+    whatsapp: {
       enabled: existingConfig.channels.whatsapp?.enabled || false,
       selfChat: existingConfig.channels.whatsapp?.selfChat,
       dmPolicy: existingConfig.channels.whatsapp?.dmPolicy,
     },
-    signal: { 
+    signal: {
       enabled: existingConfig.channels.signal?.enabled || false,
       phone: existingConfig.channels.signal?.phone,
       selfChat: existingConfig.channels.signal?.selfChat,
       dmPolicy: existingConfig.channels.signal?.dmPolicy,
+    },
+    tchap: {
+      enabled: existingConfig.channels.tchap?.enabled || false,
+      homeserverUrl: existingConfig.channels.tchap?.homeserverUrl,
+      accessToken: existingConfig.channels.tchap?.accessToken,
+      encryptionEnabled: existingConfig.channels.tchap?.encryptionEnabled,
+      dmPolicy: existingConfig.channels.tchap?.dmPolicy,
+      allowedUsers: existingConfig.channels.tchap?.allowedUsers,
     },
     google: {
       enabled: existingConfig.integrations?.google?.enabled || false,
       account: existingConfig.integrations?.google?.account,
       services: existingConfig.integrations?.google?.services,
     },
-    heartbeat: { 
+    heartbeat: {
       enabled: existingConfig.features?.heartbeat?.enabled || false,
       interval: existingConfig.features?.heartbeat?.intervalMin?.toString(),
     },
@@ -1266,11 +1337,11 @@ export async function onboard(): Promise<void> {
     model: existingConfig.agent.model,
     providers: existingConfig.providers?.map(p => ({ id: p.id, name: p.name, apiKey: p.apiKey })),
   };
-  
+
   // Run through all steps
   await stepAuth(config, env);
   await stepAgent(config, env);
-  
+
   // Fetch billing tier for free plan detection (only for Letta Cloud)
   if (config.authMethod !== 'selfhosted' && config.agentChoice === 'new') {
     const { getBillingTier } = await import('./utils/model-selection.js');
@@ -1281,20 +1352,20 @@ export async function onboard(): Promise<void> {
     config.billingTier = billingTier ?? undefined;
     spinner.stop(billingTier === 'free' ? 'Free plan' : `Plan: ${billingTier || 'Pro'}`);
   }
-  
+
   await stepProviders(config, env);
   await stepModel(config, env);
   await stepChannels(config, env);
   await stepFeatures(config);
   await stepGoogle(config);
-  
+
   // Review loop
   await reviewLoop(config, env);
-  
+
   // Apply config to env
   if (config.agentName) env.AGENT_NAME = config.agentName;
   if (config.model) env.MODEL = config.model;
-  
+
   if (config.telegram.enabled && config.telegram.token) {
     env.TELEGRAM_BOT_TOKEN = config.telegram.token;
     if (config.telegram.dmPolicy) env.TELEGRAM_DM_POLICY = config.telegram.dmPolicy;
@@ -1308,7 +1379,7 @@ export async function onboard(): Promise<void> {
     delete env.TELEGRAM_DM_POLICY;
     delete env.TELEGRAM_ALLOWED_USERS;
   }
-  
+
   if (config.slack.enabled) {
     if (config.slack.appToken) env.SLACK_APP_TOKEN = config.slack.appToken;
     if (config.slack.botToken) env.SLACK_BOT_TOKEN = config.slack.botToken;
@@ -1336,7 +1407,7 @@ export async function onboard(): Promise<void> {
     delete env.DISCORD_DM_POLICY;
     delete env.DISCORD_ALLOWED_USERS;
   }
-  
+
   if (config.whatsapp.enabled) {
     env.WHATSAPP_ENABLED = 'true';
     if (config.whatsapp.selfChat) env.WHATSAPP_SELF_CHAT_MODE = 'true';
@@ -1353,7 +1424,7 @@ export async function onboard(): Promise<void> {
     delete env.WHATSAPP_DM_POLICY;
     delete env.WHATSAPP_ALLOWED_USERS;
   }
-  
+
   if (config.signal.enabled && config.signal.phone) {
     env.SIGNAL_PHONE_NUMBER = config.signal.phone;
     // Signal selfChat defaults to true, so only set env if explicitly false (dedicated number)
@@ -1371,19 +1442,39 @@ export async function onboard(): Promise<void> {
     delete env.SIGNAL_DM_POLICY;
     delete env.SIGNAL_ALLOWED_USERS;
   }
-  
+
+  if (config.tchap.enabled && config.tchap.homeserverUrl && config.tchap.accessToken) {
+    env.TCHAP_HOMESERVER_URL = config.tchap.homeserverUrl;
+    env.TCHAP_ACCESS_TOKEN = config.tchap.accessToken;
+    if (config.tchap.encryptionEnabled === false) env.TCHAP_ENCRYPTION_ENABLED = 'false';
+    else delete env.TCHAP_ENCRYPTION_ENABLED; // default true
+
+    if (config.tchap.dmPolicy) env.TCHAP_DM_POLICY = config.tchap.dmPolicy;
+    if (config.tchap.allowedUsers?.length) {
+      env.TCHAP_ALLOWED_USERS = config.tchap.allowedUsers.join(',');
+    } else {
+      delete env.TCHAP_ALLOWED_USERS;
+    }
+  } else {
+    delete env.TCHAP_HOMESERVER_URL;
+    delete env.TCHAP_ACCESS_TOKEN;
+    delete env.TCHAP_ENCRYPTION_ENABLED;
+    delete env.TCHAP_DM_POLICY;
+    delete env.TCHAP_ALLOWED_USERS;
+  }
+
   if (config.heartbeat.enabled && config.heartbeat.interval) {
     env.HEARTBEAT_INTERVAL_MIN = config.heartbeat.interval;
   } else {
     delete env.HEARTBEAT_INTERVAL_MIN;
   }
-  
+
   if (config.cron) {
     env.CRON_ENABLED = 'true';
   } else {
     delete env.CRON_ENABLED;
   }
-  
+
   // Helper to format access control status
   const formatAccess = (policy?: string, allowedUsers?: string[]) => {
     if (policy === 'pairing') return 'pairing';
@@ -1391,7 +1482,7 @@ export async function onboard(): Promise<void> {
     if (policy === 'open') return '⚠️ open';
     return 'pairing';
   };
-  
+
   // Show summary
   const summary = [
     `Agent: ${config.agentId ? `${config.agentName} (${config.agentId.slice(0, 20)}...)` : config.agentName || '(will create on first message)'}`,
@@ -1403,6 +1494,7 @@ export async function onboard(): Promise<void> {
     config.discord.enabled ? `  ✓ Discord (${formatAccess(config.discord.dmPolicy, config.discord.allowedUsers)})` : '  ✗ Discord',
     config.whatsapp.enabled ? `  ✓ WhatsApp (${formatAccess(config.whatsapp.dmPolicy, config.whatsapp.allowedUsers)})` : '  ✗ WhatsApp',
     config.signal.enabled ? `  ✓ Signal (${formatAccess(config.signal.dmPolicy, config.signal.allowedUsers)})` : '  ✗ Signal',
+    config.tchap.enabled ? `  ✓ Tchap (${formatAccess(config.tchap.dmPolicy, config.tchap.allowedUsers)})` : '  ✗ Tchap',
     '',
     'Integrations:',
     config.google.enabled ? `  ✓ Google (${config.google.account} - ${config.google.services?.join(', ') || 'all'})` : '  ✗ Google Workspace',
@@ -1411,9 +1503,9 @@ export async function onboard(): Promise<void> {
     config.heartbeat.enabled ? `  ✓ Heartbeat (${config.heartbeat.interval}min)` : '  ✗ Heartbeat',
     config.cron ? '  ✓ Cron jobs' : '  ✗ Cron jobs',
   ].join('\n');
-  
+
   p.note(summary, 'Configuration Summary');
-  
+
   // Convert to YAML config
   const yamlConfig: LettaBotConfig = {
     server: {
@@ -1468,6 +1560,30 @@ export async function onboard(): Promise<void> {
           allowedUsers: config.signal.allowedUsers,
         }
       } : {}),
+      ...(config.tchap.enabled ? {
+        tchap: {
+          enabled: true,
+          homeserverUrl: config.tchap.homeserverUrl,
+          accessToken: config.tchap.accessToken,
+          encryptionEnabled: config.tchap.encryptionEnabled,
+          autoJoinRooms: config.tchap.autoJoinRooms,
+          dmPolicy: config.tchap.dmPolicy,
+          allowedUsers: config.tchap.allowedUsers,
+          messagePrefix: config.tchap.messagePrefix,
+        }
+      } : {}),
+      ...(config.tchap.enabled ? {
+        tchap: {
+          enabled: true,
+          homeserverUrl: config.tchap.homeserverUrl,
+          accessToken: config.tchap.accessToken,
+          encryptionEnabled: config.tchap.encryptionEnabled,
+          autoJoinRooms: config.tchap.autoJoinRooms,
+          dmPolicy: config.tchap.dmPolicy,
+          allowedUsers: config.tchap.allowedUsers,
+          messagePrefix: config.tchap.messagePrefix,
+        }
+      } : {}),
     },
     features: {
       cron: config.cron,
@@ -1486,7 +1602,7 @@ export async function onboard(): Promise<void> {
       },
     } : {}),
   };
-  
+
   // Add BYOK providers if configured
   if (config.providers && config.providers.length > 0) {
     yamlConfig.providers = config.providers.map(p => ({
@@ -1496,12 +1612,12 @@ export async function onboard(): Promise<void> {
       apiKey: p.apiKey,
     }));
   }
-  
+
   // Save YAML config (use project-local path)
   const savePath = resolve(process.cwd(), 'lettabot.yaml');
   saveConfig(yamlConfig, savePath);
   p.log.success('Configuration saved to lettabot.yaml');
-  
+
   // Sync BYOK providers to Letta Cloud
   if (yamlConfig.providers && yamlConfig.providers.length > 0 && yamlConfig.server.mode === 'cloud') {
     const spinner = p.spinner();
@@ -1513,13 +1629,13 @@ export async function onboard(): Promise<void> {
       spinner.stop('Failed to sync providers (will retry on startup)');
     }
   }
-  
+
   // Save agent ID with server URL
   if (config.agentId) {
     const baseUrl = env.LETTA_BASE_URL || process.env.LETTA_BASE_URL || 'https://api.letta.com';
     writeFileSync(
       resolve(process.cwd(), 'lettabot-agent.json'),
-      JSON.stringify({ 
+      JSON.stringify({
         agentId: config.agentId,
         baseUrl: baseUrl,
         createdAt: new Date().toISOString(),
@@ -1527,6 +1643,6 @@ export async function onboard(): Promise<void> {
     );
     p.log.success(`Agent ID saved: ${config.agentId} (${baseUrl})`);
   }
-  
+
   p.outro('🎉 Setup complete! Run `npx lettabot server` to start.');
 }

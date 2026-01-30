@@ -23,7 +23,10 @@
 		"skill:search": "npx clawdhub search",
 		"skill:list": "npx clawdhub list --dir ~/.letta/skills",
 		"skills:add": "npx skills add --global --yes",
-		"skills:find": "npx skills find"
+		"skills:find": "npx skills find",
+		"lint": "eslint . --ext .ts",
+    "format": "prettier --write .",
+    "tchap-login": "tsx src/scripts/tchap-login.ts"
 	},
 	"keywords": [
 		"telegram",
