@@ -40,6 +40,15 @@ export class StreamingDirectiveParser {
         this.buffer = this.buffer.slice(start);
       }
 
+      const gtIndex = this.buffer.indexOf('>');
+      if (gtIndex === -1) {
+        if (flush) {
+          output += this.buffer;
+          this.buffer = '';
+        }
+        break;
+      }
+
       const tagMatch = this.buffer.match(/^<([a-z_]+)>/i);
       if (!tagMatch) {
         output += this.buffer[0];
