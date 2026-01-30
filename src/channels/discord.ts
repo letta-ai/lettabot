@@ -6,7 +6,7 @@
  */
 
 import type { ChannelAdapter } from './types.js';
-import type { HistoryEntry, InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
+import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
 import type { DmPolicy } from '../pairing/types.js';
 import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
@@ -314,23 +314,6 @@ Ask the bot owner to approve with:
     await message.react(emoji);
   }
 
-  async fetchHistory(chatId: string, options: { limit: number; before?: string }): Promise<HistoryEntry[]> {
-    if (!this.client) throw new Error('Discord not started');
-    const channel = await this.client.channels.fetch(chatId);
-    if (!channel || !channel.isTextBased()) {
-      throw new Error(`Discord channel not found or not text-based: ${chatId}`);
-    }
-    const messages = await channel.messages.fetch({
-      limit: Math.min(options.limit, 100),
-      ...(options.before ? { before: options.before } : {}),
-    });
-    return Array.from(messages.values()).map((message) => ({
-      messageId: message.id,
-      author: message.author?.username || 'unknown',
-      text: message.content || '',
-      timestamp: message.createdAt.toISOString(),
-    }));
-  }
 
   async sendTypingIndicator(chatId: string): Promise<void> {
     if (!this.client) return;

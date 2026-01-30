@@ -7,7 +7,7 @@
 
 import { Bot, InputFile } from 'grammy';
 import type { ChannelAdapter } from './types.js';
-import type { HistoryEntry, InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
+import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
 import type { DmPolicy } from '../pairing/types.js';
 import {
   isUserAllowed,
@@ -319,10 +319,6 @@ export class TelegramAdapter implements ChannelAdapter {
     ]);
   }
 
-  async fetchHistory(_chatId: string, _options: { limit: number; before?: string }): Promise<HistoryEntry[]> {
-    // Telegram bots cannot fetch arbitrary chat history via Bot API.
-    return [];
-  }
   
   async sendTypingIndicator(chatId: string): Promise<void> {
     await this.bot.api.sendChatAction(chatId, 'typing');

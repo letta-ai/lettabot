@@ -8,7 +8,7 @@ import { createSession, resumeSession, type Session } from '@letta-ai/letta-code
 import { existsSync, mkdirSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
-import type { BotConfig, HistoryEntry, InboundMessage, OutboundFile, TriggerContext } from './types.js';
+import type { BotConfig, InboundMessage, OutboundFile, TriggerContext } from './types.js';
 import { Store } from './store.js';
 import { updateAgentName } from '../tools/letta-api.js';
 import { installSkillsToAgent } from '../skills/loader.js';
@@ -419,31 +419,6 @@ export class LettaBot {
               continue;
             }
 
-            if (action.type === 'edit') {
-              try {
-                await adapter.editMessage(msg.chatId, action.messageId, action.text);
-                sentAnyMessage = true;
-              } catch (error) {
-                console.error('[Bot] Edit failed:', error);
-              }
-              continue;
-            }
-
-            if (action.type === 'fetch_history') {
-              try {
-                const entries = await adapter.fetchHistory(msg.chatId, {
-                  limit: action.limit,
-                  before: action.before,
-                });
-                const historyText = this.formatHistoryPrompt(msg.channel, msg.chatId, entries);
-                if (historyText) {
-                  pendingPrompts.push(historyText);
-                }
-              } catch (error) {
-                console.error('[Bot] Fetch history failed:', error);
-              }
-              continue;
-            }
           }
 
           followupCount += 1;
@@ -497,20 +472,6 @@ export class LettaBot {
       remaining = remaining.slice(limit);
     }
     return chunks;
-  }
-
-  private formatHistoryPrompt(channel: string, chatId: string, entries: HistoryEntry[]): string {
-    if (!entries.length) {
-      return `No history available for ${channel}:${chatId}.`;
-    }
-    const lines = [`${channel} history (most recent first):`];
-    for (const entry of entries) {
-      const content = entry.text.replace(/\s+/g, ' ').trim();
-      const author = entry.author || 'unknown';
-      const idSuffix = entry.messageId ? ` (${entry.messageId})` : '';
-      lines.push(`- ${author}: ${content}${idSuffix}`);
-    }
-    return lines.join('\n');
   }
 
   private resolveUnicodeEmoji(input: string): string {

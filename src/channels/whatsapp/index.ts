@@ -18,7 +18,7 @@
  */
 
 import type { ChannelAdapter } from "../types.js";
-import type { HistoryEntry, InboundMessage, OutboundMessage, OutboundFile } from "../../core/types.js";
+import type { InboundMessage, OutboundMessage, OutboundFile } from "../../core/types.js";
 import type {
   WhatsAppConfig,
   ReconnectState,
@@ -895,10 +895,6 @@ export class WhatsAppAdapter implements ChannelAdapter {
     await sendTypingIndicator(this.sock, chatId);
   }
 
-  async fetchHistory(_chatId: string, _options: { limit: number; before?: string }): Promise<HistoryEntry[]> {
-    // WhatsApp history fetch is not supported in this adapter.
-    return [];
-  }
 }
 
 // Export types and config

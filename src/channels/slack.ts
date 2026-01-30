@@ -5,7 +5,7 @@
  */
 
 import type { ChannelAdapter } from './types.js';
-import type { HistoryEntry, InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
+import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
 import { createReadStream } from 'node:fs';
 import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
@@ -234,24 +234,6 @@ export class SlackAdapter implements ChannelAdapter {
     });
   }
 
-  async fetchHistory(chatId: string, options: { limit: number; before?: string }): Promise<HistoryEntry[]> {
-    if (!this.app) throw new Error('Slack not started');
-    const response = await this.app.client.conversations.history({
-      channel: chatId,
-      limit: Math.min(options.limit, 100),
-      ...(options.before ? { latest: options.before, inclusive: false } : {}),
-    });
-    if (!response.ok) {
-      throw new Error(`Slack history error: ${response.error || 'unknown error'}`);
-    }
-    const messages = (response.messages || []) as Array<{ text?: string; ts?: string; user?: string; bot_id?: string }>;
-    return messages.map((message) => ({
-      messageId: message.ts || undefined,
-      author: message.user || message.bot_id || 'unknown',
-      text: message.text || '',
-      timestamp: message.ts ? new Date(Number(message.ts) * 1000).toISOString() : undefined,
-    }));
-  }
   
   async sendTypingIndicator(_chatId: string): Promise<void> {
     // Slack doesn't have a typing indicator API for bots

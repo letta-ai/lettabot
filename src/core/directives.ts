@@ -7,11 +7,9 @@
 export type AssistantAction =
   | { type: 'message'; content: string }
   | { type: 'react'; emoji: string; messageId?: string }
-  | { type: 'send_file'; path: string; kind: 'image' | 'file' }
-  | { type: 'edit'; messageId: string; text: string }
-  | { type: 'fetch_history'; limit: number; before?: string };
+  | { type: 'send_file'; path: string; kind: 'image' | 'file' };
 
-const KNOWN_TAGS = new Set(['react', 'send_image', 'send_file', 'edit', 'fetch_history']);
+const KNOWN_TAGS = new Set(['react', 'send_image', 'send_file']);
 
 export class StreamingDirectiveParser {
   private buffer = '';
@@ -87,10 +85,6 @@ export function parseDirectiveTag(tagName: string, content: string): AssistantAc
       return content ? { type: 'send_file', path: content, kind: 'image' } : null;
     case 'send_file':
       return content ? { type: 'send_file', path: content, kind: 'file' } : null;
-    case 'edit':
-      return parseEditContent(content);
-    case 'fetch_history':
-      return parseFetchHistoryContent(content);
     default:
       return null;
   }
@@ -109,39 +103,6 @@ function parseReactContent(content: string): AssistantAction | null {
   }
   if (!emoji) return null;
   return { type: 'react', emoji, messageId };
-}
-
-function parseEditContent(content: string): AssistantAction | null {
-  const trimmed = content.trim();
-  if (!trimmed) return null;
-  const parts = trimmed.split(/\s+/);
-  if (parts.length < 2) return null;
-  const messageId = parts[0];
-  const body = trimmed.slice(messageId.length).trim();
-  if (!body) return null;
-  return { type: 'edit', messageId, text: body };
-}
-
-function parseFetchHistoryContent(content: string): AssistantAction | null {
-  const parts = content.trim().split(/\s+/).filter(Boolean);
-  let limit = 50;
-  let before: string | undefined;
-
-  if (parts.length > 0) {
-    if (/^\d+$/.test(parts[0])) {
-      limit = Number(parts[0]);
-      parts.shift();
-    }
-    if (parts[0]?.toLowerCase() === 'before' && parts[1]) {
-      before = parts[1];
-    }
-  }
-
-  if (!Number.isFinite(limit) || limit <= 0) {
-    limit = 50;
-  }
-
-  return { type: 'fetch_history', limit, before };
 }
 
 function looksLikeMessageId(value: string): boolean {

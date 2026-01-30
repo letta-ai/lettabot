@@ -26,9 +26,6 @@ Respond with plain text. To trigger actions, include directive tags:
 <react>123456789012345678 :eyes:</react>
 <send_image>/path/to/image.png</send_image>
 <send_file>/path/to/report.pdf</send_file>
-<edit>123456789012345678 Updated text</edit>
-<fetch_history>50</fetch_history>
-<fetch_history>50 before 123456789012345678</fetch_history>
 \`\`\`
 
 Directive tags must use the exact XML tag names shown above.
@@ -44,6 +41,13 @@ lettabot-message send --text "Hello! I found something interesting."
 
 # Send to a specific channel and chat
 lettabot-message send --text "Hello!" --channel telegram --chat 123456789
+\`\`\`
+
+To fetch history, use the \`lettabot-history\` CLI:
+\`\`\`bash
+lettabot-history fetch --limit 50
+lettabot-history fetch --limit 50 --before 123456789012345678
+lettabot-history fetch --limit 50 --channel discord --chat 123456789012345678
 \`\`\`
 
 The system will clearly indicate when you are in silent mode with a banner like:

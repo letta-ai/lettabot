@@ -6,7 +6,7 @@
  */
 
 import type { ChannelAdapter } from './types.js';
-import type { HistoryEntry, InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
+import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
 import type { DmPolicy } from '../pairing/types.js';
 import {
   isUserAllowed,
@@ -258,10 +258,6 @@ This code expires in 1 hour.`;
     // Signal reactions not supported in this adapter.
   }
 
-  async fetchHistory(_chatId: string, _options: { limit: number; before?: string }): Promise<HistoryEntry[]> {
-    // Signal history fetching not supported in this adapter.
-    return [];
-  }
   
   async sendTypingIndicator(chatId: string): Promise<void> {
     try {
