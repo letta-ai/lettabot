@@ -230,6 +230,7 @@ export class LettaBot {
       let lastUpdate = Date.now();
       let messageId: string | null = null;
       let lastMsgType: string | null = null;
+      let lastAssistantUuid: string | null = null;
       let sentAnyMessage = false;
       
       // Helper to finalize and send current accumulated response
@@ -267,6 +268,13 @@ export class LettaBot {
           lastMsgType = streamMsg.type;
           
           if (streamMsg.type === 'assistant') {
+            // Check if this is a new assistant message (different UUID)
+            const msgUuid = (streamMsg as any).uuid as string | undefined;
+            if (msgUuid && lastAssistantUuid && msgUuid !== lastAssistantUuid && response.trim()) {
+              await finalizeMessage();
+            }
+            lastAssistantUuid = msgUuid || lastAssistantUuid;
+            
             response += streamMsg.content;
             
             // Stream updates only for channels that support editing (Telegram, Slack)
