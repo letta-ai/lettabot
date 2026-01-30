@@ -165,11 +165,11 @@ export class LettaBot {
     
     // Create or resume session
     let session: Session;
+    // Base options for all sessions (model only included for new agents)
     const baseOptions = {
       permissionMode: 'bypassPermissions' as const,
       allowedTools: this.config.allowedTools,
       cwd: this.config.workingDir,
-      model: this.config.model,
       systemPrompt: SYSTEM_PROMPT,
     };
     
@@ -181,10 +181,12 @@ export class LettaBot {
         console.log(`[Bot] Resuming session for agent ${this.store.agentId}`);
         console.log(`[Bot] LETTA_BASE_URL=${process.env.LETTA_BASE_URL}`);
         console.log(`[Bot] LETTA_API_KEY=${process.env.LETTA_API_KEY ? '(set)' : '(not set)'}`);
+        // Don't pass model when resuming - agent already has its model configured
         session = resumeSession(this.store.agentId, baseOptions);
       } else {
         console.log('[Bot] Creating new session');
-        session = createSession({ ...baseOptions, memory: loadMemoryBlocks(this.config.agentName) });
+        // Only pass model when creating a new agent
+        session = createSession({ ...baseOptions, model: this.config.model, memory: loadMemoryBlocks(this.config.agentName) });
       }
       console.log(`[Bot] Session object:`, Object.keys(session));
       console.log(`[Bot] Session initialized:`, (session as any).initialized);
@@ -362,19 +364,21 @@ export class LettaBot {
     text: string,
     _context?: TriggerContext
   ): Promise<string> {
+    // Base options (model only for new agents)
     const baseOptions = {
       permissionMode: 'bypassPermissions' as const,
       allowedTools: this.config.allowedTools,
       cwd: this.config.workingDir,
-      model: this.config.model,
       systemPrompt: SYSTEM_PROMPT,
     };
     
     let session: Session;
     if (this.store.agentId) {
+      // Don't pass model when resuming - agent already has its model configured
       session = resumeSession(this.store.agentId, baseOptions);
     } else {
-      session = createSession({ ...baseOptions, memory: loadMemoryBlocks(this.config.agentName) });
+      // Only pass model when creating a new agent
+      session = createSession({ ...baseOptions, model: this.config.model, memory: loadMemoryBlocks(this.config.agentName) });
     }
     
     try {
