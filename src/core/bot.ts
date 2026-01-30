@@ -450,9 +450,14 @@ export class LettaBot {
   private resolveFilePath(input: string): string | null {
     const trimmed = input.trim();
     if (!trimmed) return null;
+    const base = resolve(this.config.workingDir);
     const resolved = isAbsolute(trimmed)
-      ? trimmed
-      : resolve(this.config.workingDir, trimmed);
+      ? resolve(trimmed)
+      : resolve(base, trimmed);
+    const withinBase = resolved === base || resolved.startsWith(`${base}/`);
+    if (!withinBase) {
+      return null;
+    }
     return existsSync(resolved) ? resolved : null;
   }
 
