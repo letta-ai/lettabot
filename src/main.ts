@@ -1,395 +1,523 @@
 /**
  * LettaBot - Multi-Channel AI Assistant
- * 
+ *
  * Single agent, single conversation across all channels.
  * Chat continues seamlessly between Telegram, Slack, and WhatsApp.
  */
 
-import { createServer } from 'node:http';
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { createServer } from "node:http";
+import { resolve } from "node:path";
 
 // Load YAML config and apply to process.env (overrides .env values)
-import { loadConfig, applyConfigToEnv, syncProviders, resolveConfigPath } from './config/index.js';
+import {
+	applyConfigToEnv,
+	loadConfig,
+	resolveConfigPath,
+	syncProviders,
+} from "./config/index.js";
+
 const yamlConfig = loadConfig();
 console.log(`[Config] Loaded from ${resolveConfigPath()}`);
-console.log(`[Config] Mode: ${yamlConfig.server.mode}, Agent: ${yamlConfig.agent.name}, Model: ${yamlConfig.agent.model}`);
+console.log(
+	`[Config] Mode: ${yamlConfig.server.mode}, Agent: ${yamlConfig.agent.name}, Model: ${yamlConfig.agent.model}`,
+);
 applyConfigToEnv(yamlConfig);
 
 // Sync BYOK providers on startup (async, don't block)
-syncProviders(yamlConfig).catch(err => console.error('[Config] Failed to sync providers:', err));
+syncProviders(yamlConfig).catch((err) =>
+	console.error("[Config] Failed to sync providers:", err),
+);
 
 // Load agent ID from store and set as env var (SDK needs this)
 // Load agent ID from store file, or use LETTA_AGENT_ID env var as fallback
-const STORE_PATH = resolve(process.cwd(), 'lettabot-agent.json');
-const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
+const STORE_PATH = resolve(process.cwd(), "lettabot-agent.json");
+const currentBaseUrl = process.env.LETTA_BASE_URL || "https://api.letta.com";
 
 if (existsSync(STORE_PATH)) {
-  try {
-    const store = JSON.parse(readFileSync(STORE_PATH, 'utf-8'));
-    
-    // Check for server mismatch
-    if (store.agentId && store.baseUrl) {
-      const storedUrl = store.baseUrl.replace(/\/$/, '');
-      const currentUrl = currentBaseUrl.replace(/\/$/, '');
-      
-      if (storedUrl !== currentUrl) {
-        console.warn(`\n⚠️  Server mismatch detected!`);
-        console.warn(`   Stored agent was created on: ${storedUrl}`);
-        console.warn(`   Current server: ${currentUrl}`);
-        console.warn(`   The agent ${store.agentId} may not exist on this server.`);
-        console.warn(`   Run 'lettabot onboard' to select or create an agent for this server.\n`);
-      }
-    }
-    
-    if (store.agentId) {
-      process.env.LETTA_AGENT_ID = store.agentId;
-    }
-  } catch {}
+	try {
+		const store = JSON.parse(readFileSync(STORE_PATH, "utf-8"));
+
+		// Check for server mismatch
+		if (store.agentId && store.baseUrl) {
+			const storedUrl = store.baseUrl.replace(/\/$/, "");
+			const currentUrl = currentBaseUrl.replace(/\/$/, "");
+
+			if (storedUrl !== currentUrl) {
+				console.warn(`\n⚠️  Server mismatch detected!`);
+				console.warn(`   Stored agent was created on: ${storedUrl}`);
+				console.warn(`   Current server: ${currentUrl}`);
+				console.warn(
+					`   The agent ${store.agentId} may not exist on this server.`,
+				);
+				console.warn(
+					`   Run 'lettabot onboard' to select or create an agent for this server.\n`,
+				);
+			}
+		}
+
+		if (store.agentId) {
+			process.env.LETTA_AGENT_ID = store.agentId;
+		}
+	} catch {}
 }
+
 // Allow LETTA_AGENT_ID env var to override (useful for local server testing)
 // This is already set if passed on command line
 
+import { refreshAccessToken } from "./auth/oauth.js";
 // OAuth token refresh - check and refresh before loading SDK
-import { loadTokens, saveTokens, isTokenExpired, hasRefreshToken, getDeviceName } from './auth/tokens.js';
-import { refreshAccessToken } from './auth/oauth.js';
+import {
+	getDeviceName,
+	hasRefreshToken,
+	isTokenExpired,
+	loadTokens,
+	saveTokens,
+} from "./auth/tokens.js";
 
 async function refreshTokensIfNeeded(): Promise<void> {
-  // If env var is set, that takes precedence (no refresh needed)
-  if (process.env.LETTA_API_KEY) {
-    return;
-  }
-  
-  // OAuth tokens only work with Letta Cloud - skip if using custom server
-  const baseUrl = process.env.LETTA_BASE_URL;
-  if (baseUrl && baseUrl !== 'https://api.letta.com') {
-    return;
-  }
-  
-  const tokens = loadTokens();
-  if (!tokens?.accessToken) {
-    return; // No stored tokens
-  }
-  
-  // Set access token to env var
-  process.env.LETTA_API_KEY = tokens.accessToken;
-  
-  // Check if token needs refresh
-  if (isTokenExpired(tokens) && hasRefreshToken(tokens)) {
-    try {
-      console.log('[OAuth] Refreshing access token...');
-      const newTokens = await refreshAccessToken(
-        tokens.refreshToken!,
-        tokens.deviceId,
-        getDeviceName(),
-      );
-      
-      // Update stored tokens
-      const now = Date.now();
-      saveTokens({
-        accessToken: newTokens.access_token,
-        refreshToken: newTokens.refresh_token ?? tokens.refreshToken,
-        tokenExpiresAt: now + newTokens.expires_in * 1000,
-        deviceId: tokens.deviceId,
-        deviceName: tokens.deviceName,
-      });
-      
-      // Update env var with new token
-      process.env.LETTA_API_KEY = newTokens.access_token;
-      console.log('[OAuth] Token refreshed successfully');
-    } catch (err) {
-      console.error('[OAuth] Failed to refresh token:', err instanceof Error ? err.message : err);
-      console.error('[OAuth] You may need to re-authenticate with `lettabot onboard`');
-    }
-  }
+	// If env var is set, that takes precedence (no refresh needed)
+	if (process.env.LETTA_API_KEY) {
+		return;
+	}
+
+	// OAuth tokens only work with Letta Cloud - skip if using custom server
+	const baseUrl = process.env.LETTA_BASE_URL;
+	if (baseUrl && baseUrl !== "https://api.letta.com") {
+		return;
+	}
+
+	const tokens = loadTokens();
+	if (!tokens?.accessToken) {
+		return; // No stored tokens
+	}
+
+	// Set access token to env var
+	process.env.LETTA_API_KEY = tokens.accessToken;
+
+	// Check if token needs refresh
+	if (isTokenExpired(tokens) && hasRefreshToken(tokens)) {
+		try {
+			console.log("[OAuth] Refreshing access token...");
+			const newTokens = await refreshAccessToken(
+				tokens.refreshToken!,
+				tokens.deviceId,
+				getDeviceName(),
+			);
+
+			// Update stored tokens
+			const now = Date.now();
+			saveTokens({
+				accessToken: newTokens.access_token,
+				refreshToken: newTokens.refresh_token ?? tokens.refreshToken,
+				tokenExpiresAt: now + newTokens.expires_in * 1000,
+				deviceId: tokens.deviceId,
+				deviceName: tokens.deviceName,
+			});
+
+			// Update env var with new token
+			process.env.LETTA_API_KEY = newTokens.access_token;
+			console.log("[OAuth] Token refreshed successfully");
+		} catch (err) {
+			console.error(
+				"[OAuth] Failed to refresh token:",
+				err instanceof Error ? err.message : err,
+			);
+			console.error(
+				"[OAuth] You may need to re-authenticate with `lettabot onboard`",
+			);
+		}
+	}
 }
 
 // Run token refresh before importing SDK (which reads LETTA_API_KEY)
 await refreshTokensIfNeeded();
 
-import { LettaBot } from './core/bot.js';
-import { TelegramAdapter } from './channels/telegram.js';
-import { SlackAdapter } from './channels/slack.js';
-import { WhatsAppAdapter } from './channels/whatsapp.js';
-import { SignalAdapter } from './channels/signal.js';
-import { DiscordAdapter } from './channels/discord.js';
-import { CronService } from './cron/service.js';
-import { HeartbeatService } from './cron/heartbeat.js';
-import { PollingService } from './polling/service.js';
-import { agentExists } from './tools/letta-api.js';
-import { installSkillsToWorkingDir } from './skills/loader.js';
+import { DiscordAdapter } from "./channels/discord.js";
+import { SignalAdapter } from "./channels/signal.js";
+import { SlackAdapter } from "./channels/slack.js";
+import { TchapAdapter } from "./channels/tchap.js";
+import { TelegramAdapter } from "./channels/telegram.js";
+import { WhatsAppAdapter } from "./channels/whatsapp.js";
+import { LettaBot } from "./core/bot.js";
+import { HeartbeatService } from "./cron/heartbeat.js";
+import { CronService } from "./cron/service.js";
+import { PollingService } from "./polling/service.js";
+import { installSkillsToWorkingDir } from "./skills/loader.js";
+import { agentExists } from "./tools/letta-api.js";
 
 // Check if config exists
 const configPath = resolveConfigPath();
 if (!existsSync(configPath)) {
-  console.log(`\n  No config found at ${configPath}. Run "lettabot onboard" first.\n`);
-  process.exit(1);
+	console.log(
+		`\n  No config found at ${configPath}. Run "lettabot onboard" first.\n`,
+	);
+	process.exit(1);
 }
 
 // Parse heartbeat target (format: "telegram:123456789", "slack:C1234567890", or "discord:123456789012345678")
-function parseHeartbeatTarget(raw?: string): { channel: string; chatId: string } | undefined {
-  if (!raw || !raw.includes(':')) return undefined;
-  const [channel, chatId] = raw.split(':');
-  if (!channel || !chatId) return undefined;
-  return { channel: channel.toLowerCase(), chatId };
+function parseHeartbeatTarget(
+	raw?: string,
+): { channel: string; chatId: string } | undefined {
+	if (!raw || !raw.includes(":")) return undefined;
+	const [channel, chatId] = raw.split(":");
+	if (!channel || !chatId) return undefined;
+	return { channel: channel.toLowerCase(), chatId };
 }
 
 // Skills are installed to agent-scoped directory when agent is created (see core/bot.ts)
 
 // Configuration from environment
 const config = {
-  workingDir: process.env.WORKING_DIR || '/tmp/lettabot',
-  model: process.env.MODEL, // e.g., 'claude-sonnet-4-20250514'
-  allowedTools: (process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search').split(','),
-  
-  // Channel configs
-  telegram: {
-    enabled: !!process.env.TELEGRAM_BOT_TOKEN,
-    token: process.env.TELEGRAM_BOT_TOKEN || '',
-    dmPolicy: (process.env.TELEGRAM_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
-    allowedUsers: process.env.TELEGRAM_ALLOWED_USERS?.split(',').filter(Boolean).map(Number) || [],
-  },
-  slack: {
-    enabled: !!process.env.SLACK_BOT_TOKEN && !!process.env.SLACK_APP_TOKEN,
-    botToken: process.env.SLACK_BOT_TOKEN || '',
-    appToken: process.env.SLACK_APP_TOKEN || '',
-    allowedUsers: process.env.SLACK_ALLOWED_USERS?.split(',').filter(Boolean) || [],
-  },
-  whatsapp: {
-    enabled: process.env.WHATSAPP_ENABLED === 'true',
-    sessionPath: process.env.WHATSAPP_SESSION_PATH || './data/whatsapp-session',
-    dmPolicy: (process.env.WHATSAPP_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
-    allowedUsers: process.env.WHATSAPP_ALLOWED_USERS?.split(',').filter(Boolean) || [],
-    selfChatMode: process.env.WHATSAPP_SELF_CHAT_MODE === 'true',
-  },
-  signal: {
-    enabled: !!process.env.SIGNAL_PHONE_NUMBER,
-    phoneNumber: process.env.SIGNAL_PHONE_NUMBER || '',
-    cliPath: process.env.SIGNAL_CLI_PATH || 'signal-cli',
-    httpHost: process.env.SIGNAL_HTTP_HOST || '127.0.0.1',
-    httpPort: parseInt(process.env.SIGNAL_HTTP_PORT || '8090', 10),
-    dmPolicy: (process.env.SIGNAL_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
-    allowedUsers: process.env.SIGNAL_ALLOWED_USERS?.split(',').filter(Boolean) || [],
-    selfChatMode: process.env.SIGNAL_SELF_CHAT_MODE !== 'false', // Default true
-  },
-  discord: {
-    enabled: !!process.env.DISCORD_BOT_TOKEN,
-    token: process.env.DISCORD_BOT_TOKEN || '',
-    dmPolicy: (process.env.DISCORD_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
-    allowedUsers: process.env.DISCORD_ALLOWED_USERS?.split(',').filter(Boolean) || [],
-  },
-  
-  // Cron
-  cronEnabled: process.env.CRON_ENABLED === 'true',
-  
-  // Heartbeat - simpler config
-  heartbeat: {
-    enabled: !!process.env.HEARTBEAT_INTERVAL_MIN,
-    intervalMinutes: parseInt(process.env.HEARTBEAT_INTERVAL_MIN || '0', 10) || 30,
-    prompt: process.env.HEARTBEAT_PROMPT,
-    target: parseHeartbeatTarget(process.env.HEARTBEAT_TARGET),
-  },
-  
-  // Polling - system-level background checks
-  polling: {
-    enabled: !!process.env.GMAIL_ACCOUNT, // Enable if any poller is configured
-    intervalMs: parseInt(process.env.POLLING_INTERVAL_MS || '60000', 10), // Default 1 minute
-    gmail: {
-      enabled: !!process.env.GMAIL_ACCOUNT,
-      account: process.env.GMAIL_ACCOUNT || '',
-    },
-  },
+	workingDir: process.env.WORKING_DIR || "/tmp/lettabot",
+	model: process.env.MODEL, // e.g., 'claude-sonnet-4-20250514'
+	allowedTools: (
+		process.env.ALLOWED_TOOLS ||
+		"Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search"
+	).split(","),
+
+	// Channel configs
+	telegram: {
+		enabled: !!process.env.TELEGRAM_BOT_TOKEN,
+		token: process.env.TELEGRAM_BOT_TOKEN || "",
+		dmPolicy: (process.env.TELEGRAM_DM_POLICY || "pairing") as
+			| "pairing"
+			| "allowlist"
+			| "open",
+		allowedUsers:
+			process.env.TELEGRAM_ALLOWED_USERS?.split(",")
+				.filter(Boolean)
+				.map(Number) || [],
+	},
+	slack: {
+		enabled: !!process.env.SLACK_BOT_TOKEN && !!process.env.SLACK_APP_TOKEN,
+		botToken: process.env.SLACK_BOT_TOKEN || "",
+		appToken: process.env.SLACK_APP_TOKEN || "",
+		allowedUsers:
+			process.env.SLACK_ALLOWED_USERS?.split(",").filter(Boolean) || [],
+	},
+	whatsapp: {
+		enabled: process.env.WHATSAPP_ENABLED === "true",
+		sessionPath: process.env.WHATSAPP_SESSION_PATH || "./data/whatsapp-session",
+		dmPolicy: (process.env.WHATSAPP_DM_POLICY || "pairing") as
+			| "pairing"
+			| "allowlist"
+			| "open",
+		allowedUsers:
+			process.env.WHATSAPP_ALLOWED_USERS?.split(",").filter(Boolean) || [],
+		selfChatMode: process.env.WHATSAPP_SELF_CHAT_MODE === "true",
+	},
+	signal: {
+		enabled: !!process.env.SIGNAL_PHONE_NUMBER,
+		phoneNumber: process.env.SIGNAL_PHONE_NUMBER || "",
+		cliPath: process.env.SIGNAL_CLI_PATH || "signal-cli",
+		httpHost: process.env.SIGNAL_HTTP_HOST || "127.0.0.1",
+		httpPort: parseInt(process.env.SIGNAL_HTTP_PORT || "8090", 10),
+		dmPolicy: (process.env.SIGNAL_DM_POLICY || "pairing") as
+			| "pairing"
+			| "allowlist"
+			| "open",
+		allowedUsers:
+			process.env.SIGNAL_ALLOWED_USERS?.split(",").filter(Boolean) || [],
+		selfChatMode: process.env.SIGNAL_SELF_CHAT_MODE !== "false", // Default true
+	},
+	discord: {
+		enabled: !!process.env.DISCORD_BOT_TOKEN,
+		token: process.env.DISCORD_BOT_TOKEN || "",
+		dmPolicy: (process.env.DISCORD_DM_POLICY || "pairing") as
+			| "pairing"
+			| "allowlist"
+			| "open",
+		allowedUsers:
+			process.env.DISCORD_ALLOWED_USERS?.split(",").filter(Boolean) || [],
+	},
+	tchap: {
+		enabled:
+			!!process.env.TCHAP_HOMESERVER_URL && !!process.env.TCHAP_ACCESS_TOKEN,
+		homeserverUrl: process.env.TCHAP_HOMESERVER_URL || "",
+		accessToken: process.env.TCHAP_ACCESS_TOKEN || "",
+		storagePath: process.env.TCHAP_STORAGE_PATH || "./data/tchap",
+		cryptoStoragePath:
+			process.env.TCHAP_CRYPTO_STORAGE_PATH || "./data/tchap/crypto",
+		encryptionEnabled: process.env.TCHAP_ENCRYPTION_ENABLED !== "false",
+		autoJoinRooms: process.env.TCHAP_AUTO_JOIN_ROOMS !== "false",
+		dmPolicy: (process.env.TCHAP_DM_POLICY || "pairing") as
+			| "pairing"
+			| "allowlist"
+			| "open",
+		allowedUsers:
+			process.env.TCHAP_ALLOWED_USERS?.split(",").filter(Boolean) || [],
+		messagePrefix: process.env.TCHAP_MESSAGE_PREFIX || undefined,
+	},
+
+	// Cron
+	cronEnabled: process.env.CRON_ENABLED === "true",
+
+	// Heartbeat - simpler config
+	heartbeat: {
+		enabled: !!process.env.HEARTBEAT_INTERVAL_MIN,
+		intervalMinutes:
+			parseInt(process.env.HEARTBEAT_INTERVAL_MIN || "0", 10) || 30,
+		prompt: process.env.HEARTBEAT_PROMPT,
+		target: parseHeartbeatTarget(process.env.HEARTBEAT_TARGET),
+	},
+
+	// Polling - system-level background checks
+	polling: {
+		enabled: !!process.env.GMAIL_ACCOUNT, // Enable if any poller is configured
+		intervalMs: parseInt(process.env.POLLING_INTERVAL_MS || "60000", 10), // Default 1 minute
+		gmail: {
+			enabled: !!process.env.GMAIL_ACCOUNT,
+			account: process.env.GMAIL_ACCOUNT || "",
+		},
+	},
 };
 
 // Validate at least one channel is configured
-if (!config.telegram.enabled && !config.slack.enabled && !config.whatsapp.enabled && !config.signal.enabled && !config.discord.enabled) {
-  console.error('\n  Error: No channels configured.');
-  console.error('  Set TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN+SLACK_APP_TOKEN, WHATSAPP_ENABLED=true, SIGNAL_PHONE_NUMBER, or DISCORD_BOT_TOKEN\n');
-  process.exit(1);
+if (
+	!config.telegram.enabled &&
+	!config.slack.enabled &&
+	!config.whatsapp.enabled &&
+	!config.signal.enabled &&
+	!config.discord.enabled &&
+	!config.tchap.enabled
+) {
+	console.error("\n  Error: No channels configured.");
+	console.error(
+		"  Set TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN+SLACK_APP_TOKEN, WHATSAPP_ENABLED=true, SIGNAL_PHONE_NUMBER, DISCORD_BOT_TOKEN, or TCHAP_HOMESERVER_URL+TCHAP_ACCESS_TOKEN\n",
+	);
+	process.exit(1);
 }
 
 async function main() {
-  console.log('Starting LettaBot...\n');
-  
-  // Install feature-gated skills based on enabled features
-  // Skills are NOT installed by default - only when their feature is enabled
-  const skillsDir = resolve(config.workingDir, '.skills');
-  mkdirSync(skillsDir, { recursive: true });
-  
-  installSkillsToWorkingDir(config.workingDir, {
-    cronEnabled: config.cronEnabled,
-    googleEnabled: config.polling.gmail.enabled, // Gmail polling uses gog skill
-  });
-  
-  const existingSkills = readdirSync(skillsDir).filter(f => !f.startsWith('.'));
-  if (existingSkills.length > 0) {
-    console.log(`[Skills] ${existingSkills.length} skill(s) available: ${existingSkills.join(', ')}`);
-  }
-  
-  // Create bot
-  const bot = new LettaBot({
-    workingDir: config.workingDir,
-    model: config.model,
-    agentName: process.env.AGENT_NAME || 'LettaBot',
-    allowedTools: config.allowedTools,
-  });
-  
-  // Verify agent exists (clear stale ID if deleted)
-  let initialStatus = bot.getStatus();
-  if (initialStatus.agentId) {
-    const exists = await agentExists(initialStatus.agentId);
-    if (!exists) {
-      console.log(`[Agent] Stored agent ${initialStatus.agentId} not found - creating new agent...`);
-      bot.reset();
-      initialStatus = bot.getStatus();
-    }
-  }
-  
-  // Agent will be created on first user message (lazy initialization)
-  if (!initialStatus.agentId) {
-    console.log('[Agent] No agent found - will create on first message');
-  }
-  
-  // Register enabled channels
-  if (config.telegram.enabled) {
-    const telegram = new TelegramAdapter({
-      token: config.telegram.token,
-      dmPolicy: config.telegram.dmPolicy,
-      allowedUsers: config.telegram.allowedUsers.length > 0 ? config.telegram.allowedUsers : undefined,
-    });
-    bot.registerChannel(telegram);
-  }
-  
-  if (config.slack.enabled) {
-    const slack = new SlackAdapter({
-      botToken: config.slack.botToken,
-      appToken: config.slack.appToken,
-      allowedUsers: config.slack.allowedUsers.length > 0 ? config.slack.allowedUsers : undefined,
-    });
-    bot.registerChannel(slack);
-  }
-  
-  if (config.whatsapp.enabled) {
-    const whatsapp = new WhatsAppAdapter({
-      sessionPath: config.whatsapp.sessionPath,
-      dmPolicy: config.whatsapp.dmPolicy,
-      allowedUsers: config.whatsapp.allowedUsers.length > 0 ? config.whatsapp.allowedUsers : undefined,
-      selfChatMode: config.whatsapp.selfChatMode,
-    });
-    bot.registerChannel(whatsapp);
-  }
-  
-  if (config.signal.enabled) {
-    const signal = new SignalAdapter({
-      phoneNumber: config.signal.phoneNumber,
-      cliPath: config.signal.cliPath,
-      httpHost: config.signal.httpHost,
-      httpPort: config.signal.httpPort,
-      dmPolicy: config.signal.dmPolicy,
-      allowedUsers: config.signal.allowedUsers.length > 0 ? config.signal.allowedUsers : undefined,
-      selfChatMode: config.signal.selfChatMode,
-    });
-    bot.registerChannel(signal);
-  }
+	console.log("Starting LettaBot...\n");
 
-  if (config.discord.enabled) {
-    const discord = new DiscordAdapter({
-      token: config.discord.token,
-      dmPolicy: config.discord.dmPolicy,
-      allowedUsers: config.discord.allowedUsers.length > 0 ? config.discord.allowedUsers : undefined,
-    });
-    bot.registerChannel(discord);
-  }
-  
-  // Start cron service if enabled
-  let cronService: CronService | null = null;
-  if (config.cronEnabled) {
-    cronService = new CronService(bot, {
-      storePath: `${config.workingDir}/cron-jobs.json`,
-    });
-    await cronService.start();
-  }
-  
-  // Create heartbeat service (always available for /heartbeat command)
-  const heartbeatService = new HeartbeatService(bot, {
-    enabled: config.heartbeat.enabled,
-    intervalMinutes: config.heartbeat.intervalMinutes,
-    prompt: config.heartbeat.prompt,
-    workingDir: config.workingDir,
-    target: config.heartbeat.target,
-  });
-  
-  // Start auto-heartbeats only if interval is configured
-  if (config.heartbeat.enabled) {
-    heartbeatService.start();
-  }
-  
-  // Wire up /heartbeat command (always available)
-  bot.onTriggerHeartbeat = () => heartbeatService.trigger();
-  
-  // Start polling service if enabled (Gmail, etc.)
-  let pollingService: PollingService | null = null;
-  if (config.polling.enabled) {
-    pollingService = new PollingService(bot, {
-      intervalMs: config.polling.intervalMs,
-      workingDir: config.workingDir,
-      gmail: config.polling.gmail,
-    });
-    pollingService.start();
-  }
-  
-  // Start all channels
-  await bot.start();
-  
-  // Start health check server (for Railway/Docker health checks)
-  // Only exposes "ok" - no sensitive info
-  const healthPort = parseInt(process.env.PORT || '8080', 10);
-  const healthServer = createServer((req, res) => {
-    if (req.url === '/health' || req.url === '/') {
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end('ok');
-    } else {
-      res.writeHead(404);
-      res.end('Not found');
-    }
-  });
-  healthServer.listen(healthPort, () => {
-    console.log(`[Health] Listening on :${healthPort}`);
-  });
-  
-  // Log status
-  const status = bot.getStatus();
-  console.log('\n=================================');
-  console.log('LettaBot is running!');
-  console.log('=================================');
-  console.log(`Agent ID: ${status.agentId || '(will be created on first message)'}`);
-  console.log(`Channels: ${status.channels.join(', ')}`);
-  console.log(`Cron: ${config.cronEnabled ? 'enabled' : 'disabled'}`);
-  console.log(`Heartbeat: ${config.heartbeat.enabled ? `every ${config.heartbeat.intervalMinutes} min` : 'disabled'}`);
-  console.log(`Polling: ${config.polling.enabled ? `every ${config.polling.intervalMs / 1000}s` : 'disabled'}`);
-  if (config.polling.gmail.enabled) {
-    console.log(`  └─ Gmail: ${config.polling.gmail.account}`);
-  }
-  if (config.heartbeat.enabled) {
-    console.log(`Heartbeat target: ${config.heartbeat.target ? `${config.heartbeat.target.channel}:${config.heartbeat.target.chatId}` : 'last messaged'}`);
-  }
-  console.log('=================================\n');
-  
-  // Handle shutdown
-  const shutdown = async () => {
-    console.log('\nShutting down...');
-    heartbeatService?.stop();
-    cronService?.stop();
-    await bot.stop();
-    process.exit(0);
-  };
-  
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+	// Install feature-gated skills based on enabled features
+	// Skills are NOT installed by default - only when their feature is enabled
+	const skillsDir = resolve(config.workingDir, ".skills");
+	mkdirSync(skillsDir, { recursive: true });
+
+	installSkillsToWorkingDir(config.workingDir, {
+		cronEnabled: config.cronEnabled,
+		googleEnabled: config.polling.gmail.enabled, // Gmail polling uses gog skill
+	});
+
+	const existingSkills = readdirSync(skillsDir).filter(
+		(f) => !f.startsWith("."),
+	);
+	if (existingSkills.length > 0) {
+		console.log(
+			`[Skills] ${existingSkills.length} skill(s) available: ${existingSkills.join(", ")}`,
+		);
+	}
+
+	// Create bot
+	const bot = new LettaBot({
+		workingDir: config.workingDir,
+		model: config.model,
+		agentName: process.env.AGENT_NAME || "LettaBot",
+		allowedTools: config.allowedTools,
+	});
+
+	// Verify agent exists (clear stale ID if deleted)
+	let initialStatus = bot.getStatus();
+	if (initialStatus.agentId) {
+		const exists = await agentExists(initialStatus.agentId);
+		if (!exists) {
+			console.log(
+				`[Agent] Stored agent ${initialStatus.agentId} not found - creating new agent...`,
+			);
+			bot.reset();
+			initialStatus = bot.getStatus();
+		}
+	}
+
+	// Agent will be created on first user message (lazy initialization)
+	if (!initialStatus.agentId) {
+		console.log("[Agent] No agent found - will create on first message");
+	}
+
+	// Register enabled channels
+	if (config.telegram.enabled) {
+		const telegram = new TelegramAdapter({
+			token: config.telegram.token,
+			dmPolicy: config.telegram.dmPolicy,
+			allowedUsers:
+				config.telegram.allowedUsers.length > 0
+					? config.telegram.allowedUsers
+					: undefined,
+		});
+		bot.registerChannel(telegram);
+	}
+
+	if (config.slack.enabled) {
+		const slack = new SlackAdapter({
+			botToken: config.slack.botToken,
+			appToken: config.slack.appToken,
+			allowedUsers:
+				config.slack.allowedUsers.length > 0
+					? config.slack.allowedUsers
+					: undefined,
+		});
+		bot.registerChannel(slack);
+	}
+
+	if (config.whatsapp.enabled) {
+		const whatsapp = new WhatsAppAdapter({
+			sessionPath: config.whatsapp.sessionPath,
+			dmPolicy: config.whatsapp.dmPolicy,
+			allowedUsers:
+				config.whatsapp.allowedUsers.length > 0
+					? config.whatsapp.allowedUsers
+					: undefined,
+			selfChatMode: config.whatsapp.selfChatMode,
+		});
+		bot.registerChannel(whatsapp);
+	}
+
+	if (config.signal.enabled) {
+		const signal = new SignalAdapter({
+			phoneNumber: config.signal.phoneNumber,
+			cliPath: config.signal.cliPath,
+			httpHost: config.signal.httpHost,
+			httpPort: config.signal.httpPort,
+			dmPolicy: config.signal.dmPolicy,
+			allowedUsers:
+				config.signal.allowedUsers.length > 0
+					? config.signal.allowedUsers
+					: undefined,
+			selfChatMode: config.signal.selfChatMode,
+		});
+		bot.registerChannel(signal);
+	}
+
+	if (config.discord.enabled) {
+		const discord = new DiscordAdapter({
+			token: config.discord.token,
+			dmPolicy: config.discord.dmPolicy,
+			allowedUsers:
+				config.discord.allowedUsers.length > 0
+					? config.discord.allowedUsers
+					: undefined,
+		});
+		bot.registerChannel(discord);
+	}
+
+	if (config.tchap.enabled) {
+		const tchap = new TchapAdapter({
+			homeserverUrl: config.tchap.homeserverUrl,
+			accessToken: config.tchap.accessToken,
+			storagePath: config.tchap.storagePath,
+			cryptoStoragePath: config.tchap.cryptoStoragePath,
+			encryptionEnabled: config.tchap.encryptionEnabled,
+			autoJoinRooms: config.tchap.autoJoinRooms,
+			dmPolicy: config.tchap.dmPolicy,
+			allowedUsers:
+				config.tchap.allowedUsers.length > 0
+					? config.tchap.allowedUsers
+					: undefined,
+			messagePrefix: config.tchap.messagePrefix,
+		});
+		bot.registerChannel(tchap);
+	}
+
+	// Start cron service if enabled
+	let cronService: CronService | null = null;
+	if (config.cronEnabled) {
+		cronService = new CronService(bot, {
+			storePath: `${config.workingDir}/cron-jobs.json`,
+		});
+		await cronService.start();
+	}
+
+	// Create heartbeat service (always available for /heartbeat command)
+	const heartbeatService = new HeartbeatService(bot, {
+		enabled: config.heartbeat.enabled,
+		intervalMinutes: config.heartbeat.intervalMinutes,
+		prompt: config.heartbeat.prompt,
+		workingDir: config.workingDir,
+		target: config.heartbeat.target,
+	});
+
+	// Start auto-heartbeats only if interval is configured
+	if (config.heartbeat.enabled) {
+		heartbeatService.start();
+	}
+
+	// Wire up /heartbeat command (always available)
+	bot.onTriggerHeartbeat = () => heartbeatService.trigger();
+
+	// Start polling service if enabled (Gmail, etc.)
+	let pollingService: PollingService | null = null;
+	if (config.polling.enabled) {
+		pollingService = new PollingService(bot, {
+			intervalMs: config.polling.intervalMs,
+			workingDir: config.workingDir,
+			gmail: config.polling.gmail,
+		});
+		pollingService.start();
+	}
+
+	// Start all channels
+	await bot.start();
+
+	// Start health check server (for Railway/Docker health checks)
+	// Only exposes "ok" - no sensitive info
+	const healthPort = parseInt(process.env.PORT || "8080", 10);
+	const healthServer = createServer((req, res) => {
+		if (req.url === "/health" || req.url === "/") {
+			res.writeHead(200, { "Content-Type": "text/plain" });
+			res.end("ok");
+		} else {
+			res.writeHead(404);
+			res.end("Not found");
+		}
+	});
+	healthServer.listen(healthPort, () => {
+		console.log(`[Health] Listening on :${healthPort}`);
+	});
+
+	// Log status
+	const status = bot.getStatus();
+	console.log("\n=================================");
+	console.log("LettaBot is running!");
+	console.log("=================================");
+	console.log(
+		`Agent ID: ${status.agentId || "(will be created on first message)"}`,
+	);
+	console.log(`Channels: ${status.channels.join(", ")}`);
+	console.log(`Cron: ${config.cronEnabled ? "enabled" : "disabled"}`);
+	console.log(
+		`Heartbeat: ${config.heartbeat.enabled ? `every ${config.heartbeat.intervalMinutes} min` : "disabled"}`,
+	);
+	console.log(
+		`Polling: ${config.polling.enabled ? `every ${config.polling.intervalMs / 1000}s` : "disabled"}`,
+	);
+	if (config.polling.gmail.enabled) {
+		console.log(`  └─ Gmail: ${config.polling.gmail.account}`);
+	}
+	if (config.heartbeat.enabled) {
+		console.log(
+			`Heartbeat target: ${config.heartbeat.target ? `${config.heartbeat.target.channel}:${config.heartbeat.target.chatId}` : "last messaged"}`,
+		);
+	}
+	console.log("=================================\n");
+
+	// Handle shutdown
+	const shutdown = async () => {
+		console.log("\nShutting down...");
+		heartbeatService?.stop();
+		cronService?.stop();
+		await bot.stop();
+		process.exit(0);
+	};
+
+	process.on("SIGINT", shutdown);
+	process.on("SIGTERM", shutdown);
 }
 
 main().catch((e) => {
-  console.error('Fatal error:', e);
-  process.exit(1);
+	console.error("Fatal error:", e);
+	process.exit(1);
 });

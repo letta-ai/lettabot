@@ -1,12 +1,12 @@
 # LettaBot
 
-Your personal AI assistant that remembers everything across **Telegram, Slack, Discord, WhatsApp, and Signal**. Powered by the [Letta Code SDK](https://github.com/letta-ai/letta-code-sdk).
+Your personal AI assistant that remembers everything across **Telegram, Slack, Discord, WhatsApp, Signal, and Tchap**. Powered by the [Letta Code SDK](https://github.com/letta-ai/letta-code-sdk).
 
 <img width="750" alt="lettabot-preview" src="https://github.com/user-attachments/assets/9f01b845-d5b0-447b-927d-ae15f9ec7511" />
 
 ## Features
 
-- **Multi-Channel** - Chat seamlessly across Telegram, Slack, Discord, WhatsApp, and Signal
+- **Multi-Channel** - Chat seamlessly across Telegram, Slack, Discord, WhatsApp, Signal, and Tchap
 - **Unified Memory** - Single agent remembers everything from all channels
 - **Persistent Memory** - Agent remembers conversations across sessions (days/weeks/months)
 - **Local Tool Execution** - Agent can read files, search code, run commands on your machine
@@ -37,8 +37,8 @@ npm run build
 npm link
 ```
 
-#### Optional: Run a Letta Docker server 
-You can use `lettabot` with a Docker server with: 
+#### Optional: Run a Letta Docker server
+You can use `lettabot` with a Docker server with:
 ```
 docker run \
   -v ~/.letta/.persist/pgdata:/var/lib/postgresql/data \
@@ -46,7 +46,7 @@ docker run \
   -e OPENAI_API_KEY="your_openai_api_key" \
   letta/letta:latest
 ```
-See the [documentation](https://docs.letta.com/guides/docker/) for more details on running with Docker. 
+See the [documentation](https://docs.letta.com/guides/docker/) for more details on running with Docker.
 
 ### Setup
 
@@ -65,7 +65,7 @@ lettabot server
 That's it! Message your bot on Telegram.
 
 ## Skills
-LettaBot is compatible with [skills.sh](https://skills.sh) and [Clawdhub](https://clawdhub.com/). 
+LettaBot is compatible with [skills.sh](https://skills.sh) and [Clawdhub](https://clawdhub.com/).
 
 ```bash
 # from Clawdhub
@@ -132,7 +132,8 @@ Telegram ──┐
 Slack ─────┤
 Discord ───┼──→ ONE AGENT ──→ ONE CONVERSATION
 WhatsApp ──┤    (memory)      (chat history)
-Signal ────┘
+Signal ────┤
+Tchap ─────┘
 ```
 
 - Start a conversation on Telegram
@@ -147,6 +148,7 @@ Signal ────┘
 | Discord | [Setup Guide](docs/discord-setup.md) | Discord bot + Message Content Intent |
 | WhatsApp | [Setup Guide](docs/whatsapp-setup.md) | Phone with WhatsApp |
 | Signal | [Setup Guide](docs/signal-setup.md) | signal-cli + phone number |
+| Tchap / Matrix | [Setup Guide](docs/tchap-setup.md) | Tchap/Matrix account |
 
 At least one channel is required. Telegram is the easiest to start with.
 
@@ -158,8 +160,8 @@ At least one channel is required. Telegram is the easiest to start with.
 | `/status` | Show current session info |
 | `/heartbeat` | Manually trigger a heartbeat check-in |
 
-## Connect to Letta Code 
-Any LettaBot agent can also be directly chatted with through [Letta Code](https://github.com/letta-ai/letta-code). Use the `/status` command to find your `agent_id`, and run: 
+## Connect to Letta Code
+Any LettaBot agent can also be directly chatted with through [Letta Code](https://github.com/letta-ai/letta-code). Use the `/status` command to find your `agent_id`, and run:
 ```sh
 letta --agent <agent_id>
 ```
@@ -231,7 +233,7 @@ SIGNAL_HTTP_PORT=8091
 **Agent not responding**
 Delete the agent store to create a fresh agent:
 ```bash
-lettabot destroy 
+lettabot destroy
 ```
 
 ## Documentation
@@ -243,7 +245,7 @@ lettabot destroy
 - [Signal Setup](docs/signal-setup.md)
 
 ## Acknowledgement
-Some skills were adapted from [Moltbot](https://github.com/moltbot/moltbot). 
+Some skills were adapted from [Moltbot](https://github.com/moltbot/moltbot).
 
 ## License
 

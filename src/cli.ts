@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * LettaBot CLI
- * 
+ *
  * Commands:
  *   lettabot onboard    - Onboarding workflow (setup integrations, install skills)
  *   lettabot server     - Run the bot server
@@ -36,7 +36,7 @@ import { onboard } from './onboard.js';
 async function configure() {
   const p = await import('@clack/prompts');
   const { resolveConfigPath } = await import('./config/index.js');
-  
+
   p.intro('🤖 LettaBot Configuration');
 
   // Show current config from YAML
@@ -48,18 +48,19 @@ async function configure() {
     ['Telegram', config.channels.telegram?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Slack', config.channels.slack?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Discord', config.channels.discord?.enabled ? '✓ Enabled' : '✗ Disabled'],
+    ['Tchap', config.channels.tchap?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Cron', config.features?.cron ? '✓ Enabled' : '✗ Disabled'],
     ['Heartbeat', config.features?.heartbeat?.enabled ? `✓ ${config.features.heartbeat.intervalMin}min` : '✗ Disabled'],
     ['BYOK Providers', config.providers?.length ? config.providers.map(p => p.name).join(', ') : 'None'],
   ];
-  
+
   const maxKeyLength = Math.max(...configRows.map(([key]) => key.length));
   const summary = configRows
     .map(([key, value]) => `${(key + ':').padEnd(maxKeyLength + 1)} ${value}`)
     .join('\n');
-  
+
   p.note(summary, `Current Configuration (${resolveConfigPath()})`);
-  
+
   const choice = await p.select({
     message: 'What would you like to do?',
     options: [
@@ -68,12 +69,12 @@ async function configure() {
       { value: 'exit', label: 'Exit', hint: '' },
     ],
   });
-  
+
   if (p.isCancel(choice)) {
     p.cancel('Configuration cancelled');
     return;
   }
-  
+
   switch (choice) {
     case 'onboard':
       await onboard();
@@ -93,15 +94,15 @@ async function configure() {
 async function server() {
   const { resolveConfigPath } = await import('./config/index.js');
   const configPath = resolveConfigPath();
-  
+
   // Check if configured
   if (!existsSync(configPath)) {
     console.log(`No config found at ${configPath}. Run "lettabot onboard" first.\n`);
     process.exit(1);
   }
-  
+
   console.log('Starting LettaBot server...\n');
-  
+
   // Start the bot using the compiled JS
   // Use __dirname to find main.js relative to this CLI file (works with npx, global install, etc.)
   const mainPath = resolve(__dirname, 'main.js');
@@ -133,16 +134,16 @@ async function server() {
 async function pairingList(channel: string) {
   const { listPairingRequests } = await import('./pairing/store.js');
   const requests = await listPairingRequests(channel);
-  
+
   if (requests.length === 0) {
     console.log(`No pending ${channel} pairing requests.`);
     return;
   }
-  
+
   console.log(`\nPending ${channel} pairing requests (${requests.length}):\n`);
   console.log('  Code      | User ID           | Username          | Requested');
   console.log('  ----------|-------------------|-------------------|---------------------');
-  
+
   for (const r of requests) {
     const username = r.meta?.username ? `@${r.meta.username}` : r.meta?.firstName || '-';
     const date = new Date(r.createdAt).toLocaleString();
@@ -154,12 +155,12 @@ async function pairingList(channel: string) {
 async function pairingApprove(channel: string, code: string) {
   const { approvePairingCode } = await import('./pairing/store.js');
   const result = await approvePairingCode(channel, code);
-  
+
   if (!result) {
     console.log(`No pending pairing request found for code: ${code}`);
     process.exit(1);
   }
-  
+
   const name = result.meta?.username ? `@${result.meta.username}` : result.meta?.firstName || result.userId;
   console.log(`✓ Approved ${channel} sender: ${name} (${result.userId})`);
 }
@@ -208,18 +209,18 @@ async function main() {
     case 'init':
       await onboard();
       break;
-      
+
     case 'server':
     case 'start':
     case 'run':
       await server();
       break;
-      
+
     case 'configure':
     case 'config':
       await configure();
       break;
-      
+
     case 'skills': {
       const { showStatus, runSkillsSync } = await import('./skills/index.js');
       switch (subCommand) {
@@ -231,18 +232,18 @@ async function main() {
       }
       break;
     }
-    
+
     case 'pairing': {
       const channel = subCommand;
       const action = args[2];
-      
+
       if (!channel) {
         console.log('Usage: lettabot pairing <list|approve> <channel> [code]');
         console.log('Example: lettabot pairing list telegram');
         console.log('Example: lettabot pairing approve telegram ABCD1234');
         process.exit(1);
       }
-      
+
       // Support both "pairing list telegram" and "pairing telegram list"
       if (channel === 'list' || channel === 'ls') {
         const ch = action || args[3];
@@ -276,108 +277,108 @@ async function main() {
       }
       break;
     }
-      
+
     case 'destroy': {
       const { rmSync, existsSync } = await import('node:fs');
       const { join } = await import('node:path');
       const p = await import('@clack/prompts');
-      
+
       const workingDir = process.env.WORKING_DIR || '/tmp/lettabot';
       // Agent store is in cwd, not working dir
       const agentJsonPath = join(process.cwd(), 'lettabot-agent.json');
       const skillsDir = join(workingDir, '.skills');
       const cronJobsPath = join(workingDir, 'cron-jobs.json');
-      
+
       p.intro('🗑️  Destroy LettaBot Data');
-      
+
       p.log.warn('This will delete:');
       p.log.message(`  • Agent store: ${agentJsonPath}`);
       p.log.message(`  • Skills: ${skillsDir}`);
       p.log.message(`  • Cron jobs: ${cronJobsPath}`);
       p.log.message('');
       p.log.message('Note: The agent on Letta servers will NOT be deleted.');
-      
+
       const confirmed = await p.confirm({
         message: 'Are you sure you want to destroy all local data?',
         initialValue: false,
       });
-      
+
       if (!confirmed || p.isCancel(confirmed)) {
         p.cancel('Cancelled');
         break;
       }
-      
+
       // Delete files
       let deleted = 0;
-      
+
       if (existsSync(agentJsonPath)) {
         rmSync(agentJsonPath);
         p.log.success('Deleted lettabot-agent.json');
         deleted++;
       }
-      
+
       if (existsSync(skillsDir)) {
         rmSync(skillsDir, { recursive: true });
         p.log.success('Deleted .skills/');
         deleted++;
       }
-      
+
       if (existsSync(cronJobsPath)) {
         rmSync(cronJobsPath);
         p.log.success('Deleted cron-jobs.json');
         deleted++;
       }
-      
+
       if (deleted === 0) {
         p.log.info('Nothing to delete');
       }
-      
+
       p.outro('✨ Done! Run `npx lettabot server` to create a fresh agent.');
       break;
     }
-      
+
     case 'logout': {
       const { revokeToken } = await import('./auth/oauth.js');
       const { loadTokens, deleteTokens } = await import('./auth/tokens.js');
       const p = await import('@clack/prompts');
-      
+
       p.intro('Logout from Letta Platform');
-      
+
       const tokens = loadTokens();
       if (!tokens) {
         p.log.info('No stored credentials found.');
         break;
       }
-      
+
       const spinner = p.spinner();
       spinner.start('Revoking token...');
-      
+
       // Revoke the refresh token on the server
       if (tokens.refreshToken) {
         await revokeToken(tokens.refreshToken);
       }
-      
+
       // Delete local tokens
       deleteTokens();
-      
+
       spinner.stop('Logged out successfully');
       p.log.info('Note: LETTA_API_KEY in .env was not modified. Remove it manually if needed.');
       p.outro('Goodbye!');
       break;
     }
-      
+
     case 'help':
     case '-h':
     case '--help':
       showHelp();
       break;
-      
+
     case undefined:
       console.log('Usage: lettabot <command>\n');
       console.log('Commands: onboard, server, configure, skills, destroy, help\n');
       console.log('Run "lettabot help" for more information.');
       break;
-      
+
     default:
       console.log(`Unknown command: ${command}`);
       console.log('Run "lettabot help" for usage.');
