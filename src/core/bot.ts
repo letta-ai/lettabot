@@ -363,6 +363,7 @@ export class LettaBot {
           }
 
           for (const action of actions) {
+            console.log('[Bot] Parsed directive action:', action);
             if (action.type === 'message') {
               const chunks = this.splitMessage(action.content, msg.channel);
               for (const chunk of chunks) {
