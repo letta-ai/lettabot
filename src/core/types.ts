@@ -95,6 +95,16 @@ export interface OutboundFile {
 }
 
 /**
+ * History entry for fetch history directives.
+ */
+export interface HistoryEntry {
+  messageId?: string;
+  author?: string;
+  text: string;
+  timestamp?: string;
+}
+
+/**
  * Bot configuration
  */
 export interface BotConfig {

@@ -5,7 +5,7 @@
  */
 
 import type { ChannelAdapter } from './types.js';
-import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
+import type { HistoryEntry, InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
 import { createReadStream } from 'node:fs';
 import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
@@ -233,6 +233,25 @@ export class SlackAdapter implements ChannelAdapter {
       timestamp: messageId,
     });
   }
+
+  async fetchHistory(chatId: string, options: { limit: number; before?: string }): Promise<HistoryEntry[]> {
+    if (!this.app) throw new Error('Slack not started');
+    const response = await this.app.client.conversations.history({
+      channel: chatId,
+      limit: Math.min(options.limit, 100),
+      ...(options.before ? { latest: options.before, inclusive: false } : {}),
+    });
+    if (!response.ok) {
+      throw new Error(`Slack history error: ${response.error || 'unknown error'}`);
+    }
+    const messages = (response.messages || []) as Array<{ text?: string; ts?: string; user?: string; bot_id?: string }>;
+    return messages.map((message) => ({
+      messageId: message.ts || undefined,
+      author: message.user || message.bot_id || 'unknown',
+      text: message.text || '',
+      timestamp: message.ts ? new Date(Number(message.ts) * 1000).toISOString() : undefined,
+    }));
+  }
   
   async sendTypingIndicator(_chatId: string): Promise<void> {
     // Slack doesn't have a typing indicator API for bots
@@ -316,6 +335,35 @@ async function collectSlackAttachments(
     attachments.push(await maybeDownloadSlackFile(attachmentsDir, attachmentsMaxBytes, channelId, file, token));
   }
   return attachments;
+}
+
+const EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
+  eyes: '👀',
+  thumbsup: '👍',
+  thumbs_up: '👍',
+  '+1': '👍',
+  heart: '❤️',
+  fire: '🔥',
+  smile: '😄',
+  laughing: '😆',
+  tada: '🎉',
+  clap: '👏',
+  ok_hand: '👌',
+};
+
+const UNICODE_TO_ALIAS = new Map<string, string>(
+  Object.entries(EMOJI_ALIAS_TO_UNICODE).map(([name, value]) => [value, name])
+);
+
+function resolveSlackEmojiName(input: string): string | null {
+  const aliasMatch = input.match(/^:([^:]+):$/);
+  if (aliasMatch) {
+    return aliasMatch[1];
+  }
+  if (EMOJI_ALIAS_TO_UNICODE[input]) {
+    return input;
+  }
+  return UNICODE_TO_ALIAS.get(input) || null;
 }
 
 const EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {

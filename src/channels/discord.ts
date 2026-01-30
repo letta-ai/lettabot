@@ -6,7 +6,7 @@
  */
 
 import type { ChannelAdapter } from './types.js';
-import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
+import type { HistoryEntry, InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
 import type { DmPolicy } from '../pairing/types.js';
 import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
@@ -270,6 +270,24 @@ Ask the bot owner to approve with:
     return { messageId: result.id };
   }
 
+  async sendFile(file: OutboundFile): Promise<{ messageId: string }> {
+    if (!this.client) throw new Error('Discord not started');
+    const channel = await this.client.channels.fetch(file.chatId);
+    if (!channel || !channel.isTextBased() || !('send' in channel)) {
+      throw new Error(`Discord channel not found or not text-based: ${file.chatId}`);
+    }
+
+    const payload: { content?: string; files: string[] } = {
+      files: [file.filePath],
+    };
+    if (file.caption?.trim()) {
+      payload.content = file.caption;
+    }
+
+    const result = await (channel as { send: (content: unknown) => Promise<{ id: string }> }).send(payload);
+    return { messageId: result.id };
+  }
+
   async editMessage(chatId: string, messageId: string, text: string): Promise<void> {
     if (!this.client) throw new Error('Discord not started');
     const channel = await this.client.channels.fetch(chatId);
@@ -284,6 +302,34 @@ Ask the bot owner to approve with:
       return;
     }
     await message.edit(text);
+  }
+
+  async addReaction(chatId: string, messageId: string, emoji: string): Promise<void> {
+    if (!this.client) throw new Error('Discord not started');
+    const channel = await this.client.channels.fetch(chatId);
+    if (!channel || !channel.isTextBased()) {
+      throw new Error(`Discord channel not found or not text-based: ${chatId}`);
+    }
+    const message = await channel.messages.fetch(messageId);
+    await message.react(emoji);
+  }
+
+  async fetchHistory(chatId: string, options: { limit: number; before?: string }): Promise<HistoryEntry[]> {
+    if (!this.client) throw new Error('Discord not started');
+    const channel = await this.client.channels.fetch(chatId);
+    if (!channel || !channel.isTextBased()) {
+      throw new Error(`Discord channel not found or not text-based: ${chatId}`);
+    }
+    const messages = await channel.messages.fetch({
+      limit: Math.min(options.limit, 100),
+      ...(options.before ? { before: options.before } : {}),
+    });
+    return Array.from(messages.values()).map((message) => ({
+      messageId: message.id,
+      author: message.author?.username || 'unknown',
+      text: message.content || '',
+      timestamp: message.createdAt.toISOString(),
+    }));
   }
 
   async sendTypingIndicator(chatId: string): Promise<void> {

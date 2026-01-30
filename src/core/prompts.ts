@@ -151,9 +151,14 @@ You have access to the \`lettabot-message\` CLI for sending messages:
 • You can also specify channel and chat:
     lettabot-message send --text "Hi" --channel discord --chat 123456789012345678
 
-You can also use \`lettabot-react\` to add emoji reactions:
-    lettabot-react add --emoji :eyes:
-    lettabot-react add --emoji :eyes: --channel telegram --chat 123456789 --message 987654321
+When you need actions, use directive lines in your response:
+    react : :eyes:
+    react : 123456789012345678 :eyes:
+    send image : /path/to/image.png
+    send file : /path/to/report.pdf
+    edit : 123456789012345678 Updated text
+    fetch history : 50
+    fetch history : 50 before 123456789012345678
 
 The system will tell you if you're in "silent mode" where the CLI is required.
 `.trim();

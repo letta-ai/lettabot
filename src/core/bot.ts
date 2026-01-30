@@ -5,15 +5,17 @@
  */
 
 import { createSession, resumeSession, type Session } from '@letta-ai/letta-code-sdk';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
+import { isAbsolute, resolve } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
-import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
+import type { BotConfig, HistoryEntry, InboundMessage, OutboundFile, TriggerContext } from './types.js';
 import { Store } from './store.js';
 import { updateAgentName } from '../tools/letta-api.js';
 import { installSkillsToAgent } from '../skills/loader.js';
 import { formatMessageEnvelope } from './formatter.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
+import { parseAssistantActions } from './directives.js';
 
 export class LettaBot {
   private store: Store;
@@ -257,107 +259,29 @@ export class LettaBot {
 
       // Send message to agent with metadata envelope
       const formattedMessage = formatMessageEnvelope(msg);
-      try {
-        await withTimeout(session.send(formattedMessage), 'Session send');
-      } catch (sendError) {
-        console.error('[Bot] Error sending message:', sendError);
-        throw sendError;
-      }
-      
-      // Stream response
-      let response = '';
-      let lastUpdate = Date.now();
-      let messageId: string | null = null;
-      let lastMsgType: string | null = null;
-      let lastAssistantUuid: string | null = null;
-      let sentAnyMessage = false;
-      
-      // Helper to finalize and send current accumulated response
-      const finalizeMessage = async () => {
-        if (response.trim()) {
-          try {
-            if (messageId) {
-              await adapter.editMessage(msg.chatId, messageId, response);
-            } else {
-              await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
-            }
-            sentAnyMessage = true;
-            const preview = response.length > 50 ? response.slice(0, 50) + '...' : response;
-            console.log(`[Bot] Sent: "${preview}"`);
-          } catch {
-            // Ignore send errors
-          }
-        }
-        // Reset for next message bubble
-        response = '';
-        messageId = null;
-        lastUpdate = Date.now();
-      };
       
       // Keep typing indicator alive
       const typingInterval = setInterval(() => {
         adapter.sendTypingIndicator(msg.chatId).catch(() => {});
       }, 4000);
-      
-      try {
+
+      let sentAnyMessage = false;
+      const pendingPrompts: string[] = [formattedMessage];
+      let followupCount = 0;
+      const maxFollowups = 3;
+
+      const collectAssistantText = async (): Promise<string> => {
+        let response = '';
         for await (const streamMsg of session.stream()) {
-          const msgUuid = (streamMsg as any).uuid;
-          
-          // When message type changes, finalize the current message
-          // This ensures different message types appear as separate bubbles
-          if (lastMsgType && lastMsgType !== streamMsg.type && response.trim()) {
-            await finalizeMessage();
-          }
-          
-          // Log meaningful events
-          if (streamMsg.type !== lastMsgType) {
-            if (streamMsg.type === 'tool_call') {
-              const toolName = (streamMsg as any).toolName || 'unknown';
-              console.log(`[Bot] Calling tool: ${toolName}`);
-            } else if (streamMsg.type === 'tool_result') {
-              console.log(`[Bot] Tool completed`);
-            } else if (streamMsg.type === 'assistant' && lastMsgType !== 'assistant') {
-              console.log(`[Bot] Generating response...`);
-            }
-          }
-          lastMsgType = streamMsg.type;
-          
           if (streamMsg.type === 'assistant') {
-            // Check if this is a new assistant message (different UUID)
-            if (msgUuid && lastAssistantUuid && msgUuid !== lastAssistantUuid && response.trim()) {
-              await finalizeMessage();
-            }
-            lastAssistantUuid = msgUuid || lastAssistantUuid;
-            
             response += streamMsg.content;
-            
-            // Stream updates only for channels that support editing (Telegram, Slack)
-            const canEdit = adapter.supportsEditing?.() ?? true;
-            if (canEdit && Date.now() - lastUpdate > 500 && response.length > 0) {
-              try {
-                if (messageId) {
-                  await adapter.editMessage(msg.chatId, messageId, response);
-                } else {
-                  const result = await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
-                  messageId = result.messageId;
-                }
-              } catch {
-                // Ignore edit errors
-              }
-              lastUpdate = Date.now();
-            }
           }
-          
           if (streamMsg.type === 'result') {
-            // Save agent ID and conversation ID
             if (session.agentId && session.agentId !== this.store.agentId) {
               const isNewAgent = !this.store.agentId;
-              // Save agent ID along with the current server URL
               const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
               this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
               console.log('Saved agent ID:', session.agentId, 'conversation ID:', session.conversationId, 'on server:', currentBaseUrl);
-              
-              // Setup new agents: set name, install skills
               if (isNewAgent) {
                 if (this.config.agentName && session.agentId) {
                   updateAgentName(session.agentId, this.config.agentName).catch(() => {});
@@ -373,33 +297,121 @@ export class LettaBot {
             break;
           }
         }
+        return response;
+      };
+
+      try {
+        while (pendingPrompts.length > 0 && followupCount < maxFollowups) {
+          const prompt = pendingPrompts.shift()!;
+          try {
+            await withTimeout(session.send(prompt), 'Session send');
+          } catch (sendError) {
+            console.error('[Bot] Error sending message:', sendError);
+            throw sendError;
+          }
+
+          const assistantText = await collectAssistantText();
+          if (!assistantText.trim()) {
+            followupCount += 1;
+            continue;
+          }
+
+          const actions = parseAssistantActions(assistantText);
+          for (const action of actions) {
+            if (action.type === 'message') {
+              const chunks = this.splitMessage(action.content, msg.channel);
+              for (const chunk of chunks) {
+                try {
+                  await adapter.sendMessage({
+                    chatId: msg.chatId,
+                    text: chunk,
+                    threadId: msg.threadId,
+                  });
+                  sentAnyMessage = true;
+                } catch (error) {
+                  console.error('[Bot] Send failed:', error);
+                }
+              }
+              continue;
+            }
+
+            if (action.type === 'react') {
+              const targetId = action.messageId || msg.messageId;
+              if (!targetId) {
+                console.warn('[Bot] React directive missing message ID');
+                continue;
+              }
+              const emoji = adapter.id === 'slack'
+                ? action.emoji
+                : this.resolveUnicodeEmoji(action.emoji);
+              try {
+                await adapter.addReaction(msg.chatId, targetId, emoji);
+                sentAnyMessage = true;
+              } catch (error) {
+                console.error('[Bot] Reaction failed:', error);
+              }
+              continue;
+            }
+
+            if (action.type === 'send_file') {
+              const resolved = this.resolveFilePath(action.path);
+              if (!resolved) {
+                console.warn(`[Bot] File not found: ${action.path}`);
+                continue;
+              }
+              const outbound: OutboundFile = {
+                chatId: msg.chatId,
+                filePath: resolved,
+                kind: action.kind,
+                threadId: msg.threadId,
+              };
+              try {
+                await adapter.sendFile(outbound);
+                sentAnyMessage = true;
+              } catch (error) {
+                console.error('[Bot] File send failed:', error);
+              }
+              continue;
+            }
+
+            if (action.type === 'edit') {
+              try {
+                await adapter.editMessage(msg.chatId, action.messageId, action.text);
+                sentAnyMessage = true;
+              } catch (error) {
+                console.error('[Bot] Edit failed:', error);
+              }
+              continue;
+            }
+
+            if (action.type === 'fetch_history') {
+              try {
+                const entries = await adapter.fetchHistory(msg.chatId, {
+                  limit: action.limit,
+                  before: action.before,
+                });
+                const historyText = this.formatHistoryPrompt(msg.channel, msg.chatId, entries);
+                if (historyText) {
+                  pendingPrompts.push(historyText);
+                }
+              } catch (error) {
+                console.error('[Bot] Fetch history failed:', error);
+              }
+              continue;
+            }
+          }
+
+          followupCount += 1;
+        }
       } finally {
         clearInterval(typingInterval);
       }
-      
-      // Send final response
-      if (response.trim()) {
-        try {
-          if (messageId) {
-            await adapter.editMessage(msg.chatId, messageId, response);
-          } else {
-            await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
-          }
-          sentAnyMessage = true;
-          const preview = response.length > 50 ? response.slice(0, 50) + '...' : response;
-          console.log(`[Bot] Sent: "${preview}"`);
-        } catch (sendError) {
-          console.error('[Bot] Error sending response:', sendError);
-          if (!messageId) {
-            await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
-            sentAnyMessage = true;
-          }
-        }
-      }
-      
-      // Only show "no response" if we never sent anything
       if (!sentAnyMessage) {
-        await adapter.sendMessage({ chatId: msg.chatId, text: '(No response from agent)', threadId: msg.threadId });
+        await adapter.sendMessage({
+          chatId: msg.chatId,
+          text: '(No response from agent)',
+          threadId: msg.threadId,
+        });
       }
       
     } catch (error) {
@@ -412,6 +424,55 @@ export class LettaBot {
     } finally {
       session!?.close();
     }
+  }
+
+  private resolveFilePath(input: string): string | null {
+    const trimmed = input.trim();
+    if (!trimmed) return null;
+    const resolved = isAbsolute(trimmed)
+      ? trimmed
+      : resolve(this.config.workingDir, trimmed);
+    return existsSync(resolved) ? resolved : null;
+  }
+
+  private splitMessage(content: string, channel: string): string[] {
+    const limits: Record<string, number> = {
+      discord: 1900,
+      telegram: 3900,
+      slack: 38000,
+      whatsapp: 1800,
+      signal: 1800,
+    };
+    const limit = limits[channel] || 1900;
+    if (content.length <= limit) return [content];
+    const chunks: string[] = [];
+    let remaining = content;
+    while (remaining.length > 0) {
+      chunks.push(remaining.slice(0, limit));
+      remaining = remaining.slice(limit);
+    }
+    return chunks;
+  }
+
+  private formatHistoryPrompt(channel: string, chatId: string, entries: HistoryEntry[]): string {
+    if (!entries.length) {
+      return `No history available for ${channel}:${chatId}.`;
+    }
+    const lines = [`${channel} history (most recent first):`];
+    for (const entry of entries) {
+      const content = entry.text.replace(/\s+/g, ' ').trim();
+      const author = entry.author || 'unknown';
+      const idSuffix = entry.messageId ? ` (${entry.messageId})` : '';
+      lines.push(`- ${author}: ${content}${idSuffix}`);
+    }
+    return lines.join('\n');
+  }
+
+  private resolveUnicodeEmoji(input: string): string {
+    const match = input.match(/^:([^:]+):$/);
+    const alias = match ? match[1] : null;
+    const key = alias || input;
+    return EMOJI_ALIAS_TO_UNICODE[key] || input;
   }
   
   /**
@@ -543,3 +604,17 @@ export class LettaBot {
     return this.lastUserMessageTime;
   }
 }
+
+const EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
+  eyes: '👀',
+  thumbsup: '👍',
+  thumbs_up: '👍',
+  '+1': '👍',
+  heart: '❤️',
+  fire: '🔥',
+  smile: '😄',
+  laughing: '😆',
+  tada: '🎉',
+  clap: '👏',
+  ok_hand: '👌',
+};
