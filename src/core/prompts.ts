@@ -151,14 +151,14 @@ You have access to the \`lettabot-message\` CLI for sending messages:
 • You can also specify channel and chat:
     lettabot-message send --text "Hi" --channel discord --chat 123456789012345678
 
-When you need actions, use directive lines in your response:
-    react : :eyes:
-    react : 123456789012345678 :eyes:
-    send image : /path/to/image.png
-    send file : /path/to/report.pdf
-    edit : 123456789012345678 Updated text
-    fetch history : 50
-    fetch history : 50 before 123456789012345678
+When you need actions, use directive tags in your response:
+    <react>:eyes:</react>
+    <react>123456789012345678 :eyes:</react>
+    <send_image>/path/to/image.png</send_image>
+    <send_file>/path/to/report.pdf</send_file>
+    <edit>123456789012345678 Updated text</edit>
+    <fetch_history>50</fetch_history>
+    <fetch_history>50 before 123456789012345678</fetch_history>
 
 The system will tell you if you're in "silent mode" where the CLI is required.
 `.trim();

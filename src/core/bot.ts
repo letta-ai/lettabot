@@ -15,7 +15,7 @@ import { installSkillsToAgent } from '../skills/loader.js';
 import { formatMessageEnvelope } from './formatter.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
-import { parseAssistantActions } from './directives.js';
+import { StreamingDirectiveParser, type AssistantAction } from './directives.js';
 
 export class LettaBot {
   private store: Store;
@@ -270,34 +270,23 @@ export class LettaBot {
       let followupCount = 0;
       const maxFollowups = 3;
 
-      const collectAssistantText = async (): Promise<string> => {
-        let response = '';
-        for await (const streamMsg of session.stream()) {
-          if (streamMsg.type === 'assistant') {
-            response += streamMsg.content;
-          }
-          if (streamMsg.type === 'result') {
-            if (session.agentId && session.agentId !== this.store.agentId) {
-              const isNewAgent = !this.store.agentId;
-              const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
-              this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
-              console.log('Saved agent ID:', session.agentId, 'conversation ID:', session.conversationId, 'on server:', currentBaseUrl);
-              if (isNewAgent) {
-                if (this.config.agentName && session.agentId) {
-                  updateAgentName(session.agentId, this.config.agentName).catch(() => {});
-                }
-                if (session.agentId) {
-                  installSkillsToAgent(session.agentId);
-                }
-              }
-            } else if (session.conversationId && session.conversationId !== this.store.conversationId) {
-              // Update conversation ID if it changed
-              this.store.conversationId = session.conversationId;
+      const handleSessionResult = () => {
+        if (session.agentId && session.agentId !== this.store.agentId) {
+          const isNewAgent = !this.store.agentId;
+          const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
+          this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
+          console.log('Saved agent ID:', session.agentId, 'conversation ID:', session.conversationId, 'on server:', currentBaseUrl);
+          if (isNewAgent) {
+            if (this.config.agentName && session.agentId) {
+              updateAgentName(session.agentId, this.config.agentName).catch(() => {});
             }
-            break;
+            if (session.agentId) {
+              installSkillsToAgent(session.agentId);
+            }
           }
+        } else if (session.conversationId && session.conversationId !== this.store.conversationId) {
+          this.store.conversationId = session.conversationId;
         }
-        return response;
       };
 
       try {
@@ -310,13 +299,69 @@ export class LettaBot {
             throw sendError;
           }
 
-          const assistantText = await collectAssistantText();
-          if (!assistantText.trim()) {
-            followupCount += 1;
-            continue;
+          const parser = new StreamingDirectiveParser();
+          const actions: AssistantAction[] = [];
+          let response = '';
+          let messageId: string | null = null;
+          let lastUpdate = Date.now();
+          const canEdit = adapter.supportsEditing?.() ?? true;
+
+          const sendOrEdit = async (text: string, forceSend = false) => {
+            if (messageId && canEdit && !forceSend) {
+              await adapter.editMessage(msg.chatId, messageId, text);
+              sentAnyMessage = true;
+              return;
+            }
+            const result = await adapter.sendMessage({
+              chatId: msg.chatId,
+              text,
+              threadId: msg.threadId,
+            });
+            messageId = result.messageId;
+            sentAnyMessage = true;
+          };
+
+          for await (const streamMsg of session.stream()) {
+            if (streamMsg.type === 'assistant') {
+              const parsed = parser.ingest(streamMsg.content);
+              if (parsed.actions.length) {
+                actions.push(...parsed.actions);
+              }
+              if (parsed.text) {
+                response += parsed.text;
+                if (canEdit && Date.now() - lastUpdate > 500 && response.length > 0) {
+                  try {
+                    await sendOrEdit(response);
+                  } catch {
+                    // Ignore edit errors during streaming
+                  }
+                  lastUpdate = Date.now();
+                }
+              }
+            }
+
+            if (streamMsg.type === 'result') {
+              handleSessionResult();
+              break;
+            }
           }
 
-          const actions = parseAssistantActions(assistantText);
+          const tail = parser.flush();
+          if (tail.actions.length) {
+            actions.push(...tail.actions);
+          }
+          if (tail.text) {
+            response += tail.text;
+          }
+
+          if (response.trim()) {
+            try {
+              await sendOrEdit(response, !canEdit);
+            } catch (sendError) {
+              console.error('[Bot] Error sending response:', sendError);
+            }
+          }
+
           for (const action of actions) {
             if (action.type === 'message') {
               const chunks = this.splitMessage(action.content, msg.channel);

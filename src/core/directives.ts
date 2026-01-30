@@ -1,7 +1,7 @@
 /**
  * Directive parsing for assistant output.
  *
- * Directives are single lines starting with a keyword and ":".
+ * Directives are XML tags (e.g., <react>...</react>).
  */
 
 export type AssistantAction =
@@ -11,78 +11,98 @@ export type AssistantAction =
   | { type: 'edit'; messageId: string; text: string }
   | { type: 'fetch_history'; limit: number; before?: string };
 
-export function parseAssistantActions(content: string): AssistantAction[] {
-  const actions: AssistantAction[] = [];
-  const messageLines: string[] = [];
+const KNOWN_TAGS = new Set(['react', 'send_image', 'send_file', 'edit', 'fetch_history']);
 
-  const flushMessage = () => {
-    if (!messageLines.length) return;
-    const text = messageLines.join('\n').trimEnd();
-    messageLines.length = 0;
-    if (text.trim()) {
-      actions.push({ type: 'message', content: text });
-    }
-  };
+export class StreamingDirectiveParser {
+  private buffer = '';
 
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.replace(/\s+$/, '');
-    const stripped = line.trim();
-    if (!stripped) {
-      messageLines.push('');
-      continue;
-    }
-    const directive = parseDirectiveLine(stripped);
-    if (directive) {
-      flushMessage();
-      actions.push(directive);
-    } else {
-      messageLines.push(line);
-    }
+  ingest(chunk: string): { text: string; actions: AssistantAction[] } {
+    return this.process(chunk, false);
   }
 
-  flushMessage();
-  return actions;
+  flush(): { text: string; actions: AssistantAction[] } {
+    return this.process('', true);
+  }
+
+  private process(chunk: string, flush: boolean): { text: string; actions: AssistantAction[] } {
+    this.buffer += chunk;
+    let output = '';
+    const actions: AssistantAction[] = [];
+
+    while (this.buffer.length > 0) {
+      const start = this.buffer.indexOf('<');
+      if (start === -1) {
+        output += this.buffer;
+        this.buffer = '';
+        break;
+      }
+
+      if (start > 0) {
+        output += this.buffer.slice(0, start);
+        this.buffer = this.buffer.slice(start);
+      }
+
+      const tagMatch = this.buffer.match(/^<([a-z_]+)>/i);
+      if (!tagMatch) {
+        output += this.buffer[0];
+        this.buffer = this.buffer.slice(1);
+        continue;
+      }
+
+      const tagName = tagMatch[1].toLowerCase();
+      if (!KNOWN_TAGS.has(tagName)) {
+        output += this.buffer[0];
+        this.buffer = this.buffer.slice(1);
+        continue;
+      }
+
+      const openLen = tagMatch[0].length;
+      const closeTag = `</${tagName}>`;
+      const closeIdx = this.buffer.indexOf(closeTag, openLen);
+      if (closeIdx === -1) {
+        if (flush) {
+          output += this.buffer;
+          this.buffer = '';
+        }
+        break;
+      }
+
+      const inner = this.buffer.slice(openLen, closeIdx).trim();
+      const action = parseDirectiveTag(tagName, inner);
+      if (action) {
+        actions.push(action);
+      }
+      this.buffer = this.buffer.slice(closeIdx + closeTag.length);
+    }
+
+    return { text: output, actions };
+  }
 }
 
-function parseDirectiveLine(stripped: string): AssistantAction | null {
-  const lowered = stripped.toLowerCase();
-  if (lowered.startsWith('react')) {
-    const parsed = parseReactDirective(stripped);
-    return parsed ? parsed : null;
+export function parseDirectiveTag(tagName: string, content: string): AssistantAction | null {
+  switch (tagName) {
+    case 'react':
+      return parseReactContent(content);
+    case 'send_image':
+      return content ? { type: 'send_file', path: content, kind: 'image' } : null;
+    case 'send_file':
+      return content ? { type: 'send_file', path: content, kind: 'file' } : null;
+    case 'edit':
+      return parseEditContent(content);
+    case 'fetch_history':
+      return parseFetchHistoryContent(content);
+    default:
+      return null;
   }
-  if (lowered.startsWith('send image')) {
-    const arg = parseDirectiveArg(stripped, 'send image');
-    return arg ? { type: 'send_file', path: arg, kind: 'image' } : null;
-  }
-  if (lowered.startsWith('send file')) {
-    const arg = parseDirectiveArg(stripped, 'send file');
-    return arg ? { type: 'send_file', path: arg, kind: 'file' } : null;
-  }
-  if (lowered.startsWith('edit')) {
-    const parsed = parseEditDirective(stripped);
-    return parsed ? parsed : null;
-  }
-  if (lowered.startsWith('fetch history')) {
-    return parseFetchHistoryDirective(stripped);
-  }
-  return null;
 }
 
-function parseDirectiveArg(text: string, keyword: string): string | null {
-  if (!text.toLowerCase().startsWith(keyword)) return null;
-  let rest = text.slice(keyword.length).trimStart();
-  if (!rest.startsWith(':')) return null;
-  rest = rest.slice(1).trim();
-  return rest || null;
-}
-
-function parseReactDirective(text: string): AssistantAction | null {
-  const arg = parseDirectiveArg(text, 'react');
-  if (!arg) return null;
+function parseReactContent(content: string): AssistantAction | null {
+  const trimmed = content.trim();
+  if (!trimmed) return null;
 
   let messageId: string | undefined;
-  let emoji = arg;
-  const parts = arg.split(/\s+/);
+  let emoji = trimmed;
+  const parts = trimmed.split(/\s+/);
   if (parts.length >= 2 && looksLikeMessageId(parts[0])) {
     messageId = parts[0];
     emoji = parts.slice(1).join(' ').trim();
@@ -91,21 +111,19 @@ function parseReactDirective(text: string): AssistantAction | null {
   return { type: 'react', emoji, messageId };
 }
 
-function parseEditDirective(text: string): AssistantAction | null {
-  const arg = parseDirectiveArg(text, 'edit');
-  if (!arg) return null;
-  const parts = arg.split(/\s+/);
+function parseEditContent(content: string): AssistantAction | null {
+  const trimmed = content.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(/\s+/);
   if (parts.length < 2) return null;
   const messageId = parts[0];
-  const body = arg.slice(messageId.length).trim();
+  const body = trimmed.slice(messageId.length).trim();
   if (!body) return null;
   return { type: 'edit', messageId, text: body };
 }
 
-function parseFetchHistoryDirective(text: string): AssistantAction | null {
-  const arg = parseDirectiveArg(text, 'fetch history');
-  if (arg === null) return null;
-  const parts = arg.split(/\s+/).filter(Boolean);
+function parseFetchHistoryContent(content: string): AssistantAction | null {
+  const parts = content.trim().split(/\s+/).filter(Boolean);
   let limit = 50;
   let before: string | undefined;
 
