@@ -50,26 +50,29 @@ See the [documentation](https://docs.letta.com/guides/docker/) for more details 
 
 ### Setup
 
-**Option 1: Quick Setup (Recommended)**
+**Option 1: AI-Assisted Setup (Recommended)**
 
-Set environment variables and run non-interactive setup:
+Paste this into Letta Code, Claude Code, Codex CLI, or any AI coding assistant:
 
-```bash
-# Configure Letta
-export LETTA_API_KEY="letta_..."        # From app.letta.com
-
-# Configure Telegram
-export TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."  # From @BotFather
-
-# Run setup
-lettabot onboard --non-interactive
 ```
+Clone https://github.com/letta-ai/lettabot, read the SKILL.md
+for setup instructions, and help me configure Telegram.
+```
+
+You'll need:
+- A Letta API key from [app.letta.com](https://app.letta.com) (or a [Letta Docker server](https://docs.letta.com/guides/docker/))
+- A Telegram bot token from [@BotFather](https://t.me/BotFather)
+
+The AI will handle the rest: cloning, installing dependencies, reading setup docs, and configuring your bot.
 
 **Option 2: Interactive Wizard**
 
-For step-by-step guidance:
+For manual step-by-step setup:
 
 ```bash
+git clone https://github.com/letta-ai/lettabot.git
+cd lettabot
+npm install && npm run build && npm link
 lettabot onboard
 ```
 
