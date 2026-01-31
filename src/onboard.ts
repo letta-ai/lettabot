@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import * as p from '@clack/prompts';
 import { saveConfig, syncProviders } from './config/index.js';
 import type { LettaBotConfig, ProviderConfig } from './config/types.js';
+import { isLettaCloudUrl } from './utils/server.js';
 
 // ============================================================================
 // Non-Interactive Helpers
@@ -65,7 +66,7 @@ async function saveConfigFromEnv(config: any, configPath: string): Promise<void>
   
   const lettabotConfig: LettaBotConfig = {
     server: {
-      mode: config.baseUrl?.includes('localhost') ? 'selfhosted' : 'cloud',
+      mode: isLettaCloudUrl(config.baseUrl) ? 'cloud' : 'selfhosted',
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
     },
@@ -167,11 +168,11 @@ const isPlaceholder = (val?: string) => !val || /^(your_|sk-\.\.\.|placeholder|e
 // ============================================================================
 
 async function stepAuth(config: OnboardConfig, env: Record<string, string>): Promise<void> {
-  const { requestDeviceCode, pollForToken, LETTA_CLOUD_API_URL } = await import('./auth/oauth.js');
+  const { requestDeviceCode, pollForToken } = await import('./auth/oauth.js');
   const { saveTokens, loadTokens, getOrCreateDeviceId, getDeviceName } = await import('./auth/tokens.js');
   
   const baseUrl = config.baseUrl || env.LETTA_BASE_URL || process.env.LETTA_BASE_URL;
-  const isLettaCloud = !baseUrl || baseUrl === LETTA_CLOUD_API_URL || baseUrl === 'https://api.letta.com';
+  const isLettaCloud = isLettaCloudUrl(baseUrl);
   
   const existingTokens = loadTokens();
   // Check both env and config for existing API key
@@ -1363,7 +1364,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     console.log('');
     
     // Validate required fields
-    if (!config.apiKey && !config.baseUrl?.includes('localhost')) {
+    if (!config.apiKey && isLettaCloudUrl(config.baseUrl)) {
       console.error('❌ Error: LETTA_API_KEY is required');
       console.error('   Get your API key from: https://app.letta.com/settings');
       console.error('   Then run: export LETTA_API_KEY="letta_..."');
@@ -1428,8 +1429,8 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   
   // Pre-populate from existing config
   const baseUrl = existingConfig.server.baseUrl || process.env.LETTA_BASE_URL || 'https://api.letta.com';
-  const isLocal = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
-  p.note(`${baseUrl}\n${isLocal ? 'Local Docker' : 'Letta Cloud'}`, 'Server');
+  const isLocal = !isLettaCloudUrl(baseUrl);
+  p.note(`${baseUrl}\n${isLocal ? 'Self-hosted' : 'Letta Cloud'}`, 'Server');
   
   // Test server connection
   const spinner = p.spinner();

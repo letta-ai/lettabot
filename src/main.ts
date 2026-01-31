@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 
 // Load YAML config and apply to process.env (overrides .env values)
 import { loadConfig, applyConfigToEnv, syncProviders, resolveConfigPath } from './config/index.js';
+import { isLettaCloudUrl } from './utils/server.js';
 const yamlConfig = loadConfig();
 console.log(`[Config] Loaded from ${resolveConfigPath()}`);
 console.log(`[Config] Mode: ${yamlConfig.server.mode}, Agent: ${yamlConfig.agent.name}, Model: ${yamlConfig.agent.model}`);
@@ -62,8 +63,7 @@ async function refreshTokensIfNeeded(): Promise<void> {
   }
   
   // OAuth tokens only work with Letta Cloud - skip if using custom server
-  const baseUrl = process.env.LETTA_BASE_URL;
-  if (baseUrl && baseUrl !== 'https://api.letta.com') {
+  if (!isLettaCloudUrl(process.env.LETTA_BASE_URL)) {
     return;
   }
   
