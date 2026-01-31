@@ -5,20 +5,24 @@
  * Supports DM pairing for secure access control.
  */
 
-import { Bot } from 'grammy';
+import { Bot, InputFile } from 'grammy';
 import type { ChannelAdapter } from './types.js';
-import type { InboundMessage, OutboundMessage } from '../core/types.js';
+import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
 import type { DmPolicy } from '../pairing/types.js';
 import {
   isUserAllowed,
   upsertPairingRequest,
   formatPairingMessage,
 } from '../pairing/store.js';
+import { basename } from 'node:path';
+import { buildAttachmentPath, downloadToFile } from './attachments.js';
 
 export interface TelegramConfig {
   token: string;
   dmPolicy?: DmPolicy;           // 'pairing' (default), 'allowlist', or 'open'
   allowedUsers?: number[];       // Telegram user IDs (config allowlist)
+  attachmentsDir?: string;
+  attachmentsMaxBytes?: number;
 }
 
 export class TelegramAdapter implements ChannelAdapter {
@@ -28,6 +32,8 @@ export class TelegramAdapter implements ChannelAdapter {
   private bot: Bot;
   private config: TelegramConfig;
   private running = false;
+  private attachmentsDir?: string;
+  private attachmentsMaxBytes?: number;
   
   onMessage?: (msg: InboundMessage) => Promise<void>;
   onCommand?: (command: string) => Promise<string | null>;
@@ -38,6 +44,8 @@ export class TelegramAdapter implements ChannelAdapter {
       dmPolicy: config.dmPolicy || 'pairing',  // Default to pairing
     };
     this.bot = new Bot(config.token);
+    this.attachmentsDir = config.attachmentsDir;
+    this.attachmentsMaxBytes = config.attachmentsMaxBytes;
     this.setupHandlers();
   }
   
@@ -166,6 +174,30 @@ export class TelegramAdapter implements ChannelAdapter {
         });
       }
     });
+
+    // Handle non-text messages with attachments
+    this.bot.on('message', async (ctx) => {
+      if (!ctx.message || ctx.message.text) return;
+      const userId = ctx.from?.id;
+      const chatId = ctx.chat.id;
+      if (!userId) return;
+
+      const { attachments, caption } = await this.collectAttachments(ctx.message, String(chatId));
+      if (attachments.length === 0 && !caption) return;
+
+      if (this.onMessage) {
+        await this.onMessage({
+          channel: 'telegram',
+          chatId: String(chatId),
+          userId: String(userId),
+          userName: ctx.from.username || ctx.from.first_name,
+          messageId: String(ctx.message.message_id),
+          text: caption || '',
+          timestamp: new Date(),
+          attachments,
+        });
+      }
+    });
     
     // Error handler
     this.bot.catch((err) => {
@@ -207,11 +239,34 @@ export class TelegramAdapter implements ChannelAdapter {
     });
     return { messageId: String(result.message_id) };
   }
+
+  async sendFile(file: OutboundFile): Promise<{ messageId: string }> {
+    const input = new InputFile(file.filePath);
+    const caption = file.caption || undefined;
+
+    if (file.kind === 'image') {
+      const result = await this.bot.api.sendPhoto(file.chatId, input, { caption });
+      return { messageId: String(result.message_id) };
+    }
+
+    const result = await this.bot.api.sendDocument(file.chatId, input, { caption });
+    return { messageId: String(result.message_id) };
+  }
   
   async editMessage(chatId: string, messageId: string, text: string): Promise<void> {
     const { markdownToTelegramV2 } = await import('./telegram-format.js');
     const formatted = markdownToTelegramV2(text);
     await this.bot.api.editMessageText(chatId, Number(messageId), formatted, { parse_mode: 'MarkdownV2' });
+  }
+
+  async addReaction(chatId: string, messageId: string, emoji: string): Promise<void> {
+    const resolved = resolveTelegramEmoji(emoji);
+    if (!TELEGRAM_REACTION_SET.has(resolved)) {
+      throw new Error(`Unsupported Telegram reaction emoji: ${resolved}`);
+    }
+    await this.bot.api.setMessageReaction(chatId, Number(messageId), [
+      { type: 'emoji', emoji: resolved as TelegramReactionEmoji },
+    ]);
   }
   
   async sendTypingIndicator(chatId: string): Promise<void> {
@@ -224,4 +279,188 @@ export class TelegramAdapter implements ChannelAdapter {
   getBot(): Bot {
     return this.bot;
   }
+
+  private async collectAttachments(
+    message: any,
+    chatId: string
+  ): Promise<{ attachments: InboundAttachment[]; caption?: string }> {
+    const attachments: InboundAttachment[] = [];
+    const caption = message.caption as string | undefined;
+
+    if (message.photo && message.photo.length > 0) {
+      const photo = message.photo[message.photo.length - 1];
+      const attachment = await this.fetchTelegramFile({
+        fileId: photo.file_id,
+        fileName: `photo-${photo.file_unique_id}.jpg`,
+        mimeType: 'image/jpeg',
+        size: photo.file_size,
+        kind: 'image',
+        chatId,
+      });
+      if (attachment) attachments.push(attachment);
+    }
+
+    if (message.document) {
+      const doc = message.document;
+      const attachment = await this.fetchTelegramFile({
+        fileId: doc.file_id,
+        fileName: doc.file_name,
+        mimeType: doc.mime_type,
+        size: doc.file_size,
+        kind: 'file',
+        chatId,
+      });
+      if (attachment) attachments.push(attachment);
+    }
+
+    if (message.video) {
+      const video = message.video;
+      const attachment = await this.fetchTelegramFile({
+        fileId: video.file_id,
+        fileName: video.file_name || `video-${video.file_unique_id}.mp4`,
+        mimeType: video.mime_type,
+        size: video.file_size,
+        kind: 'video',
+        chatId,
+      });
+      if (attachment) attachments.push(attachment);
+    }
+
+    if (message.audio) {
+      const audio = message.audio;
+      const attachment = await this.fetchTelegramFile({
+        fileId: audio.file_id,
+        fileName: audio.file_name || `audio-${audio.file_unique_id}.mp3`,
+        mimeType: audio.mime_type,
+        size: audio.file_size,
+        kind: 'audio',
+        chatId,
+      });
+      if (attachment) attachments.push(attachment);
+    }
+
+    if (message.voice) {
+      const voice = message.voice;
+      const attachment = await this.fetchTelegramFile({
+        fileId: voice.file_id,
+        fileName: `voice-${voice.file_unique_id}.ogg`,
+        mimeType: voice.mime_type,
+        size: voice.file_size,
+        kind: 'audio',
+        chatId,
+      });
+      if (attachment) attachments.push(attachment);
+    }
+
+    if (message.animation) {
+      const animation = message.animation;
+      const attachment = await this.fetchTelegramFile({
+        fileId: animation.file_id,
+        fileName: animation.file_name || `animation-${animation.file_unique_id}.mp4`,
+        mimeType: animation.mime_type,
+        size: animation.file_size,
+        kind: 'video',
+        chatId,
+      });
+      if (attachment) attachments.push(attachment);
+    }
+
+    if (message.sticker) {
+      const sticker = message.sticker;
+      const attachment = await this.fetchTelegramFile({
+        fileId: sticker.file_id,
+        fileName: `sticker-${sticker.file_unique_id}.${sticker.is_animated ? 'tgs' : 'webp'}`,
+        mimeType: sticker.mime_type,
+        size: sticker.file_size,
+        kind: 'image',
+        chatId,
+      });
+      if (attachment) attachments.push(attachment);
+    }
+
+    return { attachments, caption };
+  }
+
+  private async fetchTelegramFile(options: {
+    fileId: string;
+    fileName?: string;
+    mimeType?: string;
+    size?: number;
+    kind?: InboundAttachment['kind'];
+    chatId: string;
+  }): Promise<InboundAttachment | null> {
+    const { fileId, fileName, mimeType, size, kind, chatId } = options;
+    const attachment: InboundAttachment = {
+      id: fileId,
+      name: fileName,
+      mimeType,
+      size,
+      kind,
+    };
+
+    if (!this.attachmentsDir) {
+      return attachment;
+    }
+    if (this.attachmentsMaxBytes === 0) {
+      return attachment;
+    }
+    if (this.attachmentsMaxBytes && size && size > this.attachmentsMaxBytes) {
+      console.warn(`[Telegram] Attachment ${fileName || fileId} exceeds size limit, skipping download.`);
+      return attachment;
+    }
+
+    try {
+      const file = await this.bot.api.getFile(fileId);
+      const remotePath = file.file_path;
+      if (!remotePath) return attachment;
+      const resolvedName = fileName || basename(remotePath) || fileId;
+      const target = buildAttachmentPath(this.attachmentsDir, 'telegram', chatId, resolvedName);
+      const url = `https://api.telegram.org/file/bot${this.config.token}/${remotePath}`;
+      await downloadToFile(url, target);
+      attachment.localPath = target;
+    } catch (err) {
+      console.warn('[Telegram] Failed to download attachment:', err);
+    }
+    return attachment;
+  }
 }
+
+const TELEGRAM_EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
+  eyes: '👀',
+  thumbsup: '👍',
+  thumbs_up: '👍',
+  '+1': '👍',
+  heart: '❤️',
+  fire: '🔥',
+  smile: '😄',
+  laughing: '😆',
+  tada: '🎉',
+  clap: '👏',
+  ok_hand: '👌',
+};
+
+function resolveTelegramEmoji(input: string): string {
+  const match = input.match(/^:([^:]+):$/);
+  const alias = match ? match[1] : null;
+  if (alias && TELEGRAM_EMOJI_ALIAS_TO_UNICODE[alias]) {
+    return TELEGRAM_EMOJI_ALIAS_TO_UNICODE[alias];
+  }
+  if (TELEGRAM_EMOJI_ALIAS_TO_UNICODE[input]) {
+    return TELEGRAM_EMOJI_ALIAS_TO_UNICODE[input];
+  }
+  return input;
+}
+
+const TELEGRAM_REACTION_EMOJIS = [
+  '👍', '👎', '❤', '🔥', '🥰', '👏', '😁', '🤔', '🤯', '😱', '🤬', '😢',
+  '🎉', '🤩', '🤮', '💩', '🙏', '👌', '🕊', '🤡', '🥱', '🥴', '😍', '🐳',
+  '❤‍🔥', '🌚', '🌭', '💯', '🤣', '⚡', '🍌', '🏆', '💔', '🤨', '😐', '🍓',
+  '🍾', '💋', '🖕', '😈', '😴', '😭', '🤓', '👻', '👨‍💻', '👀', '🎃', '🙈',
+  '😇', '😨', '🤝', '✍', '🤗', '🫡', '🎅', '🎄', '☃', '💅', '🤪', '🗿',
+  '🆒', '💘', '🙉', '🦄', '😘', '💊', '🙊', '😎', '👾', '🤷‍♂', '🤷',
+  '🤷‍♀', '😡',
+] as const;
+
+type TelegramReactionEmoji = typeof TELEGRAM_REACTION_EMOJIS[number];
+
+const TELEGRAM_REACTION_SET = new Set<string>(TELEGRAM_REACTION_EMOJIS);

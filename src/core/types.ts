@@ -45,6 +45,16 @@ export interface TriggerContext {
 
 export type ChannelId = 'telegram' | 'slack' | 'whatsapp' | 'signal' | 'discord';
 
+export interface InboundAttachment {
+  id?: string;
+  name?: string;
+  mimeType?: string;
+  size?: number;
+  url?: string;
+  localPath?: string;
+  kind?: 'image' | 'file' | 'audio' | 'video';
+}
+
 /**
  * Inbound message from any channel
  */
@@ -60,6 +70,7 @@ export interface InboundMessage {
   threadId?: string;      // Slack thread_ts
   isGroup?: boolean;      // Is this from a group chat?
   groupName?: string;     // Group/channel name if applicable
+  attachments?: InboundAttachment[];
 }
 
 /**
@@ -70,6 +81,17 @@ export interface OutboundMessage {
   text: string;
   replyToMessageId?: string;
   threadId?: string;  // Slack thread_ts
+}
+
+/**
+ * Outbound file/image to any channel.
+ */
+export interface OutboundFile {
+  chatId: string;
+  filePath: string;
+  caption?: string;
+  threadId?: string;
+  kind?: 'image' | 'file';
 }
 
 /**

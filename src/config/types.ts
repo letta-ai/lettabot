@@ -49,6 +49,12 @@ export interface LettaBotConfig {
   integrations?: {
     google?: GoogleConfig;
   };
+
+  // Attachment handling
+  attachments?: {
+    maxMB?: number;
+    maxAgeDays?: number;
+  };
 }
 
 export interface ProviderConfig {

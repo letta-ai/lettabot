@@ -158,6 +158,13 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.integrations?.google?.enabled && config.integrations.google.account) {
     env.GMAIL_ACCOUNT = config.integrations.google.account;
   }
+
+  if (config.attachments?.maxMB !== undefined) {
+    env.ATTACHMENTS_MAX_MB = String(config.attachments.maxMB);
+  }
+  if (config.attachments?.maxAgeDays !== undefined) {
+    env.ATTACHMENTS_MAX_AGE_DAYS = String(config.attachments.maxAgeDays);
+  }
   
   return env;
 }
