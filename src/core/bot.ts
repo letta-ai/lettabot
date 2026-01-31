@@ -218,15 +218,13 @@ export class LettaBot {
       
       const defaultTimeoutMs = 30000; // 30s timeout
       const envTimeoutMs = Number(process.env.LETTA_SESSION_TIMEOUT_MS);
-      const initTimeoutMs = Number.isFinite(envTimeoutMs) && envTimeoutMs > 0
-        ? envTimeoutMs
-        : defaultTimeoutMs;
+      const timeoutMs = Number.isFinite(envTimeoutMs) && envTimeoutMs > 0 ? envTimeoutMs : defaultTimeoutMs;
       const withTimeout = async <T>(promise: Promise<T>, label: string): Promise<T> => {
         let timeoutId: NodeJS.Timeout;
         const timeoutPromise = new Promise<T>((_, reject) => {
           timeoutId = setTimeout(() => {
-            reject(new Error(`${label} timed out after ${initTimeoutMs}ms`));
-          }, initTimeoutMs);
+            reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
         });
         try {
           return await Promise.race([promise, timeoutPromise]);
