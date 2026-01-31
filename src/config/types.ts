@@ -52,6 +52,12 @@ export interface LettaBotConfig {
 
   // Transcription (voice messages)
   transcription?: TranscriptionConfig;
+
+  // Attachment handling
+  attachments?: {
+    maxMB?: number;
+    maxAgeDays?: number;
+  };
 }
 
 export interface TranscriptionConfig {

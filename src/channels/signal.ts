@@ -25,6 +25,8 @@ export interface SignalConfig {
   dmPolicy?: DmPolicy;        // 'pairing' (default), 'allowlist', or 'open'
   allowedUsers?: string[];    // Phone numbers (config allowlist)
   selfChatMode?: boolean;     // Respond to Note to Self (default: true)
+  attachmentsDir?: string;
+  attachmentsMaxBytes?: number;
 }
 
 type SignalRpcResponse<T> = {

@@ -6,7 +6,7 @@
  */
 
 import type { ChannelAdapter } from './types.js';
-import type { InboundMessage, OutboundMessage } from '../core/types.js';
+import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
 import type { DmPolicy } from '../pairing/types.js';
 import {
   isUserAllowed,
@@ -15,14 +15,17 @@ import {
 } from '../pairing/store.js';
 import { normalizePhoneForStorage } from '../utils/phone.js';
 import { existsSync, mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import qrcode from 'qrcode-terminal';
+import { buildAttachmentPath, writeStreamToFile } from './attachments.js';
 
 export interface WhatsAppConfig {
   sessionPath?: string;  // Where to store auth state
   dmPolicy?: DmPolicy;   // 'pairing' (default), 'allowlist', or 'open'
   allowedUsers?: string[]; // Phone numbers (e.g., +15551234567)
   selfChatMode?: boolean; // Respond to "message yourself" (for personal number use)
+  attachmentsDir?: string;
+  attachmentsMaxBytes?: number;
 }
 
 export class WhatsAppAdapter implements ChannelAdapter {
@@ -33,6 +36,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private config: WhatsAppConfig;
   private running = false;
   private sessionPath: string;
+  private attachmentsDir?: string;
+  private attachmentsMaxBytes?: number;
+  private downloadContentFromMessage?: (message: any, type: string) => Promise<AsyncIterable<Uint8Array>>;
   private myJid: string = '';  // Bot's own JID (for selfChatMode)
   private myNumber: string = ''; // Bot's phone number
   private selfChatLid: string = ''; // Self-chat LID (for selfChatMode conversion)
@@ -48,6 +54,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
       dmPolicy: config.dmPolicy || 'pairing',  // Default to pairing
     };
     this.sessionPath = resolve(config.sessionPath || './data/whatsapp-session');
+    this.attachmentsDir = config.attachmentsDir;
+    this.attachmentsMaxBytes = config.attachmentsMaxBytes;
   }
   
   /**
@@ -144,6 +152,7 @@ Ask the bot owner to approve with:
       fetchLatestBaileysVersion,
       makeCacheableSignalKeyStore,
       downloadMediaMessage,
+      downloadContentFromMessage,
     } = await import('@whiskeysockets/baileys');
     
     // Load auth state
@@ -177,6 +186,10 @@ Ask the bot owner to approve with:
       markOnlineOnConnect: false,
       logger: silentLogger as any,
     });
+    this.downloadContentFromMessage = downloadContentFromMessage as unknown as (
+      message: any,
+      type: string
+    ) => Promise<AsyncIterable<Uint8Array>>;
     
     // Save credentials when updated
     this.sock.ev.on('creds.update', saveCreds);
@@ -255,13 +268,14 @@ Ask the bot owner to approve with:
           this.lidToJid.set(remoteJid, (m.key as any).senderPn);
         }
         
-        // Get message text or audio
-        let text = m.message?.conversation || 
-                   m.message?.extendedTextMessage?.text ||
+        // Unwrap message content (handles ephemeral/viewOnce messages)
+        const messageContent = this.unwrapMessageContent(m.message);
+        let text = messageContent?.conversation ||
+                   messageContent?.extendedTextMessage?.text ||
                    '';
         
-        // Handle audio/voice messages
-        const audioMessage = m.message?.audioMessage;
+        // Handle audio/voice messages - transcribe if configured
+        const audioMessage = messageContent?.audioMessage;
         if (audioMessage) {
           try {
             const { loadConfig } = await import('../config/index.js');
@@ -288,7 +302,11 @@ Ask the bot owner to approve with:
           }
         }
         
-        if (!text) continue;
+        // Detect other media (images, videos, documents)
+        const preview = this.extractMediaPreview(messageContent);
+        const resolvedText = text || preview.caption || '';
+        
+        if (!resolvedText && !preview.hasMedia) continue;
         
         const userId = normalizePhoneForStorage(remoteJid);
         const isGroup = remoteJid.endsWith('@g.us');
@@ -332,17 +350,22 @@ Ask the bot owner to approve with:
         }
         
         if (this.onMessage) {
+          const attachments = preview.hasMedia
+            ? (await this.collectAttachments(messageContent, remoteJid, messageId)).attachments
+            : [];
+          const finalText = text || preview.caption || '';
           await this.onMessage({
             channel: 'whatsapp',
             chatId: remoteJid,
             userId,
             userName: pushName || undefined,
             messageId: m.key?.id || undefined,
-            text,
+            text: finalText,
             timestamp: new Date(m.messageTimestamp * 1000),
             isGroup,
             // Group name would require additional API call to get chat metadata
             // For now, we don't have it readily available from the message
+            attachments,
           });
         }
       }
@@ -361,22 +384,8 @@ Ask the bot owner to approve with:
   
   async sendMessage(msg: OutboundMessage): Promise<{ messageId: string }> {
     if (!this.sock) throw new Error('WhatsApp not connected');
-    
-    // Convert LID to proper JID for sending
-    let targetJid = msg.chatId;
-    if (targetJid.includes('@lid')) {
-      if (targetJid === this.selfChatLid && this.myNumber) {
-        // Self-chat LID -> our own number
-        targetJid = `${this.myNumber}@s.whatsapp.net`;
-      } else if (this.lidToJid.has(targetJid)) {
-        // Friend LID -> their real JID from senderPn
-        targetJid = this.lidToJid.get(targetJid)!;
-      } else {
-        // FAIL SAFE: Don't send to unknown LID - could go to wrong person
-        console.error(`[WhatsApp] Cannot send to unknown LID: ${targetJid}`);
-        throw new Error(`Cannot send to unknown LID - no mapping found`);
-      }
-    }
+
+    const targetJid = this.resolveTargetJid(msg.chatId);
     
     try {
       const result = await this.sock.sendMessage(targetJid, { text: msg.text });
@@ -395,6 +404,29 @@ Ask the bot owner to approve with:
       throw error;
     }
   }
+
+  async sendFile(file: OutboundFile): Promise<{ messageId: string }> {
+    if (!this.sock) throw new Error('WhatsApp not connected');
+
+    const targetJid = this.resolveTargetJid(file.chatId);
+    const caption = file.caption || undefined;
+    const fileName = basename(file.filePath);
+    const payload = file.kind === 'image'
+      ? { image: { url: file.filePath }, caption }
+      : { document: { url: file.filePath }, caption, fileName };
+
+    const result = await this.sock.sendMessage(targetJid, payload);
+    const messageId = result?.key?.id || '';
+    if (messageId) {
+      this.sentMessageIds.add(messageId);
+      setTimeout(() => this.sentMessageIds.delete(messageId), 60000);
+    }
+    return { messageId };
+  }
+
+  async addReaction(_chatId: string, _messageId: string, _emoji: string): Promise<void> {
+    // WhatsApp reactions via Baileys are not supported here yet.
+  }
   
   supportsEditing(): boolean {
     return false;
@@ -408,4 +440,129 @@ Ask the bot owner to approve with:
     if (!this.sock) return;
     await this.sock.sendPresenceUpdate('composing', chatId);
   }
+
+  private unwrapMessageContent(message: any): any {
+    if (!message) return null;
+    if (message.ephemeralMessage?.message) return message.ephemeralMessage.message;
+    if (message.viewOnceMessage?.message) return message.viewOnceMessage.message;
+    if (message.viewOnceMessageV2?.message) return message.viewOnceMessageV2.message;
+    return message;
+  }
+
+  private extractMediaPreview(messageContent: any): { hasMedia: boolean; caption?: string } {
+    if (!messageContent) return { hasMedia: false };
+    const mediaMessage = messageContent.imageMessage
+      || messageContent.videoMessage
+      || messageContent.audioMessage
+      || messageContent.documentMessage
+      || messageContent.stickerMessage;
+    if (!mediaMessage) return { hasMedia: false };
+    return { hasMedia: true, caption: mediaMessage.caption as string | undefined };
+  }
+
+  private async collectAttachments(
+    messageContent: any,
+    chatId: string,
+    messageId: string
+  ): Promise<{ attachments: InboundAttachment[]; caption?: string }> {
+    const attachments: InboundAttachment[] = [];
+    if (!messageContent) return { attachments };
+    if (!this.downloadContentFromMessage) return { attachments };
+
+    let mediaMessage: any;
+    let mediaType: 'image' | 'video' | 'audio' | 'document' | 'sticker' | null = null;
+    let kind: InboundAttachment['kind'] = 'file';
+
+    if (messageContent.imageMessage) {
+      mediaMessage = messageContent.imageMessage;
+      mediaType = 'image';
+      kind = 'image';
+    } else if (messageContent.videoMessage) {
+      mediaMessage = messageContent.videoMessage;
+      mediaType = 'video';
+      kind = 'video';
+    } else if (messageContent.audioMessage) {
+      mediaMessage = messageContent.audioMessage;
+      mediaType = 'audio';
+      kind = 'audio';
+    } else if (messageContent.documentMessage) {
+      mediaMessage = messageContent.documentMessage;
+      mediaType = 'document';
+      kind = 'file';
+    } else if (messageContent.stickerMessage) {
+      mediaMessage = messageContent.stickerMessage;
+      mediaType = 'sticker';
+      kind = 'image';
+    }
+
+    if (!mediaMessage || !mediaType) return { attachments };
+
+    const mimeType = mediaMessage.mimetype as string | undefined;
+    const fileLength = mediaMessage.fileLength;
+    const size = typeof fileLength === 'number'
+      ? fileLength
+      : typeof fileLength?.toNumber === 'function'
+        ? fileLength.toNumber()
+        : undefined;
+    const ext = extensionFromMime(mimeType);
+    const defaultName = `whatsapp-${messageId}.${ext}`;
+    const name = mediaMessage.fileName || defaultName;
+
+    const attachment: InboundAttachment = {
+      name,
+      mimeType,
+      size,
+      kind,
+    };
+
+    if (this.attachmentsDir) {
+      if (this.attachmentsMaxBytes === 0) {
+        attachments.push(attachment);
+        const caption = mediaMessage.caption as string | undefined;
+        return { attachments, caption };
+      }
+      if (this.attachmentsMaxBytes && size && size > this.attachmentsMaxBytes) {
+        console.warn(`[WhatsApp] Attachment ${name} exceeds size limit, skipping download.`);
+        attachments.push(attachment);
+        const caption = mediaMessage.caption as string | undefined;
+        return { attachments, caption };
+      }
+      const target = buildAttachmentPath(this.attachmentsDir, 'whatsapp', chatId, name);
+      try {
+        const stream = await this.downloadContentFromMessage(mediaMessage, mediaType);
+        await writeStreamToFile(stream, target);
+        attachment.localPath = target;
+      } catch (err) {
+        console.warn('[WhatsApp] Failed to download attachment:', err);
+      }
+    }
+
+    attachments.push(attachment);
+    const caption = mediaMessage.caption as string | undefined;
+    return { attachments, caption };
+  }
+
+  private resolveTargetJid(chatId: string): string {
+    let targetJid = chatId;
+    if (targetJid.includes('@lid')) {
+      if (targetJid === this.selfChatLid && this.myNumber) {
+        targetJid = `${this.myNumber}@s.whatsapp.net`;
+      } else if (this.lidToJid.has(targetJid)) {
+        targetJid = this.lidToJid.get(targetJid)!;
+      } else {
+        console.error(`[WhatsApp] Cannot send to unknown LID: ${targetJid}`);
+        throw new Error('Cannot send to unknown LID - no mapping found');
+      }
+    }
+    return targetJid;
+  }
+}
+
+function extensionFromMime(mimeType?: string): string {
+  if (!mimeType) return 'bin';
+  const clean = mimeType.split(';')[0] || '';
+  const parts = clean.split('/');
+  if (parts.length < 2) return 'bin';
+  const ext = parts[1].trim();
+  return ext || 'bin';
 }

@@ -6,8 +6,8 @@
  */
 
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, promises as fs } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
 // Load YAML config and apply to process.env (overrides .env values)
@@ -135,6 +135,84 @@ function parseHeartbeatTarget(raw?: string): { channel: string; chatId: string }
   return { channel: channel.toLowerCase(), chatId };
 }
 
+const DEFAULT_ATTACHMENTS_MAX_MB = 20;
+const DEFAULT_ATTACHMENTS_MAX_AGE_DAYS = 14;
+const ATTACHMENTS_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+function resolveAttachmentsMaxBytes(): number {
+  const rawBytes = Number(process.env.ATTACHMENTS_MAX_BYTES);
+  if (Number.isFinite(rawBytes) && rawBytes >= 0) {
+    return rawBytes;
+  }
+  const rawMb = Number(process.env.ATTACHMENTS_MAX_MB);
+  if (Number.isFinite(rawMb) && rawMb >= 0) {
+    return Math.round(rawMb * 1024 * 1024);
+  }
+  return DEFAULT_ATTACHMENTS_MAX_MB * 1024 * 1024;
+}
+
+function resolveAttachmentsMaxAgeDays(): number {
+  const raw = Number(process.env.ATTACHMENTS_MAX_AGE_DAYS);
+  if (Number.isFinite(raw) && raw >= 0) {
+    return raw;
+  }
+  return DEFAULT_ATTACHMENTS_MAX_AGE_DAYS;
+}
+
+async function pruneAttachmentsDir(baseDir: string, maxAgeDays: number): Promise<void> {
+  if (maxAgeDays <= 0) return;
+  if (!existsSync(baseDir)) return;
+  const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  let deleted = 0;
+
+  const walk = async (dir: string): Promise<boolean> => {
+    let entries: Array<import('node:fs').Dirent>;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return true;
+    }
+    let hasEntries = false;
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const childHasEntries = await walk(fullPath);
+        if (!childHasEntries) {
+          try {
+            await fs.rmdir(fullPath);
+          } catch {
+            hasEntries = true;
+          }
+        } else {
+          hasEntries = true;
+        }
+        continue;
+      }
+      if (entry.isFile()) {
+        try {
+          const stats = await fs.stat(fullPath);
+          if (stats.mtimeMs < cutoff) {
+            await fs.rm(fullPath, { force: true });
+            deleted += 1;
+          } else {
+            hasEntries = true;
+          }
+        } catch {
+          hasEntries = true;
+        }
+        continue;
+      }
+      hasEntries = true;
+    }
+    return hasEntries;
+  };
+
+  await walk(baseDir);
+  if (deleted > 0) {
+    console.log(`[Attachments] Pruned ${deleted} file(s) older than ${maxAgeDays} days.`);
+  }
+}
+
 // Skills are installed to agent-scoped directory when agent is created (see core/bot.ts)
 
 // Configuration from environment
@@ -142,6 +220,8 @@ const config = {
   workingDir: process.env.WORKING_DIR || '/tmp/lettabot',
   model: process.env.MODEL, // e.g., 'claude-sonnet-4-20250514'
   allowedTools: (process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search').split(','),
+  attachmentsMaxBytes: resolveAttachmentsMaxBytes(),
+  attachmentsMaxAgeDays: resolveAttachmentsMaxAgeDays(),
   
   // Channel configs
   telegram: {
@@ -234,6 +314,19 @@ async function main() {
     agentName: process.env.AGENT_NAME || 'LettaBot',
     allowedTools: config.allowedTools,
   });
+
+  const attachmentsDir = resolve(config.workingDir, 'attachments');
+  pruneAttachmentsDir(attachmentsDir, config.attachmentsMaxAgeDays).catch((err) => {
+    console.warn('[Attachments] Prune failed:', err);
+  });
+  if (config.attachmentsMaxAgeDays > 0) {
+    const timer = setInterval(() => {
+      pruneAttachmentsDir(attachmentsDir, config.attachmentsMaxAgeDays).catch((err) => {
+        console.warn('[Attachments] Prune failed:', err);
+      });
+    }, ATTACHMENTS_PRUNE_INTERVAL_MS);
+    timer.unref?.();
+  }
   
   // Verify agent exists (clear stale ID if deleted)
   let initialStatus = bot.getStatus();
@@ -257,6 +350,8 @@ async function main() {
       token: config.telegram.token,
       dmPolicy: config.telegram.dmPolicy,
       allowedUsers: config.telegram.allowedUsers.length > 0 ? config.telegram.allowedUsers : undefined,
+      attachmentsDir,
+      attachmentsMaxBytes: config.attachmentsMaxBytes,
     });
     bot.registerChannel(telegram);
   }
@@ -266,6 +361,8 @@ async function main() {
       botToken: config.slack.botToken,
       appToken: config.slack.appToken,
       allowedUsers: config.slack.allowedUsers.length > 0 ? config.slack.allowedUsers : undefined,
+      attachmentsDir,
+      attachmentsMaxBytes: config.attachmentsMaxBytes,
     });
     bot.registerChannel(slack);
   }
@@ -276,6 +373,8 @@ async function main() {
       dmPolicy: config.whatsapp.dmPolicy,
       allowedUsers: config.whatsapp.allowedUsers.length > 0 ? config.whatsapp.allowedUsers : undefined,
       selfChatMode: config.whatsapp.selfChatMode,
+      attachmentsDir,
+      attachmentsMaxBytes: config.attachmentsMaxBytes,
     });
     bot.registerChannel(whatsapp);
   }
@@ -289,6 +388,8 @@ async function main() {
       dmPolicy: config.signal.dmPolicy,
       allowedUsers: config.signal.allowedUsers.length > 0 ? config.signal.allowedUsers : undefined,
       selfChatMode: config.signal.selfChatMode,
+      attachmentsDir,
+      attachmentsMaxBytes: config.attachmentsMaxBytes,
     });
     bot.registerChannel(signal);
   }
@@ -298,6 +399,8 @@ async function main() {
       token: config.discord.token,
       dmPolicy: config.discord.dmPolicy,
       allowedUsers: config.discord.allowedUsers.length > 0 ? config.discord.allowedUsers : undefined,
+      attachmentsDir,
+      attachmentsMaxBytes: config.attachmentsMaxBytes,
     });
     bot.registerChannel(discord);
   }

@@ -50,3 +50,8 @@ features:
   heartbeat:
     enabled: false
     intervalMin: 30
+
+# Attachment handling (defaults to 20MB if omitted)
+# attachments:
+#   maxMB: 20
+#   maxAgeDays: 14
