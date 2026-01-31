@@ -228,13 +228,12 @@ Ask the bot owner to approve with:
         const remoteJid = m.key.remoteJid || '';
         
         // Detect self-chat: message from ourselves to ourselves
-        // For self-chat, senderPn is undefined, so we detect by: fromMe + LID + selfChatMode
         const senderPn = (m.key as any).senderPn as string | undefined;
         const isSelfChat = m.key.fromMe && (
           remoteJid === this.myJid || 
           remoteJid.replace(/@.*/, '') === this.myNumber ||
-          // In selfChatMode, fromMe + LID (with no senderPn) = self-chat
-          (this.config.selfChatMode && remoteJid.includes('@lid') && !senderPn)
+          // In selfChatMode, fromMe + LID = self-chat (don't require !senderPn as it can vary)
+          (this.config.selfChatMode && remoteJid.includes('@lid'))
         );
         
         // Track self-chat LID for reply conversion
@@ -336,8 +335,11 @@ Ask the bot owner to approve with:
       } else if (this.lidToJid.has(targetJid)) {
         // Friend LID -> their real JID from senderPn
         targetJid = this.lidToJid.get(targetJid)!;
+      } else {
+        // FAIL SAFE: Don't send to unknown LID - could go to wrong person
+        console.error(`[WhatsApp] Cannot send to unknown LID: ${targetJid}`);
+        throw new Error(`Cannot send to unknown LID - no mapping found`);
       }
-      // If no mapping, keep as-is and hope baileys handles it
     }
     
     try {
