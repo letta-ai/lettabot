@@ -48,7 +48,7 @@ async function configure() {
     ['Telegram', config.channels.telegram?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Slack', config.channels.slack?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Discord', config.channels.discord?.enabled ? '✓ Enabled' : '✗ Disabled'],
-    ['Tchap', config.channels.tchap?.enabled ? '✓ Enabled' : '✗ Disabled'],
+    ['Matrix', config.channels.matrix?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Cron', config.features?.cron ? '✓ Enabled' : '✗ Disabled'],
     ['Heartbeat', config.features?.heartbeat?.enabled ? `✓ ${config.features.heartbeat.intervalMin}min` : '✗ Disabled'],
     ['BYOK Providers', config.providers?.length ? config.providers.map(p => p.name).join(', ') : 'None'],

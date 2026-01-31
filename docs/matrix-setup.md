@@ -1,4 +1,4 @@
-# Matrix / Tchap Setup Guide
+# Matrix Setup Guide
 
 LettaBot supports **Matrix** (including **Tchap**, the French government's secure messaging platform) with End-to-End Encryption (E2EE) enabled by default.
 
@@ -15,7 +15,7 @@ Run the onboarding wizard:
 lettabot onboard
 ```
 
-Select **Matrix / Tchap** and follow the prompts.
+Select **Matrix** and follow the prompts.
 
 ## Manual Configuration
 
@@ -40,7 +40,7 @@ The script will output `MATRIX_HOMESERVER_URL` and `MATRIX_ACCESS_TOKEN`.
 Add to your `.env` file:
 
 ```bash
-# Matrix / Tchap Configuration
+# Matrix Configuration
 MATRIX_HOMESERVER_URL=https://matrix.org
 MATRIX_ACCESS_TOKEN=syt_...
 MATRIX_ENCRYPTION_ENABLED=true  # Default: true

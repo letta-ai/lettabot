@@ -1,12 +1,12 @@
 # LettaBot
 
-Your personal AI assistant that remembers everything across **Telegram, Slack, Discord, WhatsApp, Signal, and Tchap**. Powered by the [Letta Code SDK](https://github.com/letta-ai/letta-code-sdk).
+Your personal AI assistant that remembers everything across **Telegram, Slack, Discord, WhatsApp, Signal, and Matrix**. Powered by the [Letta Code SDK](https://github.com/letta-ai/letta-code-sdk).
 
 <img width="750" alt="lettabot-preview" src="https://github.com/user-attachments/assets/9f01b845-d5b0-447b-927d-ae15f9ec7511" />
 
 ## Features
 
-- **Multi-Channel** - Chat seamlessly across Telegram, Slack, Discord, WhatsApp, Signal, and Tchap
+- **Multi-Channel** - Chat seamlessly across Telegram, Slack, Discord, WhatsApp, Signal, and Matrix
 - **Unified Memory** - Single agent remembers everything from all channels
 - **Persistent Memory** - Agent remembers conversations across sessions (days/weeks/months)
 - **Local Tool Execution** - Agent can read files, search code, run commands on your machine
@@ -125,7 +125,7 @@ Then ask your bot things like:
 
 ## Channel Setup
 
-LettaBot uses9: - **Matrix / Tchap Support**: E2EE-enabled integration with Matrix homeservers (including Tchap).nnels:
+LettaBot uses9: - **Matrix Support**: E2EE-enabled integration with Matrix homeservers (including Tchap).nnels:
 
 ```
 Telegram ──┐
@@ -133,7 +133,7 @@ Slack ─────┤
 Discord ───┼──→ ONE AGENT ──→ ONE CONVERSATION
 WhatsApp ──┤    (memory)      (chat history)
 Signal ────┤
-Tchap ─────┘
+Matrix ────┘
 ```
 
 - Start a conversation on Telegram
@@ -147,7 +147,8 @@ Tchap ─────┘
 | Slack | [Setup Guide](docs/slack-setup.md) | Slack app with Socket Mode |
 | Discord | [Setup Guide](docs/discord-setup.md) | Discord bot + Message Content Intent |
 | WhatsApp | [Setup Guide](docs/whatsapp-setup.md) | Phone with WhatsApp |
-| Signal | [Setup Guide](docs/signal-setup.md) | signal-cli + phone number136: ### Matrix / Tchap Setup Guide](docs/tchap-setup.md) | Tchap/Matrix account |
+| Signal | [Setup Guide](docs/signal-setup.md) | signal-cli + phone number |
+| Matrix | [Setup Guide](docs/matrix-setup.md) | Matrix account |
 
 At least one channel is required. Telegram is the easiest to start with.
 

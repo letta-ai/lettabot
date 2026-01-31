@@ -251,24 +251,6 @@ const config = {
 			process.env.MATRIX_ALLOWED_USERS?.split(",").filter(Boolean) || [],
 		messagePrefix: process.env.MATRIX_MESSAGE_PREFIX || undefined,
 	},
-	tchap: {
-		enabled:
-			!!process.env.TCHAP_HOMESERVER_URL && !!process.env.TCHAP_ACCESS_TOKEN,
-		homeserverUrl: process.env.TCHAP_HOMESERVER_URL || "",
-		accessToken: process.env.TCHAP_ACCESS_TOKEN || "",
-		storagePath: process.env.TCHAP_STORAGE_PATH || "./data/tchap",
-		cryptoStoragePath:
-			process.env.TCHAP_CRYPTO_STORAGE_PATH || "./data/tchap/crypto",
-		encryptionEnabled: process.env.TCHAP_ENCRYPTION_ENABLED !== "false",
-		autoJoinRooms: process.env.TCHAP_AUTO_JOIN_ROOMS !== "false",
-		dmPolicy: (process.env.TCHAP_DM_POLICY || "pairing") as
-			| "pairing"
-			| "allowlist"
-			| "open",
-		allowedUsers:
-			process.env.TCHAP_ALLOWED_USERS?.split(",").filter(Boolean) || [],
-		messagePrefix: process.env.TCHAP_MESSAGE_PREFIX || undefined,
-	},
 
 	// Cron
 	cronEnabled: process.env.CRON_ENABLED === "true",

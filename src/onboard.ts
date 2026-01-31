@@ -666,7 +666,7 @@ async function stepChannels(
 			},
 			{
 				value: "matrix",
-				label: "Matrix / Tchap",
+				label: "Matrix",
 				hint: "Generic Matrix or Tchap (E2EE)",
 			},
 		];
