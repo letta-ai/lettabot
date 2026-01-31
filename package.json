@@ -54,11 +54,15 @@
     "telegram-markdown-v2": "^0.0.4",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
+    "update-notifier": "^7.3.1",
     "yaml": "^2.8.2"
   },
   "optionalDependencies": {
     "@slack/bolt": "^4.6.0",
     "@whiskeysockets/baileys": "^6.7.21",
     "discord.js": "^14.25.1"
+  },
+  "devDependencies": {
+    "@types/update-notifier": "^6.0.8"
   }
 }
