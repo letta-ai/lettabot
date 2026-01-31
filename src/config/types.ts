@@ -7,121 +7,121 @@
  */
 
 export interface LettaBotConfig {
-  // Server connection
-  server: {
-    // 'cloud' (api.letta.com) or 'selfhosted'
-    mode: 'cloud' | 'selfhosted';
-    // Only for selfhosted mode
-    baseUrl?: string;
-    // Only for cloud mode
-    apiKey?: string;
-  };
+	// Server connection
+	server: {
+		// 'cloud' (api.letta.com) or 'selfhosted'
+		mode: "cloud" | "selfhosted";
+		// Only for selfhosted mode
+		baseUrl?: string;
+		// Only for cloud mode
+		apiKey?: string;
+	};
 
-  // Agent configuration
-  agent: {
-    id?: string;
-    name: string;
-    model: string;
-  };
+	// Agent configuration
+	agent: {
+		id?: string;
+		name: string;
+		model: string;
+	};
 
-  // BYOK providers (cloud mode only)
-  providers?: ProviderConfig[];
+	// BYOK providers (cloud mode only)
+	providers?: ProviderConfig[];
 
-  // Channel configurations
-  channels: {
-    telegram?: TelegramConfig;
-    slack?: SlackConfig;
-    whatsapp?: WhatsAppConfig;
-    signal?: SignalConfig;
-    discord?: DiscordConfig;
-    tchap?: TchapConfig;
-  };
+	// Channel configurations
+	channels: {
+		telegram?: TelegramConfig;
+		slack?: SlackConfig;
+		whatsapp?: WhatsAppConfig;
+		signal?: SignalConfig;
+		discord?: DiscordConfig;
+		matrix?: MatrixConfig;
+	};
 
-  // Features
-  features?: {
-    cron?: boolean;
-    heartbeat?: {
-      enabled: boolean;
-      intervalMin?: number;
-    };
-  };
+	// Features
+	features?: {
+		cron?: boolean;
+		heartbeat?: {
+			enabled: boolean;
+			intervalMin?: number;
+		};
+	};
 
-  // Integrations (Google Workspace, etc.)
-  integrations?: {
-    google?: GoogleConfig;
-  };
+	// Integrations (Google Workspace, etc.)
+	integrations?: {
+		google?: GoogleConfig;
+	};
 }
 
 export interface ProviderConfig {
-  id: string;           // e.g., 'anthropic', 'openai'
-  name: string;         // e.g., 'lc-anthropic'
-  type: string;         // e.g., 'anthropic', 'openai'
-  apiKey: string;
+	id: string; // e.g., 'anthropic', 'openai'
+	name: string; // e.g., 'lc-anthropic'
+	type: string; // e.g., 'anthropic', 'openai'
+	apiKey: string;
 }
 
 export interface TelegramConfig {
-  enabled: boolean;
-  token?: string;
-  dmPolicy?: 'pairing' | 'allowlist' | 'open';
-  allowedUsers?: string[];
+	enabled: boolean;
+	token?: string;
+	dmPolicy?: "pairing" | "allowlist" | "open";
+	allowedUsers?: string[];
 }
 
 export interface SlackConfig {
-  enabled: boolean;
-  appToken?: string;
-  botToken?: string;
-  allowedUsers?: string[];
+	enabled: boolean;
+	appToken?: string;
+	botToken?: string;
+	allowedUsers?: string[];
 }
 
 export interface WhatsAppConfig {
-  enabled: boolean;
-  selfChat?: boolean;
-  dmPolicy?: 'pairing' | 'allowlist' | 'open';
-  allowedUsers?: string[];
+	enabled: boolean;
+	selfChat?: boolean;
+	dmPolicy?: "pairing" | "allowlist" | "open";
+	allowedUsers?: string[];
 }
 
 export interface SignalConfig {
-  enabled: boolean;
-  phone?: string;
-  selfChat?: boolean;
-  dmPolicy?: 'pairing' | 'allowlist' | 'open';
-  allowedUsers?: string[];
+	enabled: boolean;
+	phone?: string;
+	selfChat?: boolean;
+	dmPolicy?: "pairing" | "allowlist" | "open";
+	allowedUsers?: string[];
 }
 
 export interface DiscordConfig {
-  enabled: boolean;
-  token?: string;
-  dmPolicy?: 'pairing' | 'allowlist' | 'open';
-  allowedUsers?: string[];
+	enabled: boolean;
+	token?: string;
+	dmPolicy?: "pairing" | "allowlist" | "open";
+	allowedUsers?: string[];
 }
 
-export interface TchapConfig {
-  enabled: boolean;
-  homeserverUrl?: string;
-  accessToken?: string;
-  storagePath?: string;
-  cryptoStoragePath?: string;
-  encryptionEnabled?: boolean;
-  autoJoinRooms?: boolean;
-  dmPolicy?: 'pairing' | 'allowlist' | 'open';
-  allowedUsers?: string[];
-  messagePrefix?: string;
+export interface MatrixConfig {
+	enabled: boolean;
+	homeserverUrl?: string;
+	accessToken?: string;
+	storagePath?: string;
+	cryptoStoragePath?: string;
+	encryptionEnabled?: boolean;
+	autoJoinRooms?: boolean;
+	dmPolicy?: "pairing" | "allowlist" | "open";
+	allowedUsers?: string[];
+	messagePrefix?: string;
 }
 
 export interface GoogleConfig {
-  enabled: boolean;
-  account?: string;
-  services?: string[];  // e.g., ['gmail', 'calendar', 'drive', 'contacts', 'docs', 'sheets']
+	enabled: boolean;
+	account?: string;
+	services?: string[]; // e.g., ['gmail', 'calendar', 'drive', 'contacts', 'docs', 'sheets']
 }
 
 // Default config
 export const DEFAULT_CONFIG: LettaBotConfig = {
-  server: {
-    mode: 'cloud',
-  },
-  agent: {
-    name: 'LettaBot',
-    model: 'zai/glm-4.7', // Free model default
-  },
-  channels: {},
+	server: {
+		mode: "cloud",
+	},
+	agent: {
+		name: "LettaBot",
+		model: "zai/glm-4.7", // Free model default
+	},
+	channels: {},
 };

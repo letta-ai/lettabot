@@ -1,20 +1,16 @@
 /**
- * Tchap Channel Adapter
+ * Matrix Channel Adapter
  *
- * Uses matrix-bot-sdk for Matrix/Tchap integration.
+ * Uses matrix-bot-sdk for Matrix integration (including Tchap).
  * Tchap is the French government's messaging platform built on Matrix.
  *
- * Reference: https://aide.tchap.numerique.gouv.fr/fr/article/documentation-technique-bot-et-integrations-tchap-1z3dfx/
+ * Reference: https://matrix.org/docs/guides
  */
 
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { InboundMessage, OutboundMessage } from "../core/types.js";
-import {
-	formatPairingMessage,
-	isUserAllowed,
-	upsertPairingRequest,
-} from "../pairing/store.js";
+import { isUserAllowed, upsertPairingRequest } from "../pairing/store.js";
 import type { DmPolicy } from "../pairing/types.js";
 import type { ChannelAdapter } from "./types.js";
 
@@ -22,43 +18,43 @@ import type { ChannelAdapter } from "./types.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 type MatrixClientType = import("matrix-bot-sdk").MatrixClient;
 
-export interface TchapConfig {
+export interface MatrixConfig {
 	// Required
-	homeserverUrl: string; // e.g., https://matrix.agent.dinum.tchap.gouv.fr
-	accessToken: string; // Pre-obtained via password login
+	homeserverUrl: string; // e.g., https://matrix.org or https://matrix.agent.dinum.tchap.gouv.fr
+	accessToken: string;
 
 	// Storage (critical for E2EE)
-	storagePath?: string; // Default: ./data/tchap
-	cryptoStoragePath?: string; // Default: ./data/tchap/crypto
+	storagePath?: string; // Default: ./data/matrix
+	cryptoStoragePath?: string; // Default: ./data/matrix/crypto
 
 	// Encryption
-	encryptionEnabled?: boolean; // Default: true (required for most Tchap rooms)
+	encryptionEnabled?: boolean; // Default: true
 
 	// Access control
 	dmPolicy?: DmPolicy; // 'pairing', 'allowlist', or 'open'
-	allowedUsers?: string[]; // Matrix user IDs: @user:agent.dinum.tchap.gouv.fr
+	allowedUsers?: string[];
 
 	// Behavior
 	autoJoinRooms?: boolean; // Default: true
-	messagePrefix?: string; // Optional prefix for bot messages (e.g., "[BOT]")
+	messagePrefix?: string; // Optional prefix for bot messages
 }
 
-export class TchapAdapter implements ChannelAdapter {
-	readonly id = "tchap" as const;
-	readonly name = "Tchap";
+export class MatrixAdapter implements ChannelAdapter {
+	readonly id = "matrix" as const;
+	readonly name = "Matrix";
 
 	private client: MatrixClientType | null = null;
-	private config: TchapConfig;
+	private config: MatrixConfig;
 	private running = false;
 	private userId: string | null = null;
 
 	onMessage?: (msg: InboundMessage) => Promise<void>;
 	onCommand?: (command: string) => Promise<string | null>;
 
-	constructor(config: TchapConfig) {
+	constructor(config: MatrixConfig) {
 		this.config = {
-			storagePath: "./data/tchap",
-			cryptoStoragePath: "./data/tchap/crypto",
+			storagePath: "./data/matrix",
+			cryptoStoragePath: "./data/matrix/crypto",
 			encryptionEnabled: true,
 			autoJoinRooms: true,
 			dmPolicy: "pairing",
@@ -79,8 +75,8 @@ export class TchapAdapter implements ChannelAdapter {
 		} = sdk;
 
 		// Ensure storage directories exist
-		const storagePath = this.config.storagePath ?? "./data/tchap";
-		const cryptoPath = this.config.cryptoStoragePath ?? "./data/tchap/crypto";
+		const storagePath = this.config.storagePath ?? "./data/matrix";
+		const cryptoPath = this.config.cryptoStoragePath ?? "./data/matrix/crypto";
 		mkdirSync(storagePath, { recursive: true });
 		mkdirSync(cryptoPath, { recursive: true });
 
@@ -100,11 +96,11 @@ export class TchapAdapter implements ChannelAdapter {
 					cryptoPath,
 					RustSdkCryptoStoreType.Sqlite,
 				);
-				console.log("[Tchap] Crypto storage initialized");
+				console.log("[Matrix] Crypto storage initialized");
 			} catch (error) {
-				console.warn("[Tchap] Failed to initialize crypto storage:", error);
+				console.warn("[Matrix] Failed to initialize crypto storage:", error);
 				console.warn(
-					"[Tchap] E2EE will not be available. For E2EE, run: pnpm approve-builds",
+					"[Matrix] E2EE will not be available. For E2EE, run: pnpm approve-builds",
 				);
 			}
 		}
@@ -121,11 +117,11 @@ export class TchapAdapter implements ChannelAdapter {
 		if (this.config.encryptionEnabled && cryptoStorage) {
 			try {
 				await this.client.crypto.prepare([]);
-				console.log("[Tchap] E2EE encryption enabled");
+				console.log("[Matrix] E2EE encryption enabled");
 			} catch (error) {
-				console.error("[Tchap] Failed to setup encryption:", error);
+				console.error("[Matrix] Failed to setup encryption:", error);
 				console.warn(
-					"[Tchap] Continuing without E2EE support - encrypted rooms will not work!",
+					"[Matrix] Continuing without E2EE support - encrypted rooms will not work!",
 				);
 			}
 		}
@@ -147,9 +143,9 @@ export class TchapAdapter implements ChannelAdapter {
 			this.handleDecryptionFailure.bind(this),
 		);
 
-		console.log(`[Tchap] Connecting to ${this.config.homeserverUrl}...`);
+		console.log(`[Matrix] Connecting to ${this.config.homeserverUrl}...`);
 		await this.client.start();
-		console.log(`[Tchap] Bot started as ${this.userId}`);
+		console.log(`[Matrix] Bot started as ${this.userId}`);
 		this.running = true;
 	}
 
@@ -175,26 +171,47 @@ export class TchapAdapter implements ChannelAdapter {
 			if (access !== "allowed") {
 				if (access === "pairing") {
 					const { code, created } = await upsertPairingRequest(
-						"tchap",
+						"matrix",
 						sender,
 						{
 							username: sender,
 						},
 					);
 					if (created && code) {
-						console.log(`[Tchap] New pairing request from ${sender}: ${code}`);
-						const message =
-							`Bonjour ! Ce bot nécessite un appairage.\n\n` +
-							`Votre code : **${code}**\n\n` +
-							`Demandez à l'administrateur d'exécuter :\n` +
-							`\`lettabot pairing approve tchap ${code}\`\n\n` +
-							`Ce code expire dans 1 heure.`;
+						console.log(`[Matrix] New pairing request from ${sender}: ${code}`);
+
+						// Detect Tchap for French localization
+						const isTchap =
+							this.config.homeserverUrl.includes("tchap.gouv.fr") ||
+							this.config.homeserverUrl.includes("tchap.incubateur.net");
+
+						let message = "";
+						if (isTchap) {
+							message =
+								`Bonjour ! Ce bot nécessite un appairage.\n\n` +
+								`Votre code : **${code}**\n\n` +
+								`Demandez à l'administrateur d'exécuter :\n` +
+								`\`lettabot pairing approve matrix ${code}\`\n\n` +
+								`Ce code expire dans 1 heure.`;
+						} else {
+							message =
+								`Hi! This bot requires pairing.\n\n` +
+								`Your code: **${code}**\n\n` +
+								`Ask the admin to run:\n` +
+								`\`lettabot pairing approve matrix ${code}\`\n\n` +
+								`Expires in 1 hour.`;
+						}
 						await this.sendTextToRoom(roomId, message);
 					}
 				} else {
+					const isTchap =
+						this.config.homeserverUrl.includes("tchap.gouv.fr") ||
+						this.config.homeserverUrl.includes("tchap.incubateur.net");
 					await this.sendTextToRoom(
 						roomId,
-						"Désolé, vous n'êtes pas autorisé à utiliser ce bot.",
+						isTchap
+							? "Désolé, vous n'êtes pas autorisé à utiliser ce bot."
+							: "Sorry, you're not authorized to use this bot.",
 					);
 				}
 				return;
@@ -223,7 +240,7 @@ export class TchapAdapter implements ChannelAdapter {
 
 			if (this.onMessage) {
 				await this.onMessage({
-					channel: "tchap",
+					channel: "matrix",
 					chatId: roomId,
 					userId: sender,
 					userName: this.extractUsername(sender),
@@ -235,7 +252,7 @@ export class TchapAdapter implements ChannelAdapter {
 				});
 			}
 		} catch (error) {
-			console.error("[Tchap] Error handling message:", error);
+			console.error("[Matrix] Error handling message:", error);
 		}
 	}
 
@@ -244,7 +261,7 @@ export class TchapAdapter implements ChannelAdapter {
 		event: Record<string, unknown>,
 	): Promise<void> {
 		const eventId = event.event_id as string;
-		console.error(`[Tchap] Failed to decrypt message ${eventId} in ${roomId}`);
+		console.error(`[Matrix] Failed to decrypt message ${eventId} in ${roomId}`);
 
 		try {
 			await this.sendTextToRoom(
@@ -270,7 +287,7 @@ export class TchapAdapter implements ChannelAdapter {
 		if (policy === "open") return "allowed";
 
 		const allowed = await isUserAllowed(
-			"tchap",
+			"matrix",
 			userId,
 			this.config.allowedUsers,
 		);
@@ -283,7 +300,7 @@ export class TchapAdapter implements ChannelAdapter {
 		if (!this.running || !this.client) return;
 		this.client.stop();
 		this.running = false;
-		console.log("[Tchap] Bot stopped");
+		console.log("[Matrix] Bot stopped");
 	}
 
 	isRunning(): boolean {
@@ -291,7 +308,7 @@ export class TchapAdapter implements ChannelAdapter {
 	}
 
 	private async sendTextToRoom(roomId: string, text: string): Promise<string> {
-		if (!this.client) throw new Error("Tchap not started");
+		if (!this.client) throw new Error("Matrix not started");
 
 		const body = this.config.messagePrefix
 			? `${this.config.messagePrefix}\n\n${text}`
@@ -302,7 +319,7 @@ export class TchapAdapter implements ChannelAdapter {
 	}
 
 	async sendMessage(msg: OutboundMessage): Promise<{ messageId: string }> {
-		if (!this.client) throw new Error("Tchap not started");
+		if (!this.client) throw new Error("Matrix not started");
 
 		const text = this.config.messagePrefix
 			? `${this.config.messagePrefix}\n\n${msg.text}`
@@ -323,7 +340,7 @@ export class TchapAdapter implements ChannelAdapter {
 		messageId: string,
 		text: string,
 	): Promise<void> {
-		if (!this.client) throw new Error("Tchap not started");
+		if (!this.client) throw new Error("Matrix not started");
 
 		// Matrix uses m.replace relation for edits
 		await this.client.sendEvent(chatId, "m.room.message", {
@@ -343,7 +360,7 @@ export class TchapAdapter implements ChannelAdapter {
 	}
 
 	async sendTypingIndicator(chatId: string): Promise<void> {
-		if (!this.client) throw new Error("Tchap not started");
+		if (!this.client) throw new Error("Matrix not started");
 		await this.client.setTyping(chatId, true, 5000); // 5 second timeout
 	}
 

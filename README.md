@@ -125,7 +125,7 @@ Then ask your bot things like:
 
 ## Channel Setup
 
-LettaBot uses a **single agent with a single conversation** across all channels:
+LettaBot uses9: - **Matrix / Tchap Support**: E2EE-enabled integration with Matrix homeservers (including Tchap).nnels:
 
 ```
 Telegram ──┐
@@ -147,8 +147,7 @@ Tchap ─────┘
 | Slack | [Setup Guide](docs/slack-setup.md) | Slack app with Socket Mode |
 | Discord | [Setup Guide](docs/discord-setup.md) | Discord bot + Message Content Intent |
 | WhatsApp | [Setup Guide](docs/whatsapp-setup.md) | Phone with WhatsApp |
-| Signal | [Setup Guide](docs/signal-setup.md) | signal-cli + phone number |
-| Tchap / Matrix | [Setup Guide](docs/tchap-setup.md) | Tchap/Matrix account |
+| Signal | [Setup Guide](docs/signal-setup.md) | signal-cli + phone number136: ### Matrix / Tchap Setup Guide](docs/tchap-setup.md) | Tchap/Matrix account |
 
 At least one channel is required. Telegram is the easiest to start with.
 

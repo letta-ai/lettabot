@@ -54,7 +54,7 @@ export type ChannelId =
 	| "whatsapp"
 	| "signal"
 	| "discord"
-	| "tchap";
+	| "matrix";
 
 /**
  * Inbound message from any channel

@@ -6,7 +6,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 
@@ -135,9 +135,10 @@ async function refreshTokensIfNeeded(): Promise<void> {
 await refreshTokensIfNeeded();
 
 import { DiscordAdapter } from "./channels/discord.js";
+import { MatrixAdapter } from "./channels/matrix.js";
 import { SignalAdapter } from "./channels/signal.js";
 import { SlackAdapter } from "./channels/slack.js";
-import { TchapAdapter } from "./channels/tchap.js";
+
 import { TelegramAdapter } from "./channels/telegram.js";
 import { WhatsAppAdapter } from "./channels/whatsapp.js";
 import { LettaBot } from "./core/bot.js";
@@ -232,6 +233,24 @@ const config = {
 		allowedUsers:
 			process.env.DISCORD_ALLOWED_USERS?.split(",").filter(Boolean) || [],
 	},
+	matrix: {
+		enabled:
+			!!process.env.MATRIX_HOMESERVER_URL && !!process.env.MATRIX_ACCESS_TOKEN,
+		homeserverUrl: process.env.MATRIX_HOMESERVER_URL || "",
+		accessToken: process.env.MATRIX_ACCESS_TOKEN || "",
+		storagePath: process.env.MATRIX_STORAGE_PATH || "./data/matrix",
+		cryptoStoragePath:
+			process.env.MATRIX_CRYPTO_STORAGE_PATH || "./data/matrix/crypto",
+		encryptionEnabled: process.env.MATRIX_ENCRYPTION_ENABLED !== "false",
+		autoJoinRooms: process.env.MATRIX_AUTO_JOIN_ROOMS !== "false",
+		dmPolicy: (process.env.MATRIX_DM_POLICY || "pairing") as
+			| "pairing"
+			| "allowlist"
+			| "open",
+		allowedUsers:
+			process.env.MATRIX_ALLOWED_USERS?.split(",").filter(Boolean) || [],
+		messagePrefix: process.env.MATRIX_MESSAGE_PREFIX || undefined,
+	},
 	tchap: {
 		enabled:
 			!!process.env.TCHAP_HOMESERVER_URL && !!process.env.TCHAP_ACCESS_TOKEN,
@@ -281,11 +300,11 @@ if (
 	!config.whatsapp.enabled &&
 	!config.signal.enabled &&
 	!config.discord.enabled &&
-	!config.tchap.enabled
+	!config.matrix.enabled
 ) {
 	console.error("\n  Error: No channels configured.");
 	console.error(
-		"  Set TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN+SLACK_APP_TOKEN, WHATSAPP_ENABLED=true, SIGNAL_PHONE_NUMBER, DISCORD_BOT_TOKEN, or TCHAP_HOMESERVER_URL+TCHAP_ACCESS_TOKEN\n",
+		"  Set TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN+SLACK_APP_TOKEN, WHATSAPP_ENABLED=true, SIGNAL_PHONE_NUMBER, DISCORD_BOT_TOKEN, or MATRIX_HOMESERVER_URL+MATRIX_ACCESS_TOKEN\n",
 	);
 	process.exit(1);
 }
@@ -404,22 +423,22 @@ async function main() {
 		bot.registerChannel(discord);
 	}
 
-	if (config.tchap.enabled) {
-		const tchap = new TchapAdapter({
-			homeserverUrl: config.tchap.homeserverUrl,
-			accessToken: config.tchap.accessToken,
-			storagePath: config.tchap.storagePath,
-			cryptoStoragePath: config.tchap.cryptoStoragePath,
-			encryptionEnabled: config.tchap.encryptionEnabled,
-			autoJoinRooms: config.tchap.autoJoinRooms,
-			dmPolicy: config.tchap.dmPolicy,
+	if (config.matrix.enabled) {
+		const matrix = new MatrixAdapter({
+			homeserverUrl: config.matrix.homeserverUrl,
+			accessToken: config.matrix.accessToken,
+			storagePath: config.matrix.storagePath,
+			cryptoStoragePath: config.matrix.cryptoStoragePath,
+			encryptionEnabled: config.matrix.encryptionEnabled,
+			autoJoinRooms: config.matrix.autoJoinRooms,
+			dmPolicy: config.matrix.dmPolicy,
 			allowedUsers:
-				config.tchap.allowedUsers.length > 0
-					? config.tchap.allowedUsers
+				config.matrix.allowedUsers.length > 0
+					? config.matrix.allowedUsers
 					: undefined,
-			messagePrefix: config.tchap.messagePrefix,
+			messagePrefix: config.matrix.messagePrefix,
 		});
-		bot.registerChannel(tchap);
+		bot.registerChannel(matrix);
 	}
 
 	// Start cron service if enabled
