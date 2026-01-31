@@ -43,13 +43,22 @@ export class Store {
     // Allow env var override (useful for local server testing with specific agent)
     return this.data.agentId || process.env.LETTA_AGENT_ID || null;
   }
-  
+
   set agentId(id: string | null) {
     this.data.agentId = id;
     this.data.lastUsedAt = new Date().toISOString();
     if (id && !this.data.createdAt) {
       this.data.createdAt = new Date().toISOString();
     }
+    this.save();
+  }
+
+  get conversationId(): string | null {
+    return this.data.conversationId || null;
+  }
+
+  set conversationId(id: string | null) {
+    this.data.conversationId = id;
     this.save();
   }
   

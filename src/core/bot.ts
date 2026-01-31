@@ -168,22 +168,33 @@ export class LettaBot {
       permissionMode: 'bypassPermissions' as const,
       allowedTools: this.config.allowedTools,
       cwd: this.config.workingDir,
-      model: this.config.model,
       systemPrompt: SYSTEM_PROMPT,
     };
-    
+
     console.log('[Bot] Session options:', JSON.stringify(baseOptions, null, 2));
-    
+
     try {
-      if (this.store.agentId) {
-        process.env.LETTA_AGENT_ID = this.store.agentId;
-        console.log(`[Bot] Resuming session for agent ${this.store.agentId}`);
+      if (this.store.conversationId) {
+        // Resume existing conversation
+        console.log(`[Bot] Resuming conversation ${this.store.conversationId}`);
         console.log(`[Bot] LETTA_BASE_URL=${process.env.LETTA_BASE_URL}`);
         console.log(`[Bot] LETTA_API_KEY=${process.env.LETTA_API_KEY ? '(set)' : '(not set)'}`);
-        session = resumeSession(this.store.agentId, baseOptions);
+        session = resumeSession(this.store.conversationId, baseOptions);
+      } else if (this.store.agentId) {
+        process.env.LETTA_AGENT_ID = this.store.agentId;
+        console.log(`[Bot] Creating new conversation for agent ${this.store.agentId}`);
+        console.log(`[Bot] LETTA_BASE_URL=${process.env.LETTA_BASE_URL}`);
+        console.log(`[Bot] LETTA_API_KEY=${process.env.LETTA_API_KEY ? '(set)' : '(not set)'}`);
+        // Create new conversation on existing agent (agent memory persists)
+        session = createSession(this.store.agentId, baseOptions);
       } else {
         console.log('[Bot] Creating new session');
-        session = createSession({ ...baseOptions, memory: loadMemoryBlocks(this.config.agentName) });
+        // Only set model when creating new agent
+        session = createSession(undefined, {
+          ...baseOptions,
+          model: this.config.model,
+          memory: loadMemoryBlocks(this.config.agentName)
+        });
       }
       console.log(`[Bot] Session object:`, Object.keys(session));
       console.log(`[Bot] Session initialized:`, (session as any).initialized);
@@ -293,7 +304,7 @@ export class LettaBot {
               const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
               this.store.setAgent(session.agentId, currentBaseUrl);
               console.log('Saved agent ID:', session.agentId, 'on server:', currentBaseUrl);
-              
+
               // Setup new agents: set name, install skills
               if (isNewAgent) {
                 if (this.config.agentName) {
@@ -301,6 +312,11 @@ export class LettaBot {
                 }
                 installSkillsToAgent(session.agentId);
               }
+            }
+            // Save conversation ID for resuming
+            if (session.conversationId && session.conversationId !== this.store.conversationId) {
+              this.store.conversationId = session.conversationId;
+              console.log('Saved conversation ID:', session.conversationId);
             }
             break;
           }
@@ -369,17 +385,25 @@ export class LettaBot {
       permissionMode: 'bypassPermissions' as const,
       allowedTools: this.config.allowedTools,
       cwd: this.config.workingDir,
-      model: this.config.model,
       systemPrompt: SYSTEM_PROMPT,
     };
-    
+
     let session: Session;
-    if (this.store.agentId) {
-      session = resumeSession(this.store.agentId, baseOptions);
+    if (this.store.conversationId) {
+      // Resume existing conversation
+      session = resumeSession(this.store.conversationId, baseOptions);
+    } else if (this.store.agentId) {
+      // Create new conversation on existing agent (agent memory persists)
+      session = createSession(this.store.agentId, baseOptions);
     } else {
-      session = createSession({ ...baseOptions, memory: loadMemoryBlocks(this.config.agentName) });
+      // Only set model when creating new agent
+      session = createSession(undefined, {
+        ...baseOptions,
+        model: this.config.model,
+        memory: loadMemoryBlocks(this.config.agentName)
+      });
     }
-    
+
     try {
       await session.send(text);
       
@@ -393,6 +417,10 @@ export class LettaBot {
           if (session.agentId && session.agentId !== this.store.agentId) {
             const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
             this.store.setAgent(session.agentId, currentBaseUrl);
+          }
+          // Save conversation ID for resuming
+          if (session.conversationId && session.conversationId !== this.store.conversationId) {
+            this.store.conversationId = session.conversationId;
           }
           break;
         }

@@ -99,6 +99,7 @@ export interface LastMessageTarget {
  */
 export interface AgentStore {
   agentId: string | null;
+  conversationId?: string | null; // Current conversation to resume
   baseUrl?: string; // Server URL this agent belongs to
   createdAt?: string;
   lastUsedAt?: string;
