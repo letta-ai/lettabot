@@ -43,8 +43,8 @@ letta-code-sdk/
 # WhatsApp session (contains credentials)
 data/whatsapp-session/
 
-# Tchap session (contains credentials)
-data/tchap/
+# Matrix session (contains credentials)
+data/matrix/
 
 # Config with secrets
 lettabot.yaml
