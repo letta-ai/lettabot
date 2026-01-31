@@ -18,7 +18,7 @@ Your personal AI assistant that remembers everything across **Telegram, Slack, D
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - A Letta API key from [app.letta.com](https://app.letta.com) (or a running [Letta Docker server](https://docs.letta.com/guides/docker/))
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
 
