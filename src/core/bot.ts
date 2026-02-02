@@ -206,7 +206,7 @@ export class LettaBot {
       } else {
         // Create new agent with default conversation
         console.log('[Bot] Creating new agent');
-        session = createSession(undefined, { ...baseOptions, model: this.config.model, memory: loadMemoryBlocks(this.config.agentName) });
+        session = createSession({ ...baseOptions, model: this.config.model, memory: loadMemoryBlocks(this.config.agentName) });
       }
       console.log('[Bot] Session created/resumed');
       
@@ -418,7 +418,7 @@ export class LettaBot {
       session = resumeSession(this.store.agentId, baseOptions);
     } else {
       // Create new agent with default conversation
-      session = createSession(undefined, { ...baseOptions, model: this.config.model, memory: loadMemoryBlocks(this.config.agentName) });
+      session = createSession({ ...baseOptions, model: this.config.model, memory: loadMemoryBlocks(this.config.agentName) });
     }
     
     try {
