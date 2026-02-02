@@ -19,7 +19,7 @@ Your personal AI assistant that remembers everything across **Telegram, Slack, D
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - A Letta API key from [app.letta.com](https://app.letta.com) (or a running [Letta Docker server](https://docs.letta.com/guides/docker/))
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
 
@@ -36,6 +36,17 @@ npm install
 # Build and link the CLI globally
 npm run build
 npm link
+```
+
+### Update
+
+```bash
+# Pull latest changes
+git pull origin main
+
+# Reinstall dependencies and rebuild
+npm install
+npm run build
 ```
 
 #### Optional: Run a Letta Docker server 

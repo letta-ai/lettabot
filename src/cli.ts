@@ -16,10 +16,16 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
+import updateNotifier from 'update-notifier';
 
 // Get the directory where this CLI file is located (works with npx, global install, etc.)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// Check for updates (runs in background, shows notification if update available)
+const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
+updateNotifier({ pkg }).notify();
+
 import * as readline from 'node:readline';
 
 const args = process.argv.slice(2);
