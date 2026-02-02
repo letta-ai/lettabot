@@ -188,6 +188,7 @@ export class LettaBot {
       allowedTools: this.config.allowedTools,
       cwd: this.config.workingDir,
       systemPrompt: SYSTEM_PROMPT,
+      // bypassPermissions mode auto-allows all tools, no canUseTool callback needed
     };
     
     console.log('[Bot] Creating/resuming session');
@@ -405,6 +406,7 @@ export class LettaBot {
       allowedTools: this.config.allowedTools,
       cwd: this.config.workingDir,
       systemPrompt: SYSTEM_PROMPT,
+      // bypassPermissions mode auto-allows all tools, no canUseTool callback needed
     };
     
     let session: Session;
