@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formatMessageEnvelope } from './formatter.js';
 import type { InboundMessage } from './types.js';
-
 // Helper to create base message
 function createMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
   return {
@@ -214,6 +213,27 @@ describe('formatMessageEnvelope', () => {
       const result = formatMessageEnvelope(msg, { includeDay: false });
       // Should not include day of week
       expect(result).not.toMatch(/Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday/);
+    });
+  });
+
+  describe('reactions', () => {
+    it('includes reaction metadata when present', () => {
+      const msg = createMessage({
+        messageId: '1710000000.000000',
+        reaction: {
+          emoji: ':thumbsup:',
+          messageId: '1710000000.000000',
+          action: 'added',
+        },
+      });
+
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('Reaction: added :thumbsup: (msg:1710000000.000000)');
+    });
+
+    it('omits reaction metadata when not present', () => {
+      const result = formatMessageEnvelope(createMessage());
+      expect(result).not.toContain('Reaction:');
     });
   });
 });
