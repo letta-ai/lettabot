@@ -45,3 +45,4 @@ data/whatsapp-session/
 # Config with secrets
 lettabot.yaml
 lettabot.yml
+bun.lock
