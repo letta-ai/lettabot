@@ -14,6 +14,7 @@ function getClient(): Letta {
   return new Letta({ 
     apiKey: apiKey || '', 
     baseURL: LETTA_BASE_URL,
+    defaultHeaders: { "X-Letta-Source": "lettabot" },
   });
 }
 
