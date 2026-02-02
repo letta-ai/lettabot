@@ -182,6 +182,7 @@ export class LettaBot {
     
     // Create or resume session
     let session: Session;
+    let usedDefaultConversation = false;
     // Base options for all sessions (model only included for new agents)
     const baseOptions = {
       permissionMode: 'bypassPermissions' as const,
@@ -202,6 +203,7 @@ export class LettaBot {
         // Agent exists but no conversation - try default conversation
         console.log(`[Bot] Resuming agent default conversation: ${this.store.agentId}`);
         process.env.LETTA_AGENT_ID = this.store.agentId;
+        usedDefaultConversation = true;
         session = resumeSession(this.store.agentId, baseOptions);
       } else {
         // Create new agent with default conversation
@@ -225,7 +227,20 @@ export class LettaBot {
         }
       };
 
-      const initInfo = await withTimeout(session.initialize(), 'Session initialize');
+      let initInfo;
+      try {
+        initInfo = await withTimeout(session.initialize(), 'Session initialize');
+      } catch (error) {
+        if (usedDefaultConversation && this.store.agentId) {
+          console.warn('[Bot] Default conversation missing, creating a new conversation...');
+          session.close();
+          session = createSession(this.store.agentId, baseOptions);
+          initInfo = await withTimeout(session.initialize(), 'Session initialize (new conversation)');
+          usedDefaultConversation = false;
+        } else {
+          throw error;
+        }
+      }
 
       // Send message to agent with metadata envelope
       const formattedMessage = formatMessageEnvelope(msg);
@@ -410,11 +425,13 @@ export class LettaBot {
     };
     
     let session: Session;
+    let usedDefaultConversation = false;
     if (this.store.conversationId) {
       // Resume the specific conversation we've been using
       session = resumeSession(this.store.conversationId, baseOptions);
     } else if (this.store.agentId) {
       // Agent exists but no conversation - try default conversation
+      usedDefaultConversation = true;
       session = resumeSession(this.store.agentId, baseOptions);
     } else {
       // Create new agent with default conversation
@@ -422,7 +439,19 @@ export class LettaBot {
     }
     
     try {
-      await session.send(text);
+      try {
+        await session.send(text);
+      } catch (error) {
+        if (usedDefaultConversation && this.store.agentId) {
+          console.warn('[Bot] Default conversation missing, creating a new conversation...');
+          session.close();
+          session = createSession(this.store.agentId, baseOptions);
+          await session.send(text);
+          usedDefaultConversation = false;
+        } else {
+          throw error;
+        }
+      }
       
       let response = '';
       for await (const msg of session.stream()) {
