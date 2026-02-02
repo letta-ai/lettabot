@@ -296,6 +296,7 @@ async function maybeDownloadSlackFile(
   try {
     await downloadToFile(url, target, { Authorization: `Bearer ${token}` });
     attachment.localPath = target;
+    console.log(`[Slack] Attachment saved to ${target}`);
   } catch (err) {
     console.warn('[Slack] Failed to download attachment:', err);
   }

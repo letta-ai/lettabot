@@ -6,14 +6,18 @@
  */
 
 import type { ChannelAdapter } from './types.js';
-import type { InboundMessage, OutboundMessage } from '../core/types.js';
+import type { InboundAttachment, InboundMessage, OutboundMessage } from '../core/types.js';
 import type { DmPolicy } from '../pairing/types.js';
 import {
   isUserAllowed,
   upsertPairingRequest,
 } from '../pairing/store.js';
+import { buildAttachmentPath } from './attachments.js';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { copyFile, stat } from 'node:fs/promises';
 
 export interface SignalConfig {
   phoneNumber: string;        // Bot's phone number (E.164 format, e.g., +15551234567)
@@ -52,6 +56,10 @@ type SignalSseEvent = {
         contentType?: string;
         filename?: string;
         id?: string;
+        size?: number;
+        width?: number;
+        height?: number;
+        caption?: string;
       }>;
     };
     syncMessage?: {
@@ -68,6 +76,10 @@ type SignalSseEvent = {
           contentType?: string;
           filename?: string;
           id?: string;
+          size?: number;
+          width?: number;
+          height?: number;
+          caption?: string;
         }>;
       };
     };
@@ -549,13 +561,16 @@ This code expires in 1 hour.`;
         }
       }
       
+      // Collect non-voice attachments (images, files, etc.)
+      const collectedAttachments = await this.collectSignalAttachments(attachments, chatId);
+      
       // After processing attachments, check if we have any message content.
       // If this was a voice-only message and transcription failed/was disabled,
       // still forward a placeholder so the user knows we got it.
       if (!messageText && voiceAttachment?.id) {
         messageText = '[Voice message received]';
       }
-      if (!messageText) {
+      if (!messageText && collectedAttachments.length === 0) {
         return;
       }
       
@@ -611,10 +626,11 @@ This code expires in 1 hour.`;
         channel: 'signal',
         chatId,
         userId: source,
-        text: messageText,
+        text: messageText || '',
         timestamp: new Date(envelope.timestamp || Date.now()),
         isGroup,
         groupName: groupInfo?.groupName,
+        attachments: collectedAttachments.length > 0 ? collectedAttachments : undefined,
       };
       
       this.onMessage?.(msg).catch((err) => {
@@ -670,5 +686,68 @@ This code expires in 1 hour.`;
     }
     
     return parsed.result as T;
+  }
+
+  /**
+   * Collect attachments from a Signal message
+   * Copies from signal-cli's attachments directory to our attachments directory
+   */
+  private async collectSignalAttachments(
+    attachments: Array<{ contentType?: string; filename?: string; id?: string; size?: number; width?: number; height?: number; caption?: string }> | undefined,
+    chatId: string
+  ): Promise<InboundAttachment[]> {
+    if (!attachments || attachments.length === 0) return [];
+    if (!this.config.attachmentsDir) return [];
+    
+    const results: InboundAttachment[] = [];
+    const signalAttachmentsDir = join(homedir(), '.local/share/signal-cli/attachments');
+    
+    for (const attachment of attachments) {
+      // Skip voice attachments - handled separately by transcription
+      if (attachment.contentType?.startsWith('audio/')) continue;
+      
+      if (!attachment.id) continue;
+      
+      const sourcePath = join(signalAttachmentsDir, attachment.id);
+      const name = attachment.filename || attachment.id;
+      
+      const entry: InboundAttachment = {
+        id: attachment.id,
+        name,
+        mimeType: attachment.contentType,
+        size: attachment.size,
+        kind: attachment.contentType?.startsWith('image/') ? 'image' 
+            : attachment.contentType?.startsWith('video/') ? 'video'
+            : 'file',
+      };
+      
+      // Check size limit
+      if (this.config.attachmentsMaxBytes && this.config.attachmentsMaxBytes > 0) {
+        try {
+          const stats = await stat(sourcePath);
+          if (stats.size > this.config.attachmentsMaxBytes) {
+            console.warn(`[Signal] Attachment ${name} exceeds size limit, skipping download.`);
+            results.push(entry);
+            continue;
+          }
+        } catch {
+          // File might not exist
+        }
+      }
+      
+      // Copy to our attachments directory
+      const target = buildAttachmentPath(this.config.attachmentsDir, 'signal', chatId, name);
+      try {
+        await copyFile(sourcePath, target);
+        entry.localPath = target;
+        console.log(`[Signal] Attachment saved to ${target}`);
+      } catch (err) {
+        console.warn('[Signal] Failed to copy attachment:', err);
+      }
+      
+      results.push(entry);
+    }
+    
+    return results;
   }
 }

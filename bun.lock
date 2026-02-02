@@ -8,7 +8,7 @@
         "@clack/prompts": "^0.11.0",
         "@hapi/boom": "^10.0.1",
         "@letta-ai/letta-client": "^1.7.7",
-        "@letta-ai/letta-code-sdk": "^0.0.3",
+        "@letta-ai/letta-code-sdk": "^0.0.4",
         "@types/express": "^5.0.6",
         "@types/node": "^25.0.10",
         "@types/node-schedule": "^2.1.8",
@@ -19,6 +19,7 @@
         "gray-matter": "^4.0.3",
         "node-schedule": "^2.1.1",
         "open": "^11.0.0",
+        "openai": "^6.17.0",
         "qrcode-terminal": "^0.12.0",
         "telegram-markdown-v2": "^0.0.4",
         "tsx": "^4.21.0",
@@ -185,9 +186,9 @@
 
     "@letta-ai/letta-client": ["@letta-ai/letta-client@1.7.7", "", {}, "sha512-jPq/hpctvN7DGnOg+1yRWAMdPhWeVxh89qOhQMzhO55q6/ai/yXHJ0hoXiPbQOZWHb2kO+WwjsLROVkb5Hj8ow=="],
 
-    "@letta-ai/letta-code": ["@letta-ai/letta-code@0.14.1", "", { "dependencies": { "@letta-ai/letta-client": "^1.7.6", "glob": "^13.0.0", "ink-link": "^5.0.0", "open": "^10.2.0", "sharp": "^0.34.5" }, "optionalDependencies": { "@vscode/ripgrep": "^1.17.0" }, "bin": { "letta": "letta.js" } }, "sha512-4XQQxqDUlFNo7uKBilyIJ4KKHC8QrFoeMfZXmr9LgtNMtXYqB+I5AYuCnG9BBueeZgO1hlDN2ekJZELyJUqrPQ=="],
+    "@letta-ai/letta-code": ["@letta-ai/letta-code@0.14.7", "", { "dependencies": { "@letta-ai/letta-client": "^1.7.7", "glob": "^13.0.0", "ink-link": "^5.0.0", "open": "^10.2.0", "sharp": "^0.34.5" }, "optionalDependencies": { "@vscode/ripgrep": "^1.17.0" }, "bin": { "letta": "letta.js" } }, "sha512-k24IkG+xAfCJOeQIcd/UBDOnilEmu//poS0/PgWMzdkkSiH0KB2MwfGaMXqirU88StQY0zWY4ZeUf92LVsfRFw=="],
 
-    "@letta-ai/letta-code-sdk": ["@letta-ai/letta-code-sdk@0.0.3", "", { "dependencies": { "@letta-ai/letta-code": "latest" } }, "sha512-lal4bEGspmPcy0fxTNovgjyev5oOOdHEIkQXXLSzusVdi1yKOgYn3pyfRj/A/h+WgYjr3O/rWvp3yjOXRjf0TA=="],
+    "@letta-ai/letta-code-sdk": ["@letta-ai/letta-code-sdk@0.0.4", "", { "dependencies": { "@letta-ai/letta-code": "latest" } }, "sha512-ipNzKgZA0VF5npOBuQhL9wqQbvhzsEuSXhawqen/jdorSonIEnwFw7OvpVcVvxmah9+5yEk1KvD5ymrVJWu08A=="],
 
     "@pinojs/redact": ["@pinojs/redact@0.4.0", "", {}, "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg=="],
 
@@ -762,6 +763,8 @@
     "onetime": ["onetime@5.1.2", "", { "dependencies": { "mimic-fn": "^2.1.0" } }, "sha512-kbpaSSGJTWdAY5KPVeMOKXSrPtr8C8C7wodJbcsd51jRnmD+GZu8Y0VoU6Dm5Z4vWr0Ig/1NKuWRKf7j5aaYSg=="],
 
     "open": ["open@11.0.0", "", { "dependencies": { "default-browser": "^5.4.0", "define-lazy-prop": "^3.0.0", "is-in-ssh": "^1.0.0", "is-inside-container": "^1.0.0", "powershell-utils": "^0.1.0", "wsl-utils": "^0.3.0" } }, "sha512-smsWv2LzFjP03xmvFoJ331ss6h+jixfA4UUV/Bsiyuu4YJPfN+FIQGOIiv4w9/+MoHkfkJ22UIaQWRVFRfH6Vw=="],
+
+    "openai": ["openai@6.17.0", "", { "peerDependencies": { "ws": "^8.18.0", "zod": "^3.25 || ^4.0" }, "optionalPeers": ["ws", "zod"], "bin": { "openai": "bin/cli" } }, "sha512-NHRpPEUPzAvFOAFs9+9pC6+HCw/iWsYsKCMPXH5Kw7BpMxqd8g/A07/1o7Gx2TWtCnzevVRyKMRFqyiHyAlqcA=="],
 
     "p-finally": ["p-finally@1.0.0", "", {}, "sha512-LICb2p9CB7FS+0eR1oqWnHhp0FljGLZCWBE9aix0Uye9W8LTQPwMTYVGWQWIw9RdQiDg4+epXQODwIYJtSJaow=="],
 

@@ -532,6 +532,7 @@ Ask the bot owner to approve with:
         const stream = await this.downloadContentFromMessage(mediaMessage, mediaType);
         await writeStreamToFile(stream, target);
         attachment.localPath = target;
+        console.log(`[WhatsApp] Attachment saved to ${target}`);
       } catch (err) {
         console.warn('[WhatsApp] Failed to download attachment:', err);
       }

@@ -330,6 +330,7 @@ Ask the bot owner to approve with:
         try {
           await downloadToFile(attachment.url, target);
           entry.localPath = target;
+          console.log(`[Discord] Attachment saved to ${target}`);
         } catch (err) {
           console.warn('[Discord] Failed to download attachment:', err);
         }

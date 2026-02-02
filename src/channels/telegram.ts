@@ -468,6 +468,7 @@ export class TelegramAdapter implements ChannelAdapter {
       const url = `https://api.telegram.org/file/bot${this.config.token}/${remotePath}`;
       await downloadToFile(url, target);
       attachment.localPath = target;
+      console.log(`[Telegram] Attachment saved to ${target}`);
     } catch (err) {
       console.warn('[Telegram] Failed to download attachment:', err);
     }
