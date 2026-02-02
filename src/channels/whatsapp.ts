@@ -208,6 +208,11 @@ Ask the bot owner to approve with:
     
     // Handle incoming messages
     this.sock.ev.on('messages.upsert', async ({ messages, type }: any) => {
+      // Only process new messages, not historical backfill
+      if (type !== 'notify') {
+        console.log(`[WhatsApp] Skipping ${messages.length} historical message(s) (type: ${type})`);
+        return;
+      }
       
       for (const m of messages) {
         const messageId = m.key.id || '';
