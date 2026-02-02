@@ -14,6 +14,8 @@
     "dev": "tsx src/main.ts",
     "build": "tsc",
     "start": "node dist/main.js",
+    "test": "vitest",
+    "test:run": "vitest run",
     "skills": "tsx src/cli.ts skills",
     "skills:list": "tsx src/cli.ts skills list",
     "skills:status": "tsx src/cli.ts skills status",
@@ -64,6 +66,7 @@
     "discord.js": "^14.25.1"
   },
   "devDependencies": {
-    "@types/update-notifier": "^6.0.8"
+    "@types/update-notifier": "^6.0.8",
+    "vitest": "^4.0.18"
   }
 }
