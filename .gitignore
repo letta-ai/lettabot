@@ -46,3 +46,4 @@ data/whatsapp-session/
 lettabot.yaml
 lettabot.yml
 bun.lock
+.tool-versions

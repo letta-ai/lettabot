@@ -7,7 +7,7 @@
 
 import { Bot, InputFile } from 'grammy';
 import type { ChannelAdapter } from './types.js';
-import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
+import type { InboundAttachment, InboundMessage, InboundReaction, OutboundFile, OutboundMessage } from '../core/types.js';
 import type { DmPolicy } from '../pairing/types.js';
 import {
   isUserAllowed,
@@ -171,6 +171,51 @@ export class TelegramAdapter implements ChannelAdapter {
           messageId: String(ctx.message.message_id),
           text,
           timestamp: new Date(),
+        });
+      }
+    });
+
+    // Handle message reactions (Bot API >= 7.0)
+    this.bot.on('message_reaction', async (ctx) => {
+      const reaction = ctx.update.message_reaction;
+      if (!reaction) return;
+      const userId = reaction.user?.id;
+      if (!userId) return;
+
+      const access = await this.checkAccess(
+        String(userId),
+        reaction.user?.username,
+        reaction.user?.first_name
+      );
+      if (access !== 'allowed') {
+        return;
+      }
+
+      const chatId = reaction.chat?.id;
+      const messageId = reaction.message_id;
+      if (!chatId || !messageId) return;
+
+      const newEmoji = extractTelegramReaction(reaction.new_reaction?.[0]);
+      const oldEmoji = extractTelegramReaction(reaction.old_reaction?.[0]);
+      const emoji = newEmoji || oldEmoji;
+      if (!emoji) return;
+
+      const action: InboundReaction['action'] = newEmoji ? 'added' : 'removed';
+
+      if (this.onMessage) {
+        await this.onMessage({
+          channel: 'telegram',
+          chatId: String(chatId),
+          userId: String(userId),
+          userName: reaction.user?.username || reaction.user?.first_name || undefined,
+          messageId: String(messageId),
+          text: '',
+          timestamp: new Date(),
+          reaction: {
+            emoji,
+            messageId: String(messageId),
+            action,
+          },
         });
       }
     });
@@ -474,6 +519,21 @@ export class TelegramAdapter implements ChannelAdapter {
     }
     return attachment;
   }
+}
+
+function extractTelegramReaction(reaction?: {
+  type?: string;
+  emoji?: string;
+  custom_emoji_id?: string;
+}): string | null {
+  if (!reaction) return null;
+  if ('emoji' in reaction && reaction.emoji) {
+    return reaction.emoji;
+  }
+  if ('custom_emoji_id' in reaction && reaction.custom_emoji_id) {
+    return `custom:${reaction.custom_emoji_id}`;
+  }
+  return null;
 }
 
 const TELEGRAM_EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {

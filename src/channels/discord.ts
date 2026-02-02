@@ -6,7 +6,7 @@
  */
 
 import type { ChannelAdapter } from './types.js';
-import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
+import type { InboundAttachment, InboundMessage, InboundReaction, OutboundFile, OutboundMessage } from '../core/types.js';
 import type { DmPolicy } from '../pairing/types.js';
 import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
@@ -123,10 +123,12 @@ Ask the bot owner to approve with:
       intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMessageReactions,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.DirectMessageReactions,
       ],
-      partials: [Partials.Channel],
+      partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
     });
 
     this.client.on('ready', () => {
@@ -245,6 +247,14 @@ Ask the bot owner to approve with:
       console.error('[Discord] Client error:', err);
     });
 
+    this.client.on('messageReactionAdd', async (reaction, user) => {
+      await this.handleReactionEvent(reaction, user, 'added');
+    });
+
+    this.client.on('messageReactionRemove', async (reaction, user) => {
+      await this.handleReactionEvent(reaction, user, 'removed');
+    });
+
     console.log('[Discord] Connecting...');
     await this.client.login(this.config.token);
   }
@@ -299,6 +309,69 @@ Ask the bot owner to approve with:
 
   supportsEditing(): boolean {
     return true;
+  }
+
+  private async handleReactionEvent(
+    reaction: import('discord.js').MessageReaction | import('discord.js').PartialMessageReaction,
+    user: import('discord.js').User | import('discord.js').PartialUser,
+    action: InboundReaction['action']
+  ): Promise<void> {
+    if ('bot' in user && user.bot) return;
+
+    try {
+      if (reaction.partial) {
+        await reaction.fetch();
+      }
+      if (reaction.message.partial) {
+        await reaction.message.fetch();
+      }
+    } catch (err) {
+      console.warn('[Discord] Failed to fetch reaction/message:', err);
+    }
+
+    const message = reaction.message;
+    const channelId = message.channel?.id;
+    if (!channelId) return;
+
+    const access = await this.checkAccess(user.id);
+    if (access !== 'allowed') {
+      return;
+    }
+
+    const emoji = reaction.emoji.id
+      ? reaction.emoji.toString()
+      : (reaction.emoji.name || reaction.emoji.toString());
+    if (!emoji) return;
+
+    const isGroup = !!message.guildId;
+    const groupName = isGroup && 'name' in message.channel
+      ? message.channel.name || undefined
+      : undefined;
+    const userId = user.id;
+    const userName = 'username' in user ? (user.username ?? undefined) : undefined;
+    const displayName = message.guild?.members.cache.get(userId)?.displayName
+      || userName
+      || userId;
+
+    this.onMessage?.({
+      channel: 'discord',
+      chatId: channelId,
+      userId: userId,
+      userName: displayName,
+      userHandle: userName || userId,
+      messageId: message.id,
+      text: '',
+      timestamp: new Date(),
+      isGroup,
+      groupName,
+      reaction: {
+        emoji,
+        messageId: message.id,
+        action,
+      },
+    }).catch((err) => {
+      console.error('[Discord] Error handling reaction:', err);
+    });
   }
 
   private async collectAttachments(attachments: unknown, channelId: string): Promise<InboundAttachment[]> {

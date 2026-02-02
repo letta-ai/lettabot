@@ -168,6 +168,14 @@ function formatAttachments(msg: InboundMessage): string {
   return `Attachments:\n${lines.join('\n')}`;
 }
 
+function formatReaction(msg: InboundMessage): string {
+  if (!msg.reaction) return '';
+  const action = msg.reaction.action || 'added';
+  const emoji = msg.reaction.emoji;
+  const target = msg.reaction.messageId;
+  return `Reaction: ${action} ${emoji} (msg:${target})`;
+}
+
 /**
  * Format a message with metadata envelope
  * 
@@ -221,7 +229,8 @@ export function formatMessageEnvelope(
   const hint = formatHint ? `\n(Format: ${formatHint})` : '';
 
   const attachmentBlock = formatAttachments(msg);
-  const bodyParts = [msg.text, attachmentBlock].filter((part) => part && part.trim());
+  const reactionBlock = formatReaction(msg);
+  const bodyParts = [msg.text, reactionBlock, attachmentBlock].filter((part) => part && part.trim());
   const body = bodyParts.join('\n');
   const spacer = body ? ` ${body}` : '';
   return `${envelope}${spacer}${hint}`;
