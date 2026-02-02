@@ -319,34 +319,6 @@ async function collectSlackAttachments(
   return attachments;
 }
 
-const EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
-  eyes: '👀',
-  thumbsup: '👍',
-  thumbs_up: '👍',
-  '+1': '👍',
-  heart: '❤️',
-  fire: '🔥',
-  smile: '😄',
-  laughing: '😆',
-  tada: '🎉',
-  clap: '👏',
-  ok_hand: '👌',
-};
-
-const UNICODE_TO_ALIAS = new Map<string, string>(
-  Object.entries(EMOJI_ALIAS_TO_UNICODE).map(([name, value]) => [value, name])
-);
-
-function resolveSlackEmojiName(input: string): string | null {
-  const aliasMatch = input.match(/^:([^:]+):$/);
-  if (aliasMatch) {
-    return aliasMatch[1];
-  }
-  if (EMOJI_ALIAS_TO_UNICODE[input]) {
-    return input;
-  }
-  return UNICODE_TO_ALIAS.get(input) || null;
-}
 
 const EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
   eyes: '👀',
