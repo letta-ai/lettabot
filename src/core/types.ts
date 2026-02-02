@@ -55,6 +55,12 @@ export interface InboundAttachment {
   kind?: 'image' | 'file' | 'audio' | 'video';
 }
 
+export interface InboundReaction {
+  emoji: string;
+  messageId: string;
+  action?: 'added' | 'removed';
+}
+
 /**
  * Inbound message from any channel
  */
@@ -71,6 +77,7 @@ export interface InboundMessage {
   isGroup?: boolean;      // Is this from a group chat?
   groupName?: string;     // Group/channel name if applicable
   attachments?: InboundAttachment[];
+  reaction?: InboundReaction;
 }
 
 /**
