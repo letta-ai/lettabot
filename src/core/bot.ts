@@ -295,7 +295,11 @@ export class LettaBot {
           session.abort().catch((err) => {
             console.error('[Bot] Stream abort failed:', err);
           });
-          session.close();
+          try {
+            session.close();
+          } catch (err) {
+            console.error('[Bot] Stream close failed:', err);
+          }
         }, streamIdleMs);
       };
       resetIdleTimer();
