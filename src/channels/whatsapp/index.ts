@@ -31,7 +31,7 @@ import type {
 import type { CredsSaveQueue } from "../../utils/creds-queue.js";
 
 // Session management
-import { createWaSocket, type SocketResult } from "./session.js";
+import { createWaSocket, installConsoleFilters, type SocketResult } from "./session.js";
 
 // Inbound message handling
 import { extractInboundMessage } from "./inbound/extract.js";
@@ -241,6 +241,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
   async start(): Promise<void> {
     if (this.running) return;
+
+    // Suppress Baileys crypto noise from console
+    installConsoleFilters();
 
     this.running = true;
     this.reconnectState.abortController = new AbortController();
@@ -805,9 +808,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
           ? reason.message
           : String(reason ?? "").slice(0, 200);
 
-      // Just log - these are normal Signal Protocol session renegotiations
+      // Silently ignore - these are normal Signal Protocol session renegotiations
       // Forcing reconnect would destroy session keys and cause "Waiting for this message" errors
-      console.log("[WhatsApp] Signal Protocol renegotiation (normal):", errorStr);
+      // No logging needed - this is just crypto noise
 
       // Don't call forceDisconnect() - let Baileys handle it internally
     };
