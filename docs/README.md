@@ -11,6 +11,7 @@ LettaBot is a multi-channel AI assistant powered by [Letta](https://letta.com) t
 - [Gmail Pub/Sub](./gmail-pubsub.md) - Email notifications integration
 
 ### Channel Setup
+- [Telegram Setup](./telegram-setup.md) - BotFather token setup
 - [Slack Setup](./slack-setup.md) - Socket Mode configuration
 - [Discord Setup](./discord-setup.md) - Bot application setup
 - [WhatsApp Setup](./whatsapp-setup.md) - Baileys/QR code setup
