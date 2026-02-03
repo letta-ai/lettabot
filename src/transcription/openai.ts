@@ -80,20 +80,40 @@ function getMimeType(filename: string): string {
 }
 
 /**
- * Normalize filename for Whisper API
+ * Map unsupported extensions to Whisper-compatible equivalents
+ * These mappings work for whisper-1 and gpt-4o-transcribe models
+ */
+const FORMAT_MAP: Record<string, string> = {
+  'aac': 'm4a',     // AAC codec - M4A is AAC in MP4 container
+  'amr': 'mp3',     // AMR (mobile voice) - try as mp3
+  'opus': 'ogg',    // Opus codec typically in OGG container
+  'x-caf': 'm4a',   // Apple CAF format
+  'caf': 'm4a',     // Apple CAF format (alternate)
+  '3gp': 'mp4',     // 3GP mobile format
+  '3gpp': 'mp4',    // 3GPP mobile format
+};
+
+/**
+ * Normalize filename for Whisper/GPT-4o transcription API
  * Converts unsupported extensions to supported equivalents
  */
 function normalizeFilename(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase();
   
-  // AAC is just the codec - Whisper accepts it as m4a
-  if (ext === 'aac') {
-    return filename.replace(/\.aac$/i, '.m4a');
+  if (!ext) {
+    return filename + '.ogg';
   }
   
   // Check if already supported
-  if (ext && SUPPORTED_FORMATS.includes(ext)) {
+  if (SUPPORTED_FORMATS.includes(ext)) {
     return filename;
+  }
+  
+  // Map to supported format if we have a mapping
+  const mapped = FORMAT_MAP[ext];
+  if (mapped) {
+    console.log(`[Transcription] Mapping .${ext} → .${mapped}`);
+    return filename.replace(new RegExp(`\\.${ext}$`, 'i'), `.${mapped}`);
   }
   
   // Default fallback - try as ogg
