@@ -17,7 +17,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { copyFile, stat } from 'node:fs/promises';
+import { copyFile, stat, access } from 'node:fs/promises';
+import { constants } from 'node:fs';
 
 export interface SignalConfig {
   phoneNumber: string;        // Bot's phone number (E.164 format, e.g., +15551234567)
@@ -88,6 +89,33 @@ type SignalSseEvent = {
     };
   };
 };
+
+/**
+ * Wait for a file to exist on disk with exponential backoff.
+ * Signal-cli may still be downloading attachments when the SSE event fires.
+ *
+ * @param filePath - Path to check
+ * @param maxWaitMs - Maximum time to wait (default: 5000ms)
+ * @param intervalMs - Initial polling interval (default: 100ms)
+ * @returns true if file exists, false if timeout exceeded
+ */
+async function waitForFile(filePath: string, maxWaitMs = 5000, intervalMs = 100): Promise<boolean> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < maxWaitMs) {
+    try {
+      await access(filePath, constants.R_OK);
+      return true;
+    } catch {
+      // File not ready yet, wait and retry
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      // Exponential backoff: double the interval, cap at 500ms
+      intervalMs = Math.min(intervalMs * 2, 500);
+    }
+  }
+
+  return false;
+}
 
 export class SignalAdapter implements ChannelAdapter {
   readonly id = 'signal' as const;
@@ -545,17 +573,21 @@ This code expires in 1 hour.`;
             }
           } else {
             // Read attachment from signal-cli attachments directory
-            const { readFileSync, existsSync } = await import('node:fs');
+            // Note: signal-cli may still be downloading when SSE event fires, so we wait
+            const { readFileSync } = await import('node:fs');
             const { homedir } = await import('node:os');
             const { join } = await import('node:path');
             
             const attachmentPath = join(homedir(), '.local/share/signal-cli/attachments', voiceAttachment.id);
-            console.log(`[Signal] Reading attachment from: ${attachmentPath}`);
+            console.log(`[Signal] Waiting for attachment: ${attachmentPath}`);
             
-            if (!existsSync(attachmentPath)) {
-              console.error(`[Signal] Attachment file not found: ${attachmentPath}`);
-              throw new Error(`Attachment file not found: ${attachmentPath}`);
+            // Wait for file to be available (signal-cli may still be downloading)
+            const fileReady = await waitForFile(attachmentPath, 5000);
+            if (!fileReady) {
+              console.error(`[Signal] Attachment file not found after waiting: ${attachmentPath}`);
+              throw new Error(`Attachment file not found after waiting: ${attachmentPath}`);
             }
+            console.log(`[Signal] Attachment file ready: ${attachmentPath}`);
             
             const buffer = readFileSync(attachmentPath);
             console.log(`[Signal] Read ${buffer.length} bytes`);
@@ -747,6 +779,14 @@ This code expires in 1 hour.`;
         } catch {
           // File might not exist
         }
+      }
+      
+      // Wait for file to be available (signal-cli may still be downloading)
+      const fileReady = await waitForFile(sourcePath, 5000);
+      if (!fileReady) {
+        console.warn(`[Signal] Attachment ${name} not found after waiting, skipping.`);
+        results.push(entry);
+        continue;
       }
       
       // Copy to our attachments directory
