@@ -258,13 +258,18 @@ export class TelegramAdapter implements ChannelAdapter {
   async start(): Promise<void> {
     if (this.running) return;
     
-    await this.bot.start({
+    // Don't await - bot.start() never resolves (it's a long-polling loop)
+    // The onStart callback fires when polling begins
+    this.bot.start({
       onStart: (botInfo) => {
         console.log(`[Telegram] Bot started as @${botInfo.username}`);
         console.log(`[Telegram] DM policy: ${this.config.dmPolicy}`);
         this.running = true;
       },
     });
+    
+    // Give it a moment to connect before returning
+    await new Promise(resolve => setTimeout(resolve, 1000));
   }
   
   async stop(): Promise<void> {
