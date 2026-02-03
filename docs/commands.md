@@ -1,6 +1,6 @@
 # Commands Reference
 
-LettaBot responds to these slash commands in Telegram.
+LettaBot responds to these slash commands in chat channels.
 
 ## Available Commands
 
@@ -9,55 +9,39 @@ LettaBot responds to these slash commands in Telegram.
 Shows the welcome message and list of available commands.
 
 ```
-🤖 LettaBot - AI assistant with persistent memory
+LettaBot - AI assistant with persistent memory
 
 Commands:
-/new - Start a new conversation (keeps memory)
-/reset - Create a new agent (fresh memory)
-/status - Show current agent ID
+/status - Show current status
 /help - Show this message
 
 Just send me a message to get started!
 ```
 
-### `/new`
-
-Starts a new conversation while keeping the same agent and memory.
-
-Use this when you want to change topics but keep your agent's memory of who you are and past interactions.
-
-**Example:**
-```
-You: /new
-Bot: Started a new conversation. Your agent still remembers you!
-You: Let's talk about something different now.
-```
-
-### `/reset`
-
-Creates a completely fresh agent with no memory.
-
-Use this if you want to start over from scratch, as if you've never talked to the bot before.
-
-**Warning:** This permanently deletes your agent's memory of past conversations.
-
-**Example:**
-```
-You: /reset
-Bot: Created a fresh agent with no memory. Send a message to begin!
-```
-
 ### `/status`
 
-Shows your current agent ID.
+Shows your current agent ID and connection status.
 
 Useful for debugging or if you need to reference your agent in other tools.
 
 **Example:**
 ```
 You: /status
-Bot: Current agent: agent-a1b2c3d4-e5f6-7890-abcd-ef1234567890
+Bot: Agent: agent-a1b2c3d4-...
+     Model: claude-sonnet-4
+     Channels: telegram, slack
 ```
+
+### `/heartbeat`
+
+Manually triggers a heartbeat check-in.
+
+Heartbeats are background tasks where the agent can:
+- Review pending tasks
+- Check reminders
+- Perform proactive actions
+
+**Note:** This command runs silently - the agent won't automatically reply. If the agent wants to message you during a heartbeat, it will use the `lettabot-message` CLI.
 
 ## Sending Messages
 
@@ -82,10 +66,8 @@ The bot supports markdown formatting in responses:
 - ```Code blocks```
 - [Links](https://example.com)
 
-## Future Commands
+Note: Available formatting varies by channel. WhatsApp and Signal have limited markdown support.
 
-These commands are planned for future releases:
+## Cross-Channel Commands
 
-- `/model <name>` - Switch the LLM model
-- `/verbose` - Toggle tool output visibility
-- `/context` - Show memory summary
+Commands work the same across all channels (Telegram, Slack, Discord, WhatsApp, Signal). The agent maintains a single conversation across all channels.

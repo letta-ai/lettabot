@@ -1,61 +1,74 @@
 # LettaBot Documentation
 
-LettaBot is a Telegram bot powered by [Letta](https://letta.com) that provides persistent memory and local tool execution.
+LettaBot is a multi-channel AI assistant powered by [Letta](https://letta.com) that provides persistent memory and local tool execution across Telegram, Slack, Discord, WhatsApp, and Signal.
 
 ## Guides
 
 - [Getting Started](./getting-started.md) - Installation and basic setup
+- [Configuration Reference](./configuration.md) - All config options
+- [Commands Reference](./commands.md) - Bot commands reference
+- [Scheduling Tasks](./cron-setup.md) - Cron jobs and heartbeats
 - [Gmail Pub/Sub](./gmail-pubsub.md) - Email notifications integration
-- [Commands](./commands.md) - Bot commands reference
+
+### Channel Setup
+- [Slack Setup](./slack-setup.md) - Socket Mode configuration
+- [Discord Setup](./discord-setup.md) - Bot application setup
+- [WhatsApp Setup](./whatsapp-setup.md) - Baileys/QR code setup
+- [Signal Setup](./signal-setup.md) - signal-cli daemon setup
 
 ## Architecture
 
+LettaBot uses a **single agent with unified memory** across all channels:
+
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                     Your Server / Machine                             │
-│                                                                       │
-│  ┌────────────────┐        ┌───────────────────────────────────────┐ │
-│  │    Telegram    │        │            LettaBot Core               │ │
-│  │    Bot API     │◀──────▶│         (TypeScript/Node)             │ │
-│  │   (grammY)     │        │                                       │ │
-│  └────────────────┘        │  ┌─────────────────────────────────┐  │ │
-│                            │  │     Session Manager              │  │ │
-│                            │  │  userId → agentId (persisted)   │  │ │
-│                            │  └─────────────────────────────────┘  │ │
-│                            │                                       │ │
-│                            │  ┌─────────────────────────────────┐  │ │
-│                            │  │     Letta Code SDK              │  │ │
-│                            │  │  createSession/resumeSession    │  │ │
-│                            │  └──────────────┬──────────────────┘  │ │
-│                            └─────────────────┼─────────────────────┘ │
-│                                              │ spawn subprocess      │
-│                                              ▼                       │
-│                            ┌─────────────────────────────────────┐   │
-│                            │          Letta Code CLI              │   │
-│                            │   (--input-format stream-json)       │   │
-│                            │                                      │   │
-│                            │  Local Tool Execution:               │   │
-│                            │  • Read/Glob/Grep - file ops         │   │
-│                            │  • Task - spawn subagents            │   │
-│                            │  • web_search - internet queries     │   │
-│                            └──────────────────┬───────────────────┘   │
-└───────────────────────────────────────────────┼───────────────────────┘
-                                                │ Letta API
-                                                ▼
-                              ┌──────────────────────────────────┐
-                              │        Letta Server              │
-                              │   (api.letta.com or self-hosted) │
-                              │                                  │
-                              │  • Agent Memory (persistent)     │
-                              │  • LLM Inference                 │
-                              │  • Conversation History          │
-                              └──────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        Your Server / Machine                              │
+│                                                                           │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌──────────┐  ┌───────┐ │
+│  │  Telegram  │  │   Slack    │  │  Discord   │  │ WhatsApp │  │ Signal│ │
+│  │  (grammY)  │  │  (Socket)  │  │ (Gateway)  │  │(Baileys) │  │ (CLI) │ │
+│  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └────┬─────┘  └───┬───┘ │
+│        │               │               │              │            │      │
+│        └───────────────┴───────────────┴──────────────┴────────────┘      │
+│                                    │                                      │
+│                          ┌─────────▼─────────┐                            │
+│                          │   LettaBot Core   │                            │
+│                          │   (TypeScript)    │                            │
+│                          │                   │                            │
+│                          │  • Message Router │                            │
+│                          │  • Session Mgmt   │                            │
+│                          │  • Heartbeat/Cron │                            │
+│                          └─────────┬─────────┘                            │
+│                                    │                                      │
+│                          ┌─────────▼─────────┐                            │
+│                          │  Letta Code SDK   │                            │
+│                          │  (subprocess)     │                            │
+│                          │                   │                            │
+│                          │  Local Tools:     │                            │
+│                          │  • Read/Glob/Grep │                            │
+│                          │  • Bash           │                            │
+│                          │  • web_search     │                            │
+│                          └─────────┬─────────┘                            │
+└────────────────────────────────────┼──────────────────────────────────────┘
+                                     │ Letta API
+                                     ▼
+                       ┌──────────────────────────┐
+                       │      Letta Server        │
+                       │  (api.letta.com or       │
+                       │   self-hosted Docker)    │
+                       │                          │
+                       │  • Agent Memory          │
+                       │  • LLM Inference         │
+                       │  • Conversation History  │
+                       └──────────────────────────┘
 ```
 
 ## Key Features
 
-- **Persistent Memory** - Your agent remembers conversations across days/weeks/months
+- **Multi-Channel** - Chat across Telegram, Slack, Discord, WhatsApp, and Signal
+- **Unified Memory** - Single agent remembers everything from all channels
+- **Persistent Memory** - Conversations persist across days/weeks/months
 - **Local Tool Execution** - Agent can search files, run commands on your machine
-- **Multi-user Support** - Each Telegram user gets their own persistent agent
+- **Voice Messages** - Automatic transcription via OpenAI Whisper
 - **Streaming Responses** - Real-time message updates as the agent thinks
-- **Gmail Integration** - Get email summaries delivered to Telegram
+- **Background Tasks** - Heartbeats and cron jobs for proactive actions
