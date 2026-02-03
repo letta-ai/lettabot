@@ -322,6 +322,19 @@ export class LettaBot {
           }
           lastMsgType = streamMsg.type;
           
+          // Handle send_message tool call - this is how Letta agents respond
+          if (streamMsg.type === 'tool_call') {
+            const toolName = (streamMsg as any).toolName || '';
+            if (toolName === 'send_message') {
+              const args = (streamMsg as any).arguments || (streamMsg as any).args || {};
+              const message = args.message || args.content || '';
+              if (message) {
+                response = message;
+                console.log(`[Bot] Agent message: ${message.slice(0, 50)}...`);
+              }
+            }
+          }
+          
           if (streamMsg.type === 'assistant') {
             // Check if this is a new assistant message (different UUID)
             if (msgUuid && lastAssistantUuid && msgUuid !== lastAssistantUuid && response.trim()) {
