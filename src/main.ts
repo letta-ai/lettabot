@@ -368,6 +368,10 @@ async function main() {
   }
   
   if (config.whatsapp.enabled) {
+    if (!config.whatsapp.selfChatMode) {
+      console.warn('[WhatsApp] WARNING: selfChatMode is OFF - bot will respond to ALL incoming messages!');
+      console.warn('[WhatsApp] Only use this if this is a dedicated bot number, not your personal WhatsApp.');
+    }
     const whatsapp = new WhatsAppAdapter({
       sessionPath: config.whatsapp.sessionPath,
       dmPolicy: config.whatsapp.dmPolicy,
@@ -380,6 +384,10 @@ async function main() {
   }
   
   if (config.signal.enabled) {
+    if (!config.signal.selfChatMode) {
+      console.warn('[Signal] WARNING: selfChatMode is OFF - bot will respond to ALL incoming messages!');
+      console.warn('[Signal] Only use this if this is a dedicated bot number, not your personal Signal.');
+    }
     const signal = new SignalAdapter({
       phoneNumber: config.signal.phoneNumber,
       cliPath: config.signal.cliPath,
