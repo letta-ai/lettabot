@@ -525,6 +525,11 @@ This code expires in 1 hour.`;
       }
       
       // Handle voice message attachments
+      // Log all attachments for debugging
+      if (attachments?.length) {
+        console.log(`[Signal] Attachments received: ${JSON.stringify(attachments.map(a => ({ type: a.contentType, id: a.id })))}`);
+      }
+      
       const voiceAttachment = attachments?.find(a => a.contentType?.startsWith('audio/'));
       if (voiceAttachment?.id) {
         console.log(`[Signal] Voice attachment detected: ${voiceAttachment.contentType}, id: ${voiceAttachment.id}`);
@@ -540,12 +545,18 @@ This code expires in 1 hour.`;
             }
           } else {
             // Read attachment from signal-cli attachments directory
-            const { readFileSync } = await import('node:fs');
+            const { readFileSync, existsSync } = await import('node:fs');
             const { homedir } = await import('node:os');
             const { join } = await import('node:path');
             
             const attachmentPath = join(homedir(), '.local/share/signal-cli/attachments', voiceAttachment.id);
             console.log(`[Signal] Reading attachment from: ${attachmentPath}`);
+            
+            if (!existsSync(attachmentPath)) {
+              console.error(`[Signal] Attachment file not found: ${attachmentPath}`);
+              throw new Error(`Attachment file not found: ${attachmentPath}`);
+            }
+            
             const buffer = readFileSync(attachmentPath);
             console.log(`[Signal] Read ${buffer.length} bytes`);
             
@@ -559,6 +570,9 @@ This code expires in 1 hour.`;
         } catch (error) {
           console.error('[Signal] Error transcribing voice message:', error);
         }
+      } else if (attachments?.some(a => a.contentType?.startsWith('audio/'))) {
+        // Audio attachment exists but has no ID
+        console.warn(`[Signal] Audio attachment found but missing ID: ${JSON.stringify(voiceAttachment)}`);
       }
       
       // Collect non-voice attachments (images, files, etc.)
