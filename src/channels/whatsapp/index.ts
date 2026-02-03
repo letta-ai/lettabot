@@ -588,11 +588,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
         continue;
       }
 
-      // Deduplicate using TTL cache
+      // Build dedupe key (but don't check yet - wait until after extraction succeeds)
       const dedupeKey = `whatsapp:${remoteJid}:${messageId}`;
-      if (this.dedupeCache.check(dedupeKey)) {
-        continue; // Duplicate message - skip
-      }
 
       // Detect self-chat
       const isSelfChat = isSelfChatMessage(
@@ -622,20 +619,39 @@ export class WhatsAppAdapter implements ChannelAdapter {
       // Type safety: Socket must be available
       if (!this.sock) continue;
 
-      // Extract message using module
-      const extracted = await extractInboundMessage(
-        m,
-        this.sock,
-        this.groupMetaCache,
-        // Pass attachment config if enabled
-        this.attachmentsDir && this.downloadContentFromMessage ? {
-          downloadContentFromMessage: this.downloadContentFromMessage,
-          attachmentsDir: this.attachmentsDir,
-          attachmentsMaxBytes: this.attachmentsMaxBytes,
-        } : undefined
-      );
+      // CRITICAL: Extract message BEFORE deduplication
+      // This allows failed messages (Bad MAC, decryption errors) to retry after session renegotiation
+      let extracted;
+      try {
+        extracted = await extractInboundMessage(
+          m,
+          this.sock,
+          this.groupMetaCache,
+          // Pass attachment config if enabled
+          this.attachmentsDir && this.downloadContentFromMessage ? {
+            downloadContentFromMessage: this.downloadContentFromMessage,
+            attachmentsDir: this.attachmentsDir,
+            attachmentsMaxBytes: this.attachmentsMaxBytes,
+          } : undefined
+        );
+      } catch (err) {
+        // Extraction threw error (e.g., Bad MAC during session renegotiation)
+        // Skip without marking as seen → WhatsApp will retry after session fix
+        continue;
+      }
 
-      if (!extracted) continue; // No text or invalid message
+      if (!extracted) {
+        // Extraction returned null (no text, invalid format, or decryption failure)
+        // Skip without marking as seen → allows retry on next attempt
+        continue;
+      }
+
+      // Deduplicate ONLY after successful extraction
+      // Why: If we dedupe first, failed messages get marked as "seen" and are lost forever
+      // With this order: Failed messages can retry after WhatsApp renegotiates the session
+      if (this.dedupeCache.check(dedupeKey)) {
+        continue; // Duplicate message - skip
+      }
 
       const { body, from, chatId, pushName, senderE164, chatType, isSelfChat: isExtractedSelfChat } = extracted;
       const userId = normalizePhoneForStorage(from);
