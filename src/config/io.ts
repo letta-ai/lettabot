@@ -167,14 +167,14 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   }
 
   // CLI display options
-  if (config.cli?.showReasoning) {
-    env.SHOW_REASONING = 'true';
+  if (config.cli?.showReasoning !== undefined) {
+    env.SHOW_REASONING = config.cli.showReasoning ? 'true' : 'false';
   }
-  if (config.cli?.showTools) {
-    env.SHOW_TOOLS = 'true';
+  if (config.cli?.showTools !== undefined) {
+    env.SHOW_TOOLS = config.cli.showTools ? 'true' : 'false';
   }
-  if (config.cli?.verbose) {
-    env.VERBOSE = 'true';
+  if (config.cli?.verbose !== undefined) {
+    env.VERBOSE = config.cli.verbose ? 'true' : 'false';
   }
 
   return env;
