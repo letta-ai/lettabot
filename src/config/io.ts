@@ -166,15 +166,15 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
     env.ATTACHMENTS_MAX_AGE_DAYS = String(config.attachments.maxAgeDays);
   }
 
-  // CLI display options
-  if (config.cli?.showReasoning !== undefined) {
-    env.SHOW_REASONING = config.cli.showReasoning ? 'true' : 'false';
+  // Debug display options (applies to all channels)
+  if (config.debug?.showReasoning) {
+    env.SHOW_REASONING = 'true';
   }
-  if (config.cli?.showTools !== undefined) {
-    env.SHOW_TOOLS = config.cli.showTools ? 'true' : 'false';
+  if (config.debug?.showTools) {
+    env.SHOW_TOOLS = 'true';
   }
-  if (config.cli?.verbose !== undefined) {
-    env.VERBOSE = config.cli.verbose ? 'true' : 'false';
+  if (config.debug?.verbose) {
+    env.VERBOSE = 'true';
   }
 
   return env;

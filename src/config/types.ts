@@ -59,8 +59,8 @@ export interface LettaBotConfig {
     maxAgeDays?: number;
   };
 
-  // CLI display options
-  cli?: {
+  // Debug display options (applies to all channels, useful for debugging)
+  debug?: {
     showReasoning?: boolean;  // Display thinking/reasoning blocks
     showTools?: boolean;      // Display tool calls and results
     verbose?: boolean;        // Enable all output (reasoning + tools)
