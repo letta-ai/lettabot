@@ -232,23 +232,43 @@ export class LettaBot {
           clearTimeout(timeoutId!);
         }
       };
+      type InitInfo = Awaited<ReturnType<Session['initialize']>>;
+      const initializeSession = async (target: Session, label: string): Promise<InitInfo> => {
+        let closedTimer: NodeJS.Timeout | null = null;
+        const closedPromise = new Promise<never>((_, reject) => {
+          closedTimer = setInterval(() => {
+            const transport = (target as any).transport;
+            if (transport?.isClosed) {
+              reject(new Error('Session transport closed before init'));
+            }
+          }, 200);
+        });
+        try {
+          return await withTimeout(Promise.race([target.initialize(), closedPromise]), label);
+        } finally {
+          if (closedTimer) {
+            clearInterval(closedTimer);
+            closedTimer = null;
+          }
+        }
+      };
 
-      let initInfo;
+      let initInfo: InitInfo;
       try {
-        initInfo = await withTimeout(session.initialize(), 'Session initialize');
+        initInfo = await initializeSession(session, 'Session initialize');
       } catch (error) {
         if (usedSpecificConversation && this.store.agentId) {
           console.warn('[Bot] Conversation missing, creating a new conversation...');
           session.close();
           session = createSession(this.store.agentId, baseOptions);
-          initInfo = await withTimeout(session.initialize(), 'Session initialize (new conversation)');
+          initInfo = await initializeSession(session, 'Session initialize (new conversation)');
           usedSpecificConversation = false;
           usedDefaultConversation = false;
         } else if (usedDefaultConversation && this.store.agentId) {
           console.warn('[Bot] Default conversation missing, creating a new conversation...');
           session.close();
           session = createSession(this.store.agentId, baseOptions);
-          initInfo = await withTimeout(session.initialize(), 'Session initialize (new conversation)');
+          initInfo = await initializeSession(session, 'Session initialize (new conversation)');
           usedDefaultConversation = false;
         } else {
           throw error;
