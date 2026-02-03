@@ -21,13 +21,23 @@ export class LettaBot {
   private channels: Map<string, ChannelAdapter> = new Map();
   private messageQueue: Array<{ msg: InboundMessage; adapter: ChannelAdapter }> = [];
   private lastUserMessageTime: Date | null = null;
-  
+
   // Callback to trigger heartbeat (set by main.ts)
   public onTriggerHeartbeat?: () => Promise<void>;
   private processing = false;
-  
+
+  // CLI display options
+  private showReasoning: boolean;
+  private showTools: boolean;
+
   constructor(config: BotConfig) {
     this.config = config;
+    this.showReasoning = config.showReasoning ?? false;
+    this.showTools = config.showTools ?? false;
+
+    if (this.showReasoning || this.showTools) {
+      console.log(`[Bot] Display options: reasoning=${this.showReasoning}, tools=${this.showTools}`);
+    }
     
     // Ensure working directory exists
     mkdirSync(config.workingDir, { recursive: true });
@@ -292,6 +302,95 @@ export class LettaBot {
               console.log(`[Bot] Generating response...`);
             }
           }
+
+          // Display reasoning blocks if enabled
+          // SDKReasoningMessage: type="reasoning", content=string
+          // SDKStreamEventMessage: type="stream_event", event.delta.reasoning=string
+          if (this.showReasoning) {
+            let reasoningContent = '';
+
+            if (streamMsg.type === 'reasoning') {
+              reasoningContent = (streamMsg as { type: 'reasoning'; content: string; uuid: string }).content;
+            } else if (streamMsg.type === 'stream_event') {
+              const streamEventMsg = streamMsg as {
+                type: 'stream_event';
+                event: {
+                  type: string;
+                  index?: number;
+                  delta?: { type?: string; text?: string; reasoning?: string };
+                  content_block?: { type?: string; text?: string };
+                };
+                uuid: string;
+              };
+              reasoningContent = streamEventMsg.event?.delta?.reasoning || '';
+            }
+
+            if (reasoningContent) {
+              const truncated = reasoningContent.length > 500
+                ? reasoningContent.slice(0, 500) + '...'
+                : reasoningContent;
+              // Format: dimmed/italic style using markdown underscore
+              const formatted = `_[thinking]_ ${truncated}`;
+              try {
+                await adapter.sendMessage({ chatId: msg.chatId, text: formatted, threadId: msg.threadId });
+                sentAnyMessage = true;
+              } catch {
+                // Ignore send errors for reasoning display
+              }
+            }
+          }
+
+          // Display tool calls if enabled (SDKToolCallMessage: toolName, toolInput)
+          if (this.showTools && streamMsg.type === 'tool_call') {
+            const toolCallMsg = streamMsg as {
+              type: 'tool_call';
+              toolCallId: string;
+              toolName: string;
+              toolInput: Record<string, unknown>;
+              uuid: string;
+            };
+            const toolName = toolCallMsg.toolName;
+            const toolInput = toolCallMsg.toolInput;
+            // Truncate input for display
+            let inputStr = JSON.stringify(toolInput);
+            if (inputStr.length > 100) {
+              inputStr = inputStr.slice(0, 100) + '...';
+            }
+            const formatted = `\`[tool]\` ${toolName}: ${inputStr}`;
+            try {
+              await adapter.sendMessage({ chatId: msg.chatId, text: formatted, threadId: msg.threadId });
+              sentAnyMessage = true;
+            } catch {
+              // Ignore send errors for tool display
+            }
+          }
+
+          // Display tool results if enabled (SDKToolResultMessage: content, isError)
+          if (this.showTools && streamMsg.type === 'tool_result') {
+            const toolResultMsg = streamMsg as {
+              type: 'tool_result';
+              toolCallId: string;
+              content: string;
+              isError: boolean;
+              uuid: string;
+            };
+            const resultContent = toolResultMsg.content;
+            const isError = toolResultMsg.isError;
+            // Truncate result for display
+            let resultStr = resultContent;
+            if (resultStr.length > 200) {
+              resultStr = resultStr.slice(0, 200) + '...';
+            }
+            const prefix = isError ? `\`[error]\`` : `\`[result]\``;
+            const formatted = `${prefix} ${resultStr}`;
+            try {
+              await adapter.sendMessage({ chatId: msg.chatId, text: formatted, threadId: msg.threadId });
+              sentAnyMessage = true;
+            } catch {
+              // Ignore send errors for result display
+            }
+          }
+
           lastMsgType = streamMsg.type;
           
           if (streamMsg.type === 'assistant') {

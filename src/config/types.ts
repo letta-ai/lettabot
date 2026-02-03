@@ -58,6 +58,13 @@ export interface LettaBotConfig {
     maxMB?: number;
     maxAgeDays?: number;
   };
+
+  // CLI display options
+  cli?: {
+    showReasoning?: boolean;  // Display thinking/reasoning blocks
+    showTools?: boolean;      // Display tool calls and results
+    verbose?: boolean;        // Enable all output (reasoning + tools)
+  };
 }
 
 export interface TranscriptionConfig {
