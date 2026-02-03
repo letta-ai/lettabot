@@ -211,5 +211,5 @@ First responses may take longer as the agent "wakes up".
 ## Next Steps
 
 - [WhatsApp Setup](./whatsapp-setup.md)
-- [Cron Jobs](./cron-setup.md)
-- [Configuration Reference](./configuration.md)
+- [Discord Setup](./discord-setup.md)
+- [Signal Setup](./signal-setup.md)
