@@ -217,6 +217,24 @@ At least one channel is required. Telegram is the easiest to start with.
 | `/status` | Show current session info |
 | `/heartbeat` | Manually trigger a heartbeat check-in |
 
+## Background Tasks (Heartbeats & Cron)
+
+Heartbeats and cron jobs run in **Silent Mode** - the agent's text responses are NOT automatically sent to users during these background tasks. This is intentional: the agent decides when something is worth interrupting you for.
+
+To send messages during silent mode, the agent must explicitly use the CLI:
+
+```bash
+lettabot-message send --text "Hey, I found something interesting!"
+```
+
+The agent sees a clear `[SILENT MODE]` banner when triggered by heartbeats/cron, along with instructions on how to use the CLI.
+
+**Requirements for background messaging:**
+- The **Bash tool must be enabled** for the agent to run the CLI
+- A user must have messaged the bot at least once (to establish a delivery target)
+
+If your agent isn't sending messages during heartbeats, check the [ADE](https://app.letta.com) to see what the agent is doing and whether it's attempting to use `lettabot-message`.
+
 ## Connect to Letta Code 
 Any LettaBot agent can also be directly chatted with through [Letta Code](https://github.com/letta-ai/letta-code). Use the `/status` command to find your `agent_id`, and run: 
 ```sh
@@ -292,6 +310,26 @@ Delete the agent store to create a fresh agent:
 ```bash
 lettabot destroy 
 ```
+
+**Heartbeat/cron messages not reaching my chat**
+Heartbeats and cron jobs run in "Silent Mode" - the agent's text output is private and not auto-delivered. To send messages during background tasks, the agent must run:
+```bash
+lettabot-message send --text "Your message here"
+```
+Check the [ADE](https://app.letta.com) to see if your agent is attempting to use this command. Common issues:
+- Bash tool not enabled (agent can't run CLI commands)
+- Agent doesn't understand it needs to use the CLI
+- No delivery target set (user never messaged the bot first)
+
+**Heartbeat/cron messages not reaching my chat**
+Heartbeats and cron jobs run in "Silent Mode" - the agent's text output is private and not auto-delivered. To send messages during background tasks, the agent must run:
+```bash
+lettabot-message send --text "Your message here"
+```
+Check the [ADE](https://app.letta.com) to see if your agent is attempting to use this command. Common issues:
+- Bash tool not enabled (agent can't run CLI commands)
+- Agent doesn't understand it needs to use the CLI
+- No delivery target set (user never messaged the bot first)
 
 ## Documentation
 

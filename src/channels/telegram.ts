@@ -175,9 +175,9 @@ export class TelegramAdapter implements ChannelAdapter {
       }
     });
 
-    // Handle non-text messages with attachments
+    // Handle non-text messages with attachments (excluding voice - handled separately)
     this.bot.on('message', async (ctx) => {
-      if (!ctx.message || ctx.message.text) return;
+      if (!ctx.message || ctx.message.text || ctx.message.voice) return;
       const userId = ctx.from?.id;
       const chatId = ctx.chat.id;
       if (!userId) return;
