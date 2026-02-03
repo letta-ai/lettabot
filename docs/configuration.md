@@ -117,8 +117,12 @@ All channels share these common options:
 
 ### DM Policies
 
-- **`pairing`** (recommended): New users get a code, approve with `lettabot pairing approve`
-- **`allowlist`**: Only specified user IDs can message
+**Note:** For WhatsApp/Signal with `selfChat: true` (personal number), dmPolicy is ignored - only you can message via "Message Yourself" / "Note to Self".
+
+For dedicated bot numbers (`selfChat: false`), onboarding defaults to **allowlist**:
+
+- **`allowlist`** (default for dedicated numbers): Only specified phone numbers can message
+- **`pairing`**: New users get a code, approve with `lettabot pairing approve`
 - **`open`**: Anyone can message (not recommended)
 
 ### Channel-Specific Options

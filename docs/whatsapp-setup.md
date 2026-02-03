@@ -24,8 +24,7 @@ Add to your `lettabot.yaml` or set environment variables:
 channels:
   whatsapp:
     enabled: true
-    selfChatMode: true    # IMPORTANT: See below
-    dmPolicy: pairing     # or 'allowlist' or 'open'
+    selfChat: true        # IMPORTANT: See below
 ```
 
 Or via environment variables:
@@ -34,11 +33,9 @@ Or via environment variables:
 # WhatsApp Configuration
 WHATSAPP_ENABLED=true
 WHATSAPP_SELF_CHAT_MODE=true  # CRITICAL - see below
-WHATSAPP_DM_POLICY=pairing
-
-# Optional: Restrict to specific phone numbers (if dmPolicy=allowlist)
-# WHATSAPP_ALLOWED_USERS=+15551234567,+15559876543
 ```
+
+**Note:** For personal numbers (`selfChat: true`), `dmPolicy` is ignored - only you can message via "Message Yourself". For dedicated bot numbers, onboarding defaults to `allowlist`.
 
 ### Self-Chat Mode (Critical Safety Setting)
 

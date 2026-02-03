@@ -868,32 +868,19 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
       }
     }
     
-    // Access control only matters for dedicated numbers
+    // Dedicated numbers use allowlist by default
     if (config.whatsapp.selfChat === false) {
-      const dmPolicy = await p.select({
-        message: 'WhatsApp: Who can message the bot?',
-        options: [
-          { value: 'pairing', label: 'Pairing (recommended)', hint: 'Requires CLI approval' },
-          { value: 'allowlist', label: 'Allowlist only', hint: 'Specific phone numbers' },
-          { value: 'open', label: 'Open', hint: '⚠️ Anyone (not recommended - full account access!)' },
-        ],
-        initialValue: config.whatsapp.dmPolicy || 'pairing',
+      config.whatsapp.dmPolicy = 'allowlist';
+      const users = await p.text({
+        message: 'Allowed phone numbers (comma-separated, with +)',
+        placeholder: '+15551234567,+15559876543',
+        initialValue: config.whatsapp.allowedUsers?.join(',') || '',
       });
-      if (!p.isCancel(dmPolicy)) {
-        config.whatsapp.dmPolicy = dmPolicy as 'pairing' | 'allowlist' | 'open';
-        
-        if (dmPolicy === 'pairing') {
-          p.log.info('Users will get a code. Approve with: lettabot pairing approve whatsapp CODE');
-        } else if (dmPolicy === 'allowlist') {
-        const users = await p.text({
-          message: 'Allowed phone numbers (comma-separated, with +)',
-          placeholder: '+15551234567,+15559876543',
-          initialValue: config.whatsapp.allowedUsers?.join(',') || '',
-        });
-        if (!p.isCancel(users) && users) {
-          config.whatsapp.allowedUsers = users.split(',').map(s => s.trim()).filter(Boolean);
-        }
+      if (!p.isCancel(users) && users) {
+        config.whatsapp.allowedUsers = users.split(',').map(s => s.trim()).filter(Boolean);
       }
+      if (!config.whatsapp.allowedUsers?.length) {
+        p.log.warn('No allowed numbers set. Bot will reject all messages until you add numbers to lettabot.yaml');
       }
     }
   }
@@ -931,31 +918,19 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
     }
     
     // Access control only matters for dedicated numbers
+    // Dedicated numbers use allowlist by default
     if (config.signal.selfChat === false) {
-      const dmPolicy = await p.select({
-        message: 'Signal: Who can message the bot?',
-        options: [
-          { value: 'pairing', label: 'Pairing (recommended)', hint: 'Requires CLI approval' },
-          { value: 'allowlist', label: 'Allowlist only', hint: 'Specific phone numbers' },
-          { value: 'open', label: 'Open', hint: 'Anyone (not recommended)' },
-        ],
-        initialValue: config.signal.dmPolicy || 'pairing',
+      config.signal.dmPolicy = 'allowlist';
+      const users = await p.text({
+        message: 'Allowed phone numbers (comma-separated, with +)',
+        placeholder: '+15551234567,+15559876543',
+        initialValue: config.signal.allowedUsers?.join(',') || '',
       });
-      if (!p.isCancel(dmPolicy)) {
-        config.signal.dmPolicy = dmPolicy as 'pairing' | 'allowlist' | 'open';
-        
-        if (dmPolicy === 'pairing') {
-          p.log.info('Users will get a code. Approve with: lettabot pairing approve signal CODE');
-        } else if (dmPolicy === 'allowlist') {
-          const users = await p.text({
-            message: 'Allowed phone numbers (comma-separated, with +)',
-            placeholder: '+15551234567,+15559876543',
-            initialValue: config.signal.allowedUsers?.join(',') || '',
-          });
-          if (!p.isCancel(users) && users) {
-            config.signal.allowedUsers = users.split(',').map(s => s.trim()).filter(Boolean);
-          }
-        }
+      if (!p.isCancel(users) && users) {
+        config.signal.allowedUsers = users.split(',').map(s => s.trim()).filter(Boolean);
+      }
+      if (!config.signal.allowedUsers?.length) {
+        p.log.warn('No allowed numbers set. Bot will reject all messages until you add numbers to lettabot.yaml');
       }
     }
   }
