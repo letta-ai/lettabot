@@ -217,6 +217,10 @@ async function pruneAttachmentsDir(baseDir: string, maxAgeDays: number): Promise
 
 // Skills are installed to agent-scoped directory when agent is created (see core/bot.ts)
 
+// CLI display options (VERBOSE enables all)
+const showReasoning = process.env.VERBOSE === 'true' || process.env.SHOW_REASONING === 'true';
+const showTools = process.env.VERBOSE === 'true' || process.env.SHOW_TOOLS === 'true';
+
 // Configuration from environment
 const config = {
   workingDir: process.env.WORKING_DIR || '/tmp/lettabot',
@@ -224,6 +228,8 @@ const config = {
   allowedTools: (process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search').split(','),
   attachmentsMaxBytes: resolveAttachmentsMaxBytes(),
   attachmentsMaxAgeDays: resolveAttachmentsMaxAgeDays(),
+  showReasoning,
+  showTools,
   
   // Channel configs
   telegram: {
@@ -322,6 +328,8 @@ async function main() {
     model: config.model,
     agentName: process.env.AGENT_NAME || 'LettaBot',
     allowedTools: config.allowedTools,
+    showReasoning: config.showReasoning,
+    showTools: config.showTools,
   });
 
   const attachmentsDir = resolve(config.workingDir, 'attachments');

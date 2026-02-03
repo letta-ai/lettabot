@@ -103,9 +103,13 @@ export interface BotConfig {
   model?: string; // e.g., 'anthropic/claude-sonnet-4-5-20250929'
   agentName?: string; // Name for the agent (set via API after creation)
   allowedTools: string[];
-  
+
   // Security
   allowedUsers?: string[];  // Empty = allow all
+
+  // CLI display options
+  showReasoning?: boolean;  // Display thinking/reasoning blocks
+  showTools?: boolean;      // Display tool calls and results
 }
 
 /**

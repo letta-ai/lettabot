@@ -165,7 +165,18 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.attachments?.maxAgeDays !== undefined) {
     env.ATTACHMENTS_MAX_AGE_DAYS = String(config.attachments.maxAgeDays);
   }
-  
+
+  // Debug display options (applies to all channels)
+  if (config.debug?.showReasoning) {
+    env.SHOW_REASONING = 'true';
+  }
+  if (config.debug?.showTools) {
+    env.SHOW_TOOLS = 'true';
+  }
+  if (config.debug?.verbose) {
+    env.VERBOSE = 'true';
+  }
+
   return env;
 }
 

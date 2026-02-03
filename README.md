@@ -271,6 +271,42 @@ LettaBot supports pairing-based access control. When `TELEGRAM_DM_POLICY=pairing
 2. You approve codes via `lettabot pairing approve telegram <CODE>`
 3. Approved users can then chat with the bot
 
+## Debug Display Options
+
+By default, LettaBot only shows assistant text responses. You can enable visibility into the agent's decision-making process for debugging purposes.
+
+> **Note:** These options apply to **all channels** (Telegram, Slack, Discord, WhatsApp, Signal). They're useful for debugging but may be noisy for end users.
+
+| Variable | Description |
+|----------|-------------|
+| `SHOW_REASONING=true` | Display thinking/reasoning blocks |
+| `SHOW_TOOLS=true` | Display tool calls and results |
+| `VERBOSE=true` | Enable all output (reasoning + tools) |
+
+### Display Format
+
+**Reasoning output** (italic styling, sent once complete):
+```
+_[thinking]_ Let me calculate this simple arithmetic...
+```
+
+**Tool operations** (showing name and truncated input):
+```
+`[tool]` Glob: {"pattern": "*.ts"}
+`[result]` Found 5 files: index.ts, bot.ts, ...
+```
+
+### YAML Configuration
+
+You can also configure these in `lettabot.yaml`:
+
+```yaml
+debug:
+  showReasoning: true   # Display thinking blocks
+  showTools: true       # Display tool calls and results
+  verbose: true         # Enable all output
+```
+
 ## Development
 
 ```bash

@@ -4,7 +4,16 @@
  * Single agent, single conversation - chat continues across all channels.
  */
 
-import { createSession, resumeSession, type Session } from '@letta-ai/letta-code-sdk';
+import {
+  createSession,
+  resumeSession,
+  type Session,
+  type SDKToolCallMessage,
+  type SDKToolResultMessage,
+  type SDKReasoningMessage,
+  type SDKStreamEventMessage,
+  type SDKAssistantMessage
+} from '@letta-ai/letta-code-sdk';
 import { mkdirSync } from 'node:fs';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
@@ -21,13 +30,23 @@ export class LettaBot {
   private channels: Map<string, ChannelAdapter> = new Map();
   private messageQueue: Array<{ msg: InboundMessage; adapter: ChannelAdapter }> = [];
   private lastUserMessageTime: Date | null = null;
-  
+
   // Callback to trigger heartbeat (set by main.ts)
   public onTriggerHeartbeat?: () => Promise<void>;
   private processing = false;
-  
+
+  // CLI display options
+  private showReasoning: boolean;
+  private showTools: boolean;
+
   constructor(config: BotConfig) {
     this.config = config;
+    this.showReasoning = config.showReasoning ?? false;
+    this.showTools = config.showTools ?? false;
+
+    if (this.showReasoning || this.showTools) {
+      console.log(`[Bot] Display options: reasoning=${this.showReasoning}, tools=${this.showTools}`);
+    }
     
     // Ensure working directory exists
     mkdirSync(config.workingDir, { recursive: true });
@@ -266,12 +285,30 @@ export class LettaBot {
       
       // Stream response
       let response = '';
+      let reasoningBuffer = '';  // Accumulate reasoning content
       let lastUpdate = Date.now();
       let messageId: string | null = null;
       let lastMsgType: string | null = null;
       let lastAssistantUuid: string | null = null;
       let sentAnyMessage = false;
-      
+
+      // Helper to send accumulated reasoning
+      const sendReasoningIfNeeded = async () => {
+        if (this.showReasoning && reasoningBuffer.trim()) {
+          const truncated = reasoningBuffer.length > 500
+            ? reasoningBuffer.slice(0, 500) + '...'
+            : reasoningBuffer;
+          const formatted = `_[thinking]_ ${truncated}`;
+          try {
+            await adapter.sendMessage({ chatId: msg.chatId, text: formatted, threadId: msg.threadId });
+            sentAnyMessage = true;
+          } catch {
+            // Ignore send errors for reasoning display
+          }
+          reasoningBuffer = '';
+        }
+      };
+
       // Helper to finalize and send current accumulated response
       const finalizeMessage = async () => {
         if (response.trim()) {
@@ -303,10 +340,16 @@ export class LettaBot {
         for await (const streamMsg of session.stream()) {
           const msgUuid = (streamMsg as any).uuid;
           
-          // When message type changes, finalize the current message
+          // When message type changes, finalize any accumulated content
           // This ensures different message types appear as separate bubbles
-          if (lastMsgType && lastMsgType !== streamMsg.type && response.trim()) {
-            await finalizeMessage();
+          if (lastMsgType && lastMsgType !== streamMsg.type) {
+            // Send accumulated reasoning when leaving reasoning mode
+            if (lastMsgType === 'reasoning' || lastMsgType === 'stream_event') {
+              await sendReasoningIfNeeded();
+            }
+            if (response.trim()) {
+              await finalizeMessage();
+            }
           }
           
           // Log meaningful events
@@ -320,6 +363,66 @@ export class LettaBot {
               console.log(`[Bot] Generating response...`);
             }
           }
+
+          // Accumulate reasoning content if enabled (sent as batch when message type changes)
+          // SDKReasoningMessage: type="reasoning", content=string
+          // SDKStreamEventMessage: type="stream_event", event.delta.reasoning=string
+          if (this.showReasoning) {
+            if (streamMsg.type === 'reasoning') {
+              const reasoningMsg = streamMsg as SDKReasoningMessage;
+              reasoningBuffer += reasoningMsg.content;
+            } else if (streamMsg.type === 'stream_event') {
+              const streamEventMsg = streamMsg as SDKStreamEventMessage;
+              const deltaReasoning = streamEventMsg.event?.delta?.reasoning || '';
+              if (deltaReasoning) {
+                reasoningBuffer += deltaReasoning;
+              }
+            }
+          }
+
+          // Display tool calls if enabled (SDKToolCallMessage: toolName, toolInput)
+          if (this.showTools && streamMsg.type === 'tool_call') {
+            const toolCallMsg = streamMsg as SDKToolCallMessage;
+            const toolName = toolCallMsg.toolName;
+            const toolInput = toolCallMsg.toolInput;
+            // Truncate input for display
+            let inputStr = JSON.stringify(toolInput);
+            if (inputStr.length > 100) {
+              inputStr = inputStr.slice(0, 100) + '...';
+            }
+            const formatted = `\`[tool]\` ${toolName}: ${inputStr}`;
+            try {
+              await adapter.sendMessage({ chatId: msg.chatId, text: formatted, threadId: msg.threadId });
+              // Rate limiting: delay to prevent platform limits (WhatsApp: 6s, Telegram/Slack: 1s recommended)
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            } catch (error) {
+              // Log but don't rethrow: display features are optional, failures shouldn't block main response
+              console.log(`[Display] Failed to send tool call: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
+
+          // Display tool results if enabled (SDKToolResultMessage: content, isError)
+          if (this.showTools && streamMsg.type === 'tool_result') {
+            const toolResultMsg = streamMsg as SDKToolResultMessage;
+            const resultContent = toolResultMsg.content;
+            const isError = toolResultMsg.isError;
+            // Truncate result for display
+            let resultStr = resultContent;
+            if (resultStr.length > 200) {
+              resultStr = resultStr.slice(0, 200) + '...';
+            }
+            const prefix = isError ? `\`[error]\`` : `\`[result]\``;
+            const formatted = `${prefix} ${resultStr}`;
+            try {
+              await adapter.sendMessage({ chatId: msg.chatId, text: formatted, threadId: msg.threadId });
+              // Rate limiting: delay to prevent platform limits (WhatsApp: 6s, Telegram/Slack: 1s recommended)
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            } catch (error) {
+              // Log but don't rethrow: display features are optional, failures shouldn't block main response
+              console.log(`[Display] Failed to send tool result: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
+
           lastMsgType = streamMsg.type;
           
           if (streamMsg.type === 'assistant') {
@@ -376,7 +479,10 @@ export class LettaBot {
       } finally {
         clearInterval(typingInterval);
       }
-      
+
+      // Send any remaining accumulated reasoning
+      await sendReasoningIfNeeded();
+
       // Send final response
       if (response.trim()) {
         try {
