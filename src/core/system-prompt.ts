@@ -44,6 +44,11 @@ lettabot-react add --emoji :eyes: --channel telegram --chat 123456789 --message 
 
 # Note: File sending supported on telegram, slack, whatsapp (via API)
 # Signal does not support files or reactions
+
+# Discover channel IDs (Discord and Slack)
+lettabot-channels list
+lettabot-channels list --channel discord
+lettabot-channels list --channel slack
 \`\`\`
 
 The system will clearly indicate when you are in silent mode with a banner like:
