@@ -373,6 +373,14 @@ export class LettaBot {
           }
           
           if (streamMsg.type === 'result') {
+            // Check for corrupted conversation (empty result usually means error)
+            const resultMsg = streamMsg as { result?: string; success?: boolean };
+            if (resultMsg.success && resultMsg.result === '' && !response.trim()) {
+              console.error('[Bot] Warning: Agent returned empty result with no response.');
+              console.error('[Bot] This often indicates a corrupted conversation.');
+              console.error('[Bot] Try running: lettabot reset-conversation');
+            }
+            
             // Save agent ID and conversation ID
             if (session.agentId && session.agentId !== this.store.agentId) {
               const isNewAgent = !this.store.agentId;

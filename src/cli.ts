@@ -184,6 +184,7 @@ Commands:
   logout               Logout from Letta Platform (revoke OAuth tokens)
   skills               Configure which skills are enabled
   skills status        Show skills status
+  reset-conversation   Clear conversation ID (fixes corrupted conversations)
   destroy              Delete all local data and start fresh
   pairing list <ch>    List pending pairing requests
   pairing approve <ch> <code>   Approve a pairing code
@@ -343,6 +344,57 @@ async function main() {
       p.outro('✨ Done! Run `npx lettabot server` to create a fresh agent.');
       break;
     }
+    
+    case 'reset-conversation': {
+      const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const p = await import('@clack/prompts');
+      
+      const dataDir = getDataDir();
+      const agentJsonPath = join(dataDir, 'lettabot-agent.json');
+      
+      p.intro('Reset Conversation');
+      
+      if (!existsSync(agentJsonPath)) {
+        p.log.error('No agent store found. Run the server first to create an agent.');
+        break;
+      }
+      
+      const store = JSON.parse(readFileSync(agentJsonPath, 'utf-8'));
+      const oldConversationId = store.conversationId;
+      
+      if (!oldConversationId) {
+        p.log.info('No conversation ID stored. Nothing to reset.');
+        break;
+      }
+      
+      p.log.warn(`Current conversation: ${oldConversationId}`);
+      p.log.message('');
+      p.log.message('This will clear the conversation ID, causing the bot to create');
+      p.log.message('a new conversation on the next message. Use this if you see:');
+      p.log.message('  • "stop_reason: error" with empty responses');
+      p.log.message('  • Messages not reaching the agent');
+      p.log.message('  • Agent returning empty results');
+      p.log.message('');
+      p.log.message('The agent and its memory will be preserved.');
+      
+      const confirmed = await p.confirm({
+        message: 'Reset conversation?',
+        initialValue: true,
+      });
+      
+      if (!confirmed || p.isCancel(confirmed)) {
+        p.cancel('Cancelled');
+        break;
+      }
+      
+      store.conversationId = null;
+      writeFileSync(agentJsonPath, JSON.stringify(store, null, 2));
+      
+      p.log.success('Conversation ID cleared');
+      p.outro('Restart the server - a new conversation will be created on the next message.');
+      break;
+    }
       
     case 'logout': {
       const { revokeToken } = await import('./auth/oauth.js');
@@ -382,7 +434,7 @@ async function main() {
       
     case undefined:
       console.log('Usage: lettabot <command>\n');
-      console.log('Commands: onboard, server, configure, skills, destroy, help\n');
+      console.log('Commands: onboard, server, configure, skills, reset-conversation, destroy, help\n');
       console.log('Run "lettabot help" for more information.');
       break;
       
