@@ -361,7 +361,7 @@ export class LettaBot {
             console.log(`[Bot] Generating response...`);
           } else if (streamMsg.type === 'reasoning' && lastMsgType !== 'reasoning') {
             console.log(`[Bot] Reasoning...`);
-          } else if (streamMsg.type === 'system' && lastMsgType !== 'system') {
+          } else if ((streamMsg.type as string) === 'system' && lastMsgType !== 'system') {
             const subtype = (streamMsg as any).subtype || 'unknown';
             console.log(`[Bot] System message: ${subtype}`);
           }
