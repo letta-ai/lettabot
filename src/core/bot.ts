@@ -287,6 +287,7 @@ export class LettaBot {
       let lastMsgType: string | null = null;
       let lastAssistantUuid: string | null = null;
       let sentAnyMessage = false;
+      const msgTypeCounts: Record<string, number> = {};
       
       // Stream watchdog - abort if idle for too long
       const watchdog = new StreamWatchdog({
@@ -334,6 +335,13 @@ export class LettaBot {
         for await (const streamMsg of session.stream()) {
           const msgUuid = (streamMsg as any).uuid;
           watchdog.ping();
+          msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
+          
+          // Verbose logging: show every stream message type
+          if (process.env.DEBUG_STREAM) {
+            const preview = JSON.stringify(streamMsg).slice(0, 200);
+            console.log(`[Stream] type=${streamMsg.type} ${preview}`);
+          }
           
           // When message type changes, finalize the current message
           // This ensures different message types appear as separate bubbles
@@ -341,16 +349,21 @@ export class LettaBot {
             await finalizeMessage();
           }
           
-          // Log meaningful events
-          if (streamMsg.type !== lastMsgType) {
-            if (streamMsg.type === 'tool_call') {
-              const toolName = (streamMsg as any).toolName || 'unknown';
-              console.log(`[Bot] Calling tool: ${toolName}`);
-            } else if (streamMsg.type === 'tool_result') {
-              console.log(`[Bot] Tool completed`);
-            } else if (streamMsg.type === 'assistant' && lastMsgType !== 'assistant') {
-              console.log(`[Bot] Generating response...`);
-            }
+          // Log meaningful events (always, not just on type change for tools)
+          if (streamMsg.type === 'tool_call') {
+            const toolName = (streamMsg as any).toolName || 'unknown';
+            console.log(`[Bot] Calling tool: ${toolName}`);
+          } else if (streamMsg.type === 'tool_result') {
+            const isError = (streamMsg as any).isError;
+            const contentLen = (streamMsg as any).content?.length || 0;
+            console.log(`[Bot] Tool completed: error=${isError}, resultLen=${contentLen}`);
+          } else if (streamMsg.type === 'assistant' && lastMsgType !== 'assistant') {
+            console.log(`[Bot] Generating response...`);
+          } else if (streamMsg.type === 'reasoning' && lastMsgType !== 'reasoning') {
+            console.log(`[Bot] Reasoning...`);
+          } else if (streamMsg.type === 'system' && lastMsgType !== 'system') {
+            const subtype = (streamMsg as any).subtype || 'unknown';
+            console.log(`[Bot] System message: ${subtype}`);
           }
           lastMsgType = streamMsg.type;
           
@@ -384,6 +397,7 @@ export class LettaBot {
             // Log result details for debugging (#132)
             const resultMsg = streamMsg as { result?: string; success?: boolean; error?: string };
             console.log(`[Bot] Stream result: success=${resultMsg.success}, hasResponse=${response.trim().length > 0}, resultLen=${resultMsg.result?.length || 0}`);
+            console.log(`[Bot] Stream message counts:`, msgTypeCounts);
             if (resultMsg.error) {
               console.error(`[Bot] Result error: ${resultMsg.error}`);
             }
