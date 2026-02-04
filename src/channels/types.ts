@@ -10,14 +10,15 @@ import type { ChannelId, InboundMessage, OutboundMessage, OutboundFile } from '.
  * Channel adapter - implement this for each messaging platform
  */
 export interface ChannelAdapter {
-  readonly id: ChannelId;
+  /** Channel ID - legacy: 'telegram', 'slack', etc. Multi-agent: 'telegram:work', 'whatsapp:personal' */
+  readonly id: string;
   readonly name: string;
-  
+
   // Lifecycle
   start(): Promise<void>;
   stop(): Promise<void>;
   isRunning(): boolean;
-  
+
   // Messaging
   sendMessage(msg: OutboundMessage): Promise<{ messageId: string }>;
   editMessage(chatId: string, messageId: string, text: string): Promise<void>;
@@ -26,7 +27,14 @@ export interface ChannelAdapter {
   // Capabilities (optional)
   supportsEditing?(): boolean;
   sendFile?(file: OutboundFile): Promise<{ messageId: string }>;
-  
+
+  // Multi-agent support (optional)
+  /**
+   * Set the data directory for channel state (e.g., WhatsApp session).
+   * Called before start() in multi-agent mode.
+   */
+  setDataDir?(dir: string): void;
+
   // Event handlers (set by bot core)
   onMessage?: (msg: InboundMessage) => Promise<void>;
   onCommand?: (command: string) => Promise<string | null>;

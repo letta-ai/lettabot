@@ -7,7 +7,7 @@
 import { createAgent, createSession, resumeSession, type Session } from '@letta-ai/letta-code-sdk';
 import { mkdirSync } from 'node:fs';
 import type { ChannelAdapter } from '../channels/types.js';
-import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
+import type { BotConfig, InboundMessage, TriggerContext, LastMessageTarget, BotLike } from './types.js';
 import { Store } from './store.js';
 import { updateAgentName } from '../tools/letta-api.js';
 import { installSkillsToAgent } from '../skills/loader.js';
@@ -16,7 +16,7 @@ import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { StreamWatchdog } from './stream-watchdog.js';
 
-export class LettaBot {
+export class LettaBot implements BotLike {
   private store: Store;
   private config: BotConfig;
   private channels: Map<string, ChannelAdapter> = new Map();
@@ -609,7 +609,7 @@ export class LettaBot {
   /**
    * Get the last message target (for heartbeat delivery)
    */
-  getLastMessageTarget(): { channel: string; chatId: string } | null {
+  getLastMessageTarget(): LastMessageTarget | null {
     return this.store.lastMessageTarget || null;
   }
   

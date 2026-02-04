@@ -38,26 +38,50 @@ export function resolveConfigPath(): string {
  */
 export function loadConfig(): LettaBotConfig {
   const configPath = resolveConfigPath();
-  
+
   if (!existsSync(configPath)) {
-    return { ...DEFAULT_CONFIG };
+    return {
+      server: { mode: 'cloud', ...DEFAULT_CONFIG.server },
+      agent: DEFAULT_CONFIG.agent,
+      channels: DEFAULT_CONFIG.channels,
+    } as LettaBotConfig;
   }
-  
+
   try {
     const content = readFileSync(configPath, 'utf-8');
     const parsed = YAML.parse(content) as Partial<LettaBotConfig>;
-    
-    // Merge with defaults
+
+    // Multi-agent config doesn't need legacy defaults
+    if (parsed.agents && parsed.agents.length > 0) {
+      return {
+        server: { mode: 'cloud', ...parsed.server },
+        agents: parsed.agents,
+        providers: parsed.providers,
+        features: parsed.features,
+        integrations: parsed.integrations,
+        transcription: parsed.transcription,
+        attachments: parsed.attachments,
+      } as LettaBotConfig;
+    }
+
+    // Legacy single-agent config: merge with defaults
     return {
-      ...DEFAULT_CONFIG,
-      ...parsed,
-      server: { ...DEFAULT_CONFIG.server, ...parsed.server },
+      server: { mode: 'cloud', ...DEFAULT_CONFIG.server, ...parsed.server },
       agent: { ...DEFAULT_CONFIG.agent, ...parsed.agent },
       channels: { ...DEFAULT_CONFIG.channels, ...parsed.channels },
-    };
+      providers: parsed.providers,
+      features: parsed.features,
+      integrations: parsed.integrations,
+      transcription: parsed.transcription,
+      attachments: parsed.attachments,
+    } as LettaBotConfig;
   } catch (err) {
     console.error(`[Config] Failed to load ${configPath}:`, err);
-    return { ...DEFAULT_CONFIG };
+    return {
+      server: { mode: 'cloud', ...DEFAULT_CONFIG.server },
+      agent: DEFAULT_CONFIG.agent,
+      channels: DEFAULT_CONFIG.channels,
+    } as LettaBotConfig;
   }
 }
 
@@ -85,10 +109,12 @@ export function saveConfig(config: LettaBotConfig, path?: string): void {
 
 /**
  * Get environment variables from config (for backwards compatibility)
+ * Note: This only works for legacy single-agent configs. Multi-agent configs
+ * handle env vars differently (per-agent).
  */
 export function configToEnv(config: LettaBotConfig): Record<string, string> {
   const env: Record<string, string> = {};
-  
+
   // Server
   if (config.server.mode === 'selfhosted' && config.server.baseUrl) {
     env.LETTA_BASE_URL = config.server.baseUrl;
@@ -96,56 +122,57 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.server.apiKey) {
     env.LETTA_API_KEY = config.server.apiKey;
   }
-  
-  // Agent
-  if (config.agent.id) {
+
+  // Agent (legacy single-agent mode only)
+  if (config.agent?.id) {
     env.LETTA_AGENT_ID = config.agent.id;
   }
-  if (config.agent.name) {
+  if (config.agent?.name) {
     env.AGENT_NAME = config.agent.name;
   }
-  if (config.agent.model) {
+  if (config.agent?.model) {
     env.MODEL = config.agent.model;
   }
-  
-  // Channels
-  if (config.channels.telegram?.token) {
-    env.TELEGRAM_BOT_TOKEN = config.channels.telegram.token;
-    if (config.channels.telegram.dmPolicy) {
-      env.TELEGRAM_DM_POLICY = config.channels.telegram.dmPolicy;
+
+  // Channels (legacy single-agent mode only)
+  const channels = config.channels;
+  if (channels?.telegram?.token) {
+    env.TELEGRAM_BOT_TOKEN = channels.telegram.token;
+    if (channels.telegram.dmPolicy) {
+      env.TELEGRAM_DM_POLICY = channels.telegram.dmPolicy;
     }
   }
-  if (config.channels.slack?.appToken) {
-    env.SLACK_APP_TOKEN = config.channels.slack.appToken;
+  if (channels?.slack?.appToken) {
+    env.SLACK_APP_TOKEN = channels.slack.appToken;
   }
-  if (config.channels.slack?.botToken) {
-    env.SLACK_BOT_TOKEN = config.channels.slack.botToken;
+  if (channels?.slack?.botToken) {
+    env.SLACK_BOT_TOKEN = channels.slack.botToken;
   }
-  if (config.channels.whatsapp?.enabled) {
+  if (channels?.whatsapp?.enabled) {
     env.WHATSAPP_ENABLED = 'true';
-    if (config.channels.whatsapp.selfChat) {
+    if (channels.whatsapp.selfChat) {
       env.WHATSAPP_SELF_CHAT_MODE = 'true';
     } else {
       env.WHATSAPP_SELF_CHAT_MODE = 'false';
     }
   }
-  if (config.channels.signal?.phone) {
-    env.SIGNAL_PHONE_NUMBER = config.channels.signal.phone;
+  if (channels?.signal?.phone) {
+    env.SIGNAL_PHONE_NUMBER = channels.signal.phone;
     // Signal selfChat defaults to true, so only set env if explicitly false
-    if (config.channels.signal.selfChat === false) {
+    if (channels.signal.selfChat === false) {
       env.SIGNAL_SELF_CHAT_MODE = 'false';
     }
   }
-  if (config.channels.discord?.token) {
-    env.DISCORD_BOT_TOKEN = config.channels.discord.token;
-    if (config.channels.discord.dmPolicy) {
-      env.DISCORD_DM_POLICY = config.channels.discord.dmPolicy;
+  if (channels?.discord?.token) {
+    env.DISCORD_BOT_TOKEN = channels.discord.token;
+    if (channels.discord.dmPolicy) {
+      env.DISCORD_DM_POLICY = channels.discord.dmPolicy;
     }
-    if (config.channels.discord.allowedUsers?.length) {
-      env.DISCORD_ALLOWED_USERS = config.channels.discord.allowedUsers.join(',');
+    if (channels.discord.allowedUsers?.length) {
+      env.DISCORD_ALLOWED_USERS = channels.discord.allowedUsers.join(',');
     }
   }
-  
+
   // Features
   if (config.features?.cron) {
     env.CRON_ENABLED = 'true';
@@ -153,7 +180,7 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.features?.heartbeat?.enabled) {
     env.HEARTBEAT_INTERVAL_MIN = String(config.features.heartbeat.intervalMin || 30);
   }
-  
+
   // Integrations - Google (Gmail polling)
   if (config.integrations?.google?.enabled && config.integrations.google.account) {
     env.GMAIL_ACCOUNT = config.integrations.google.account;
@@ -165,7 +192,7 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.attachments?.maxAgeDays !== undefined) {
     env.ATTACHMENTS_MAX_AGE_DAYS = String(config.attachments.maxAgeDays);
   }
-  
+
   return env;
 }
 

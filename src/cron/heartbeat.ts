@@ -7,61 +7,51 @@
  * The agent must use `lettabot-message` CLI via Bash to contact the user.
  */
 
-import { appendFileSync, mkdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import type { LettaBot } from '../core/bot.js';
-import type { TriggerContext } from '../core/types.js';
+import type { BotLike, TriggerContext } from '../core/types.js';
 import { buildHeartbeatPrompt } from '../core/prompts.js';
-import { getDataDir } from '../utils/paths.js';
+import { logEvent as baseLogEvent } from './log.js';
 
-
-// Log file
-const LOG_PATH = resolve(getDataDir(), 'cron-log.jsonl');
-
-function logEvent(event: string, data: Record<string, unknown>): void {
-  const entry = {
-    timestamp: new Date().toISOString(),
-    event,
-    ...data,
-  };
-  
-  try {
-    mkdirSync(dirname(LOG_PATH), { recursive: true });
-    appendFileSync(LOG_PATH, JSON.stringify(entry) + '\n');
-  } catch {
-    // Ignore
-  }
-  
-  console.log(`[Heartbeat] ${event}:`, JSON.stringify(data));
+/**
+ * Log heartbeat event to file and console
+ */
+function logEvent(agentName: string | undefined, event: string, data: Record<string, unknown>): void {
+  baseLogEvent(agentName, event, data, 'Heartbeat');
 }
 
 /**
- * Heartbeat configuration
+ * HeartbeatService runtime configuration
+ *
+ * Different from config/types.ts HeartbeatConfig (YAML config) and
+ * cron/types.ts CronHeartbeatConfig (CronService internal).
+ * This is the runtime config passed to HeartbeatService constructor.
  */
-export interface HeartbeatConfig {
+export interface HeartbeatServiceConfig {
   enabled: boolean;
   intervalMinutes: number;
   workingDir: string;
-  
+
   // Custom heartbeat prompt (optional)
   prompt?: string;
-  
+
   // Target for delivery (optional - defaults to last messaged)
   target?: {
     channel: string;
     chatId: string;
   };
+
+  // Agent name (for agent-scoped log files)
+  agentName?: string;
 }
 
 /**
  * Heartbeat Service
  */
 export class HeartbeatService {
-  private bot: LettaBot;
-  private config: HeartbeatConfig;
+  private bot: BotLike;
+  private config: HeartbeatServiceConfig;
   private intervalId: NodeJS.Timeout | null = null;
-  
-  constructor(bot: LettaBot, config: HeartbeatConfig) {
+
+  constructor(bot: BotLike, config: HeartbeatServiceConfig) {
     this.bot = bot;
     this.config = config;
   }
@@ -88,7 +78,7 @@ export class HeartbeatService {
     // Wait full interval before first heartbeat (don't fire on startup)
     this.intervalId = setInterval(() => this.runHeartbeat(), intervalMs);
     
-    logEvent('heartbeat_started', {
+    logEvent(this.config.agentName, 'heartbeat_started', {
       intervalMinutes: this.config.intervalMinutes,
       mode: 'silent',
       note: 'Agent must use lettabot-message CLI to contact user',
@@ -142,7 +132,7 @@ export class HeartbeatService {
         if (msSinceLastMessage < skipWindowMs) {
           const minutesAgo = Math.round(msSinceLastMessage / 60000);
           console.log(`[Heartbeat] User messaged ${minutesAgo}m ago - skipping heartbeat`);
-          logEvent('heartbeat_skipped_recent_user', {
+          logEvent(this.config.agentName, 'heartbeat_skipped_recent_user', {
             lastUserMessage: lastUserMessage.toISOString(),
             minutesAgo,
           });
@@ -153,7 +143,7 @@ export class HeartbeatService {
     
     console.log(`[Heartbeat] Sending heartbeat to agent...`);
     
-    logEvent('heartbeat_running', { 
+    logEvent(this.config.agentName, 'heartbeat_running', { 
       time: now.toISOString(),
       mode: 'silent',
     });
@@ -185,14 +175,14 @@ export class HeartbeatService {
         console.log(`  - Response preview: "${response.slice(0, 100)}${response.length > 100 ? '...' : ''}"`);
       }
       
-      logEvent('heartbeat_completed', {
+      logEvent(this.config.agentName, 'heartbeat_completed', {
         mode: 'silent',
         responseLength: response?.length || 0,
       });
       
     } catch (error) {
       console.error('[Heartbeat] Error:', error);
-      logEvent('heartbeat_error', {
+      logEvent(this.config.agentName, 'heartbeat_error', {
         error: error instanceof Error ? error.message : String(error),
       });
     }

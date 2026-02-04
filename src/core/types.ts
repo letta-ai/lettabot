@@ -125,7 +125,7 @@ export interface LastMessageTarget {
 }
 
 /**
- * Agent store - persists the single agent ID
+ * Agent store - persists the single agent ID (legacy v1 format)
  */
 export interface AgentStore {
   agentId: string | null;
@@ -134,4 +134,54 @@ export interface AgentStore {
   createdAt?: string;
   lastUsedAt?: string;
   lastMessageTarget?: LastMessageTarget;
+}
+
+// =============================================================================
+// Multi-Agent Store Types (v2)
+// =============================================================================
+
+/**
+ * Per-agent state in multi-agent store
+ */
+export interface AgentState {
+  agentId: string | null;
+  conversationId?: string;
+  baseUrl?: string;
+  createdAt?: string;
+  lastUsedAt?: string;
+  lastMessageTarget?: LastMessageTarget;
+}
+
+/**
+ * Multi-agent store format (v2)
+ */
+export interface MultiAgentStoreData {
+  version: 2;
+  agents: Record<string, AgentState>;
+}
+
+// =============================================================================
+// Service Interface (shared between LettaBot and AgentSession)
+// =============================================================================
+
+/**
+ * Interface for services (CronService, HeartbeatService, PollingService)
+ * Both LettaBot and AgentSession implement this interface.
+ */
+export interface BotLike {
+  /** Send a message to the agent (returns response text) */
+  sendToAgent(text: string, context?: TriggerContext): Promise<string>;
+
+  /** Get the last user message time (for heartbeat skip logic) */
+  getLastUserMessageTime(): Date | null;
+
+  /** Get the last message target (for heartbeat delivery) */
+  getLastMessageTarget(): LastMessageTarget | null;
+
+  /** Deliver a message/file to a specific channel */
+  deliverToChannel(
+    channelId: string,
+    chatId: string,
+    options: { text?: string; filePath?: string; kind?: 'image' | 'file' }
+  ): Promise<string | undefined>;
 }

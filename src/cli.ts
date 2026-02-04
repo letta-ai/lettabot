@@ -47,18 +47,28 @@ async function configure() {
   p.intro('🤖 LettaBot Configuration');
 
   // Show current config from YAML
-  const configRows = [
-    ['Server Mode', config.server.mode],
-    ['API Key', config.server.apiKey ? '✓ Set' : '✗ Not set'],
-    ['Agent Name', config.agent.name],
-    ['Model', config.agent.model],
-    ['Telegram', config.channels.telegram?.enabled ? '✓ Enabled' : '✗ Disabled'],
-    ['Slack', config.channels.slack?.enabled ? '✓ Enabled' : '✗ Disabled'],
-    ['Discord', config.channels.discord?.enabled ? '✓ Enabled' : '✗ Disabled'],
-    ['Cron', config.features?.cron ? '✓ Enabled' : '✗ Disabled'],
-    ['Heartbeat', config.features?.heartbeat?.enabled ? `✓ ${config.features.heartbeat.intervalMin}min` : '✗ Disabled'],
-    ['BYOK Providers', config.providers?.length ? config.providers.map(p => p.name).join(', ') : 'None'],
-  ];
+  const isMultiAgent = config.agents && config.agents.length > 0;
+  const configRows = isMultiAgent
+    ? [
+        ['Mode', 'Multi-Agent'],
+        ['Server Mode', config.server.mode],
+        ['API Key', config.server.apiKey ? '✓ Set' : '✗ Not set'],
+        ['Agents', config.agents!.map(a => a.name).join(', ')],
+        ['BYOK Providers', config.providers?.length ? config.providers.map(p => p.name).join(', ') : 'None'],
+      ]
+    : [
+        ['Mode', 'Single-Agent (Legacy)'],
+        ['Server Mode', config.server.mode],
+        ['API Key', config.server.apiKey ? '✓ Set' : '✗ Not set'],
+        ['Agent Name', config.agent?.name || 'Not set'],
+        ['Model', config.agent?.model || 'Not set'],
+        ['Telegram', config.channels?.telegram?.enabled ? '✓ Enabled' : '✗ Disabled'],
+        ['Slack', config.channels?.slack?.enabled ? '✓ Enabled' : '✗ Disabled'],
+        ['Discord', config.channels?.discord?.enabled ? '✓ Enabled' : '✗ Disabled'],
+        ['Cron', config.features?.cron ? '✓ Enabled' : '✗ Disabled'],
+        ['Heartbeat', config.features?.heartbeat?.enabled ? `✓ ${config.features.heartbeat.intervalMin}min` : '✗ Disabled'],
+        ['BYOK Providers', config.providers?.length ? config.providers.map(p => p.name).join(', ') : 'None'],
+      ];
   
   const maxKeyLength = Math.max(...configRows.map(([key]) => key.length));
   const summary = configRows

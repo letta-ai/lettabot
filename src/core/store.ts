@@ -1,15 +1,18 @@
 /**
- * Agent Store - Persists the single agent ID
- * 
- * Since we use dmScope: "main", there's only ONE agent shared across all channels.
+ * Agent Store - Persists agent state
+ *
+ * Two formats:
+ * - v1 (legacy): Single agent in lettabot-agent.json
+ * - v2 (multi-agent): Multiple agents in lettabot-agents.json
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import type { AgentStore, LastMessageTarget } from './types.js';
+import type { AgentStore, AgentState, MultiAgentStoreData, LastMessageTarget } from './types.js';
 import { getDataDir } from '../utils/paths.js';
 
 const DEFAULT_STORE_PATH = 'lettabot-agent.json';
+const MULTI_AGENT_STORE_PATH = 'lettabot-agents.json';
 
 export class Store {
   private storePath: string;
@@ -133,5 +136,188 @@ export class Store {
       throw new Error('No agent found. Run `lettabot onboard` or `lettabot server` first to create an agent.');
     }
     return data.agentId;
+  }
+}
+
+// =============================================================================
+// Multi-Agent Store (v2)
+// =============================================================================
+
+/**
+ * Multi-agent store - supports multiple agents with per-agent state
+ */
+export class MultiAgentStore {
+  private storePath: string;
+  private data: MultiAgentStoreData;
+
+  constructor() {
+    this.storePath = resolve(getDataDir(), MULTI_AGENT_STORE_PATH);
+    this.data = this.load();
+  }
+
+  /**
+   * Load store, migrating from v1 if necessary
+   */
+  private load(): MultiAgentStoreData {
+    // Try to load existing v2 store
+    if (existsSync(this.storePath)) {
+      try {
+        const raw = readFileSync(this.storePath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed.version === 2) {
+          return parsed as MultiAgentStoreData;
+        }
+      } catch (e) {
+        console.error('[MultiAgentStore] Failed to load store:', e);
+      }
+    }
+
+    // Check for v1 store to migrate
+    const v1Path = resolve(getDataDir(), DEFAULT_STORE_PATH);
+    if (existsSync(v1Path)) {
+      try {
+        const v1Data = JSON.parse(readFileSync(v1Path, 'utf-8')) as AgentStore;
+        if (v1Data.agentId) {
+          console.log('[MultiAgentStore] Migrating from v1 store...');
+
+          // Backup v1 store
+          const backupPath = resolve(getDataDir(), 'lettabot-agent.v1.backup.json');
+          if (!existsSync(backupPath)) {
+            copyFileSync(v1Path, backupPath);
+            console.log(`[MultiAgentStore] Backed up v1 store to ${backupPath}`);
+          }
+
+          // Migrate to v2 with 'default' agent
+          const migrated: MultiAgentStoreData = {
+            version: 2,
+            agents: {
+              default: {
+                agentId: v1Data.agentId,
+                conversationId: v1Data.conversationId || undefined,
+                baseUrl: v1Data.baseUrl,
+                createdAt: v1Data.createdAt,
+                lastUsedAt: v1Data.lastUsedAt,
+                lastMessageTarget: v1Data.lastMessageTarget,
+              },
+            },
+          };
+
+          // Save migrated store
+          this.saveData(migrated);
+          console.log('[MultiAgentStore] Migration complete');
+          return migrated;
+        }
+      } catch (e) {
+        console.error('[MultiAgentStore] Failed to migrate v1 store:', e);
+      }
+    }
+
+    // Return empty v2 store
+    return { version: 2, agents: {} };
+  }
+
+  private saveData(data: MultiAgentStoreData): void {
+    try {
+      mkdirSync(dirname(this.storePath), { recursive: true });
+      writeFileSync(this.storePath, JSON.stringify(data, null, 2));
+    } catch (e) {
+      console.error('[MultiAgentStore] Failed to save:', e);
+    }
+  }
+
+  private save(): void {
+    this.saveData(this.data);
+  }
+
+  /**
+   * Get state for a specific agent
+   */
+  getAgent(name: string): AgentState | null {
+    return this.data.agents[name] || null;
+  }
+
+  /**
+   * Get agent ID for a specific agent
+   */
+  getAgentId(name: string): string | null {
+    return this.data.agents[name]?.agentId || null;
+  }
+
+  /**
+   * Set state for a specific agent
+   */
+  setAgent(name: string, state: Partial<AgentState>): void {
+    const existing = this.data.agents[name] || { agentId: null };
+    this.data.agents[name] = {
+      ...existing,
+      ...state,
+      lastUsedAt: new Date().toISOString(),
+    };
+    if (state.agentId && !existing.createdAt) {
+      this.data.agents[name].createdAt = new Date().toISOString();
+    }
+    this.save();
+  }
+
+  /**
+   * Set agent ID for a specific agent
+   */
+  setAgentId(name: string, agentId: string, baseUrl?: string): void {
+    this.setAgent(name, { agentId, baseUrl });
+  }
+
+  /**
+   * Check if an agent exists in the store
+   */
+  hasAgent(name: string): boolean {
+    return !!this.data.agents[name]?.agentId;
+  }
+
+  /**
+   * Get all agent names
+   */
+  getAgentNames(): string[] {
+    return Object.keys(this.data.agents);
+  }
+
+  /**
+   * Reset a specific agent
+   */
+  resetAgent(name: string): void {
+    delete this.data.agents[name];
+    this.save();
+  }
+
+  /**
+   * Reset all agents
+   */
+  resetAll(): void {
+    this.data = { version: 2, agents: {} };
+    this.save();
+  }
+
+  /**
+   * Get raw data (for debugging)
+   */
+  getData(): MultiAgentStoreData {
+    return { ...this.data };
+  }
+
+  /**
+   * Get last message target for an agent
+   */
+  getLastMessageTarget(name: string): LastMessageTarget | null {
+    return this.data.agents[name]?.lastMessageTarget || null;
+  }
+
+  /**
+   * Set last message target for an agent
+   */
+  setLastMessageTarget(name: string, target: LastMessageTarget | null): void {
+    if (!this.data.agents[name]) {
+      this.data.agents[name] = { agentId: null };
+    }
+    this.data.agents[name].lastMessageTarget = target || undefined;
+    this.save();
   }
 }

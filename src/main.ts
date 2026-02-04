@@ -20,7 +20,11 @@ import { getDataDir, getWorkingDir, hasRailwayVolume } from './utils/paths.js';
 const yamlConfig = loadConfig();
 const configSource = existsSync(resolveConfigPath()) ? resolveConfigPath() : 'defaults + environment variables';
 console.log(`[Config] Loaded from ${configSource}`);
-console.log(`[Config] Mode: ${yamlConfig.server.mode}, Agent: ${yamlConfig.agent.name}, Model: ${yamlConfig.agent.model}`);
+if (yamlConfig.agents?.length) {
+  console.log(`[Config] Mode: ${yamlConfig.server.mode}, Multi-Agent: ${yamlConfig.agents.map(a => a.name).join(', ')}`);
+} else {
+  console.log(`[Config] Mode: ${yamlConfig.server.mode}, Agent: ${yamlConfig.agent?.name || 'default'}, Model: ${yamlConfig.agent?.model || 'default'}`);
+}
 applyConfigToEnv(yamlConfig);
 
 // Sync BYOK providers on startup (async, don't block)
@@ -114,6 +118,8 @@ async function refreshTokensIfNeeded(): Promise<void> {
 await refreshTokensIfNeeded();
 
 import { LettaBot } from './core/bot.js';
+import { LettaGateway } from './core/gateway.js';
+import { isMultiAgentConfig } from './config/types.js';
 import { TelegramAdapter } from './channels/telegram.js';
 import { SlackAdapter } from './channels/slack.js';
 import { WhatsAppAdapter } from './channels/whatsapp/index.js';
@@ -123,6 +129,8 @@ import { CronService } from './cron/service.js';
 import { HeartbeatService } from './cron/heartbeat.js';
 import { PollingService } from './polling/service.js';
 import { agentExists, findAgentByName } from './tools/letta-api.js';
+import type { ChannelAdapter } from './channels/types.js';
+import type { AgentChannelBinding, ChannelType } from './config/types.js';
 
 // Check if config exists (skip in Railway/Docker where env vars are used directly)
 const configPath = resolveConfigPath();
@@ -287,8 +295,80 @@ const config = {
   },
 };
 
-// Validate at least one channel is configured
-if (!config.telegram.enabled && !config.slack.enabled && !config.whatsapp.enabled && !config.signal.enabled && !config.discord.enabled) {
+// =============================================================================
+// Multi-Agent Helper Functions
+// =============================================================================
+
+/**
+ * Create a channel adapter from a channel binding config
+ */
+function createChannelAdapter(
+  binding: AgentChannelBinding,
+  attachmentsDir: string,
+  attachmentsMaxBytes: number
+): ChannelAdapter {
+  const type = binding.type as ChannelType;
+
+  switch (type) {
+    case 'telegram':
+      return new TelegramAdapter({
+        token: binding.token as string,
+        dmPolicy: binding.dmPolicy as 'pairing' | 'allowlist' | 'open' | undefined,
+        allowedUsers: binding.allowedUsers as number[] | undefined,
+        attachmentsDir,
+        attachmentsMaxBytes,
+      });
+    case 'slack':
+      return new SlackAdapter({
+        botToken: binding.botToken as string,
+        appToken: binding.appToken as string,
+        allowedUsers: binding.allowedUsers as string[] | undefined,
+        attachmentsDir,
+        attachmentsMaxBytes,
+      });
+    case 'whatsapp':
+      return new WhatsAppAdapter({
+        sessionPath: binding.sessionPath as string | undefined,
+        dmPolicy: binding.dmPolicy as 'pairing' | 'allowlist' | 'open' | undefined,
+        allowedUsers: binding.allowedUsers as string[] | undefined,
+        selfChatMode: binding.selfChat !== false,
+        attachmentsDir,
+        attachmentsMaxBytes,
+      });
+    case 'signal':
+      return new SignalAdapter({
+        phoneNumber: binding.phone as string,
+        cliPath: binding.cliPath as string | undefined,
+        httpHost: binding.httpHost as string | undefined,
+        httpPort: binding.httpPort as number | undefined,
+        dmPolicy: binding.dmPolicy as 'pairing' | 'allowlist' | 'open' | undefined,
+        allowedUsers: binding.allowedUsers as string[] | undefined,
+        selfChatMode: binding.selfChat !== false,
+        attachmentsDir,
+        attachmentsMaxBytes,
+      });
+    case 'discord':
+      return new DiscordAdapter({
+        token: binding.token as string,
+        dmPolicy: binding.dmPolicy as 'pairing' | 'allowlist' | 'open' | undefined,
+        allowedUsers: binding.allowedUsers as string[] | undefined,
+        attachmentsDir,
+        attachmentsMaxBytes,
+      });
+    default:
+      throw new Error(`Unknown channel type: ${type}`);
+  }
+}
+
+// =============================================================================
+// Validation
+// =============================================================================
+
+// Multi-agent mode validation
+const isMultiAgent = isMultiAgentConfig(yamlConfig);
+
+// Validate at least one channel is configured (legacy mode only)
+if (!isMultiAgent && !config.telegram.enabled && !config.slack.enabled && !config.whatsapp.enabled && !config.signal.enabled && !config.discord.enabled) {
   console.error('\n  Error: No channels configured.');
   console.error('  Set TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN+SLACK_APP_TOKEN, WHATSAPP_ENABLED=true, SIGNAL_PHONE_NUMBER, or DISCORD_BOT_TOKEN\n');
   process.exit(1);
@@ -301,7 +381,162 @@ if (!process.env.LETTA_API_KEY) {
   process.exit(1);
 }
 
-async function main() {
+/**
+ * Start multi-agent mode using LettaGateway
+ */
+async function startMultiAgent() {
+  console.log('Starting LettaBot (Multi-Agent Mode)...\n');
+
+  const dataDir = getDataDir();
+  if (hasRailwayVolume()) {
+    console.log(`[Storage] Railway volume detected at ${process.env.RAILWAY_VOLUME_MOUNT_PATH}`);
+  }
+  console.log(`[Storage] Data directory: ${dataDir}`);
+  console.log(`[Storage] Working directory: ${config.workingDir}`);
+
+  const attachmentsDir = resolve(config.workingDir, 'attachments');
+  pruneAttachmentsDir(attachmentsDir, config.attachmentsMaxAgeDays).catch((err) => {
+    console.warn('[Attachments] Prune failed:', err);
+  });
+  if (config.attachmentsMaxAgeDays > 0) {
+    const timer = setInterval(() => {
+      pruneAttachmentsDir(attachmentsDir, config.attachmentsMaxAgeDays).catch((err) => {
+        console.warn('[Attachments] Prune failed:', err);
+      });
+    }, ATTACHMENTS_PRUNE_INTERVAL_MS);
+    timer.unref?.();
+  }
+
+  // Create gateway
+  const gateway = new LettaGateway({
+    workingDir: config.workingDir,
+    allowedTools: config.allowedTools,
+    defaultModel: config.model,
+  });
+
+  // Track per-agent services for cleanup
+  const perAgentServices: Array<{
+    heartbeat?: HeartbeatService;
+    cron?: CronService;
+    polling?: PollingService;
+  }> = [];
+
+  // Add agents from config
+  for (const agentEntry of yamlConfig.agents!) {
+    const session = gateway.addAgent(agentEntry);
+
+    // Register channels for this agent
+    for (const channelBinding of agentEntry.channels) {
+      const adapter = createChannelAdapter(channelBinding, attachmentsDir, config.attachmentsMaxBytes);
+      session.registerChannel(adapter);
+    }
+
+    // Per-agent services
+    const agentServices: typeof perAgentServices[0] = {};
+
+    // Cron service (if enabled for this agent)
+    const cronEnabled = agentEntry.features?.cron ?? false;
+    if (cronEnabled) {
+      agentServices.cron = new CronService(session, {
+        storePath: `${config.workingDir}/${agentEntry.name}-cron-jobs.json`,
+        agentName: agentEntry.name,
+      });
+    }
+
+    // Heartbeat service (if configured for this agent)
+    const heartbeatConfig = agentEntry.features?.heartbeat;
+    if (heartbeatConfig?.enabled) {
+      agentServices.heartbeat = new HeartbeatService(session, {
+        enabled: true,
+        intervalMinutes: heartbeatConfig.intervalMin || 30,
+        prompt: heartbeatConfig.prompt,
+        workingDir: config.workingDir,
+        target: parseHeartbeatTarget(heartbeatConfig.target),
+        agentName: agentEntry.name,
+      });
+
+      // Wire up /heartbeat command for this agent
+      gateway.setHeartbeatTrigger(agentEntry.name, () => agentServices.heartbeat!.trigger());
+    }
+
+    // Polling service (if configured for this agent)
+    const pollingConfig = agentEntry.features?.polling;
+    if (pollingConfig?.enabled) {
+      agentServices.polling = new PollingService(session, {
+        intervalMs: pollingConfig.intervalMs || 60000,
+        workingDir: config.workingDir,
+        gmail: pollingConfig.gmail,
+        agentName: agentEntry.name,
+      });
+    }
+
+    perAgentServices.push(agentServices);
+  }
+
+  // Start all agents
+  await gateway.start();
+
+  // Start per-agent services
+  for (const services of perAgentServices) {
+    if (services.cron) {
+      await services.cron.start();
+    }
+    if (services.heartbeat) {
+      services.heartbeat.start();
+    }
+    if (services.polling) {
+      services.polling.start();
+    }
+  }
+
+  // Load/generate API key for CLI authentication
+  const apiKey = loadOrGenerateApiKey();
+  console.log(`[API] Key: ${apiKey.slice(0, 8)}... (set LETTABOT_API_KEY to customize)`);
+
+  // Start API server (works with both LettaBot and LettaGateway)
+  const apiPort = parseInt(process.env.PORT || '8080', 10);
+  const apiHost = process.env.API_HOST; // undefined = 127.0.0.1 (secure default)
+  const apiCorsOrigin = process.env.API_CORS_ORIGIN; // undefined = same-origin only
+  const apiServer = createApiServer(gateway, {
+    port: apiPort,
+    apiKey: apiKey,
+    host: apiHost,
+    corsOrigin: apiCorsOrigin,
+  });
+
+  // Log status
+  const status = gateway.getStatus();
+  console.log('\n=================================');
+  console.log('LettaBot is running! (Multi-Agent)');
+  console.log('=================================');
+  console.log(`Agents: ${status.agents.length}`);
+  for (const agent of status.agents) {
+    console.log(`  - ${agent.name}: ${agent.agentId || '(will create on start)'}`);
+    console.log(`    Channels: ${agent.channels.join(', ') || '(none)'}`);
+  }
+  console.log('=================================\n');
+
+  // Handle shutdown
+  const shutdown = async () => {
+    console.log('\nShutting down...');
+    // Stop per-agent services
+    for (const services of perAgentServices) {
+      services.heartbeat?.stop();
+      services.cron?.stop();
+      services.polling?.stop();
+    }
+    await gateway.stop();
+    process.exit(0);
+  };
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+/**
+ * Start legacy single-agent mode using LettaBot
+ */
+async function startLegacyMode() {
   console.log('Starting LettaBot...\n');
 
   // Log storage locations (helpful for Railway debugging)
@@ -529,6 +764,17 @@ async function main() {
   
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+}
+
+/**
+ * Main entry point - dispatch to multi-agent or legacy mode
+ */
+async function main() {
+  if (isMultiAgent) {
+    await startMultiAgent();
+  } else {
+    await startLegacyMode();
+  }
 }
 
 main().catch((e) => {

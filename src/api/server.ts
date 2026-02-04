@@ -8,10 +8,19 @@ import * as fs from 'fs';
 import { validateApiKey } from './auth.js';
 import type { SendMessageRequest, SendMessageResponse, SendFileResponse } from './types.js';
 import { parseMultipart } from './multipart.js';
-import type { LettaBot } from '../core/bot.js';
-import type { ChannelId } from '../core/types.js';
 
-const VALID_CHANNELS: ChannelId[] = ['telegram', 'slack', 'discord', 'whatsapp', 'signal'];
+/**
+ * Interface for message delivery (implemented by both LettaBot and LettaGateway)
+ */
+interface MessageDeliverer {
+  deliverToChannel(
+    channelId: string,
+    chatId: string,
+    options: { text?: string; filePath?: string; kind?: 'image' | 'file' }
+  ): Promise<string | undefined>;
+}
+
+const VALID_CHANNELS = ['telegram', 'slack', 'discord', 'whatsapp', 'signal'];
 const MAX_BODY_SIZE = 10 * 1024; // 10KB
 const MAX_TEXT_LENGTH = 10000; // 10k chars
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
@@ -25,8 +34,9 @@ interface ServerOptions {
 
 /**
  * Create and start the HTTP API server
+ * @param deliverer - Either LettaBot (legacy) or LettaGateway (multi-agent)
  */
-export function createApiServer(bot: LettaBot, options: ServerOptions): http.Server {
+export function createApiServer(deliverer: MessageDeliverer, options: ServerOptions): http.Server {
   const server = http.createServer(async (req, res) => {
     // Set CORS headers (configurable origin, defaults to same-origin for security)
     const corsOrigin = options.corsOrigin || req.headers.origin || 'null';
@@ -74,7 +84,7 @@ export function createApiServer(bot: LettaBot, options: ServerOptions): http.Ser
           return;
         }
 
-        if (!VALID_CHANNELS.includes(fields.channel as ChannelId)) {
+        if (!VALID_CHANNELS.includes(fields.channel)) {
           sendError(res, 400, `Invalid channel: ${fields.channel}`, 'channel');
           return;
         }
@@ -87,9 +97,9 @@ export function createApiServer(bot: LettaBot, options: ServerOptions): http.Ser
 
         const file = files.length > 0 ? files[0] : undefined;
 
-        // Send via unified bot method
-        const messageId = await bot.deliverToChannel(
-          fields.channel as ChannelId,
+        // Send via unified deliverer method (works with both LettaBot and LettaGateway)
+        const messageId = await deliverer.deliverToChannel(
+          fields.channel,
           fields.chatId,
           {
             text: fields.text,
@@ -178,7 +188,7 @@ function validateRequest(request: SendMessageRequest): { message: string; field?
     return { message: 'Missing required field: text', field: 'text' };
   }
 
-  if (!VALID_CHANNELS.includes(request.channel as ChannelId)) {
+  if (!VALID_CHANNELS.includes(request.channel)) {
     return { message: `Invalid channel: ${request.channel}`, field: 'channel' };
   }
 

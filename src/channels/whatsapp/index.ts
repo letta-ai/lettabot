@@ -304,6 +304,19 @@ export class WhatsAppAdapter implements ChannelAdapter {
     return this.running;
   }
 
+  /**
+   * Set the data directory for session storage (multi-agent support).
+   * Must be called before start().
+   */
+  setDataDir(dir: string): void {
+    if (this.running) {
+      console.warn('[WhatsApp] setDataDir called after start() - ignored');
+      return;
+    }
+    this.sessionPath = `${dir}/whatsapp-session`;
+    console.log(`[WhatsApp] Session path set to: ${this.sessionPath}`);
+  }
+
   // ==========================================================================
   // RECONNECTION MONITOR
   // ==========================================================================

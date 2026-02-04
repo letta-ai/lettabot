@@ -12,6 +12,7 @@
 
 // Config loaded from lettabot.yaml
 import { loadConfig, applyConfigToEnv } from '../config/index.js';
+import { isMultiAgentConfig } from '../config/types.js';
 const config = loadConfig();
 applyConfigToEnv(config);
 import { resolve } from 'node:path';
@@ -24,18 +25,55 @@ interface LastTarget {
   chatId: string;
 }
 
-interface AgentStore {
+interface AgentStoreV1 {
   agentId?: string;
   lastMessageTarget?: LastTarget;  // Note: field is "lastMessageTarget" not "lastTarget"
 }
 
-// Store path (same location as bot uses)
-const STORE_PATH = resolve(getDataDir(), 'lettabot-agent.json');
+interface AgentStoreV2 {
+  version: 2;
+  agents: Record<string, {
+    agentId?: string;
+    lastMessageTarget?: LastTarget;
+  }>;
+}
 
+// Store paths (same locations as bot uses)
+const STORE_PATH_V1 = resolve(getDataDir(), 'lettabot-agent.json');
+const STORE_PATH_V2 = resolve(getDataDir(), 'lettabot-agents.json');
+
+/**
+ * Load last message target from store (supports both v1 and v2 formats)
+ */
 function loadLastTarget(): LastTarget | null {
+  // Check if multi-agent mode (v2 store)
+  if (isMultiAgentConfig(config)) {
+    try {
+      if (existsSync(STORE_PATH_V2)) {
+        const store: AgentStoreV2 = JSON.parse(readFileSync(STORE_PATH_V2, 'utf-8'));
+        // In multi-agent mode, try to find the first agent with a lastMessageTarget
+        // (or use a specific agent if specified via env var)
+        const targetAgentName = process.env.LETTABOT_AGENT_NAME;
+        if (targetAgentName && store.agents[targetAgentName]) {
+          return store.agents[targetAgentName].lastMessageTarget || null;
+        }
+        // Fallback: find first agent with a lastMessageTarget
+        for (const agentState of Object.values(store.agents)) {
+          if (agentState.lastMessageTarget) {
+            return agentState.lastMessageTarget;
+          }
+        }
+      }
+    } catch {
+      // Ignore
+    }
+    return null;
+  }
+
+  // Legacy v1 store
   try {
-    if (existsSync(STORE_PATH)) {
-      const store: AgentStore = JSON.parse(readFileSync(STORE_PATH, 'utf-8'));
+    if (existsSync(STORE_PATH_V1)) {
+      const store: AgentStoreV1 = JSON.parse(readFileSync(STORE_PATH_V1, 'utf-8'));
       return store.lastMessageTarget || null;
     }
   } catch {
