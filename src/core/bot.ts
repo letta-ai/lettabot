@@ -287,6 +287,7 @@ export class LettaBot {
       let lastMsgType: string | null = null;
       let lastAssistantUuid: string | null = null;
       let sentAnyMessage = false;
+      let receivedAnyData = false; // Track if we got ANY stream data
       const msgTypeCounts: Record<string, number> = {};
       
       // Stream watchdog - abort if idle for too long
@@ -335,6 +336,7 @@ export class LettaBot {
         for await (const streamMsg of session.stream()) {
           const msgUuid = (streamMsg as any).uuid;
           watchdog.ping();
+          receivedAnyData = true;
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
           // Verbose logging: show every stream message type
@@ -361,9 +363,8 @@ export class LettaBot {
             console.log(`[Bot] Generating response...`);
           } else if (streamMsg.type === 'reasoning' && lastMsgType !== 'reasoning') {
             console.log(`[Bot] Reasoning...`);
-          } else if ((streamMsg.type as string) === 'system' && lastMsgType !== 'system') {
-            const subtype = (streamMsg as any).subtype || 'unknown';
-            console.log(`[Bot] System message: ${subtype}`);
+          } else if (streamMsg.type === 'init' && lastMsgType !== 'init') {
+            console.log(`[Bot] Session initialized`);
           }
           lastMsgType = streamMsg.type;
           
@@ -461,10 +462,25 @@ export class LettaBot {
       
       // Only show "no response" if we never sent anything
       if (!sentAnyMessage) {
-        console.warn('[Bot] No message sent during stream - sending "(No response from agent)"');
-        console.warn('[Bot] This may indicate: tool approval hang, stream error, or ADE session conflict');
-        console.warn('[Bot] Check if ADE web interface is open - simultaneous access can cause this issue');
-        await adapter.sendMessage({ chatId: msg.chatId, text: '(No response from agent)', threadId: msg.threadId });
+        if (!receivedAnyData) {
+          // Stream timed out with NO data at all - likely stuck approval or connection issue
+          console.error('[Bot] Stream received NO DATA - possible stuck tool approval');
+          console.error('[Bot] Conversation:', this.store.conversationId);
+          console.error('[Bot] This can happen when a previous session disconnected mid-tool-approval');
+          console.error('[Bot] The CLI should auto-recover, but if this persists:');
+          console.error('[Bot]   1. Run: lettabot reset-conversation');
+          console.error('[Bot]   2. Or try your message again (CLI may auto-recover on retry)');
+          await adapter.sendMessage({ 
+            chatId: msg.chatId, 
+            text: '(No response - connection issue. Please try sending your message again.)', 
+            threadId: msg.threadId 
+          });
+        } else {
+          console.warn('[Bot] Stream received data but no assistant message');
+          console.warn('[Bot] Message types received:', msgTypeCounts);
+          console.warn('[Bot] This may indicate: ADE session conflict, or tool approval needed');
+          await adapter.sendMessage({ chatId: msg.chatId, text: '(No response from agent)', threadId: msg.threadId });
+        }
       }
       
     } catch (error) {
