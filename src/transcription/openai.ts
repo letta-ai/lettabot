@@ -4,6 +4,10 @@
 
 import OpenAI from 'openai';
 import { loadConfig } from '../config/index.js';
+import { execSync } from 'node:child_process';
+import { writeFileSync, readFileSync, unlinkSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 let openaiClient: OpenAI | null = null;
 
@@ -34,15 +38,25 @@ function getModel(): string {
  */
 export async function transcribeAudio(audioBuffer: Buffer, filename: string = 'audio.ogg'): Promise<string> {
   const client = getClient();
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
   
-  // Normalize filename for Whisper API (e.g., .aac -> .m4a)
-  const normalizedFilename = normalizeFilename(filename);
+  // Check if format needs conversion (not just renaming)
+  let finalBuffer = audioBuffer;
+  let finalFilename = filename;
+  
+  if (NEEDS_CONVERSION.includes(ext)) {
+    console.log(`[Transcription] Converting .${ext} to .mp3 with ffmpeg`);
+    const converted = convertAudioToMp3(audioBuffer, ext);
+    finalBuffer = converted;
+    finalFilename = filename.replace(/\.[^.]+$/, '.mp3');
+  } else {
+    // Just normalize the filename for formats that work with renaming
+    finalFilename = normalizeFilename(filename);
+  }
   
   // Create a File object from the buffer
-  // OpenAI SDK expects a File-like object
-  // Convert Buffer to Uint8Array to satisfy BlobPart type
-  const file = new File([new Uint8Array(audioBuffer)], normalizedFilename, { 
-    type: getMimeType(normalizedFilename) 
+  const file = new File([new Uint8Array(finalBuffer)], finalFilename, { 
+    type: getMimeType(finalFilename) 
   });
   
   const response = await client.audio.transcriptions.create({
@@ -51,6 +65,41 @@ export async function transcribeAudio(audioBuffer: Buffer, filename: string = 'a
   });
   
   return response.text;
+}
+
+/**
+ * Formats that need actual conversion (not just renaming)
+ */
+const NEEDS_CONVERSION = ['aac', 'amr', 'caf', 'x-caf', '3gp', '3gpp'];
+
+/**
+ * Convert audio to MP3 using ffmpeg
+ */
+function convertAudioToMp3(audioBuffer: Buffer, inputExt: string): Buffer {
+  const tempDir = join(tmpdir(), 'lettabot-transcription');
+  mkdirSync(tempDir, { recursive: true });
+  
+  const inputPath = join(tempDir, `input-${Date.now()}.${inputExt}`);
+  const outputPath = join(tempDir, `output-${Date.now()}.mp3`);
+  
+  try {
+    // Write input file
+    writeFileSync(inputPath, audioBuffer);
+    
+    // Convert with ffmpeg
+    execSync(`ffmpeg -y -i "${inputPath}" -acodec libmp3lame -q:a 2 "${outputPath}" 2>/dev/null`, {
+      timeout: 30000,
+    });
+    
+    // Read output
+    const converted = readFileSync(outputPath);
+    console.log(`[Transcription] Converted ${audioBuffer.length} bytes → ${converted.length} bytes`);
+    return converted;
+  } finally {
+    // Cleanup temp files
+    try { unlinkSync(inputPath); } catch {}
+    try { unlinkSync(outputPath); } catch {}
+  }
 }
 
 /**
