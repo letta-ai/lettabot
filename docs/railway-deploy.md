@@ -72,6 +72,33 @@ Railway automatically:
 - Sets the `PORT` environment variable
 - Monitors `/health` endpoint
 
+## Persistent Storage
+
+The Railway template includes a persistent volume mounted at `/data`. This is set up automatically when you deploy using the button above.
+
+### What Gets Persisted
+
+- **Agent ID** - No need to set `LETTA_AGENT_ID` manually after first run
+- **Cron jobs** - Scheduled tasks survive restarts
+- **Skills** - Downloaded skills persist
+- **Attachments** - Downloaded media files
+
+### Volume Size
+
+- Free plan: 0.5 GB (sufficient for most use cases)
+- Hobby plan: 5 GB
+- Pro plan: 50 GB
+
+### Manual Deployment (Without Template)
+
+If you deploy manually from a fork instead of using the template, you'll need to add a volume yourself:
+
+1. In your Railway project, click **+ New** and select **Volume**
+2. Connect the volume to your LettaBot service
+3. Set the mount path to `/data`
+
+LettaBot automatically detects `RAILWAY_VOLUME_MOUNT_PATH` and uses it for persistent data.
+
 ## Channel Limitations
 
 | Channel | Railway Support | Notes |
@@ -100,12 +127,20 @@ Check Railway logs for startup errors. Common issues:
 - Missing `LETTA_API_KEY`
 - Invalid channel tokens
 
+### Data not persisting
+
+If data is lost between restarts:
+1. Verify a volume is attached to your service
+2. Check that the mount path is set (e.g., `/data`)
+3. Look for `[Storage] Railway volume detected` in startup logs
+4. If not using a volume, set `LETTA_AGENT_ID` explicitly
+
 ## Deploy Button
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.com/deploy/lettabot)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/lettabot?utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 Or add to your README:
 
 ```markdown
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.com/deploy/lettabot)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/lettabot?utm_medium=integration&utm_source=template&utm_campaign=generic)
 ```

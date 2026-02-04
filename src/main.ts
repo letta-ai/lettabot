@@ -13,6 +13,7 @@ import { spawn } from 'node:child_process';
 // Load YAML config and apply to process.env (overrides .env values)
 import { loadConfig, applyConfigToEnv, syncProviders, resolveConfigPath } from './config/index.js';
 import { isLettaCloudUrl } from './utils/server.js';
+import { getDataDir, getWorkingDir, hasRailwayVolume } from './utils/paths.js';
 const yamlConfig = loadConfig();
 const configSource = existsSync(resolveConfigPath()) ? resolveConfigPath() : 'defaults + environment variables';
 console.log(`[Config] Loaded from ${configSource}`);
@@ -24,7 +25,7 @@ syncProviders(yamlConfig).catch(err => console.error('[Config] Failed to sync pr
 
 // Load agent ID from store and set as env var (SDK needs this)
 // Load agent ID from store file, or use LETTA_AGENT_ID env var as fallback
-const STORE_PATH = resolve(process.cwd(), 'lettabot-agent.json');
+const STORE_PATH = resolve(getDataDir(), 'lettabot-agent.json');
 const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
 
 if (existsSync(STORE_PATH)) {
@@ -219,7 +220,7 @@ async function pruneAttachmentsDir(baseDir: string, maxAgeDays: number): Promise
 
 // Configuration from environment
 const config = {
-  workingDir: process.env.WORKING_DIR || '/tmp/lettabot',
+  workingDir: getWorkingDir(),
   model: process.env.MODEL, // e.g., 'claude-sonnet-4-20250514'
   allowedTools: (process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search').split(','),
   attachmentsMaxBytes: resolveAttachmentsMaxBytes(),
@@ -300,6 +301,14 @@ if (!process.env.LETTA_API_KEY) {
 
 async function main() {
   console.log('Starting LettaBot...\n');
+  
+  // Log storage locations (helpful for Railway debugging)
+  const dataDir = getDataDir();
+  if (hasRailwayVolume()) {
+    console.log(`[Storage] Railway volume detected at ${process.env.RAILWAY_VOLUME_MOUNT_PATH}`);
+  }
+  console.log(`[Storage] Data directory: ${dataDir}`);
+  console.log(`[Storage] Working directory: ${config.workingDir}`);
   
   // Install feature-gated skills based on enabled features
   // Skills are NOT installed by default - only when their feature is enabled

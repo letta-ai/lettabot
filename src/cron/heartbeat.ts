@@ -7,15 +7,16 @@
  * The agent must use `lettabot-message` CLI via Bash to contact the user.
  */
 
-import { appendFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
 import type { LettaBot } from '../core/bot.js';
 import type { TriggerContext } from '../core/types.js';
 import { buildHeartbeatPrompt } from '../core/prompts.js';
+import { getDataDir } from '../utils/paths.js';
 
 
 // Log file
-const LOG_PATH = resolve(process.cwd(), 'cron-log.jsonl');
+const LOG_PATH = resolve(getDataDir(), 'cron-log.jsonl');
 
 function logEvent(event: string, data: Record<string, unknown>): void {
   const entry = {
@@ -25,6 +26,7 @@ function logEvent(event: string, data: Record<string, unknown>): void {
   };
   
   try {
+    mkdirSync(dirname(LOG_PATH), { recursive: true });
     appendFileSync(LOG_PATH, JSON.stringify(entry) + '\n');
   } catch {
     // Ignore

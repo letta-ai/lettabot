@@ -13,8 +13,9 @@
 
  */
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { getDataDir } from '../utils/paths.js';
 
 // Parse ISO datetime string
 function parseISODateTime(input: string): Date {
@@ -55,8 +56,8 @@ interface CronStore {
 }
 
 // Store path
-const STORE_PATH = resolve(process.cwd(), 'cron-jobs.json');
-const LOG_PATH = resolve(process.cwd(), 'cron-log.jsonl');
+const STORE_PATH = resolve(getDataDir(), 'cron-jobs.json');
+const LOG_PATH = resolve(getDataDir(), 'cron-log.jsonl');
 
 function log(event: string, data: Record<string, unknown>): void {
   const entry = {
@@ -66,6 +67,7 @@ function log(event: string, data: Record<string, unknown>): void {
   };
   
   try {
+    mkdirSync(dirname(LOG_PATH), { recursive: true });
     appendFileSync(LOG_PATH, JSON.stringify(entry) + '\n');
   } catch {
     // Ignore log errors
@@ -87,6 +89,7 @@ function loadStore(): CronStore {
 }
 
 function saveStore(store: CronStore): void {
+  mkdirSync(dirname(STORE_PATH), { recursive: true });
   writeFileSync(STORE_PATH, JSON.stringify(store, null, 2));
 }
 

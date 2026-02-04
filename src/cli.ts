@@ -14,6 +14,7 @@ const config = loadConfig();
 applyConfigToEnv(config);
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { getDataDir, getWorkingDir } from './utils/paths.js';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import updateNotifier from 'update-notifier';
@@ -289,11 +290,11 @@ async function main() {
       const { join } = await import('node:path');
       const p = await import('@clack/prompts');
       
-      const workingDir = process.env.WORKING_DIR || '/tmp/lettabot';
-      // Agent store is in cwd, not working dir
-      const agentJsonPath = join(process.cwd(), 'lettabot-agent.json');
+      const dataDir = getDataDir();
+      const workingDir = getWorkingDir();
+      const agentJsonPath = join(dataDir, 'lettabot-agent.json');
       const skillsDir = join(workingDir, '.skills');
-      const cronJobsPath = join(workingDir, 'cron-jobs.json');
+      const cronJobsPath = join(dataDir, 'cron-jobs.json');
       
       p.intro('🗑️  Destroy LettaBot Data');
       

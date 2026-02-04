@@ -5,14 +5,15 @@
  * Supports heartbeat check-ins and agent-managed cron jobs.
  */
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync, watch, type FSWatcher } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
+import { resolve, dirname } from 'node:path';
 import type { LettaBot } from '../core/bot.js';
 import type { CronJob, CronJobCreate, CronSchedule, CronConfig, HeartbeatConfig } from './types.js';
 import { DEFAULT_HEARTBEAT_MESSAGES } from './types.js';
+import { getDataDir } from '../utils/paths.js';
 
 // Log file for cron events
-const LOG_PATH = resolve(process.cwd(), 'cron-log.jsonl');
+const LOG_PATH = resolve(getDataDir(), 'cron-log.jsonl');
 
 function logEvent(event: string, data: Record<string, unknown>): void {
   const entry = {
@@ -22,6 +23,7 @@ function logEvent(event: string, data: Record<string, unknown>): void {
   };
   
   try {
+    mkdirSync(dirname(LOG_PATH), { recursive: true });
     appendFileSync(LOG_PATH, JSON.stringify(entry) + '\n');
   } catch {
     // Ignore log errors
@@ -58,7 +60,9 @@ export class CronService {
   constructor(bot: LettaBot, config?: CronConfig) {
     this.bot = bot;
     this.config = config || {};
-    this.storePath = resolve(process.cwd(), config?.storePath || 'cron-jobs.json');
+    this.storePath = config?.storePath 
+      ? resolve(getDataDir(), config.storePath)
+      : resolve(getDataDir(), 'cron-jobs.json');
     this.loadJobs();
   }
   
@@ -89,6 +93,8 @@ export class CronService {
         version: 1,
         jobs: Array.from(this.jobs.values()),
       };
+      // Ensure directory exists (important for Railway volumes)
+      mkdirSync(dirname(this.storePath), { recursive: true });
       writeFileSync(this.storePath, JSON.stringify(data, null, 2));
     } catch (e) {
       console.error('[Cron] Failed to save jobs:', e);
