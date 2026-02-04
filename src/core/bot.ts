@@ -287,7 +287,6 @@ export class LettaBot {
       let lastMsgType: string | null = null;
       let lastAssistantUuid: string | null = null;
       let sentAnyMessage = false;
-      let receivedAnyData = false; // Track if stream received ANY data at all
       const msgTypeCounts: Record<string, number> = {};
       
       // Stream watchdog - abort if idle for too long
@@ -336,7 +335,6 @@ export class LettaBot {
         for await (const streamMsg of session.stream()) {
           const msgUuid = (streamMsg as any).uuid;
           watchdog.ping();
-          receivedAnyData = true;
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
           // Verbose logging: show every stream message type
@@ -363,8 +361,9 @@ export class LettaBot {
             console.log(`[Bot] Generating response...`);
           } else if (streamMsg.type === 'reasoning' && lastMsgType !== 'reasoning') {
             console.log(`[Bot] Reasoning...`);
-          } else if (streamMsg.type === 'init' && lastMsgType !== 'init') {
-            console.log(`[Bot] Session initialized`);
+          } else if (streamMsg.type === 'system' && lastMsgType !== 'system') {
+            const subtype = (streamMsg as any).subtype || 'unknown';
+            console.log(`[Bot] System message: ${subtype}`);
           }
           lastMsgType = streamMsg.type;
           
@@ -462,29 +461,10 @@ export class LettaBot {
       
       // Only show "no response" if we never sent anything
       if (!sentAnyMessage) {
-        if (!receivedAnyData) {
-          // Stream received NOTHING - likely stuck approval or connection issue
-          console.error('[Bot] Stream received NO DATA at all - conversation may be stuck');
-          console.error('[Bot] This usually means a pending tool approval from a previous session');
-          console.error('[Bot] Auto-resetting conversation to recover...');
-          
-          // Clear conversation ID to force new conversation on next message
-          const oldConvoId = this.store.conversationId;
-          this.store.conversationId = null; // Auto-saves via setter
-          
-          await adapter.sendMessage({ 
-            chatId: msg.chatId, 
-            text: '(Connection issue detected - conversation reset. Please try again.)', 
-            threadId: msg.threadId 
-          });
-          console.log(`[Bot] Conversation reset: ${oldConvoId} -> (new conversation on next message)`);
-        } else {
-          console.warn('[Bot] No message sent during stream - sending "(No response from agent)"');
-          console.warn('[Bot] Stream DID receive data but no assistant response');
-          console.warn('[Bot] Message type counts:', msgTypeCounts);
-          console.warn('[Bot] Check if ADE web interface is open - simultaneous access can cause this issue');
-          await adapter.sendMessage({ chatId: msg.chatId, text: '(No response from agent)', threadId: msg.threadId });
-        }
+        console.warn('[Bot] No message sent during stream - sending "(No response from agent)"');
+        console.warn('[Bot] This may indicate: tool approval hang, stream error, or ADE session conflict');
+        console.warn('[Bot] Check if ADE web interface is open - simultaneous access can cause this issue');
+        await adapter.sendMessage({ chatId: msg.chatId, text: '(No response from agent)', threadId: msg.threadId });
       }
       
     } catch (error) {
