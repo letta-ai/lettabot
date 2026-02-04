@@ -43,7 +43,9 @@ export interface TriggerContext {
 // Original Types
 // =============================================================================
 
-export type ChannelId = 'telegram' | 'slack' | 'whatsapp' | 'signal' | 'discord';
+// Built-in channels + extensible for plugins (string & {} preserves autocomplete)
+export type BuiltInChannelId = 'telegram' | 'slack' | 'whatsapp' | 'signal' | 'discord';
+export type ChannelId = BuiltInChannelId | (string & {});
 
 export interface InboundAttachment {
   id?: string;

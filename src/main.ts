@@ -1,9 +1,12 @@
 /**
  * LettaBot - Multi-Channel AI Assistant
- * 
+ *
  * Single agent, single conversation across all channels.
  * Chat continues seamlessly between Telegram, Slack, and WhatsApp.
  */
+
+// Load .env file before any other imports
+import 'dotenv/config';
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, promises as fs } from 'node:fs';
 import { join, resolve } from 'node:path';

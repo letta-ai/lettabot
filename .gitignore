@@ -49,3 +49,7 @@ data/whatsapp-session/
 lettabot.yaml
 lettabot.yml
 bun.lock
+
+# TDLib session data (MTProto plugin)
+data/telegram-mtproto/
+data/telegram-mtproto-*/

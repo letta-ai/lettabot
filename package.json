@@ -2,18 +2,19 @@
   "name": "lettabot",
   "version": "1.0.0",
   "type": "module",
-  "main": "dist/main.js",
+  "main": "dist/src/main.js",
   "bin": {
-    "lettabot": "./dist/cli.js",
-    "lettabot-schedule": "./dist/cron/cli.js",
-    "lettabot-message": "./dist/cli/message.js",
-    "lettabot-react": "./dist/cli/react.js"
+    "lettabot": "./dist/src/cli.js",
+    "lettabot-schedule": "./dist/src/cron/cli.js",
+    "lettabot-message": "./dist/src/cli/message.js",
+    "lettabot-react": "./dist/src/cli/react.js"
   },
   "scripts": {
     "setup": "tsx src/setup.ts",
     "dev": "tsx src/main.ts",
-    "build": "tsc",
-    "start": "node dist/main.js",
+    "build": "tsc && npm run build:plugins",
+    "build:plugins": "node -e \"const fs=require('fs'),path=require('path');const src='plugins',dst='dist/plugins';if(!fs.existsSync(src)){process.exit(0)}fs.readdirSync(src,{withFileTypes:true}).filter(d=>d.isDirectory()).forEach(d=>{const s=path.join(src,d.name),t=path.join(dst,d.name);['plugin.json'].forEach(f=>{if(fs.existsSync(path.join(s,f)))fs.copyFileSync(path.join(s,f),path.join(t,f))});['views','assets','static','public'].forEach(dir=>{const sd=path.join(s,dir);if(fs.existsSync(sd))fs.cpSync(sd,path.join(t,dir),{recursive:true})})})\"",
+    "start": "node dist/src/main.js",
     "test": "vitest",
     "test:run": "vitest run",
     "skills": "tsx src/cli.ts skills",
