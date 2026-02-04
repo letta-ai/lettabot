@@ -5,9 +5,14 @@
 import OpenAI from 'openai';
 import { loadConfig } from '../config/index.js';
 import { execSync } from 'node:child_process';
-import { writeFileSync, readFileSync, unlinkSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, unlinkSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+
+// Whisper API limit is 25MB, we use 20MB to be safe
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
+// Chunk duration in seconds (10 minutes)
+const CHUNK_DURATION_SECONDS = 600;
 
 let openaiClient: OpenAI | null = null;
 
@@ -37,25 +42,36 @@ function getModel(): string {
  * @returns The transcribed text
  */
 export async function transcribeAudio(audioBuffer: Buffer, filename: string = 'audio.ogg'): Promise<string> {
-  const client = getClient();
   const ext = filename.split('.').pop()?.toLowerCase() || '';
   
   // Check if format needs conversion (not just renaming)
   let finalBuffer = audioBuffer;
-  let finalFilename = filename;
+  let finalExt = ext;
   
   if (NEEDS_CONVERSION.includes(ext)) {
     console.log(`[Transcription] Converting .${ext} to .mp3 with ffmpeg`);
-    const converted = convertAudioToMp3(audioBuffer, ext);
-    finalBuffer = converted;
-    finalFilename = filename.replace(/\.[^.]+$/, '.mp3');
-  } else {
-    // Just normalize the filename for formats that work with renaming
-    finalFilename = normalizeFilename(filename);
+    finalBuffer = convertAudioToMp3(audioBuffer, ext);
+    finalExt = 'mp3';
   }
   
-  // Create a File object from the buffer
-  const file = new File([new Uint8Array(finalBuffer)], finalFilename, { 
+  // Check if file is too large and needs chunking
+  if (finalBuffer.length > MAX_FILE_SIZE) {
+    console.log(`[Transcription] File too large (${(finalBuffer.length / 1024 / 1024).toFixed(1)}MB), splitting into chunks`);
+    return transcribeInChunks(finalBuffer, finalExt);
+  }
+  
+  // Single file transcription
+  return transcribeSingleFile(finalBuffer, filename, finalExt);
+}
+
+/**
+ * Transcribe a single audio file (under size limit)
+ */
+async function transcribeSingleFile(audioBuffer: Buffer, originalFilename: string, ext: string): Promise<string> {
+  const client = getClient();
+  const finalFilename = normalizeFilename(originalFilename.replace(/\.[^.]+$/, `.${ext}`));
+  
+  const file = new File([new Uint8Array(audioBuffer)], finalFilename, { 
     type: getMimeType(finalFilename) 
   });
   
@@ -65,6 +81,69 @@ export async function transcribeAudio(audioBuffer: Buffer, filename: string = 'a
   });
   
   return response.text;
+}
+
+/**
+ * Split large audio into chunks and transcribe each
+ */
+async function transcribeInChunks(audioBuffer: Buffer, ext: string): Promise<string> {
+  const tempDir = join(tmpdir(), 'lettabot-transcription', `chunks-${Date.now()}`);
+  mkdirSync(tempDir, { recursive: true });
+  
+  const inputPath = join(tempDir, `input.${ext}`);
+  const outputPattern = join(tempDir, 'chunk-%03d.mp3');
+  
+  try {
+    // Write input file
+    writeFileSync(inputPath, audioBuffer);
+    
+    // Split into chunks using ffmpeg
+    execSync(
+      `ffmpeg -y -i "${inputPath}" -f segment -segment_time ${CHUNK_DURATION_SECONDS} -reset_timestamps 1 -acodec libmp3lame -q:a 2 "${outputPattern}" 2>/dev/null`,
+      { timeout: 120000 }
+    );
+    
+    // Find all chunk files
+    const chunkFiles = readdirSync(tempDir)
+      .filter(f => f.startsWith('chunk-') && f.endsWith('.mp3'))
+      .sort();
+    
+    console.log(`[Transcription] Split into ${chunkFiles.length} chunks`);
+    
+    if (chunkFiles.length === 0) {
+      throw new Error('Failed to split audio into chunks');
+    }
+    
+    // Transcribe each chunk
+    const transcriptions: string[] = [];
+    for (let i = 0; i < chunkFiles.length; i++) {
+      const chunkPath = join(tempDir, chunkFiles[i]);
+      const chunkBuffer = readFileSync(chunkPath);
+      
+      console.log(`[Transcription] Transcribing chunk ${i + 1}/${chunkFiles.length} (${(chunkBuffer.length / 1024).toFixed(0)}KB)`);
+      
+      const text = await transcribeSingleFile(chunkBuffer, chunkFiles[i], 'mp3');
+      if (text.trim()) {
+        transcriptions.push(text.trim());
+      }
+    }
+    
+    // Combine transcriptions
+    const combined = transcriptions.join(' ');
+    console.log(`[Transcription] Combined ${transcriptions.length} chunks into ${combined.length} chars`);
+    
+    return combined;
+  } finally {
+    // Cleanup temp directory
+    try {
+      const files = readdirSync(tempDir);
+      for (const file of files) {
+        unlinkSync(join(tempDir, file));
+      }
+      // rmdir for the directory itself
+      execSync(`rmdir "${tempDir}" 2>/dev/null || true`);
+    } catch {}
+  }
 }
 
 /**
