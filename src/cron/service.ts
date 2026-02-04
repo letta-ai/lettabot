@@ -5,32 +5,13 @@
  * Supports heartbeat check-ins and agent-managed cron jobs.
  */
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import type { LettaBot } from '../core/bot.js';
-import type { CronJob, CronJobCreate, CronSchedule, CronConfig, HeartbeatConfig } from './types.js';
+import type { BotLike } from '../core/types.js';
+import type { CronJob, CronJobCreate, CronSchedule, CronConfig, CronHeartbeatConfig } from './types.js';
 import { DEFAULT_HEARTBEAT_MESSAGES } from './types.js';
 import { getDataDir } from '../utils/paths.js';
-
-// Log file for cron events
-const LOG_PATH = resolve(getDataDir(), 'cron-log.jsonl');
-
-function logEvent(event: string, data: Record<string, unknown>): void {
-  const entry = {
-    timestamp: new Date().toISOString(),
-    event,
-    ...data,
-  };
-  
-  try {
-    mkdirSync(dirname(LOG_PATH), { recursive: true });
-    appendFileSync(LOG_PATH, JSON.stringify(entry) + '\n');
-  } catch {
-    // Ignore log errors
-  }
-  
-  console.log(`[Cron] ${event}:`, JSON.stringify(data));
-}
+import { logEvent } from './log.js';
 
 // Dynamic import for node-schedule
 let schedule: typeof import('node-schedule');
@@ -40,7 +21,7 @@ interface CronStoreFile {
   jobs: CronJob[];
 }
 
-const DEFAULT_HEARTBEAT: HeartbeatConfig = {
+const DEFAULT_HEARTBEAT: CronHeartbeatConfig = {
   enabled: false,
   schedule: '0 * * * *', // Every hour
   message: DEFAULT_HEARTBEAT_MESSAGES.simple,
@@ -49,18 +30,20 @@ const DEFAULT_HEARTBEAT: HeartbeatConfig = {
 export class CronService {
   private jobs: Map<string, CronJob> = new Map();
   private scheduledJobs: Map<string, import('node-schedule').Job> = new Map();
-  private bot: LettaBot;
+  private bot: BotLike;
   private storePath: string;
+  private agentName: string | undefined;
   private config: CronConfig;
   private started = false;
   private heartbeatJob: import('node-schedule').Job | null = null;
   private fileWatcher: FSWatcher | null = null;
   private lastFileContent: string = '';
-  
-  constructor(bot: LettaBot, config?: CronConfig) {
+
+  constructor(bot: BotLike, config?: CronConfig) {
     this.bot = bot;
     this.config = config || {};
-    this.storePath = config?.storePath 
+    this.agentName = config?.agentName;
+    this.storePath = config?.storePath
       ? resolve(getDataDir(), config.storePath)
       : resolve(getDataDir(), 'cron-jobs.json');
     this.loadJobs();
@@ -200,7 +183,7 @@ export class CronService {
       if (newContent === this.lastFileContent) return;
       this.lastFileContent = newContent;
       
-      logEvent('file_changed', { path: this.storePath });
+      logEvent(this.agentName, 'file_changed', { path: this.storePath });
       
       // Reload jobs
       this.reloadJobs();
@@ -231,15 +214,15 @@ export class CronService {
     }
     
     const enabledCount = Array.from(this.jobs.values()).filter(j => j.enabled).length;
-    logEvent('jobs_reloaded', { total: this.jobs.size, enabled: enabledCount });
+    logEvent(this.agentName, 'jobs_reloaded', { total: this.jobs.size, enabled: enabledCount });
   }
   
   /**
    * Start the heartbeat check-in (SILENT MODE - no auto-delivery)
    */
-  private startHeartbeat(config: HeartbeatConfig): void {
+  private startHeartbeat(config: CronHeartbeatConfig): void {
     this.heartbeatJob = schedule.scheduleJob(config.schedule, async () => {
-      logEvent('heartbeat_running', { schedule: config.schedule });
+      logEvent(this.agentName, 'heartbeat_running', { schedule: config.schedule });
       
       try {
         // SILENT MODE - response NOT auto-delivered
@@ -255,7 +238,7 @@ export class CronService {
     });
     
     const next = this.heartbeatJob.nextInvocation();
-    logEvent('heartbeat_scheduled', {
+    logEvent(this.agentName, 'heartbeat_scheduled', {
       schedule: config.schedule,
       nextRun: next?.toISOString() || null,
     });
@@ -264,7 +247,7 @@ export class CronService {
   /**
    * Update heartbeat configuration
    */
-  setHeartbeat(config: Partial<HeartbeatConfig>): void {
+  setHeartbeat(config: Partial<CronHeartbeatConfig>): void {
     const current = this.config.heartbeat || DEFAULT_HEARTBEAT;
     this.config.heartbeat = { ...current, ...config };
     
@@ -284,7 +267,7 @@ export class CronService {
   /**
    * Get heartbeat configuration
    */
-  getHeartbeat(): HeartbeatConfig {
+  getHeartbeat(): CronHeartbeatConfig {
     return this.config.heartbeat || DEFAULT_HEARTBEAT;
   }
   
@@ -310,7 +293,7 @@ export class CronService {
         
         console.log(`[Cron] 📅 Scheduled "${job.name}" - next run: ${job.state.nextRunAt.toLocaleString()}`);
         
-        logEvent('job_scheduled', {
+        logEvent(this.agentName, 'job_scheduled', {
           id: job.id,
           name: job.name,
           schedule: job.schedule.kind === 'cron' ? job.schedule.expr : job.schedule.kind,
@@ -360,7 +343,7 @@ export class CronService {
     }
     console.log(`${'='.repeat(50)}\n`);
     
-    logEvent('job_running', { id: job.id, name: job.name });
+    logEvent(this.agentName, 'job_running', { id: job.id, name: job.name });
     
     try {
       // Format message with metadata
@@ -397,7 +380,7 @@ export class CronService {
       console.log(`       (Response NOT auto-delivered - agent uses lettabot-message CLI)`);
       console.log(`${'='.repeat(50)}\n`);
       
-      logEvent('job_completed', {
+      logEvent(this.agentName, 'job_completed', {
         id: job.id,
         name: job.name,
         status: 'ok',
@@ -414,7 +397,7 @@ export class CronService {
       }
       
     } catch (error) {
-      logEvent('job_failed', {
+      logEvent(this.agentName, 'job_failed', {
         id: job.id,
         name: job.name,
         error: error instanceof Error ? error.message : String(error),
@@ -509,7 +492,7 @@ export class CronService {
     running: boolean;
     totalJobs: number;
     enabledJobs: number;
-    heartbeat: HeartbeatConfig;
+    heartbeat: CronHeartbeatConfig;
   } {
     const jobs = Array.from(this.jobs.values());
     return {

@@ -1450,34 +1450,34 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     authMethod: hasExistingConfig ? 'keep' : 'skip',
     apiKey: existingConfig.server.apiKey,
     baseUrl: existingConfig.server.baseUrl,
-    telegram: { 
-      enabled: existingConfig.channels.telegram?.enabled || false,
-      token: existingConfig.channels.telegram?.token,
-      dmPolicy: existingConfig.channels.telegram?.dmPolicy,
-      allowedUsers: existingConfig.channels.telegram?.allowedUsers?.map(String),
+    telegram: {
+      enabled: existingConfig.channels?.telegram?.enabled || false,
+      token: existingConfig.channels?.telegram?.token,
+      dmPolicy: existingConfig.channels?.telegram?.dmPolicy,
+      allowedUsers: existingConfig.channels?.telegram?.allowedUsers?.map(String),
     },
-    slack: { 
-      enabled: existingConfig.channels.slack?.enabled || false,
-      appToken: existingConfig.channels.slack?.appToken,
-      botToken: existingConfig.channels.slack?.botToken,
-      allowedUsers: existingConfig.channels.slack?.allowedUsers,
+    slack: {
+      enabled: existingConfig.channels?.slack?.enabled || false,
+      appToken: existingConfig.channels?.slack?.appToken,
+      botToken: existingConfig.channels?.slack?.botToken,
+      allowedUsers: existingConfig.channels?.slack?.allowedUsers,
     },
     discord: {
-      enabled: existingConfig.channels.discord?.enabled || false,
-      token: existingConfig.channels.discord?.token,
-      dmPolicy: existingConfig.channels.discord?.dmPolicy,
-      allowedUsers: existingConfig.channels.discord?.allowedUsers,
+      enabled: existingConfig.channels?.discord?.enabled || false,
+      token: existingConfig.channels?.discord?.token,
+      dmPolicy: existingConfig.channels?.discord?.dmPolicy,
+      allowedUsers: existingConfig.channels?.discord?.allowedUsers,
     },
-    whatsapp: { 
-      enabled: existingConfig.channels.whatsapp?.enabled || false,
-      selfChat: existingConfig.channels.whatsapp?.selfChat ?? true, // Default true
-      dmPolicy: existingConfig.channels.whatsapp?.dmPolicy,
+    whatsapp: {
+      enabled: existingConfig.channels?.whatsapp?.enabled || false,
+      selfChat: existingConfig.channels?.whatsapp?.selfChat ?? true, // Default true
+      dmPolicy: existingConfig.channels?.whatsapp?.dmPolicy,
     },
-    signal: { 
-      enabled: existingConfig.channels.signal?.enabled || false,
-      phone: existingConfig.channels.signal?.phone,
-      selfChat: existingConfig.channels.signal?.selfChat ?? true, // Default true
-      dmPolicy: existingConfig.channels.signal?.dmPolicy,
+    signal: {
+      enabled: existingConfig.channels?.signal?.enabled || false,
+      phone: existingConfig.channels?.signal?.phone,
+      selfChat: existingConfig.channels?.signal?.selfChat ?? true, // Default true
+      dmPolicy: existingConfig.channels?.signal?.dmPolicy,
     },
     google: {
       enabled: existingConfig.integrations?.google?.enabled || false,
@@ -1490,9 +1490,9 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     },
     cron: existingConfig.features?.cron || false,
     agentChoice: hasExistingConfig ? 'env' : 'skip',
-    agentName: existingConfig.agent.name,
-    agentId: existingConfig.agent.id,
-    model: existingConfig.agent.model,
+    agentName: existingConfig.agent?.name || 'lettabot',
+    agentId: existingConfig.agent?.id,
+    model: existingConfig.agent?.model || 'claude-sonnet-4',
     providers: existingConfig.providers?.map(p => ({ id: p.id, name: p.name, apiKey: p.apiKey })),
   };
   

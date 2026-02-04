@@ -67,3 +67,67 @@ export function isRailway(): boolean {
 export function hasRailwayVolume(): boolean {
   return !!process.env.RAILWAY_VOLUME_MOUNT_PATH;
 }
+
+// =============================================================================
+// Multi-Agent Path Utilities
+// =============================================================================
+
+import { existsSync, mkdirSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
+
+/**
+ * Get the data directory for a specific agent.
+ * Channel state (WhatsApp sessions, Signal data) is stored here.
+ *
+ * Format: {dataDir}/agents/{agentId}/
+ */
+export function getAgentDataDir(agentId: string): string {
+  return join(getDataDir(), 'agents', agentId);
+}
+
+/**
+ * Get the channel state directory for a specific agent and channel type.
+ *
+ * Format: {dataDir}/agents/{agentId}/{channelType}-session/
+ */
+export function getAgentChannelStateDir(agentId: string, channelType: string): string {
+  return join(getAgentDataDir(agentId), `${channelType}-session`);
+}
+
+/**
+ * Migrate legacy channel state to agent-scoped directory.
+ *
+ * This is called on agent startup to move legacy channel state
+ * (e.g., ./data/whatsapp-session) to the new agent-scoped location
+ * (e.g., ./data/agents/{agentId}/whatsapp-session).
+ *
+ * Only runs once per agent - skips if destination already exists.
+ */
+export function migrateChannelState(agentId: string): void {
+  const dataDir = getDataDir();
+  const agentDataDir = getAgentDataDir(agentId);
+
+  // Channels with persistent state that may need migration
+  const channelTypes = ['whatsapp', 'signal'];
+
+  for (const channelType of channelTypes) {
+    const oldPath = join(dataDir, `${channelType}-session`);
+    const newPath = join(agentDataDir, `${channelType}-session`);
+
+    // Skip if old path doesn't exist or new path already exists
+    if (!existsSync(oldPath) || existsSync(newPath)) {
+      continue;
+    }
+
+    try {
+      // Ensure agent data directory exists
+      mkdirSync(agentDataDir, { recursive: true });
+
+      // Move the session directory
+      renameSync(oldPath, newPath);
+      console.log(`[Migration] Moved ${channelType} session to ${newPath}`);
+    } catch (e) {
+      console.error(`[Migration] Failed to migrate ${channelType} session:`, e);
+    }
+  }
+}

@@ -49,17 +49,20 @@ export interface CronJob {
 export type CronJobCreate = Omit<CronJob, 'id' | 'state'>;
 
 /**
- * Heartbeat configuration
+ * CronService heartbeat configuration (internal)
+ *
+ * Different from HeartbeatService config - this uses cron expressions
+ * and is managed by CronService as part of the scheduling system.
  */
-export interface HeartbeatConfig {
+export interface CronHeartbeatConfig {
   enabled: boolean;
-  
+
   // Cron schedule (default: every hour)
   schedule: string;
-  
+
   // Message to send to the agent
   message: string;
-  
+
   // Deliver response to a channel (optional)
   deliver?: {
     channel: ChannelId;
@@ -102,10 +105,13 @@ Use acknowledge() if nothing significant.`,
 export interface CronConfig {
   // Where to store cron jobs
   storePath?: string;
-  
-  // Heartbeat configuration
-  heartbeat?: HeartbeatConfig;
-  
+
+  // Heartbeat configuration (CronService-managed heartbeats using cron expressions)
+  heartbeat?: CronHeartbeatConfig;
+
   // Default timezone for cron expressions
   timezone?: string;
+
+  // Agent name (for agent-scoped state files)
+  agentName?: string;
 }

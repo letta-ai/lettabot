@@ -47,18 +47,28 @@ async function configure() {
   p.intro('🤖 LettaBot Configuration');
 
   // Show current config from YAML
-  const configRows = [
-    ['Server Mode', config.server.mode],
-    ['API Key', config.server.apiKey ? '✓ Set' : '✗ Not set'],
-    ['Agent Name', config.agent.name],
-    ['Model', config.agent.model],
-    ['Telegram', config.channels.telegram?.enabled ? '✓ Enabled' : '✗ Disabled'],
-    ['Slack', config.channels.slack?.enabled ? '✓ Enabled' : '✗ Disabled'],
-    ['Discord', config.channels.discord?.enabled ? '✓ Enabled' : '✗ Disabled'],
-    ['Cron', config.features?.cron ? '✓ Enabled' : '✗ Disabled'],
-    ['Heartbeat', config.features?.heartbeat?.enabled ? `✓ ${config.features.heartbeat.intervalMin}min` : '✗ Disabled'],
-    ['BYOK Providers', config.providers?.length ? config.providers.map(p => p.name).join(', ') : 'None'],
-  ];
+  const isMultiAgent = config.agents && config.agents.length > 0;
+  const configRows = isMultiAgent
+    ? [
+        ['Mode', 'Multi-Agent'],
+        ['Server Mode', config.server.mode],
+        ['API Key', config.server.apiKey ? '✓ Set' : '✗ Not set'],
+        ['Agents', config.agents!.map(a => a.name).join(', ')],
+        ['BYOK Providers', config.providers?.length ? config.providers.map(p => p.name).join(', ') : 'None'],
+      ]
+    : [
+        ['Mode', 'Single-Agent (Legacy)'],
+        ['Server Mode', config.server.mode],
+        ['API Key', config.server.apiKey ? '✓ Set' : '✗ Not set'],
+        ['Agent Name', config.agent?.name || 'Not set'],
+        ['Model', config.agent?.model || 'Not set'],
+        ['Telegram', config.channels?.telegram?.enabled ? '✓ Enabled' : '✗ Disabled'],
+        ['Slack', config.channels?.slack?.enabled ? '✓ Enabled' : '✗ Disabled'],
+        ['Discord', config.channels?.discord?.enabled ? '✓ Enabled' : '✗ Disabled'],
+        ['Cron', config.features?.cron ? '✓ Enabled' : '✗ Disabled'],
+        ['Heartbeat', config.features?.heartbeat?.enabled ? `✓ ${config.features.heartbeat.intervalMin}min` : '✗ Disabled'],
+        ['BYOK Providers', config.providers?.length ? config.providers.map(p => p.name).join(', ') : 'None'],
+      ];
   
   const maxKeyLength = Math.max(...configRows.map(([key]) => key.length));
   const summary = configRows
@@ -286,60 +296,85 @@ async function main() {
     }
       
     case 'destroy': {
-      const { rmSync, existsSync } = await import('node:fs');
+      const { rmSync, existsSync, readFileSync } = await import('node:fs');
       const { join } = await import('node:path');
       const p = await import('@clack/prompts');
-      
+      const { getAgentSkillsDir } = await import('./skills/loader.js');
+
       const dataDir = getDataDir();
       const workingDir = getWorkingDir();
       const agentJsonPath = join(dataDir, 'lettabot-agent.json');
-      const skillsDir = join(workingDir, '.skills');
       const cronJobsPath = join(dataDir, 'cron-jobs.json');
-      
+
+      // Build list of skill directories to clean up
+      const skillsDirs: { path: string; label: string }[] = [
+        { path: join(workingDir, '.skills'), label: 'Project skills (.skills/)' },
+      ];
+
+      // Read agent ID before deleting store (needed for agent-scoped skills dir)
+      if (existsSync(agentJsonPath)) {
+        try {
+          const store = JSON.parse(readFileSync(agentJsonPath, 'utf-8'));
+          if (store.agentId) {
+            skillsDirs.unshift({
+              path: getAgentSkillsDir(store.agentId),
+              label: 'Agent skills',
+            });
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+
       p.intro('🗑️  Destroy LettaBot Data');
-      
+
       p.log.warn('This will delete:');
       p.log.message(`  • Agent store: ${agentJsonPath}`);
-      p.log.message(`  • Skills: ${skillsDir}`);
+      for (const dir of skillsDirs) {
+        p.log.message(`  • ${dir.label}: ${dir.path}`);
+      }
       p.log.message(`  • Cron jobs: ${cronJobsPath}`);
       p.log.message('');
       p.log.message('Note: The agent on Letta servers will NOT be deleted.');
-      
+
       const confirmed = await p.confirm({
         message: 'Are you sure you want to destroy all local data?',
         initialValue: false,
       });
-      
+
       if (!confirmed || p.isCancel(confirmed)) {
         p.cancel('Cancelled');
         break;
       }
-      
+
       // Delete files
       let deleted = 0;
-      
+
       if (existsSync(agentJsonPath)) {
         rmSync(agentJsonPath);
         p.log.success('Deleted lettabot-agent.json');
         deleted++;
       }
-      
-      if (existsSync(skillsDir)) {
-        rmSync(skillsDir, { recursive: true });
-        p.log.success('Deleted .skills/');
-        deleted++;
+
+      // Delete all skill directories
+      for (const dir of skillsDirs) {
+        if (existsSync(dir.path)) {
+          rmSync(dir.path, { recursive: true });
+          p.log.success(`Deleted ${dir.label}: ${dir.path}`);
+          deleted++;
+        }
       }
-      
+
       if (existsSync(cronJobsPath)) {
         rmSync(cronJobsPath);
         p.log.success('Deleted cron-jobs.json');
         deleted++;
       }
-      
+
       if (deleted === 0) {
         p.log.info('Nothing to delete');
       }
-      
+
       p.outro('✨ Done! Run `npx lettabot server` to create a fresh agent.');
       break;
     }

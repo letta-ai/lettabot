@@ -8,11 +8,18 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { LettaBot } from '../core/bot.js';
+import type { BotLike } from '../core/types.js';
 
-export interface PollingConfig {
+/**
+ * PollingService runtime configuration
+ *
+ * Different from config/types.ts PollingConfig (YAML config).
+ * This is the runtime config passed to PollingService constructor.
+ */
+export interface PollingServiceConfig {
   intervalMs: number;  // Polling interval in milliseconds
   workingDir: string;  // For persisting state
+  agentName?: string;  // Agent name for agent-scoped state files
   gmail?: {
     enabled: boolean;
     account: string;
@@ -21,17 +28,21 @@ export interface PollingConfig {
 
 export class PollingService {
   private intervalId: ReturnType<typeof setInterval> | null = null;
-  private bot: LettaBot;
-  private config: PollingConfig;
-  
+  private bot: BotLike;
+  private config: PollingServiceConfig;
+
   // Track seen email IDs to detect new emails (persisted to disk)
   private seenEmailIds: Set<string> = new Set();
   private seenEmailsPath: string;
-  
-  constructor(bot: LettaBot, config: PollingConfig) {
+
+  constructor(bot: BotLike, config: PollingServiceConfig) {
     this.bot = bot;
     this.config = config;
-    this.seenEmailsPath = join(config.workingDir, 'seen-emails.json');
+    // Agent-scoped state file to prevent collisions in multi-agent mode
+    const stateFileName = config.agentName
+      ? `${config.agentName}-seen-emails.json`
+      : 'seen-emails.json';
+    this.seenEmailsPath = join(config.workingDir, stateFileName);
     this.loadSeenEmails();
   }
   

@@ -1,15 +1,22 @@
 /**
- * Skills Sync - Interactive checklist to manage skills in working directory
+ * Skills Sync - Interactive checklist to manage skills in agent-scoped directory
+ *
+ * Skills are installed to: ~/.letta/agents/{agentId}/skills/
+ * This aligns with Letta Code CLI behavior.
+ * See: https://github.com/letta-ai/lettabot/issues/108
  */
 
 import { existsSync, readdirSync, cpSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import * as p from '@clack/prompts';
-import { PROJECT_SKILLS_DIR, GLOBAL_SKILLS_DIR, SKILLS_SH_DIR, parseSkillFile } from './loader.js';
+import { PROJECT_SKILLS_DIR, GLOBAL_SKILLS_DIR, SKILLS_SH_DIR, parseSkillFile, getAgentSkillsDir } from './loader.js';
+import { Store } from '../core/store.js';
 
 const HOME = process.env.HOME || process.env.USERPROFILE || '';
-const WORKING_DIR = process.env.WORKING_DIR || '/tmp/lettabot';
-const TARGET_DIR = join(WORKING_DIR, '.skills');
+
+// Agent-scoped skills directory (primary location for skill installs)
+const AGENT_ID = Store.getAgentIdOrThrow();
+const TARGET_DIR = getAgentSkillsDir(AGENT_ID);
 
 // Skill source directories
 const CLAWDHUB_DIR = join(HOME, 'clawd', 'skills');      // ~/clawd/skills (ClawdHub)

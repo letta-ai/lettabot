@@ -7,7 +7,7 @@
 import { createAgent, createSession, resumeSession, type Session } from '@letta-ai/letta-code-sdk';
 import { mkdirSync } from 'node:fs';
 import type { ChannelAdapter } from '../channels/types.js';
-import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
+import type { BotConfig, InboundMessage, TriggerContext, LastMessageTarget, BotLike } from './types.js';
 import { Store } from './store.js';
 import { updateAgentName } from '../tools/letta-api.js';
 import { installSkillsToAgent } from '../skills/loader.js';
@@ -16,7 +16,7 @@ import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { StreamWatchdog } from './stream-watchdog.js';
 
-export class LettaBot {
+export class LettaBot implements BotLike {
   private store: Store;
   private config: BotConfig;
   private channels: Map<string, ChannelAdapter> = new Map();
@@ -29,16 +29,98 @@ export class LettaBot {
   
   constructor(config: BotConfig) {
     this.config = config;
-    
+
     // Ensure working directory exists
     mkdirSync(config.workingDir, { recursive: true });
-    
+
     // Store in project root (same as main.ts reads for LETTA_AGENT_ID)
     this.store = new Store('lettabot-agent.json');
-    
+
     console.log(`LettaBot initialized. Agent ID: ${this.store.agentId || '(new)'}`);
   }
-  
+
+  /**
+   * Get base session options (shared across all session creation)
+   */
+  private getBaseSessionOptions() {
+    return {
+      permissionMode: 'bypassPermissions' as const,
+      allowedTools: this.config.allowedTools,
+      cwd: this.config.workingDir,
+      // Note: systemPrompt/memory now passed to createAgent() for new agents (SDK 0.0.5+)
+    };
+  }
+
+  /**
+   * Get or create a session for the agent.
+   *
+   * For fresh users (no agent), this:
+   * 1. Creates a new agent via createAgent()
+   * 2. Installs skills to agent-scoped directory (~/.letta/agents/{id}/skills/)
+   * 3. Returns a resumed session with skills available
+   *
+   * For returning users, this resumes the existing conversation/agent.
+   *
+   * See: https://github.com/letta-ai/lettabot/issues/108
+   */
+  private async getOrCreateSession(): Promise<{
+    session: Session;
+    usedSpecificConversation: boolean;
+    usedDefaultConversation: boolean;
+  }> {
+    const baseOptions = this.getBaseSessionOptions();
+
+    let session: Session;
+    let usedDefaultConversation = false;
+    let usedSpecificConversation = false;
+
+    if (this.store.conversationId) {
+      // Resume the specific conversation we've been using
+      console.log(`[Bot] Resuming conversation: ${this.store.conversationId}`);
+      process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
+      usedSpecificConversation = true;
+      session = resumeSession(this.store.conversationId, baseOptions);
+    } else if (this.store.agentId) {
+      // Agent exists but no conversation - try default conversation
+      console.log(`[Bot] Resuming agent default conversation: ${this.store.agentId}`);
+      process.env.LETTA_AGENT_ID = this.store.agentId;
+      usedDefaultConversation = true;
+      session = resumeSession(this.store.agentId, baseOptions);
+    } else {
+      // Fresh user: Create agent first, install skills, then create session
+      console.log('[Bot] Creating new agent...');
+      const newAgentId = await createAgent({
+        model: this.config.model,
+        systemPrompt: SYSTEM_PROMPT,
+        memory: loadMemoryBlocks(this.config.agentName),
+      });
+      console.log(`[Bot] Agent created: ${newAgentId}`);
+
+      // Install feature-gated skills to agent-scoped directory
+      // ~/.letta/agents/{agentId}/skills/ (aligns with Letta Code CLI)
+      installSkillsToAgent(newAgentId, {
+        cronEnabled: this.config.cronEnabled,
+        googleEnabled: this.config.googleEnabled,
+      });
+
+      // Save agent ID immediately
+      const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
+      this.store.setAgent(newAgentId, currentBaseUrl);
+      process.env.LETTA_AGENT_ID = newAgentId;
+
+      // Set agent name
+      if (this.config.agentName) {
+        updateAgentName(newAgentId, this.config.agentName).catch(() => {});
+      }
+
+      // Create session for the new agent (SDK 0.0.5+ pattern)
+      console.log('[Bot] Creating session for new agent...');
+      session = createSession(newAgentId, baseOptions);
+    }
+
+    return { session, usedSpecificConversation, usedDefaultConversation };
+  }
+
   /**
    * Register a channel adapter
    */
@@ -182,43 +264,11 @@ export class LettaBot {
     console.log('[Bot] Typing indicator sent');
     
     // Create or resume session
-    let session: Session;
-    let usedDefaultConversation = false;
-    let usedSpecificConversation = false;
-    // Base options for sessions (systemPrompt/memory set via createAgent for new agents)
-    const baseOptions = {
-      permissionMode: 'bypassPermissions' as const,
-      allowedTools: this.config.allowedTools,
-      cwd: this.config.workingDir,
-      // bypassPermissions mode auto-allows all tools, no canUseTool callback needed
-    };
-    
     console.log('[Bot] Creating/resuming session');
+    let { session, usedSpecificConversation, usedDefaultConversation } = await this.getOrCreateSession();
+    console.log('[Bot] Session created/resumed');
+
     try {
-    if (this.store.conversationId) {
-      // Resume the specific conversation we've been using
-      console.log(`[Bot] Resuming conversation: ${this.store.conversationId}`);
-      process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
-      usedSpecificConversation = true;
-      session = resumeSession(this.store.conversationId, baseOptions);
-    } else if (this.store.agentId) {
-        // Agent exists but no conversation - try default conversation
-        console.log(`[Bot] Resuming agent default conversation: ${this.store.agentId}`);
-        process.env.LETTA_AGENT_ID = this.store.agentId;
-        usedDefaultConversation = true;
-        session = resumeSession(this.store.agentId, baseOptions);
-      } else {
-        // Create new agent with default conversation
-        console.log('[Bot] Creating new agent');
-        const newAgentId = await createAgent({
-          model: this.config.model,
-          systemPrompt: SYSTEM_PROMPT,
-          memory: loadMemoryBlocks(this.config.agentName),
-        });
-        session = createSession(newAgentId, baseOptions);
-      }
-      console.log('[Bot] Session created/resumed');
-      
       const defaultTimeoutMs = 30000; // 30s timeout
       const envTimeoutMs = Number(process.env.LETTA_SESSION_TIMEOUT_MS);
       const initTimeoutMs = Number.isFinite(envTimeoutMs) && envTimeoutMs > 0
@@ -241,6 +291,7 @@ export class LettaBot {
       try {
         initInfo = await withTimeout(session.initialize(), 'Session initialize');
       } catch (error) {
+        const baseOptions = this.getBaseSessionOptions();
         if (usedSpecificConversation && this.store.agentId) {
           console.warn('[Bot] Conversation missing, creating a new conversation...');
           session.close();
@@ -373,26 +424,12 @@ export class LettaBot {
           }
           
           if (streamMsg.type === 'result') {
-            // Save agent ID and conversation ID
-            if (session.agentId && session.agentId !== this.store.agentId) {
-              const isNewAgent = !this.store.agentId;
-              // Save agent ID along with the current server URL
-              const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
-              this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
-              console.log('Saved agent ID:', session.agentId, 'conversation ID:', session.conversationId, 'on server:', currentBaseUrl);
-              
-              // Setup new agents: set name, install skills
-              if (isNewAgent) {
-                if (this.config.agentName && session.agentId) {
-                  updateAgentName(session.agentId, this.config.agentName).catch(() => {});
-                }
-                if (session.agentId) {
-                  installSkillsToAgent(session.agentId);
-                }
-              }
-            } else if (session.conversationId && session.conversationId !== this.store.conversationId) {
-              // Update conversation ID if it changed
+            // Update conversation ID if changed
+            // Note: Agent setup (name, skills) is now done BEFORE first message
+            // via createAgent() flow, so skills are available immediately
+            if (session.conversationId && session.conversationId !== this.store.conversationId) {
               this.store.conversationId = session.conversationId;
+              console.log('Updated conversation ID:', session.conversationId);
             }
             break;
           }
@@ -454,39 +491,13 @@ export class LettaBot {
     text: string,
     _context?: TriggerContext
   ): Promise<string> {
-    // Base options for sessions (systemPrompt/memory set via createAgent for new agents)
-    const baseOptions = {
-      permissionMode: 'bypassPermissions' as const,
-      allowedTools: this.config.allowedTools,
-      cwd: this.config.workingDir,
-      // bypassPermissions mode auto-allows all tools, no canUseTool callback needed
-    };
-    
-    let session: Session;
-    let usedDefaultConversation = false;
-    let usedSpecificConversation = false;
-    if (this.store.conversationId) {
-      // Resume the specific conversation we've been using
-      usedSpecificConversation = true;
-      session = resumeSession(this.store.conversationId, baseOptions);
-    } else if (this.store.agentId) {
-      // Agent exists but no conversation - try default conversation
-      usedDefaultConversation = true;
-      session = resumeSession(this.store.agentId, baseOptions);
-    } else {
-      // Create new agent with default conversation
-      const newAgentId = await createAgent({
-        model: this.config.model,
-        systemPrompt: SYSTEM_PROMPT,
-        memory: loadMemoryBlocks(this.config.agentName),
-      });
-      session = createSession(newAgentId, baseOptions);
-    }
-    
+    let { session, usedSpecificConversation, usedDefaultConversation } = await this.getOrCreateSession();
+
     try {
       try {
         await session.send(text);
       } catch (error) {
+        const baseOptions = this.getBaseSessionOptions();
         if (usedSpecificConversation && this.store.agentId) {
           console.warn('[Bot] Conversation missing, creating a new conversation...');
           session.close();
@@ -512,10 +523,8 @@ export class LettaBot {
         }
         
         if (msg.type === 'result') {
-          if (session.agentId && session.agentId !== this.store.agentId) {
-            const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
-            this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
-          } else if (session.conversationId && session.conversationId !== this.store.conversationId) {
+          // Update conversation ID if changed
+          if (session.conversationId && session.conversationId !== this.store.conversationId) {
             this.store.conversationId = session.conversationId;
           }
           break;
@@ -600,7 +609,7 @@ export class LettaBot {
   /**
    * Get the last message target (for heartbeat delivery)
    */
-  getLastMessageTarget(): { channel: string; chatId: string } | null {
+  getLastMessageTarget(): LastMessageTarget | null {
     return this.store.lastMessageTarget || null;
   }
   

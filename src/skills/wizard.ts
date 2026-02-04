@@ -1,17 +1,21 @@
 /**
  * Skills Wizard - Interactive CLI for managing skills
+ *
+ * Skills are installed to agent-scoped directory: ~/.letta/agents/{agentId}/skills/
+ * This aligns with Letta Code CLI behavior.
+ * See: https://github.com/letta-ai/lettabot/issues/108
  */
 
 import * as p from '@clack/prompts';
-import { join } from 'node:path';
 import { getSkillsSummary, type SkillsSummary } from './status.js';
 import { installSkillDeps } from './install.js';
-import { hasBinary, GLOBAL_SKILLS_DIR, SKILLS_SH_DIR } from './loader.js';
+import { hasBinary, GLOBAL_SKILLS_DIR, SKILLS_SH_DIR, getAgentSkillsDir } from './loader.js';
+import { Store } from '../core/store.js';
 import type { NodeManager, SkillStatus } from './types.js';
 
-// Skills in working directory (where Letta Code looks)
-const WORKING_DIR = process.env.WORKING_DIR || '/tmp/lettabot';
-const WORKING_SKILLS_DIR = join(WORKING_DIR, '.skills');
+// Agent-scoped skills directory (primary location for skill installs)
+const AGENT_ID = Store.getAgentIdOrThrow();
+const WORKING_SKILLS_DIR = getAgentSkillsDir(AGENT_ID);
 
 /**
  * Detect available node managers
@@ -294,6 +298,6 @@ export async function showStatus(): Promise<void> {
   }
   
   console.log('');
-  console.log(`  To enable: lettabot skills enable <name>`);
+  console.log(`  Run 'lettabot skills' to enable/disable skills`);
   console.log(`  Skills dir: ${WORKING_SKILLS_DIR}\n`);
 }

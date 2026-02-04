@@ -243,59 +243,52 @@ export interface SkillsInstallConfig {
 }
 
 /**
- * Install feature-gated skills to the working directory's .skills/ folder
- * 
- * Skills are NOT installed by default. They are enabled based on:
- * 1. Feature flags (cronEnabled, googleEnabled)
- * 2. Explicit list (additionalSkills)
- * 
- * Called on server startup
+ * Install feature-gated skills to the agent-scoped skills directory
+ *
+ * Skills are installed to ~/.letta/agents/{agentId}/skills/
+ * This aligns with Letta Code CLI's skill discovery (see vendor/letta-code/src/agent/skills.ts)
+ *
+ * Called after agent creation or on server startup for returning users
  */
-export function installSkillsToWorkingDir(workingDir: string, config: SkillsInstallConfig = {}): void {
-  const targetDir = join(workingDir, '.skills');
-  
+export function installSkillsToAgent(agentId: string, config: SkillsInstallConfig = {}): void {
+  const targetDir = getAgentSkillsDir(agentId);
+
   // Ensure target directory exists
   mkdirSync(targetDir, { recursive: true });
-  
+
   // Collect skills to install based on enabled features
   const skillsToInstall: string[] = [];
-  
+
   // Cron skills (always if cron is enabled)
   if (config.cronEnabled) {
     skillsToInstall.push(...FEATURE_SKILLS.cron);
   }
-  
+
   // Google skills (if Gmail polling or Google is configured)
   if (config.googleEnabled) {
     skillsToInstall.push(...FEATURE_SKILLS.google);
   }
-  
+
   // Additional explicitly enabled skills
   if (config.additionalSkills?.length) {
     skillsToInstall.push(...config.additionalSkills);
   }
-  
+
   if (skillsToInstall.length === 0) {
-    console.log('[Skills] No feature-gated skills to install');
     return;
   }
-  
+
   // Source directories (later has priority)
   const sourceDirs = [SKILLS_SH_DIR, BUNDLED_SKILLS_DIR, PROJECT_SKILLS_DIR];
-  
+
   // Install the specific skills
   const installed = installSpecificSkills(skillsToInstall, sourceDirs, targetDir);
-  
+
   if (installed.length > 0) {
-    console.log(`[Skills] Installed ${installed.length} skill(s): ${installed.join(', ')}`);
+    console.log(`[Skills] Installed ${installed.length} skill(s) to agent ${agentId}: ${installed.join(', ')}`);
   }
 }
 
-
-
-/**
- * @deprecated Use installSkillsToWorkingDir instead
- */
-export function installSkillsToAgent(agentId: string): void {
-  // No-op - skills are now installed to working dir on startup
-}
+// Note: Migration is not needed. Existing .skills/ directories continue to work
+// (read-only) because the SDK searches .skills/ with highest priority.
+// New skill installs go directly to agent-scoped directory.

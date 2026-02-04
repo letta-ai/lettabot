@@ -139,7 +139,26 @@ export class SignalAdapter implements ChannelAdapter {
     const port = config.httpPort || 8090;
     this.baseUrl = `http://${host}:${port}`;
   }
-  
+
+  /**
+   * Set the data directory for signal-cli state (multi-agent support).
+   *
+   * NOTE: This is a stub. Full implementation would require passing
+   * --config-dir to signal-cli daemon and updating attachment paths.
+   * Signal stores data in ~/.local/share/signal-cli/ by default.
+   *
+   * TODO: Support per-agent signal-cli config directories for multi-agent isolation.
+   */
+  setDataDir(dir: string): void {
+    if (this.running) {
+      console.warn('[Signal] setDataDir called after start() - ignored');
+      return;
+    }
+    // For now, just log. Full implementation would store this and use it
+    // when spawning the daemon and reading attachments.
+    console.log(`[Signal] setDataDir: ${dir} (not yet implemented - using default signal-cli location)`);
+  }
+
   /**
    * Check if a user is authorized based on dmPolicy
    * Returns 'allowed', 'blocked', or 'pairing'
