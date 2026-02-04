@@ -462,6 +462,31 @@ export class LettaBot {
     text: string,
     _context?: TriggerContext
   ): Promise<string> {
+    // Wait for any in-progress message processing to complete
+    // This prevents 409 conflicts when heartbeats overlap with user messages
+    while (this.processing) {
+      console.log('[Bot] Waiting for message queue to finish before sendToAgent...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    // Mark as processing to prevent queue from starting
+    this.processing = true;
+    console.log('[Bot] sendToAgent acquired processing lock');
+    
+    try {
+      return await this._sendToAgentInternal(text, _context);
+    } finally {
+      this.processing = false;
+      console.log('[Bot] sendToAgent released processing lock');
+      // Trigger queue processing in case messages arrived while we were busy
+      this.processQueue();
+    }
+  }
+  
+  private async _sendToAgentInternal(
+    text: string,
+    _context?: TriggerContext
+  ): Promise<string> {
     // Base options for sessions (systemPrompt/memory set via createAgent for new agents)
     const baseOptions = {
       permissionMode: 'bypassPermissions' as const,
