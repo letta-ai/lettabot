@@ -451,11 +451,10 @@ async function main() {
   }
   
   // Start cron service if enabled
+  // Note: CronService uses getDataDir() for cron-jobs.json to match the CLI
   let cronService: CronService | null = null;
   if (config.cronEnabled) {
-    cronService = new CronService(bot, {
-      storePath: `${config.workingDir}/cron-jobs.json`,
-    });
+    cronService = new CronService(bot);
     await cronService.start();
   }
   
