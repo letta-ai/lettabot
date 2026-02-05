@@ -674,20 +674,40 @@ export class LettaBot {
       }
       
       let response = '';
-      for await (const msg of session.stream()) {
-        if (msg.type === 'assistant') {
-          response += msg.content;
-        }
-        
-        if (msg.type === 'result') {
-          if (session.agentId && session.agentId !== this.store.agentId) {
-            const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
-            this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
-          } else if (session.conversationId && session.conversationId !== this.store.conversationId) {
-            this.store.conversationId = session.conversationId;
+      const watchdog = new StreamWatchdog({
+        onAbort: () => {
+          console.warn('[Bot] sendToAgent stream idle timeout, aborting session...');
+          session.abort().catch((err) => {
+            console.error('[Bot] sendToAgent abort failed:', err);
+          });
+          try {
+            session.close();
+          } catch (err) {
+            console.error('[Bot] sendToAgent close failed:', err);
           }
-          break;
+        },
+      });
+      watchdog.start();
+      
+      try {
+        for await (const msg of session.stream()) {
+          watchdog.ping();
+          if (msg.type === 'assistant') {
+            response += msg.content;
+          }
+          
+          if (msg.type === 'result') {
+            if (session.agentId && session.agentId !== this.store.agentId) {
+              const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
+              this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
+            } else if (session.conversationId && session.conversationId !== this.store.conversationId) {
+              this.store.conversationId = session.conversationId;
+            }
+            break;
+          }
         }
+      } finally {
+        watchdog.stop();
       }
       
       return response;

@@ -233,6 +233,35 @@ export async function getPendingApprovals(
 ): Promise<PendingApproval[]> {
   try {
     const client = getClient();
+
+    // Prefer agent-level pending approval to avoid scanning stale history.
+    try {
+      const agentState = await client.agents.retrieve(agentId);
+      if ('pending_approval' in agentState) {
+        const pending = (agentState as { pending_approval?: { id: string; run_id?: string | null; tool_calls?: Array<{ tool_call_id: string; name: string }>; tool_call?: { tool_call_id: string; name: string } } | null }).pending_approval;
+        if (!pending) {
+          return [];
+        }
+        const toolCalls = pending.tool_calls || (pending.tool_call ? [pending.tool_call] : []);
+        const seen = new Set<string>();
+        const approvals: PendingApproval[] = [];
+        for (const tc of toolCalls) {
+          if (!tc?.tool_call_id || seen.has(tc.tool_call_id)) {
+            continue;
+          }
+          seen.add(tc.tool_call_id);
+          approvals.push({
+            runId: pending.run_id || 'unknown',
+            toolCallId: tc.tool_call_id,
+            toolName: tc.name || 'unknown',
+            messageId: pending.id,
+          });
+        }
+        return approvals;
+      }
+    } catch (e) {
+      console.warn('[Letta API] Failed to retrieve agent pending_approval, falling back to run scan:', e);
+    }
     
     // First, check for runs with 'requires_approval' stop reason
     const runsPage = await client.runs.list({
@@ -249,10 +278,31 @@ export async function getPendingApprovals(
         // Get recent messages to find approval_request_message
         const messagesPage = await client.agents.messages.list(agentId, {
           conversation_id: conversationId,
-          limit: 20,
+          limit: 100,
         });
         
+        const messages: Array<{ message_type?: string }> = [];
         for await (const msg of messagesPage) {
+          messages.push(msg as { message_type?: string });
+        }
+        
+        const resolvedToolCalls = new Set<string>();
+        for (const msg of messages) {
+          if ('message_type' in msg && msg.message_type === 'approval_response_message') {
+            const approvalMsg = msg as {
+              approvals?: Array<{ tool_call_id?: string | null }>;
+            };
+            const approvals = approvalMsg.approvals || [];
+            for (const approval of approvals) {
+              if (approval.tool_call_id) {
+                resolvedToolCalls.add(approval.tool_call_id);
+              }
+            }
+          }
+        }
+        
+        const seenToolCalls = new Set<string>();
+        for (const msg of messages) {
           // Check for approval_request_message type
           if ('message_type' in msg && msg.message_type === 'approval_request_message') {
             const approvalMsg = msg as {
@@ -265,6 +315,13 @@ export async function getPendingApprovals(
             // Extract tool call info
             const toolCalls = approvalMsg.tool_calls || (approvalMsg.tool_call ? [approvalMsg.tool_call] : []);
             for (const tc of toolCalls) {
+              if (resolvedToolCalls.has(tc.tool_call_id)) {
+                continue;
+              }
+              if (seenToolCalls.has(tc.tool_call_id)) {
+                continue;
+              }
+              seenToolCalls.add(tc.tool_call_id);
               pendingApprovals.push({
                 runId: approvalMsg.run_id || run.id,
                 toolCallId: tc.tool_call_id,
@@ -306,6 +363,7 @@ export async function rejectApproval(
         approvals: [{
           approve: false,
           tool_call_id: approval.toolCallId,
+          type: 'approval',
           reason: approval.reason || 'Session was interrupted - please retry your request',
         }],
       }],
@@ -315,6 +373,12 @@ export async function rejectApproval(
     console.log(`[Letta API] Rejected approval for tool call ${approval.toolCallId}`);
     return true;
   } catch (e) {
+    const err = e as { status?: number; error?: { detail?: string } };
+    const detail = err?.error?.detail || '';
+    if (err?.status === 400 && detail.includes('No tool call is currently awaiting approval')) {
+      console.warn(`[Letta API] Approval already resolved for tool call ${approval.toolCallId}`);
+      return true;
+    }
     console.error('[Letta API] Failed to reject approval:', e);
     return false;
   }
