@@ -124,17 +124,10 @@ export class LettaBot {
       return { recovered: false, shouldReset: false };
     }
     
-    const attempts = this.store.recoveryAttempts;
-    if (attempts >= maxAttempts) {
-      console.error(`[Bot] Recovery failed after ${attempts} attempts.`);
-      console.error('[Bot] Try running: lettabot reset-conversation');
-      return { recovered: false, shouldReset: true };
-    }
-    
     console.log('[Bot] Checking for pending approvals...');
     
     try {
-      // Check for pending approvals
+      // Check for pending approvals FIRST, before checking attempt counter
       const pendingApprovals = await getPendingApprovals(
         this.store.agentId,
         this.store.conversationId || undefined
@@ -146,7 +139,15 @@ export class LettaBot {
         return { recovered: false, shouldReset: false };
       }
       
-      console.log(`[Bot] Found ${pendingApprovals.length} pending approval(s), attempting recovery...`);
+      // There ARE pending approvals - check if we've exceeded max attempts
+      const attempts = this.store.recoveryAttempts;
+      if (attempts >= maxAttempts) {
+        console.error(`[Bot] Recovery failed after ${attempts} attempts. Still have ${pendingApprovals.length} pending approval(s).`);
+        console.error('[Bot] Try running: lettabot reset-conversation');
+        return { recovered: false, shouldReset: true };
+      }
+      
+      console.log(`[Bot] Found ${pendingApprovals.length} pending approval(s), attempting recovery (attempt ${attempts + 1}/${maxAttempts})...`);
       this.store.incrementRecoveryAttempts();
       
       // Reject all pending approvals
