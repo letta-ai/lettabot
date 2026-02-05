@@ -6,6 +6,7 @@
 
 import type { ChannelAdapter } from '../channels/types.js';
 import type { InboundMessage, OutboundMessage } from '../core/types.js';
+import { parseCommand, HELP_TEXT } from '../core/commands.js';
 
 export class MockChannelAdapter implements ChannelAdapter {
   readonly id = 'mock' as const;
@@ -71,6 +72,18 @@ export class MockChannelAdapter implements ChannelAdapter {
     }
     
     const chatId = options.chatId || 'test-chat-123';
+    
+    // Handle slash commands locally (like real channels do)
+    const command = parseCommand(text);
+    if (command) {
+      if (command === 'help' || command === 'start') {
+        return HELP_TEXT;
+      } else if (this.onCommand) {
+        const result = await this.onCommand(command);
+        return result || '(No response)';
+      }
+      return '(Command not handled)';
+    }
     
     // Create promise that resolves when bot sends response
     const responsePromise = new Promise<OutboundMessage>((resolve) => {
