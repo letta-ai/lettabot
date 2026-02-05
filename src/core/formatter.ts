@@ -2,11 +2,16 @@
  * Message Envelope Formatter
  *
  * Formats incoming messages with metadata context for the agent.
- * Based on moltbot's envelope pattern.
+ * Uses <system-reminder> XML tags matching Letta Code CLI conventions.
  */
 
 import type { InboundMessage } from './types.js';
 import { normalizePhoneForStorage } from '../utils/phone.js';
+
+// XML tag constants (matching Letta Code CLI conventions from constants.ts)
+export const SYSTEM_REMINDER_TAG = 'system-reminder';
+export const SYSTEM_REMINDER_OPEN = `<${SYSTEM_REMINDER_TAG}>`;
+export const SYSTEM_REMINDER_CLOSE = `</${SYSTEM_REMINDER_TAG}>`;
 
 /**
  * Channel format hints - tells the agent what formatting syntax to use
@@ -33,6 +38,15 @@ const DEFAULT_OPTIONS: EnvelopeOptions = {
   includeSender: true,
   includeGroup: true,
 };
+
+/**
+ * Session context options for first-message enrichment
+ */
+export interface SessionContextOptions {
+  agentId?: string;
+  agentName?: string;
+  serverUrl?: string;
+}
 
 /**
  * Format a phone number nicely: +15551234567 -> +1 (555) 123-4567
@@ -90,7 +104,7 @@ function formatSender(msg: InboundMessage): string {
 }
 
 /**
- * Format channel name for display
+ * Format channel name for display (capitalized)
  */
 function formatChannelName(channel: string): string {
   return channel.charAt(0).toUpperCase() + channel.slice(1);
@@ -149,9 +163,9 @@ function formatBytes(size?: number): string | null {
   return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-function formatAttachments(msg: InboundMessage): string {
-  if (!msg.attachments || msg.attachments.length === 0) return '';
-  const lines = msg.attachments.map((attachment) => {
+function formatAttachmentLines(msg: InboundMessage): string[] {
+  if (!msg.attachments || msg.attachments.length === 0) return [];
+  return msg.attachments.map((attachment) => {
     const name = attachment.name || attachment.id || 'attachment';
     const details: string[] = [];
     if (attachment.mimeType) details.push(attachment.mimeType);
@@ -159,96 +173,166 @@ function formatAttachments(msg: InboundMessage): string {
     if (size) details.push(size);
     const detailText = details.length > 0 ? ` (${details.join(', ')})` : '';
     if (attachment.localPath) {
-      return `- ${name}${detailText} saved to ${attachment.localPath}`;
+      return `  - ${name}${detailText} saved to ${attachment.localPath}`;
     }
     if (attachment.url) {
-      return `- ${name}${detailText} ${attachment.url}`;
+      return `  - ${name}${detailText} ${attachment.url}`;
     }
-    return `- ${name}${detailText}`;
+    return `  - ${name}${detailText}`;
   });
-  return `Attachments:\n${lines.join('\n')}`;
-}
-
-function formatReaction(msg: InboundMessage): string {
-  if (!msg.reaction) return '';
-  const action = msg.reaction.action || 'added';
-  const emoji = msg.reaction.emoji;
-  const target = msg.reaction.messageId;
-  return `Reaction: ${action} ${emoji} (msg:${target})`;
 }
 
 /**
- * Format a message with metadata envelope
- * 
- * Format: [Channel:ChatId msg:MessageId Sender Timestamp] Message
- * 
- * The Channel:ChatId format allows the agent to reply using:
- *   lettabot-message send --text "..." --channel telegram --chat 123456789
- * 
- * Examples:
- * - [telegram:123456789 msg:123 Sarah Wednesday, Jan 28, 4:30 PM PST] Hello!
- * - [slack:C1234567 msg:1737685.1234 @cameron Monday, Jan 27, 4:30 PM PST] Hello!
+ * Build the metadata lines for the system-reminder block.
  */
-export function formatMessageEnvelope(
-  msg: InboundMessage,
-  options: EnvelopeOptions = {}
-): string {
-  const opts = { ...DEFAULT_OPTIONS, ...options };
-  const parts: string[] = [];
-  
-  // Channel:ChatId (for lettabot-message CLI)
-  parts.push(`${msg.channel}:${msg.chatId}`);
+function buildMetadataLines(msg: InboundMessage, options: EnvelopeOptions): string[] {
+  const lines: string[] = [];
 
+  // Channel and routing info
+  lines.push(`- **Channel**: ${formatChannelName(msg.channel)}`);
+  lines.push(`- **Chat ID**: ${msg.chatId}`);
   if (msg.messageId) {
-    parts.push(`msg:${msg.messageId}`);
-  }
-
-  // Group context (if group chat)
-  if (msg.isGroup && opts.includeGroup !== false) {
-    // Group name with GROUP: prefix for WhatsApp
-    if (msg.groupName?.trim()) {
-      if (msg.channel === 'whatsapp') {
-        parts.push(`GROUP:"${msg.groupName}"`);
-      } else if ((msg.channel === 'slack' || msg.channel === 'discord') && !msg.groupName.startsWith('#')) {
-        parts.push(`#${msg.groupName}`);
-      } else {
-        parts.push(msg.groupName);
-      }
-    }
-
-    // @mentioned tag (if bot was mentioned)
-    if (msg.wasMentioned) {
-      parts.push('@mentioned');
-    }
+    lines.push(`- **Message ID**: ${msg.messageId}`);
   }
 
   // Sender
-  if (opts.includeSender !== false) {
-    parts.push(formatSender(msg));
-  }
-
-  // Reply context (if replying to someone)
-  if (msg.replyToUser) {
-    const normalizedReply = normalizePhoneForStorage(msg.replyToUser);
-    const formattedReply = formatPhoneNumber(normalizedReply);
-    parts.push(`via ${formattedReply}`);
+  if (options.includeSender !== false) {
+    lines.push(`- **Sender**: ${formatSender(msg)}`);
   }
 
   // Timestamp
-  const timestamp = formatTimestamp(msg.timestamp, opts);
-  parts.push(timestamp);
-  
-  // Build envelope
-  const envelope = `[${parts.join(' ')}]`;
+  lines.push(`- **Timestamp**: ${formatTimestamp(msg.timestamp, options)}`);
 
-  // Add format hint so agent knows what formatting syntax to use
+  // Format support hint
   const formatHint = CHANNEL_FORMATS[msg.channel];
-  const hint = formatHint ? `\n(Format: ${formatHint})` : '';
+  if (formatHint) {
+    lines.push(`- **Format support**: ${formatHint}`);
+  }
 
-  const attachmentBlock = formatAttachments(msg);
-  const reactionBlock = formatReaction(msg);
-  const bodyParts = [msg.text, reactionBlock, attachmentBlock].filter((part) => part && part.trim());
-  const body = bodyParts.join('\n');
-  const spacer = body ? ` ${body}` : '';
-  return `${envelope}${spacer}${hint}`;
+  return lines;
+}
+
+/**
+ * Build the chat context lines (group info, mentions, reply context).
+ */
+function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): string[] {
+  const lines: string[] = [];
+
+  if (msg.isGroup) {
+    lines.push(`- **Type**: Group chat`);
+    if (options.includeGroup !== false && msg.groupName?.trim()) {
+      if (msg.channel === 'slack' || msg.channel === 'discord') {
+        const name = msg.groupName.startsWith('#') ? msg.groupName : `#${msg.groupName}`;
+        lines.push(`- **Group**: ${name}`);
+      } else {
+        lines.push(`- **Group**: ${msg.groupName}`);
+      }
+    }
+    if (msg.wasMentioned) {
+      lines.push(`- **Mentioned**: yes`);
+    }
+  } else {
+    lines.push(`- **Type**: Direct message`);
+  }
+
+  if (msg.replyToUser) {
+    const normalizedReply = normalizePhoneForStorage(msg.replyToUser);
+    const formattedReply = formatPhoneNumber(normalizedReply);
+    lines.push(`- **Replying to**: ${formattedReply}`);
+  }
+
+  // Reaction (if this is a reaction event)
+  if (msg.reaction) {
+    const action = msg.reaction.action || 'added';
+    lines.push(`- **Reaction**: ${action} ${msg.reaction.emoji} on message ${msg.reaction.messageId}`);
+  }
+
+  // Attachments
+  const attachmentLines = formatAttachmentLines(msg);
+  if (attachmentLines.length > 0) {
+    lines.push(`- **Attachments**:`);
+    lines.push(...attachmentLines);
+  }
+
+  return lines;
+}
+
+/**
+ * Build session context block for the first message in a chat session.
+ */
+export function buildSessionContext(options: SessionContextOptions): string[] {
+  const lines: string[] = [];
+
+  if (options.agentName || options.agentId) {
+    const name = options.agentName || 'lettabot';
+    const id = options.agentId ? ` (${options.agentId})` : '';
+    lines.push(`- **Agent**: ${name}${id}`);
+  }
+  if (options.serverUrl) {
+    lines.push(`- **Server**: ${options.serverUrl}`);
+  }
+
+  return lines;
+}
+
+/**
+ * Format a message with XML system-reminder envelope.
+ *
+ * Uses <system-reminder> XML tags matching Letta Code CLI conventions.
+ * Metadata is structured as markdown inside the tag, followed by the user's
+ * message text outside the tag.
+ *
+ * Example output:
+ * ```
+ * <system-reminder>
+ * ## Message Metadata
+ * - **Channel**: Telegram
+ * - **Chat ID**: 123456789
+ * - **Sender**: Sarah
+ * - **Timestamp**: Wednesday, Jan 28, 4:30 PM PST
+ * - **Format support**: MarkdownV2: *bold* _italic_ `code` [links](url) - NO: headers, tables
+ *
+ * ## Chat Context
+ * - **Type**: Direct message
+ * </system-reminder>
+ *
+ * Hello!
+ * ```
+ */
+export function formatMessageEnvelope(
+  msg: InboundMessage,
+  options: EnvelopeOptions = {},
+  sessionContext?: SessionContextOptions,
+): string {
+  const opts = { ...DEFAULT_OPTIONS, ...options };
+  const sections: string[] = [];
+
+  // Session context section (for first message in a chat session)
+  if (sessionContext) {
+    const sessionLines = buildSessionContext(sessionContext);
+    if (sessionLines.length > 0) {
+      sections.push(`## Session Context\n${sessionLines.join('\n')}`);
+    }
+  }
+
+  // Message metadata section
+  const metadataLines = buildMetadataLines(msg, opts);
+  sections.push(`## Message Metadata\n${metadataLines.join('\n')}`);
+
+  // Chat context section
+  const contextLines = buildChatContextLines(msg, opts);
+  if (contextLines.length > 0) {
+    sections.push(`## Chat Context\n${contextLines.join('\n')}`);
+  }
+
+  // Build the full system-reminder block
+  const reminderContent = sections.join('\n\n');
+  const reminder = `${SYSTEM_REMINDER_OPEN}\n${reminderContent}\n${SYSTEM_REMINDER_CLOSE}`;
+
+  // User message text (outside the tag)
+  const body = msg.text?.trim() || '';
+  if (body) {
+    return `${reminder}\n\n${body}`;
+  }
+  return reminder;
 }

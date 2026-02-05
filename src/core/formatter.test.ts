@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { formatMessageEnvelope } from './formatter.js';
+import { formatMessageEnvelope, SYSTEM_REMINDER_OPEN, SYSTEM_REMINDER_CLOSE } from './formatter.js';
 import type { InboundMessage } from './types.js';
+
 // Helper to create base message
 function createMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
   return {
@@ -14,29 +15,67 @@ function createMessage(overrides: Partial<InboundMessage> = {}): InboundMessage 
 }
 
 describe('formatMessageEnvelope', () => {
-  describe('basic envelope structure', () => {
-    it('includes channel and chatId', () => {
+  describe('XML tag structure', () => {
+    it('wraps metadata in system-reminder tags', () => {
+      const msg = createMessage();
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain(SYSTEM_REMINDER_OPEN);
+      expect(result).toContain(SYSTEM_REMINDER_CLOSE);
+    });
+
+    it('places user message text outside the tags', () => {
+      const msg = createMessage({ text: 'Test message' });
+      const result = formatMessageEnvelope(msg);
+      const closeIdx = result.indexOf(SYSTEM_REMINDER_CLOSE);
+      const textIdx = result.indexOf('Test message');
+      expect(textIdx).toBeGreaterThan(closeIdx);
+    });
+
+    it('has Message Metadata section', () => {
+      const msg = createMessage();
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('## Message Metadata');
+    });
+
+    it('has Chat Context section', () => {
+      const msg = createMessage();
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('## Chat Context');
+    });
+  });
+
+  describe('basic envelope metadata', () => {
+    it('includes channel name (capitalized)', () => {
       const msg = createMessage({ channel: 'telegram', chatId: '123' });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('[telegram:123');
+      expect(result).toContain('**Channel**: Telegram');
+    });
+
+    it('includes chatId', () => {
+      const msg = createMessage({ chatId: '123' });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('**Chat ID**: 123');
     });
 
     it('includes messageId when present', () => {
       const msg = createMessage({ messageId: 'msg456' });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('msg:msg456');
+      expect(result).toContain('**Message ID**: msg456');
     });
 
     it('omits messageId when not present', () => {
       const msg = createMessage({ messageId: undefined });
       const result = formatMessageEnvelope(msg);
-      expect(result).not.toContain('msg:');
+      expect(result).not.toContain('**Message ID**');
     });
 
-    it('includes message text after envelope', () => {
+    it('includes message text after closing tag', () => {
       const msg = createMessage({ text: 'Test message' });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('] Test message');
+      expect(result).toContain('Test message');
+      // Verify it's after the closing tag
+      const parts = result.split(SYSTEM_REMINDER_CLOSE);
+      expect(parts[1]).toContain('Test message');
     });
   });
 
@@ -44,7 +83,7 @@ describe('formatMessageEnvelope', () => {
     it('uses userName when available', () => {
       const msg = createMessage({ userName: 'John Doe' });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('John Doe');
+      expect(result).toContain('**Sender**: John Doe');
     });
 
     it('formats Slack users with @ prefix', () => {
@@ -54,7 +93,7 @@ describe('formatMessageEnvelope', () => {
         userHandle: 'cameron' 
       });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('@cameron');
+      expect(result).toContain('**Sender**: @cameron');
     });
 
     it('formats Discord users with @ prefix', () => {
@@ -64,7 +103,7 @@ describe('formatMessageEnvelope', () => {
         userHandle: 'user#1234' 
       });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('@user#1234');
+      expect(result).toContain('**Sender**: @user#1234');
     });
 
     it('formats US phone numbers nicely for WhatsApp', () => {
@@ -88,14 +127,26 @@ describe('formatMessageEnvelope', () => {
     });
   });
 
-  describe('group formatting', () => {
+  describe('chat context', () => {
+    it('marks DMs as direct message', () => {
+      const msg = createMessage({ isGroup: false });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('**Type**: Direct message');
+    });
+
+    it('marks groups as group chat', () => {
+      const msg = createMessage({ isGroup: true });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('**Type**: Group chat');
+    });
+
     it('includes group name for group chats', () => {
       const msg = createMessage({ 
         isGroup: true, 
         groupName: 'Test Group' 
       });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('Test Group');
+      expect(result).toContain('**Group**: Test Group');
     });
 
     it('adds # prefix for Slack channels', () => {
@@ -105,7 +156,7 @@ describe('formatMessageEnvelope', () => {
         groupName: 'general' 
       });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('#general');
+      expect(result).toContain('**Group**: #general');
     });
 
     it('adds # prefix for Discord channels', () => {
@@ -115,13 +166,19 @@ describe('formatMessageEnvelope', () => {
         groupName: 'chat' 
       });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('#chat');
+      expect(result).toContain('**Group**: #chat');
     });
 
-    it('omits group name for DMs', () => {
+    it('omits group info for DMs', () => {
       const msg = createMessage({ isGroup: false });
       const result = formatMessageEnvelope(msg);
-      expect(result).not.toContain('#');
+      expect(result).not.toContain('**Group**');
+    });
+
+    it('includes mentioned flag when bot is mentioned', () => {
+      const msg = createMessage({ isGroup: true, wasMentioned: true });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('**Mentioned**: yes');
     });
   });
 
@@ -129,26 +186,26 @@ describe('formatMessageEnvelope', () => {
     it('includes Slack format hint', () => {
       const msg = createMessage({ channel: 'slack' });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('(Format: mrkdwn:');
+      expect(result).toContain('**Format support**: mrkdwn:');
     });
 
     it('includes Telegram format hint', () => {
       const msg = createMessage({ channel: 'telegram' });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('(Format: MarkdownV2:');
+      expect(result).toContain('**Format support**: MarkdownV2:');
     });
 
     it('includes WhatsApp format hint', () => {
       const msg = createMessage({ channel: 'whatsapp' });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('(Format:');
+      expect(result).toContain('**Format support**:');
       expect(result).toContain('NO: headers');
     });
 
     it('includes Signal format hint', () => {
       const msg = createMessage({ channel: 'signal' });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('(Format: ONLY:');
+      expect(result).toContain('**Format support**: ONLY:');
     });
   });
 
@@ -163,7 +220,7 @@ describe('formatMessageEnvelope', () => {
         }]
       });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('Attachments:');
+      expect(result).toContain('**Attachments**');
       expect(result).toContain('photo.jpg');
       expect(result).toContain('image/jpeg');
     });
@@ -199,13 +256,13 @@ describe('formatMessageEnvelope', () => {
     it('respects includeSender: false', () => {
       const msg = createMessage({ userName: 'John' });
       const result = formatMessageEnvelope(msg, { includeSender: false });
-      expect(result).not.toContain('John');
+      expect(result).not.toContain('**Sender**');
     });
 
     it('respects includeGroup: false', () => {
       const msg = createMessage({ isGroup: true, groupName: 'TestGroup' });
       const result = formatMessageEnvelope(msg, { includeGroup: false });
-      expect(result).not.toContain('TestGroup');
+      expect(result).not.toContain('**Group**: TestGroup');
     });
 
     it('respects includeDay: false', () => {
@@ -228,12 +285,42 @@ describe('formatMessageEnvelope', () => {
       });
 
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('Reaction: added :thumbsup: (msg:1710000000.000000)');
+      expect(result).toContain('**Reaction**: added :thumbsup: on message 1710000000.000000');
     });
 
     it('omits reaction metadata when not present', () => {
       const result = formatMessageEnvelope(createMessage());
-      expect(result).not.toContain('Reaction:');
+      expect(result).not.toContain('**Reaction**');
+    });
+  });
+
+  describe('session context', () => {
+    it('includes session context section when provided', () => {
+      const msg = createMessage();
+      const result = formatMessageEnvelope(msg, {}, {
+        agentId: 'agent-abc123',
+        agentName: 'lettabot',
+        serverUrl: 'https://api.letta.com',
+      });
+      expect(result).toContain('## Session Context');
+      expect(result).toContain('**Agent**: lettabot (agent-abc123)');
+      expect(result).toContain('**Server**: https://api.letta.com');
+    });
+
+    it('omits session context section when not provided', () => {
+      const msg = createMessage();
+      const result = formatMessageEnvelope(msg);
+      expect(result).not.toContain('## Session Context');
+    });
+
+    it('session context appears before message metadata', () => {
+      const msg = createMessage();
+      const result = formatMessageEnvelope(msg, {}, {
+        agentName: 'lettabot',
+      });
+      const sessionIdx = result.indexOf('## Session Context');
+      const metadataIdx = result.indexOf('## Message Metadata');
+      expect(sessionIdx).toBeLessThan(metadataIdx);
     });
   });
 });
