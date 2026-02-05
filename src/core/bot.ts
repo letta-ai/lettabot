@@ -487,8 +487,9 @@ export class LettaBot {
             // Check for potential stuck state (empty result usually means pending approval or error)
             if (resultMsg.success && resultMsg.result === '' && !response.trim()) {
               console.error('[Bot] Warning: Agent returned empty result with no response.');
-              console.error('[Bot] This may indicate a pending approval or interrupted session.');
-              console.error('[Bot] Recovery will be attempted on the next message.');
+              console.error('[Bot] This may indicate the agent is processing internally or encountered an issue.');
+              console.error('[Bot] Agent ID:', this.store.agentId);
+              console.error('[Bot] Conversation ID:', this.store.conversationId);
             }
             
             // Save agent ID and conversation ID
@@ -561,8 +562,13 @@ export class LettaBot {
         } else {
           console.warn('[Bot] Stream received data but no assistant message');
           console.warn('[Bot] Message types received:', msgTypeCounts);
-          console.warn('[Bot] This may indicate: ADE session conflict, or tool approval needed');
-          await adapter.sendMessage({ chatId: msg.chatId, text: '(No response from agent)', threadId: msg.threadId });
+          console.warn('[Bot] This may indicate: ADE session conflict, agent processing, or internal error');
+          // Give user informative message - avoid suggesting reset
+          await adapter.sendMessage({ 
+            chatId: msg.chatId, 
+            text: '(Agent is processing but returned no response. Please try again.)', 
+            threadId: msg.threadId 
+          });
         }
       }
       
