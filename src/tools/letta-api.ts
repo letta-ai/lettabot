@@ -352,10 +352,12 @@ export async function disableToolApproval(
 ): Promise<boolean> {
   try {
     const client = getClient();
+    // Note: API expects 'requires_approval' but client types say 'body_requires_approval'
+    // This is a bug in @letta-ai/letta-client - filed issue, using workaround
     await client.agents.tools.updateApproval(toolName, {
       agent_id: agentId,
-      body_requires_approval: false,
-    });
+      requires_approval: false,
+    } as unknown as Parameters<typeof client.agents.tools.updateApproval>[1]);
     console.log(`[Letta API] Disabled approval requirement for tool ${toolName} on agent ${agentId}`);
     return true;
   } catch (e) {
