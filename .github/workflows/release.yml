@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: read
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for changelog generation
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run tests
+        run: npm run test:run
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          # Get the previous tag (if any)
+          PREV_TAG=$(git tag --sort=-creatordate | sed -n '2p')
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "First release - including all commits"
+            RANGE="HEAD"
+          else
+            RANGE="${PREV_TAG}..${CURRENT_TAG}"
+          fi
+
+          # Collect merged PRs from commit messages
+          echo "## What's Changed" > notes.md
+          echo "" >> notes.md
+
+          # Extract PR numbers and titles from merge commits
+          git log $RANGE --oneline --grep="(#" | while read -r line; do
+            # Extract PR number
+            PR_NUM=$(echo "$line" | grep -oP '\(#\K[0-9]+' | head -1)
+            # Clean up the message (remove hash prefix)
+            MSG=$(echo "$line" | sed 's/^[a-f0-9]* //')
+            if [ -n "$PR_NUM" ]; then
+              echo "- ${MSG} by @$(gh pr view $PR_NUM --json author --jq '.author.login' 2>/dev/null || echo 'contributor')" >> notes.md
+            else
+              echo "- ${MSG}" >> notes.md
+            fi
+          done
+
+          # Add install instructions
+          echo "" >> notes.md
+          echo "## Install" >> notes.md
+          echo "" >> notes.md
+          echo '```bash' >> notes.md
+          echo "git clone https://github.com/letta-ai/lettabot.git" >> notes.md
+          echo "cd lettabot" >> notes.md
+          echo "git checkout ${CURRENT_TAG}" >> notes.md
+          echo "npm install && npm run build && npm link" >> notes.md
+          echo '```' >> notes.md
+
+          # Add full changelog link
+          if [ -n "$PREV_TAG" ]; then
+            echo "" >> notes.md
+            echo "**Full Changelog**: https://github.com/letta-ai/lettabot/compare/${PREV_TAG}...${CURRENT_TAG}" >> notes.md
+          fi
+
+          cat notes.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        run: |
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+
+          # Determine if pre-release
+          if echo "$CURRENT_TAG" | grep -qE '(alpha|beta|rc)'; then
+            PRERELEASE="--prerelease"
+          else
+            PRERELEASE=""
+          fi
+
+          gh release create "$CURRENT_TAG" \
+            --title "$CURRENT_TAG" \
+            --notes-file notes.md \
+            $PRERELEASE
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Optional: Ping letta-code agent to write a richer summary
+      - name: Notify Letta Code agent
+        if: ${{ secrets.LETTA_API_KEY != '' }}
+        continue-on-error: true
+        uses: letta-ai/letta-code-action@v0
+        with:
+          letta_api_key: ${{ secrets.LETTA_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          agent_id: agent-a7d61fda-62c3-44ae-90a0-c8359fae6e3d
+          model: opus
+          custom_prompt: |
+            A new release ${{ github.ref_name }} was just published for lettabot.
+            Review the release notes and add a comment on the release with a
+            brief, friendly summary of what's new for users. Keep it concise.
