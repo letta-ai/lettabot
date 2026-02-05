@@ -103,17 +103,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Optional: Ping letta-code agent to write a richer summary
-      - name: Notify Letta Code agent
-        if: ${{ secrets.LETTA_API_KEY != '' }}
-        continue-on-error: true
-        uses: letta-ai/letta-code-action@v0
-        with:
-          letta_api_key: ${{ secrets.LETTA_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          agent_id: agent-a7d61fda-62c3-44ae-90a0-c8359fae6e3d
-          model: opus
-          custom_prompt: |
-            A new release ${{ github.ref_name }} was just published for lettabot.
-            Review the release notes and add a comment on the release with a
-            brief, friendly summary of what's new for users. Keep it concise.
+      # TODO: Ping letta-code agent to write a richer summary once
+      # letta-code-action supports release events / custom prompts
