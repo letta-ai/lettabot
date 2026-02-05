@@ -1,5 +1,10 @@
 /**
  * OpenAI Whisper transcription service
+ * 
+ * Supports tiered fallback:
+ * 1. Try format rename (AAC → M4A, etc.) - no external deps
+ * 2. Try ffmpeg conversion if available
+ * 3. Return informative error if both fail
  */
 
 import OpenAI from 'openai';
@@ -15,6 +20,16 @@ const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const CHUNK_DURATION_SECONDS = 600;
 
 let openaiClient: OpenAI | null = null;
+
+/**
+ * Result of a transcription attempt
+ */
+export interface TranscriptionResult {
+  success: boolean;
+  text?: string;
+  error?: string;
+  audioPath?: string;  // Path to original audio (for agent to reference)
+}
 
 function getClient(): OpenAI {
   if (!openaiClient) {
@@ -34,40 +49,125 @@ function getModel(): string {
   return config.transcription?.model || process.env.TRANSCRIPTION_MODEL || 'whisper-1';
 }
 
-/**
- * Transcribe audio using OpenAI Whisper API
- * 
- * @param audioBuffer - The audio data as a Buffer
- * @param filename - Filename with extension (e.g., 'voice.ogg')
- * @returns The transcribed text
- */
-export async function transcribeAudio(audioBuffer: Buffer, filename: string = 'audio.ogg'): Promise<string> {
-  const ext = filename.split('.').pop()?.toLowerCase() || '';
-  
-  // Check if format needs conversion (not just renaming)
-  let finalBuffer = audioBuffer;
-  let finalExt = ext;
-  
-  if (NEEDS_CONVERSION.includes(ext)) {
-    console.log(`[Transcription] Converting .${ext} to .mp3 with ffmpeg`);
-    finalBuffer = convertAudioToMp3(audioBuffer, ext);
-    finalExt = 'mp3';
+// Cache ffmpeg availability check
+let ffmpegAvailable: boolean | null = null;
+
+function isFfmpegAvailable(): boolean {
+  if (ffmpegAvailable === null) {
+    try {
+      execSync('which ffmpeg', { stdio: 'ignore' });
+      ffmpegAvailable = true;
+    } catch {
+      ffmpegAvailable = false;
+      console.warn('[Transcription] ffmpeg not found - audio conversion will be skipped');
+    }
   }
-  
-  // Check if file is too large and needs chunking
-  if (finalBuffer.length > MAX_FILE_SIZE) {
-    console.log(`[Transcription] File too large (${(finalBuffer.length / 1024 / 1024).toFixed(1)}MB), splitting into chunks`);
-    return transcribeInChunks(finalBuffer, finalExt);
-  }
-  
-  // Single file transcription
-  return transcribeSingleFile(finalBuffer, filename, finalExt);
+  return ffmpegAvailable;
 }
 
 /**
- * Transcribe a single audio file (under size limit)
+ * Transcribe audio using OpenAI Whisper API
+ * 
+ * Returns a result object instead of throwing, so callers can handle failures gracefully.
+ * 
+ * @param audioBuffer - The audio data as a Buffer
+ * @param filename - Filename with extension (e.g., 'voice.ogg')
+ * @param options - Optional settings
+ * @returns TranscriptionResult with success/text or error info
  */
-async function transcribeSingleFile(audioBuffer: Buffer, originalFilename: string, ext: string): Promise<string> {
+export async function transcribeAudio(
+  audioBuffer: Buffer, 
+  filename: string = 'audio.ogg',
+  options?: { audioPath?: string }
+): Promise<TranscriptionResult> {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  
+  try {
+    let finalBuffer = audioBuffer;
+    let finalExt = ext;
+    
+    // Check if format needs handling
+    if (NEEDS_CONVERSION.includes(ext)) {
+      // Tier 1: Try format mapping first (just rename, no conversion)
+      const mapped = FORMAT_MAP[ext];
+      if (mapped) {
+        console.log(`[Transcription] Trying .${ext} as .${mapped} (no conversion)`);
+        finalExt = mapped;
+        
+        // Try without conversion first
+        try {
+          const text = await attemptTranscription(finalBuffer, filename, finalExt);
+          return { success: true, text };
+        } catch (renameError) {
+          console.log(`[Transcription] Rename approach failed: ${renameError instanceof Error ? renameError.message : renameError}`);
+          
+          // Tier 2: Try ffmpeg conversion if available
+          if (isFfmpegAvailable()) {
+            console.log(`[Transcription] Attempting ffmpeg conversion .${ext} → .mp3`);
+            try {
+              finalBuffer = convertAudioToMp3(audioBuffer, ext);
+              finalExt = 'mp3';
+              const text = await attemptTranscription(finalBuffer, filename, finalExt);
+              return { success: true, text };
+            } catch (conversionError) {
+              // Both approaches failed
+              const errorMsg = conversionError instanceof Error ? conversionError.message : String(conversionError);
+              return {
+                success: false,
+                error: `Transcription failed after conversion: ${errorMsg}`,
+                audioPath: options?.audioPath,
+              };
+            }
+          } else {
+            // No ffmpeg, rename failed
+            return {
+              success: false,
+              error: `Cannot transcribe .${ext} format. Install ffmpeg for audio conversion, or send in a supported format (mp3, ogg, wav, m4a).`,
+              audioPath: options?.audioPath,
+            };
+          }
+        }
+      } else {
+        // No mapping available
+        if (isFfmpegAvailable()) {
+          console.log(`[Transcription] Converting .${ext} to .mp3 with ffmpeg`);
+          finalBuffer = convertAudioToMp3(audioBuffer, ext);
+          finalExt = 'mp3';
+        } else {
+          return {
+            success: false,
+            error: `Unsupported format .${ext} and ffmpeg not available for conversion.`,
+            audioPath: options?.audioPath,
+          };
+        }
+      }
+    }
+    
+    // Check file size and chunk if needed
+    if (finalBuffer.length > MAX_FILE_SIZE) {
+      console.log(`[Transcription] File too large (${(finalBuffer.length / 1024 / 1024).toFixed(1)}MB), splitting into chunks`);
+      const text = await transcribeInChunks(finalBuffer, finalExt);
+      return { success: true, text };
+    }
+    
+    // Single file transcription
+    const text = await attemptTranscription(finalBuffer, filename, finalExt);
+    return { success: true, text };
+    
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      error: errorMsg,
+      audioPath: options?.audioPath,
+    };
+  }
+}
+
+/**
+ * Attempt a single transcription (may throw)
+ */
+async function attemptTranscription(audioBuffer: Buffer, originalFilename: string, ext: string): Promise<string> {
   const client = getClient();
   const finalFilename = normalizeFilename(originalFilename.replace(/\.[^.]+$/, `.${ext}`));
   
@@ -87,6 +187,10 @@ async function transcribeSingleFile(audioBuffer: Buffer, originalFilename: strin
  * Split large audio into chunks and transcribe each
  */
 async function transcribeInChunks(audioBuffer: Buffer, ext: string): Promise<string> {
+  if (!isFfmpegAvailable()) {
+    throw new Error('Cannot split large audio files without ffmpeg');
+  }
+  
   const tempDir = join(tmpdir(), 'lettabot-transcription', `chunks-${Date.now()}`);
   mkdirSync(tempDir, { recursive: true });
   
@@ -122,7 +226,7 @@ async function transcribeInChunks(audioBuffer: Buffer, ext: string): Promise<str
       
       console.log(`[Transcription] Transcribing chunk ${i + 1}/${chunkFiles.length} (${(chunkBuffer.length / 1024).toFixed(0)}KB)`);
       
-      const text = await transcribeSingleFile(chunkBuffer, chunkFiles[i], 'mp3');
+      const text = await attemptTranscription(chunkBuffer, chunkFiles[i], 'mp3');
       if (text.trim()) {
         transcriptions.push(text.trim());
       }

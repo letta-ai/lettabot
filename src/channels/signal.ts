@@ -628,13 +628,22 @@ This code expires in 1 hour.`;
             
             const { transcribeAudio } = await import('../transcription/index.js');
             const ext = voiceAttachment.contentType?.split('/')[1] || 'ogg';
-            const transcript = await transcribeAudio(buffer, `voice.${ext}`);
+            const result = await transcribeAudio(buffer, `voice.${ext}`, { audioPath: attachmentPath });
             
-            console.log(`[Signal] Transcribed voice message: "${transcript.slice(0, 50)}..."`);
-            messageText = (messageText ? messageText + '\n' : '') + `[Voice message]: ${transcript}`;
+            if (result.success && result.text) {
+              console.log(`[Signal] Transcribed voice message: "${result.text.slice(0, 50)}..."`);
+              messageText = (messageText ? messageText + '\n' : '') + `[Voice message]: ${result.text}`;
+            } else {
+              console.error(`[Signal] Transcription failed: ${result.error}`);
+              const errorInfo = result.audioPath 
+                ? `[Voice message - transcription failed: ${result.error}. Audio saved to: ${result.audioPath}]`
+                : `[Voice message - transcription failed: ${result.error}]`;
+              messageText = (messageText ? messageText + '\n' : '') + errorInfo;
+            }
           }
         } catch (error) {
           console.error('[Signal] Error transcribing voice message:', error);
+          messageText = (messageText ? messageText + '\n' : '') + `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`;
         }
       } else if (attachments?.some(a => a.contentType?.startsWith('audio/'))) {
         // Audio attachment exists but has no ID

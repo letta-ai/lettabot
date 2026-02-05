@@ -83,13 +83,19 @@ export class SlackAdapter implements ChannelAdapter {
             
             const { transcribeAudio } = await import('../transcription/index.js');
             const ext = audioFile.mimetype?.split('/')[1] || 'mp3';
-            const transcript = await transcribeAudio(buffer, audioFile.name || `audio.${ext}`);
+            const result = await transcribeAudio(buffer, audioFile.name || `audio.${ext}`);
             
-            console.log(`[Slack] Transcribed audio: "${transcript.slice(0, 50)}..."`);
-            text = (text ? text + '\n' : '') + `[Voice message]: ${transcript}`;
+            if (result.success && result.text) {
+              console.log(`[Slack] Transcribed audio: "${result.text.slice(0, 50)}..."`);
+              text = (text ? text + '\n' : '') + `[Voice message]: ${result.text}`;
+            } else {
+              console.error(`[Slack] Transcription failed: ${result.error}`);
+              text = (text ? text + '\n' : '') + `[Voice message - transcription failed: ${result.error}]`;
+            }
           }
         } catch (error) {
           console.error('[Slack] Error transcribing audio:', error);
+          text = (text ? text + '\n' : '') + `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`;
         }
       }
       

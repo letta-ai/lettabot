@@ -247,11 +247,18 @@ export class TelegramAdapter implements ChannelAdapter {
 
         // Transcribe
         const { transcribeAudio } = await import('../transcription/index.js');
-        const transcript = await transcribeAudio(buffer, 'voice.ogg');
+        const result = await transcribeAudio(buffer, 'voice.ogg');
 
-        console.log(`[Telegram] Transcribed voice message: "${transcript.slice(0, 50)}..."`);
+        let messageText: string;
+        if (result.success && result.text) {
+          console.log(`[Telegram] Transcribed voice message: "${result.text.slice(0, 50)}..."`);
+          messageText = `[Voice message]: ${result.text}`;
+        } else {
+          console.error(`[Telegram] Transcription failed: ${result.error}`);
+          messageText = `[Voice message - transcription failed: ${result.error}]`;
+        }
 
-        // Send to agent as text with prefix
+        // Send to agent
         if (this.onMessage) {
           await this.onMessage({
             channel: 'telegram',
@@ -259,14 +266,24 @@ export class TelegramAdapter implements ChannelAdapter {
             userId: String(userId),
             userName: ctx.from.username || ctx.from.first_name,
             messageId: String(ctx.message.message_id),
-            text: `[Voice message]: ${transcript}`,
+            text: messageText,
             timestamp: new Date(),
           });
         }
       } catch (error) {
         console.error('[Telegram] Error processing voice message:', error);
-        // Optionally notify user
-        await ctx.reply('Sorry, I could not transcribe that voice message.');
+        // Send error to agent so it can explain
+        if (this.onMessage) {
+          await this.onMessage({
+            channel: 'telegram',
+            chatId: String(chatId),
+            userId: String(userId),
+            userName: ctx.from?.username || ctx.from?.first_name,
+            messageId: String(ctx.message.message_id),
+            text: `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`,
+            timestamp: new Date(),
+          });
+        }
       }
     });
 

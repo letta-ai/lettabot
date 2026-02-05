@@ -161,13 +161,19 @@ Ask the bot owner to approve with:
             
             const { transcribeAudio } = await import('../transcription/index.js');
             const ext = audioAttachment.contentType?.split('/')[1] || 'mp3';
-            const transcript = await transcribeAudio(buffer, audioAttachment.name || `audio.${ext}`);
+            const result = await transcribeAudio(buffer, audioAttachment.name || `audio.${ext}`);
             
-            console.log(`[Discord] Transcribed audio: "${transcript.slice(0, 50)}..."`);
-            content = (content ? content + '\n' : '') + `[Voice message]: ${transcript}`;
+            if (result.success && result.text) {
+              console.log(`[Discord] Transcribed audio: "${result.text.slice(0, 50)}..."`);
+              content = (content ? content + '\n' : '') + `[Voice message]: ${result.text}`;
+            } else {
+              console.error(`[Discord] Transcription failed: ${result.error}`);
+              content = (content ? content + '\n' : '') + `[Voice message - transcription failed: ${result.error}]`;
+            }
           }
         } catch (error) {
           console.error('[Discord] Error transcribing audio:', error);
+          content = (content ? content + '\n' : '') + `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`;
         }
       }
 
