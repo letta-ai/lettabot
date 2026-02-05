@@ -235,20 +235,46 @@ export async function getPendingApprovals(
     const client = getClient();
 
     // Prefer agent-level pending approval to avoid scanning stale history.
+    // IMPORTANT: Must include 'agent.pending_approval' or the field won't be returned.
     try {
-      const agentState = await client.agents.retrieve(agentId);
+      const agentState = await client.agents.retrieve(agentId, {
+        include: ['agent.pending_approval'],
+      });
       if ('pending_approval' in agentState) {
-        const pending = (agentState as { pending_approval?: { id: string; run_id?: string | null; tool_calls?: Array<{ tool_call_id: string; name: string }>; tool_call?: { tool_call_id: string; name: string } } | null }).pending_approval;
+        const pending = agentState.pending_approval;
         if (!pending) {
+          console.log('[Letta API] No pending approvals on agent');
           return [];
         }
-        const toolCalls = pending.tool_calls || (pending.tool_call ? [pending.tool_call] : []);
+        console.log(`[Letta API] Found pending approval: ${pending.id}, run_id=${pending.run_id}`);
+        
+        // Extract tool calls - handle both Array<ToolCall> and ToolCallDelta formats
+        const rawToolCalls = pending.tool_calls;
+        const toolCallsList: Array<{ tool_call_id: string; name: string }> = [];
+        
+        if (Array.isArray(rawToolCalls)) {
+          for (const tc of rawToolCalls) {
+            if (tc && 'tool_call_id' in tc && tc.tool_call_id) {
+              toolCallsList.push({ tool_call_id: tc.tool_call_id, name: tc.name || 'unknown' });
+            }
+          }
+        } else if (rawToolCalls && typeof rawToolCalls === 'object' && 'tool_call_id' in rawToolCalls && rawToolCalls.tool_call_id) {
+          // ToolCallDelta case
+          toolCallsList.push({ tool_call_id: rawToolCalls.tool_call_id, name: rawToolCalls.name || 'unknown' });
+        }
+        
+        // Fallback to deprecated singular tool_call field
+        if (toolCallsList.length === 0 && pending.tool_call) {
+          const tc = pending.tool_call;
+          if ('tool_call_id' in tc && tc.tool_call_id) {
+            toolCallsList.push({ tool_call_id: tc.tool_call_id, name: tc.name || 'unknown' });
+          }
+        }
+        
         const seen = new Set<string>();
         const approvals: PendingApproval[] = [];
-        for (const tc of toolCalls) {
-          if (!tc?.tool_call_id || seen.has(tc.tool_call_id)) {
-            continue;
-          }
+        for (const tc of toolCallsList) {
+          if (seen.has(tc.tool_call_id)) continue;
           seen.add(tc.tool_call_id);
           approvals.push({
             runId: pending.run_id || 'unknown',
@@ -257,6 +283,7 @@ export async function getPendingApprovals(
             messageId: pending.id,
           });
         }
+        console.log(`[Letta API] Extracted ${approvals.length} pending approval(s): ${approvals.map(a => a.toolName).join(', ')}`);
         return approvals;
       }
     } catch (e) {
@@ -457,6 +484,24 @@ export async function getAgentTools(agentId: string): Promise<Array<{
   } catch (e) {
     console.error('[Letta API] Failed to get agent tools:', e);
     return [];
+  }
+}
+
+/**
+ * Ensure no tools on the agent require approval.
+ * Call on startup to proactively prevent stuck approval states.
+ */
+export async function ensureNoToolApprovals(agentId: string): Promise<void> {
+  try {
+    const tools = await getAgentTools(agentId);
+    const approvalTools = tools.filter(t => t.requiresApproval);
+    if (approvalTools.length > 0) {
+      console.log(`[Letta API] Found ${approvalTools.length} tool(s) requiring approval: ${approvalTools.map(t => t.name).join(', ')}`);
+      console.log('[Letta API] Disabling tool approvals for headless operation...');
+      await disableAllToolApprovals(agentId);
+    }
+  } catch (e) {
+    console.warn('[Letta API] Failed to check/disable tool approvals:', e);
   }
 }
 

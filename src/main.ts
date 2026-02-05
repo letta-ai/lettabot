@@ -122,7 +122,7 @@ import { DiscordAdapter } from './channels/discord.js';
 import { CronService } from './cron/service.js';
 import { HeartbeatService } from './cron/heartbeat.js';
 import { PollingService } from './polling/service.js';
-import { agentExists, findAgentByName } from './tools/letta-api.js';
+import { agentExists, findAgentByName, ensureNoToolApprovals } from './tools/letta-api.js';
 // Skills are now installed to agent-scoped location after agent creation (see bot.ts)
 
 // Check if config exists (skip in Railway/Docker where env vars are used directly)
@@ -378,6 +378,14 @@ async function main() {
   // Agent will be created on first user message (lazy initialization)
   if (!initialStatus.agentId) {
     console.log(`[Agent] No agent found - will create "${agentName}" on first message`);
+  }
+  
+  // Proactively disable tool approvals for headless operation
+  // Prevents stuck states from server-side requires_approval=true (SDK issue #25)
+  if (initialStatus.agentId) {
+    ensureNoToolApprovals(initialStatus.agentId).catch(err => {
+      console.warn('[Agent] Failed to check tool approvals:', err);
+    });
   }
   
   // Register enabled channels

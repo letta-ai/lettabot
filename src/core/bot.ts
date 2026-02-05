@@ -79,6 +79,13 @@ export class LettaBot {
         });
         return '⏰ Heartbeat triggered (silent mode - check server logs)';
       }
+      case 'reset': {
+        const oldConversationId = this.store.conversationId;
+        this.store.conversationId = null;
+        this.store.resetRecoveryAttempts();
+        console.log(`[Command] /reset - conversation cleared (was: ${oldConversationId})`);
+        return 'Conversation reset. Send a message to start a new conversation. (Agent memory is preserved.)';
+      }
       default:
         return null;
     }
