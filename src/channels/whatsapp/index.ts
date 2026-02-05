@@ -70,6 +70,7 @@ import {
 import { createDedupeCache, type DedupeCache } from "../../utils/dedupe-cache.js";
 import { createInboundDebouncer, type Debouncer } from "../../utils/debouncer.js";
 import { normalizePhoneForStorage } from "../../utils/phone.js";
+import { parseCommand, HELP_TEXT } from "../../core/commands.js";
 
 // Node imports
 import { rmSync } from "node:fs";
@@ -171,8 +172,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
   // Credential save queue
   private credsSaveQueue: CredsSaveQueue | null = null;
 
-  // Event handler (set by bot core)
+  // Event handlers (set by bot core)
   onMessage?: (msg: InboundMessage) => Promise<void>;
+  onCommand?: (command: string) => Promise<string | null>;
 
   // Pre-bound handlers (created once to avoid bind() overhead)
   private boundHandleConnectionUpdate: (update: Partial<import("@whiskeysockets/baileys").ConnectionState>) => void;
@@ -761,6 +763,18 @@ export class WhatsAppAdapter implements ChannelAdapter {
           messageId,
           m.key?.participant ?? undefined
         );
+      }
+
+      // Handle slash commands (before debouncing)
+      const command = parseCommand(body);
+      if (command && !isHistory) {
+        if (command === 'help' || command === 'start') {
+          await this.sendMessage({ chatId, text: HELP_TEXT });
+        } else if (this.onCommand) {
+          const result = await this.onCommand(command);
+          if (result) await this.sendMessage({ chatId, text: result });
+        }
+        return; // Don't pass commands to agent
       }
 
       // Debounce and forward to bot core (unless history)

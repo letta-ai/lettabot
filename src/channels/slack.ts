@@ -9,6 +9,7 @@ import type { InboundAttachment, InboundMessage, InboundReaction, OutboundFile, 
 import { createReadStream } from 'node:fs';
 import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
+import { parseCommand, HELP_TEXT } from '../core/commands.js';
 
 // Dynamic import to avoid requiring Slack deps if not used
 let App: typeof import('@slack/bolt').App;
@@ -32,6 +33,7 @@ export class SlackAdapter implements ChannelAdapter {
   private attachmentsMaxBytes?: number;
   
   onMessage?: (msg: InboundMessage) => Promise<void>;
+  onCommand?: (command: string) => Promise<string | null>;
   
   constructor(config: SlackConfig) {
     this.config = config;
@@ -99,6 +101,18 @@ export class SlackAdapter implements ChannelAdapter {
         }
       }
       
+      // Handle slash commands
+      const command = parseCommand(text);
+      if (command) {
+        if (command === 'help' || command === 'start') {
+          await say(HELP_TEXT);
+        } else if (this.onCommand) {
+          const result = await this.onCommand(command);
+          if (result) await say(result);
+        }
+        return; // Don't pass commands to agent
+      }
+      
       if (this.onMessage) {
         const attachments = await this.collectAttachments(
           (message as { files?: SlackFile[] }).files,
@@ -136,6 +150,18 @@ export class SlackAdapter implements ChannelAdapter {
           // Can't use say() in app_mention event the same way
           return;
         }
+      }
+      
+      // Handle slash commands
+      const command = parseCommand(text);
+      if (command) {
+        if (command === 'help' || command === 'start') {
+          await this.sendMessage({ chatId: channelId, text: HELP_TEXT, threadId: threadTs });
+        } else if (this.onCommand) {
+          const result = await this.onCommand(command);
+          if (result) await this.sendMessage({ chatId: channelId, text: result, threadId: threadTs });
+        }
+        return; // Don't pass commands to agent
       }
       
       if (this.onMessage) {

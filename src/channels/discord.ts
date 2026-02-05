@@ -10,6 +10,7 @@ import type { InboundAttachment, InboundMessage, InboundReaction, OutboundFile, 
 import type { DmPolicy } from '../pairing/types.js';
 import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
+import { HELP_TEXT } from '../core/commands.js';
 
 // Dynamic import to avoid requiring Discord deps if not used
 let Client: typeof import('discord.js').Client;
@@ -204,6 +205,10 @@ Ask the bot owner to approve with:
 
       if (content.startsWith('/')) {
         const command = content.slice(1).split(/\s+/)[0]?.toLowerCase();
+        if (command === 'help' || command === 'start') {
+          await message.channel.send(HELP_TEXT);
+          return;
+        }
         if (this.onCommand) {
           if (command === 'status') {
             const result = await this.onCommand('status');

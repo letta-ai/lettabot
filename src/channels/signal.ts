@@ -13,6 +13,7 @@ import {
   upsertPairingRequest,
 } from '../pairing/store.js';
 import { buildAttachmentPath } from './attachments.js';
+import { parseCommand, HELP_TEXT } from '../core/commands.js';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -128,6 +129,7 @@ export class SignalAdapter implements ChannelAdapter {
   private baseUrl: string;
   
   onMessage?: (msg: InboundMessage) => Promise<void>;
+  onCommand?: (command: string) => Promise<string | null>;
   
   constructor(config: SignalConfig) {
     this.config = {
@@ -665,6 +667,18 @@ This code expires in 1 hour.`;
           // Don't process the message
           return;
         }
+      }
+      
+      // Handle slash commands
+      const command = parseCommand(messageText);
+      if (command) {
+        if (command === 'help' || command === 'start') {
+          await this.sendMessage({ chatId, text: HELP_TEXT });
+        } else if (this.onCommand) {
+          const result = await this.onCommand(command);
+          if (result) await this.sendMessage({ chatId, text: result });
+        }
+        return; // Don't pass commands to agent
       }
       
       const isGroup = chatId.startsWith('group:');
