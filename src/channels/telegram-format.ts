@@ -11,13 +11,13 @@
  */
 export async function markdownToTelegramV2(markdown: string): Promise<string> {
   try {
-    // Dynamic import to avoid ESM/CommonJS compatibility issues
-    const { convert } = await import('telegram-markdown-v2');
-    // Use 'keep' strategy to preserve blockquotes (>) and other elements
-    return convert(markdown, 'keep');
+    // Dynamic import to handle ESM module
+    const telegramifyMarkdown = (await import('telegramify-markdown')).default;
+    // Use 'keep' strategy to preserve blockquotes (>) and other unsupported elements
+    return telegramifyMarkdown(markdown, 'keep');
   } catch (e) {
-    console.error('[Telegram] Markdown conversion failed, using fallback:', e);
-    // Fallback: escape special characters manually
+    console.error('[Telegram] Markdown conversion failed, using escape fallback:', e);
+    // Fallback: escape special characters manually (loses formatting)
     return escapeMarkdownV2(markdown);
   }
 }

@@ -549,24 +549,25 @@ export class LettaBot {
       // Only show "no response" if we never sent anything
       if (!sentAnyMessage) {
         if (!receivedAnyData) {
-          // Stream timed out with NO data at all - likely stuck approval or connection issue
-          console.error('[Bot] Stream received NO DATA - possible stuck tool approval');
+          // Stream timed out with NO data at all - likely stuck state
+          console.error('[Bot] Stream received NO DATA - possible stuck state');
+          console.error('[Bot] Agent:', this.store.agentId);
           console.error('[Bot] Conversation:', this.store.conversationId);
           console.error('[Bot] This can happen when a previous session disconnected mid-tool-approval');
-          console.error('[Bot] Recovery will be attempted automatically on the next message.');
           await adapter.sendMessage({ 
             chatId: msg.chatId, 
-            text: '(Session interrupted. Please try your message again - recovery in progress.)', 
+            text: '(Session interrupted. Try: lettabot reset-conversation)', 
             threadId: msg.threadId 
           });
         } else {
           console.warn('[Bot] Stream received data but no assistant message');
           console.warn('[Bot] Message types received:', msgTypeCounts);
-          console.warn('[Bot] This may indicate: ADE session conflict, agent processing, or internal error');
-          // Give user informative message - avoid suggesting reset
+          console.warn('[Bot] Agent:', this.store.agentId);
+          console.warn('[Bot] Conversation:', this.store.conversationId);
+          const convIdShort = this.store.conversationId?.slice(0, 8) || 'none';
           await adapter.sendMessage({ 
             chatId: msg.chatId, 
-            text: '(Agent is processing but returned no response. Please try again.)', 
+            text: `(No response. Conversation: ${convIdShort}... Try: lettabot reset-conversation)`, 
             threadId: msg.threadId 
           });
         }

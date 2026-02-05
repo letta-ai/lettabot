@@ -347,14 +347,24 @@ export class TelegramAdapter implements ChannelAdapter {
   async sendMessage(msg: OutboundMessage): Promise<{ messageId: string }> {
     const { markdownToTelegramV2 } = await import('./telegram-format.js');
     
-    // Convert markdown to Telegram MarkdownV2 format
-    const formatted = await markdownToTelegramV2(msg.text);
-    
-    const result = await this.bot.api.sendMessage(msg.chatId, formatted, {
-      parse_mode: 'MarkdownV2',
-      reply_to_message_id: msg.replyToMessageId ? Number(msg.replyToMessageId) : undefined,
-    });
-    return { messageId: String(result.message_id) };
+    // Try MarkdownV2 first
+    try {
+      const formatted = await markdownToTelegramV2(msg.text);
+      const result = await this.bot.api.sendMessage(msg.chatId, formatted, {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: msg.replyToMessageId ? Number(msg.replyToMessageId) : undefined,
+      });
+      return { messageId: String(result.message_id) };
+    } catch (e) {
+      // If MarkdownV2 fails, send raw text with notice
+      console.warn('[Telegram] MarkdownV2 send failed, falling back to raw text:', e);
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      const fallbackText = `${msg.text}\n\n(Telegram formatting failed: ${errorMsg.slice(0, 50)}. Report: github.com/letta-ai/lettabot/issues)`;
+      const result = await this.bot.api.sendMessage(msg.chatId, fallbackText, {
+        reply_to_message_id: msg.replyToMessageId ? Number(msg.replyToMessageId) : undefined,
+      });
+      return { messageId: String(result.message_id) };
+    }
   }
 
   async sendFile(file: OutboundFile): Promise<{ messageId: string }> {
