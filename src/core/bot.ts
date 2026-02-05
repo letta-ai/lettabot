@@ -424,7 +424,7 @@ export class LettaBot {
                   updateAgentName(session.agentId, this.config.agentName).catch(() => {});
                 }
                 if (session.agentId) {
-                  installSkillsToAgent(session.agentId);
+                  installSkillsToAgent(session.agentId, this.config.skills);
                 }
               }
             } else if (session.conversationId && session.conversationId !== this.store.conversationId) {

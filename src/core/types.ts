@@ -104,6 +104,15 @@ export interface OutboundFile {
 }
 
 /**
+ * Skills installation config
+ */
+export interface SkillsConfig {
+  cronEnabled?: boolean;
+  googleEnabled?: boolean;
+  additionalSkills?: string[];
+}
+
+/**
  * Bot configuration
  */
 export interface BotConfig {
@@ -112,6 +121,9 @@ export interface BotConfig {
   model?: string; // e.g., 'anthropic/claude-sonnet-4-5-20250929'
   agentName?: string; // Name for the agent (set via API after creation)
   allowedTools: string[];
+  
+  // Skills
+  skills?: SkillsConfig;
   
   // Security
   allowedUsers?: string[];  // Empty = allow all

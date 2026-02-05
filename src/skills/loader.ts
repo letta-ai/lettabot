@@ -294,8 +294,47 @@ export function installSkillsToWorkingDir(workingDir: string, config: SkillsInst
 
 
 /**
- * @deprecated Use installSkillsToWorkingDir instead
+ * Install feature-gated skills to the agent-scoped skills directory
+ * (~/.letta/agents/{agentId}/skills/)
+ * 
+ * This aligns with Letta Code CLI which uses agent-scoped skills.
+ * Called after agent creation in bot.ts.
  */
-export function installSkillsToAgent(agentId: string): void {
-  // No-op - skills are now installed to working dir on startup
+export function installSkillsToAgent(agentId: string, config: SkillsInstallConfig = {}): void {
+  const targetDir = getAgentSkillsDir(agentId);
+  
+  // Ensure target directory exists
+  mkdirSync(targetDir, { recursive: true });
+  
+  // Collect skills to install based on enabled features
+  const skillsToInstall: string[] = [];
+  
+  // Cron skills (always if cron is enabled)
+  if (config.cronEnabled) {
+    skillsToInstall.push(...FEATURE_SKILLS.cron);
+  }
+  
+  // Google skills (if Gmail polling or Google is configured)
+  if (config.googleEnabled) {
+    skillsToInstall.push(...FEATURE_SKILLS.google);
+  }
+  
+  // Additional explicitly enabled skills
+  if (config.additionalSkills?.length) {
+    skillsToInstall.push(...config.additionalSkills);
+  }
+  
+  if (skillsToInstall.length === 0) {
+    return; // No skills to install - silent return
+  }
+  
+  // Source directories (later has priority)
+  const sourceDirs = [SKILLS_SH_DIR, BUNDLED_SKILLS_DIR, PROJECT_SKILLS_DIR];
+  
+  // Install the specific skills
+  const installed = installSpecificSkills(skillsToInstall, sourceDirs, targetDir);
+  
+  if (installed.length > 0) {
+    console.log(`[Skills] Installed ${installed.length} skill(s) to agent: ${installed.join(', ')}`);
+  }
 }

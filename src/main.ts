@@ -5,7 +5,7 @@
  * Chat continues seamlessly between Telegram, Slack, and WhatsApp.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, promises as fs } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, promises as fs } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
@@ -123,7 +123,7 @@ import { CronService } from './cron/service.js';
 import { HeartbeatService } from './cron/heartbeat.js';
 import { PollingService } from './polling/service.js';
 import { agentExists, findAgentByName } from './tools/letta-api.js';
-import { installSkillsToWorkingDir } from './skills/loader.js';
+// Skills are now installed to agent-scoped location after agent creation (see bot.ts)
 
 // Check if config exists (skip in Railway/Docker where env vars are used directly)
 const configPath = resolveConfigPath();
@@ -313,27 +313,16 @@ async function main() {
   console.log(`[Storage] Data directory: ${dataDir}`);
   console.log(`[Storage] Working directory: ${config.workingDir}`);
   
-  // Install feature-gated skills based on enabled features
-  // Skills are NOT installed by default - only when their feature is enabled
-  const skillsDir = resolve(config.workingDir, '.skills');
-  mkdirSync(skillsDir, { recursive: true });
-  
-  installSkillsToWorkingDir(config.workingDir, {
-    cronEnabled: config.cronEnabled,
-    googleEnabled: config.polling.gmail.enabled, // Gmail polling uses gog skill
-  });
-  
-  const existingSkills = readdirSync(skillsDir).filter(f => !f.startsWith('.'));
-  if (existingSkills.length > 0) {
-    console.log(`[Skills] ${existingSkills.length} skill(s) available: ${existingSkills.join(', ')}`);
-  }
-  
-  // Create bot
+  // Create bot with skills config (skills installed to agent-scoped location after agent creation)
   const bot = new LettaBot({
     workingDir: config.workingDir,
     model: config.model,
     agentName: process.env.AGENT_NAME || 'LettaBot',
     allowedTools: config.allowedTools,
+    skills: {
+      cronEnabled: config.cronEnabled,
+      googleEnabled: config.polling.gmail.enabled,
+    },
   });
 
   const attachmentsDir = resolve(config.workingDir, 'attachments');
