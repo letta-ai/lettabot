@@ -108,10 +108,14 @@ export async function transcribeAudio(
               finalBuffer = convertAudioToMp3(audioBuffer, ext);
               finalExt = 'mp3';
               const text = await attemptTranscription(finalBuffer, filename, finalExt);
+              console.log(`[Transcription] Success after conversion, text length: ${text?.length || 0}`);
               return { success: true, text };
-            } catch (conversionError) {
+            } catch (conversionError: unknown) {
               // Both approaches failed
-              const errorMsg = conversionError instanceof Error ? conversionError.message : String(conversionError);
+              console.error(`[Transcription] Failed after conversion:`, conversionError);
+              const errorMsg = conversionError instanceof Error 
+                ? conversionError.message 
+                : (conversionError ? String(conversionError) : 'Unknown error after conversion');
               return {
                 success: false,
                 error: `Transcription failed after conversion: ${errorMsg}`,

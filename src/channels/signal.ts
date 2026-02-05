@@ -630,14 +630,20 @@ This code expires in 1 hour.`;
             const ext = voiceAttachment.contentType?.split('/')[1] || 'ogg';
             const result = await transcribeAudio(buffer, `voice.${ext}`, { audioPath: attachmentPath });
             
-            if (result.success && result.text) {
-              console.log(`[Signal] Transcribed voice message: "${result.text.slice(0, 50)}..."`);
-              messageText = (messageText ? messageText + '\n' : '') + `[Voice message]: ${result.text}`;
+            if (result.success) {
+              if (result.text) {
+                console.log(`[Signal] Transcribed voice message: "${result.text.slice(0, 50)}..."`);
+                messageText = (messageText ? messageText + '\n' : '') + `[Voice message]: ${result.text}`;
+              } else {
+                console.warn(`[Signal] Transcription returned empty text`);
+                messageText = (messageText ? messageText + '\n' : '') + `[Voice message - transcription returned empty]`;
+              }
             } else {
-              console.error(`[Signal] Transcription failed: ${result.error}`);
+              const errorMsg = result.error || 'Unknown transcription error';
+              console.error(`[Signal] Transcription failed: ${errorMsg}`);
               const errorInfo = result.audioPath 
-                ? `[Voice message - transcription failed: ${result.error}. Audio saved to: ${result.audioPath}]`
-                : `[Voice message - transcription failed: ${result.error}]`;
+                ? `[Voice message - transcription failed: ${errorMsg}. Audio saved to: ${result.audioPath}]`
+                : `[Voice message - transcription failed: ${errorMsg}]`;
               messageText = (messageText ? messageText + '\n' : '') + errorInfo;
             }
           }
