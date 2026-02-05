@@ -529,6 +529,8 @@ export class LettaBot {
             await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
           }
           sentAnyMessage = true;
+          // Reset recovery counter on successful response
+          this.store.resetRecoveryAttempts();
           const preview = response.length > 50 ? response.slice(0, 50) + '...' : response;
           console.log(`[Bot] Sent: "${preview}"`);
         } catch (sendError) {
@@ -536,6 +538,8 @@ export class LettaBot {
           if (!messageId) {
             await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
             sentAnyMessage = true;
+            // Reset recovery counter on successful response
+            this.store.resetRecoveryAttempts();
           }
         }
       }
