@@ -284,6 +284,22 @@ npm run build
 lettabot server
 ```
 
+## Releases
+
+Releases are automated via GitHub Actions. When a version tag is pushed, the workflow builds, tests, generates release notes from merged PRs, and creates a GitHub Release.
+
+```bash
+# Create a release
+git tag v0.2.0
+git push origin v0.2.0
+
+# Create a pre-release (alpha/beta/rc are auto-detected)
+git tag v0.2.0-alpha.1
+git push origin v0.2.0-alpha.1
+```
+
+See all releases: [GitHub Releases](https://github.com/letta-ai/lettabot/releases)
+
 ## Troubleshooting
 
 ### WhatsApp

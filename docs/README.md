@@ -11,6 +11,7 @@ LettaBot is a multi-channel AI assistant powered by [Letta](https://letta.com) t
 - [Scheduling Tasks](./cron-setup.md) - Cron jobs and heartbeats
 - [Gmail Pub/Sub](./gmail-pubsub.md) - Email notifications integration
 - [Railway Deployment](./railway-deploy.md) - Deploy to Railway
+- [Releasing](./releasing.md) - How to create releases
 
 ### Channel Setup
 - [Telegram Setup](./telegram-setup.md) - BotFather token setup
