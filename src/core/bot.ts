@@ -475,11 +475,9 @@ export class LettaBot {
           receivedAnyData = true;
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
-          // Verbose logging: show every stream message type
-          if (process.env.DEBUG_STREAM) {
-            const preview = JSON.stringify(streamMsg).slice(0, 200);
-            console.log(`[Stream] type=${streamMsg.type} ${preview}`);
-          }
+          // Always log every stream message type for debugging approval issues
+          const preview = JSON.stringify(streamMsg).slice(0, 300);
+          console.log(`[Stream] type=${streamMsg.type} ${preview}`);
           
           // When message type changes, finalize the current message
           // This ensures different message types appear as separate bubbles

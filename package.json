@@ -14,6 +14,7 @@
     "setup": "tsx src/setup.ts",
     "dev": "tsx src/main.ts",
     "build": "tsc",
+    "postinstall": "npx patch-package",
     "start": "node dist/main.js",
     "test": "vitest",
     "test:run": "vitest run",
