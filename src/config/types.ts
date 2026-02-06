@@ -120,6 +120,7 @@ export interface GoogleConfig {
   enabled: boolean;
   account?: string;
   services?: string[];  // e.g., ['gmail', 'calendar', 'drive', 'contacts', 'docs', 'sheets']
+  pollIntervalSec?: number;  // Polling interval in seconds (default: 60)
 }
 
 // Default config

@@ -170,6 +170,9 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.integrations?.google?.enabled && config.integrations.google.account) {
     env.GMAIL_ACCOUNT = config.integrations.google.account;
   }
+  if (config.integrations?.google?.pollIntervalSec) {
+    env.POLLING_INTERVAL_MS = String(config.integrations.google.pollIntervalSec * 1000);
+  }
 
   if (config.attachments?.maxMB !== undefined) {
     env.ATTACHMENTS_MAX_MB = String(config.attachments.maxMB);
