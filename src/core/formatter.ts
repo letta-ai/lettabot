@@ -231,6 +231,7 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
     if (msg.wasMentioned) {
       lines.push(`- **Mentioned**: yes`);
     }
+    lines.push(`- **Hint**: To skip replying, respond with exactly: \`<no-reply/>\``);
   } else {
     lines.push(`- **Type**: Direct message`);
   }

@@ -180,6 +180,18 @@ describe('formatMessageEnvelope', () => {
       const result = formatMessageEnvelope(msg);
       expect(result).toContain('**Mentioned**: yes');
     });
+
+    it('includes no-reply hint for group chats', () => {
+      const msg = createMessage({ isGroup: true });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('<no-reply/>');
+    });
+
+    it('omits no-reply hint for DMs', () => {
+      const msg = createMessage({ isGroup: false });
+      const result = formatMessageEnvelope(msg);
+      expect(result).not.toContain('no-reply');
+    });
   });
 
   describe('format hints', () => {
