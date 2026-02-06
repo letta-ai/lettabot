@@ -5,10 +5,10 @@
  * Based on moltbot's pairing system.
  */
 
-import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import type { PairingRequest, PairingStore, AllowFromStore } from './types.js';
 import { normalizePhoneForStorage } from '../utils/phone.js';
 
