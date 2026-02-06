@@ -4,7 +4,7 @@
  * Single agent, single conversation - chat continues across all channels.
  */
 
-import { createAgent, createSession, resumeSession, type Session } from '@letta-ai/letta-code-sdk';
+import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage } from '@letta-ai/letta-code-sdk';
 import { mkdirSync } from 'node:fs';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
@@ -31,6 +31,43 @@ function isApprovalConflictError(error: unknown): boolean {
   const statusError = error as { status?: number };
   if (statusError?.status === 409) return true;
   return false;
+}
+
+const SUPPORTED_IMAGE_MIMES = new Set([
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+]);
+
+async function buildMultimodalMessage(
+  formattedText: string,
+  msg: InboundMessage,
+): Promise<SendMessage> {
+  const imageAttachments = (msg.attachments ?? []).filter(
+    (a) => a.kind === 'image'
+      && (a.localPath || a.url)
+      && (!a.mimeType || SUPPORTED_IMAGE_MIMES.has(a.mimeType))
+  );
+
+  if (imageAttachments.length === 0) {
+    return formattedText;
+  }
+
+  const content: MessageContentItem[] = [
+    { type: 'text', text: formattedText },
+  ];
+
+  for (const attachment of imageAttachments) {
+    try {
+      if (attachment.localPath) {
+        content.push(imageFromFile(attachment.localPath));
+      } else if (attachment.url) {
+        content.push(await imageFromURL(attachment.url));
+      }
+    } catch (err) {
+      console.warn(`[Bot] Failed to load image ${attachment.name || 'unknown'}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  return content.length > 1 ? content : formattedText;
 }
 
 export class LettaBot {
@@ -440,11 +477,12 @@ export class LettaBot {
       } : undefined;
 
       // Send message to agent with metadata envelope
-      const formattedMessage = msg.isBatch && msg.batchedMessages
+      const formattedText = msg.isBatch && msg.batchedMessages
         ? formatGroupBatchEnvelope(msg.batchedMessages)
-        : formatMessageEnvelope(msg);
+        : formatMessageEnvelope(msg, {}, sessionContext);
+      const messageToSend = await buildMultimodalMessage(formattedText, msg);
       try {
-        await withTimeout(session.send(formattedMessage), 'Session send');
+        await withTimeout(session.send(messageToSend), 'Session send');
       } catch (sendError) {
         // Check for 409 CONFLICT from orphaned approval_request_message
         if (!retried && isApprovalConflictError(sendError) && this.store.agentId && this.store.conversationId) {
