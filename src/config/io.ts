@@ -133,6 +133,12 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.channels.slack?.botToken) {
     env.SLACK_BOT_TOKEN = config.channels.slack.botToken;
   }
+  if (config.channels.slack?.groupPollIntervalMin !== undefined) {
+    env.SLACK_GROUP_POLL_INTERVAL_MIN = String(config.channels.slack.groupPollIntervalMin);
+  }
+  if (config.channels.slack?.instantGroups?.length) {
+    env.SLACK_INSTANT_GROUPS = config.channels.slack.instantGroups.join(',');
+  }
   if (config.channels.whatsapp?.enabled) {
     env.WHATSAPP_ENABLED = 'true';
     if (config.channels.whatsapp.selfChat) {
@@ -141,12 +147,30 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
       env.WHATSAPP_SELF_CHAT_MODE = 'false';
     }
   }
+  if (config.channels.whatsapp?.groupPollIntervalMin !== undefined) {
+    env.WHATSAPP_GROUP_POLL_INTERVAL_MIN = String(config.channels.whatsapp.groupPollIntervalMin);
+  }
+  if (config.channels.whatsapp?.instantGroups?.length) {
+    env.WHATSAPP_INSTANT_GROUPS = config.channels.whatsapp.instantGroups.join(',');
+  }
   if (config.channels.signal?.phone) {
     env.SIGNAL_PHONE_NUMBER = config.channels.signal.phone;
     // Signal selfChat defaults to true, so only set env if explicitly false
     if (config.channels.signal.selfChat === false) {
       env.SIGNAL_SELF_CHAT_MODE = 'false';
     }
+  }
+  if (config.channels.signal?.groupPollIntervalMin !== undefined) {
+    env.SIGNAL_GROUP_POLL_INTERVAL_MIN = String(config.channels.signal.groupPollIntervalMin);
+  }
+  if (config.channels.signal?.instantGroups?.length) {
+    env.SIGNAL_INSTANT_GROUPS = config.channels.signal.instantGroups.join(',');
+  }
+  if (config.channels.telegram?.groupPollIntervalMin !== undefined) {
+    env.TELEGRAM_GROUP_POLL_INTERVAL_MIN = String(config.channels.telegram.groupPollIntervalMin);
+  }
+  if (config.channels.telegram?.instantGroups?.length) {
+    env.TELEGRAM_INSTANT_GROUPS = config.channels.telegram.instantGroups.join(',');
   }
   if (config.channels.discord?.token) {
     env.DISCORD_BOT_TOKEN = config.channels.discord.token;
@@ -156,6 +180,12 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
     if (config.channels.discord.allowedUsers?.length) {
       env.DISCORD_ALLOWED_USERS = config.channels.discord.allowedUsers.join(',');
     }
+  }
+  if (config.channels.discord?.groupPollIntervalMin !== undefined) {
+    env.DISCORD_GROUP_POLL_INTERVAL_MIN = String(config.channels.discord.groupPollIntervalMin);
+  }
+  if (config.channels.discord?.instantGroups?.length) {
+    env.DISCORD_INSTANT_GROUPS = config.channels.discord.instantGroups.join(',');
   }
   
   // Features

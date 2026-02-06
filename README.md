@@ -266,10 +266,13 @@ By default, the agent is restricted to **read-only** operations:
 
 ### Access Control
 
-LettaBot supports pairing-based access control. When `TELEGRAM_DM_POLICY=pairing`:
-1. Unauthorized users get a pairing code
-2. You approve codes via `lettabot pairing approve telegram <CODE>`
-3. Approved users can then chat with the bot
+LettaBot supports pairing-based access control. When `dmPolicy: pairing` (the default for Telegram, Discord, Signal, and WhatsApp):
+
+**DMs:** Unauthorized users receive a pairing code. You approve codes via `lettabot pairing approve <channel> <CODE>`, and approved users can then chat with the bot.
+
+**Groups:** Only paired users can activate the bot in groups. On Telegram, if an unpaired user adds the bot to a group, it sends a notice and leaves automatically. On other channels, the bot silently ignores messages in unapproved groups until a paired user sends the first message, which approves the group for everyone. Once a group is approved, all users in that group can interact with the bot.
+
+When `dmPolicy` is `open` or `allowlist`, groups are fully open with no approval required.
 
 ## Development
 

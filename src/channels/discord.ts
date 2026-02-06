@@ -177,33 +177,36 @@ Ask the bot owner to approve with:
         }
       }
 
-      const access = await this.checkAccess(userId);
-      if (access === 'blocked') {
-        const ch = message.channel;
-        if (ch.isTextBased() && 'send' in ch) {
-          await (ch as { send: (content: string) => Promise<unknown> }).send(
-            "Sorry, you're not authorized to use this bot."
-          );
-        }
-        return;
-      }
-
-      if (access === 'pairing') {
-        const { code, created } = await upsertPairingRequest('discord', userId, {
-          username: message.author.username,
-        });
-
-        if (!code) {
-          await message.channel.send('Too many pending pairing requests. Please try again later.');
+      // Bypass pairing for guild (group) messages
+      if (!message.guildId) {
+        const access = await this.checkAccess(userId);
+        if (access === 'blocked') {
+          const ch = message.channel;
+          if (ch.isTextBased() && 'send' in ch) {
+            await (ch as { send: (content: string) => Promise<unknown> }).send(
+              "Sorry, you're not authorized to use this bot."
+            );
+          }
           return;
         }
 
-        if (created) {
-          console.log(`[Discord] New pairing request from ${userId} (${message.author.username}): ${code}`);
-        }
+        if (access === 'pairing') {
+          const { code, created } = await upsertPairingRequest('discord', userId, {
+            username: message.author.username,
+          });
 
-        await this.sendPairingMessage(message, this.formatPairingMsg(code));
-        return;
+          if (!code) {
+            await message.channel.send('Too many pending pairing requests. Please try again later.');
+            return;
+          }
+
+          if (created) {
+            console.log(`[Discord] New pairing request from ${userId} (${message.author.username}): ${code}`);
+          }
+
+          await this.sendPairingMessage(message, this.formatPairingMsg(code));
+          return;
+        }
       }
 
       const attachments = await this.collectAttachments(message.attachments, message.channel.id);
@@ -237,6 +240,7 @@ Ask the bot owner to approve with:
         const isGroup = !!message.guildId;
         const groupName = isGroup && 'name' in message.channel ? message.channel.name : undefined;
         const displayName = message.member?.displayName || message.author.globalName || message.author.username;
+        const wasMentioned = isGroup && !!this.client?.user && message.mentions.has(this.client.user);
 
         await this.onMessage({
           channel: 'discord',
@@ -249,6 +253,8 @@ Ask the bot owner to approve with:
           timestamp: message.createdAt,
           isGroup,
           groupName,
+          serverId: message.guildId || undefined,
+          wasMentioned,
           attachments,
         });
       }
@@ -318,6 +324,10 @@ Ask the bot owner to approve with:
     }
   }
 
+  getDmPolicy(): string {
+    return this.config.dmPolicy || 'pairing';
+  }
+
   supportsEditing(): boolean {
     return true;
   }
@@ -375,6 +385,7 @@ Ask the bot owner to approve with:
       timestamp: new Date(),
       isGroup,
       groupName,
+      serverId: message.guildId || undefined,
       reaction: {
         emoji,
         messageId: message.id,

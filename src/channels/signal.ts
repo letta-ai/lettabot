@@ -303,6 +303,10 @@ This code expires in 1 hour.`;
     };
   }
   
+  getDmPolicy(): string {
+    return this.config.dmPolicy || 'pairing';
+  }
+
   supportsEditing(): boolean {
     return false;
   }
@@ -679,8 +683,11 @@ This code expires in 1 hour.`;
         }
         // selfChatMode enabled - allow the message through
         console.log('[Signal] Note to Self allowed (selfChatMode enabled)');
+      } else if (chatId.startsWith('group:')) {
+        // Group messages bypass pairing - anyone in the group can interact
+        console.log('[Signal] Group message - bypassing access control');
       } else {
-        // External message - check access control
+        // External DM - check access control
         console.log('[Signal] Checking access for external message');
         const access = await this.checkAccess(source);
         console.log(`[Signal] Access result: ${access}`);

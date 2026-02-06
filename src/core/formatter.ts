@@ -40,6 +40,31 @@ const DEFAULT_OPTIONS: EnvelopeOptions = {
 };
 
 /**
+ * Format a short time string (e.g., "4:30 PM")
+ */
+function formatShortTime(date: Date, options: EnvelopeOptions): string {
+  let timeZone: string | undefined;
+  if (options.timezone === 'utc') {
+    timeZone = 'UTC';
+  } else if (options.timezone && options.timezone !== 'local') {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: options.timezone });
+      timeZone = options.timezone;
+    } catch {
+      timeZone = undefined;
+    }
+  }
+
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone,
+  });
+  return formatter.format(date);
+}
+
+/**
  * Session context options for first-message enrichment
  */
 export interface SessionContextOptions {
@@ -336,4 +361,61 @@ export function formatMessageEnvelope(
     return `${reminder}\n\n${body}`;
   }
   return reminder;
+}
+
+/**
+ * Format a group batch of messages as a chat log for the agent.
+ *
+ * Output format:
+ * [GROUP CHAT - discord:123 #general - 3 messages]
+ * [4:30 PM] Alice: Hey everyone
+ * [4:32 PM] Bob: What's up?
+ * [4:35 PM] Alice: @LettaBot can you help?
+ * (Format: **bold** *italic* ...)
+ */
+export function formatGroupBatchEnvelope(
+  messages: InboundMessage[],
+  options: EnvelopeOptions = {}
+): string {
+  if (messages.length === 0) return '';
+
+  const opts = { ...DEFAULT_OPTIONS, ...options };
+  const first = messages[0];
+
+  // Header: [GROUP CHAT - channel:chatId #groupName - N messages]
+  const headerParts: string[] = ['GROUP CHAT'];
+  headerParts.push(`${first.channel}:${first.chatId}`);
+  if (first.groupName?.trim()) {
+    if ((first.channel === 'slack' || first.channel === 'discord') && !first.groupName.startsWith('#')) {
+      headerParts.push(`#${first.groupName}`);
+    } else {
+      headerParts.push(first.groupName);
+    }
+  }
+  headerParts.push(`${messages.length} message${messages.length === 1 ? '' : 's'}`);
+  const header = `[${headerParts.join(' - ')}]`;
+
+  // Chat log lines
+  const lines = messages.map((msg) => {
+    const time = formatShortTime(msg.timestamp, opts);
+    const sender = formatSender(msg);
+    const textParts: string[] = [];
+    if (msg.text?.trim()) textParts.push(msg.text.trim());
+    if (msg.reaction) {
+      const action = msg.reaction.action || 'added';
+      textParts.push(`[Reaction ${action}: ${msg.reaction.emoji}]`);
+    }
+    if (msg.attachments && msg.attachments.length > 0) {
+      const names = msg.attachments.map((a) => a.name || 'attachment').join(', ');
+      textParts.push(`[Attachments: ${names}]`);
+    }
+    const body = textParts.join(' ') || '(empty)';
+    return `[${time}] ${sender}: ${body}`;
+  });
+
+  // Format hint
+  const formatHint = CHANNEL_FORMATS[first.channel];
+  const hint = formatHint ? `\n(Format: ${formatHint})` : '';
+
+  return `${header}\n${lines.join('\n')}${hint}`;
 }
