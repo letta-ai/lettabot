@@ -9,12 +9,28 @@ import { mkdirSync } from 'node:fs';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import { Store } from './store.js';
-import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, disableAllToolApprovals } from '../tools/letta-api.js';
+import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, disableAllToolApprovals, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
 import { installSkillsToAgent } from '../skills/loader.js';
 import { formatMessageEnvelope, type SessionContextOptions } from './formatter.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { StreamWatchdog } from './stream-watchdog.js';
+
+/**
+ * Detect if an error is a 409 CONFLICT from an orphaned approval.
+ * The error may come as a ConflictError from the Letta client (status 409)
+ * or as an error message string through the CLI transport.
+ */
+function isApprovalConflictError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes('waiting for approval')) return true;
+    if (msg.includes('conflict') && msg.includes('approval')) return true;
+  }
+  const statusError = error as { status?: number };
+  if (statusError?.status === 409) return true;
+  return false;
+}
 
 export class LettaBot {
   private store: Store;
@@ -230,7 +246,7 @@ export class LettaBot {
   /**
    * Process a single message
    */
-  private async processMessage(msg: InboundMessage, adapter: ChannelAdapter): Promise<void> {
+  private async processMessage(msg: InboundMessage, adapter: ChannelAdapter, retried = false): Promise<void> {
     console.log('[Bot] Starting processMessage');
     // Track when user last sent a message (for heartbeat skip logic)
     this.lastUserMessageTime = new Date();
@@ -366,6 +382,20 @@ export class LettaBot {
       try {
         await withTimeout(session.send(formattedMessage), 'Session send');
       } catch (sendError) {
+        // Check for 409 CONFLICT from orphaned approval_request_message
+        if (!retried && isApprovalConflictError(sendError) && this.store.agentId && this.store.conversationId) {
+          console.log('[Bot] CONFLICT detected - attempting orphaned approval recovery...');
+          session.close();
+          const result = await recoverOrphanedConversationApproval(
+            this.store.agentId,
+            this.store.conversationId
+          );
+          if (result.recovered) {
+            console.log(`[Bot] Recovery succeeded (${result.details}), retrying message...`);
+            return this.processMessage(msg, adapter, /* retried */ true);
+          }
+          console.error(`[Bot] Orphaned approval recovery failed: ${result.details}`);
+        }
         console.error('[Bot] Error sending message:', sendError);
         throw sendError;
       }
@@ -631,7 +661,8 @@ export class LettaBot {
   
   private async _sendToAgentInternal(
     text: string,
-    _context?: TriggerContext
+    _context?: TriggerContext,
+    retried = false
   ): Promise<string> {
     // Base options for sessions (systemPrompt/memory set via createAgent for new agents)
     const baseOptions = {
@@ -672,6 +703,21 @@ export class LettaBot {
       try {
         await session.send(text);
       } catch (error) {
+        // Check for 409 CONFLICT from orphaned approval_request_message
+        if (!retried && isApprovalConflictError(error) && this.store.agentId && this.store.conversationId) {
+          console.log('[Bot] CONFLICT in sendToAgent - attempting orphaned approval recovery...');
+          session.close();
+          const result = await recoverOrphanedConversationApproval(
+            this.store.agentId,
+            this.store.conversationId
+          );
+          if (result.recovered) {
+            console.log(`[Bot] Recovery succeeded (${result.details}), retrying sendToAgent...`);
+            return this._sendToAgentInternal(text, _context, /* retried */ true);
+          }
+          console.error(`[Bot] Orphaned approval recovery failed: ${result.details}`);
+          throw error;
+        }
         if (usedSpecificConversation && this.store.agentId) {
           console.warn('[Bot] Conversation missing, creating a new conversation...');
           session.close();
