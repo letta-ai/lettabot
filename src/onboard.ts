@@ -160,6 +160,9 @@ interface OnboardConfig {
   // Features
   heartbeat: { enabled: boolean; interval?: string };
   cron: boolean;
+
+  // Transcription (voice messages)
+  transcription: { enabled: boolean; apiKey?: string; model?: string };
 }
 
 const isPlaceholder = (val?: string) => !val || /^(your_|sk-\.\.\.|placeholder|example)/i.test(val);
@@ -524,6 +527,18 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
         if (response.ok) {
           spinner.stop(`Connected ${provider.displayName}`);
           config.providers.push({ id: provider.id, name: provider.name, apiKey: providerKey });
+
+          // If OpenAI was just connected, offer to enable voice transcription
+          if (provider.id === 'openai') {
+            const enableTranscription = await p.confirm({
+              message: 'Enable voice message transcription with this OpenAI key? (uses Whisper)',
+              initialValue: true,
+            });
+            if (!p.isCancel(enableTranscription) && enableTranscription) {
+              config.transcription.enabled = true;
+              config.transcription.apiKey = providerKey;
+            }
+          }
         } else {
           const error = await response.text();
           spinner.stop(`Failed to connect ${provider.displayName}: ${error}`);
@@ -688,6 +703,37 @@ async function stepFeatures(config: OnboardConfig): Promise<void> {
     initialValue: config.cron,
   });
   if (!p.isCancel(setupCron)) config.cron = setupCron;
+}
+
+// ============================================================================
+// Voice Transcription Setup
+// ============================================================================
+
+async function stepTranscription(config: OnboardConfig): Promise<void> {
+  // Skip if already configured from the providers step
+  if (config.transcription.enabled && config.transcription.apiKey) return;
+
+  const setupTranscription = await p.confirm({
+    message: 'Enable voice message transcription? (uses OpenAI Whisper)',
+    initialValue: config.transcription.enabled,
+  });
+  if (p.isCancel(setupTranscription)) { p.cancel('Setup cancelled'); process.exit(0); }
+  config.transcription.enabled = setupTranscription;
+
+  if (setupTranscription) {
+    const existingKey = process.env.OPENAI_API_KEY;
+
+    const apiKey = await p.text({
+      message: 'OpenAI API Key (for Whisper transcription)',
+      placeholder: 'sk-...',
+      initialValue: existingKey || '',
+      validate: (v) => {
+        if (!v) return 'API key is required for voice transcription';
+      },
+    });
+    if (p.isCancel(apiKey)) { p.cancel('Setup cancelled'); process.exit(0); }
+    config.transcription.apiKey = apiKey;
+  }
 }
 
 // ============================================================================
@@ -959,11 +1005,14 @@ function showSummary(config: OnboardConfig): void {
   if (config.cron) features.push('Cron');
   lines.push(`Features:  ${features.length > 0 ? features.join(', ') : 'None'}`);
   
+  // Transcription
+  lines.push(`Voice:     ${config.transcription.enabled ? 'Enabled (OpenAI Whisper)' : 'Disabled'}`);
+
   // Google
   if (config.google.enabled) {
     lines.push(`Google:    ${config.google.account} (${config.google.services?.join(', ') || 'all'})`);
   }
-  
+
   p.note(lines.join('\n'), 'Configuration');
 }
 
@@ -981,6 +1030,7 @@ async function reviewLoop(config: OnboardConfig, env: Record<string, string>): P
         { value: 'agent', label: 'Change agent', hint: '' },
         { value: 'channels', label: 'Change channels', hint: '' },
         { value: 'features', label: 'Change features', hint: '' },
+        { value: 'transcription', label: 'Change voice transcription', hint: '' },
         { value: 'google', label: 'Change Google Workspace', hint: '' },
       ],
     });
@@ -999,6 +1049,7 @@ async function reviewLoop(config: OnboardConfig, env: Record<string, string>): P
     }
     else if (choice === 'channels') await stepChannels(config, env);
     else if (choice === 'features') await stepFeatures(config);
+    else if (choice === 'transcription') await stepTranscription(config);
     else if (choice === 'google') await stepGoogle(config);
   }
 }
@@ -1217,6 +1268,11 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
       interval: existingConfig.features?.heartbeat?.intervalMin?.toString(),
     },
     cron: existingConfig.features?.cron || false,
+    transcription: {
+      enabled: !!existingConfig.transcription?.apiKey || !!process.env.OPENAI_API_KEY,
+      apiKey: existingConfig.transcription?.apiKey,
+      model: existingConfig.transcription?.model,
+    },
     agentChoice: hasExistingConfig ? 'env' : 'skip',
     agentName: existingConfig.agent.name,
     agentId: existingConfig.agent.id,
@@ -1243,8 +1299,9 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   await stepModel(config, env);
   await stepChannels(config, env);
   await stepFeatures(config);
+  await stepTranscription(config);
   await stepGoogle(config);
-  
+
   // Review loop
   await reviewLoop(config, env);
   
@@ -1340,7 +1397,11 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   } else {
     delete env.CRON_ENABLED;
   }
-  
+
+  if (config.transcription.enabled && config.transcription.apiKey) {
+    env.OPENAI_API_KEY = config.transcription.apiKey;
+  }
+
   // Helper to format access control status
   const formatAccess = (policy?: string, allowedUsers?: string[]) => {
     if (policy === 'pairing') return 'pairing';
@@ -1367,6 +1428,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     'Features:',
     config.heartbeat.enabled ? `  ✓ Heartbeat (${config.heartbeat.interval}min)` : '  ✗ Heartbeat',
     config.cron ? '  ✓ Cron jobs' : '  ✗ Cron jobs',
+    config.transcription.enabled ? '  ✓ Voice transcription (OpenAI Whisper)' : '  ✗ Voice transcription',
   ].join('\n');
   
   p.note(summary, 'Configuration Summary');
@@ -1433,6 +1495,13 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
         intervalMin: config.heartbeat.interval ? parseInt(config.heartbeat.interval) : undefined,
       },
     },
+    ...(config.transcription.enabled && config.transcription.apiKey ? {
+      transcription: {
+        provider: 'openai' as const,
+        apiKey: config.transcription.apiKey,
+        ...(config.transcription.model ? { model: config.transcription.model } : {}),
+      },
+    } : {}),
     ...(config.google.enabled ? {
       integrations: {
         google: {
