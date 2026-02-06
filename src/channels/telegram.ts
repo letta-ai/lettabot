@@ -322,12 +322,25 @@ export class TelegramAdapter implements ChannelAdapter {
     
     // Don't await - bot.start() never resolves (it's a long-polling loop)
     // The onStart callback fires when polling begins
+    // Must catch errors: on deploy, the old instance's getUpdates long-poll may still
+    // be active, causing a 409 Conflict. grammY retries internally but can throw.
     this.bot.start({
       onStart: (botInfo) => {
         console.log(`[Telegram] Bot started as @${botInfo.username}`);
         console.log(`[Telegram] DM policy: ${this.config.dmPolicy}`);
         this.running = true;
       },
+    }).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('terminated by other getUpdates request') || msg.includes('409')) {
+        console.error(`[Telegram] getUpdates conflict (likely old instance still polling). Retrying in 5s...`);
+        setTimeout(() => {
+          this.running = false;
+          this.start().catch(e => console.error('[Telegram] Retry failed:', e));
+        }, 5000);
+      } else {
+        console.error('[Telegram] Bot polling error:', err);
+      }
     });
     
     // Give it a moment to connect before returning
