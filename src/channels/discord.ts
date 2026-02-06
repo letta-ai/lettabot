@@ -132,7 +132,7 @@ Ask the bot owner to approve with:
       partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
     });
 
-    this.client.on('ready', () => {
+    this.client.once('clientReady', () => {
       const tag = this.client?.user?.tag || '(unknown)';
       console.log(`[Discord] Bot logged in as ${tag}`);
       console.log(`[Discord] DM policy: ${this.config.dmPolicy}`);
