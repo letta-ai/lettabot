@@ -464,6 +464,134 @@ export async function getAgentTools(agentId: string): Promise<Array<{
  * Disable approval requirement for ALL tools on an agent.
  * Useful for ensuring a headless deployment doesn't get stuck.
  */
+/**
+ * Recover from orphaned approval_request_messages by directly inspecting the conversation.
+ * 
+ * Unlike getPendingApprovals() which relies on agent.pending_approval or run stop_reason,
+ * this function looks at the actual conversation messages to find unresolved approval requests
+ * from terminated (failed/cancelled) runs.
+ * 
+ * Returns { recovered: true } if orphaned approvals were found and resolved.
+ */
+export async function recoverOrphanedConversationApproval(
+  agentId: string,
+  conversationId: string
+): Promise<{ recovered: boolean; details: string }> {
+  try {
+    const client = getClient();
+    
+    // List recent messages from the conversation to find orphaned approvals
+    const messagesPage = await client.conversations.messages.list(conversationId, { limit: 50 });
+    const messages: Array<Record<string, unknown>> = [];
+    for await (const msg of messagesPage) {
+      messages.push(msg as unknown as Record<string, unknown>);
+    }
+    
+    if (messages.length === 0) {
+      return { recovered: false, details: 'No messages in conversation' };
+    }
+    
+    // Build set of tool_call_ids that already have approval responses
+    const resolvedToolCalls = new Set<string>();
+    for (const msg of messages) {
+      if (msg.message_type === 'approval_response_message') {
+        const approvals = (msg.approvals as Array<{ tool_call_id?: string }>) || [];
+        for (const a of approvals) {
+          if (a.tool_call_id) resolvedToolCalls.add(a.tool_call_id);
+        }
+      }
+    }
+    
+    // Find unresolved approval_request_messages
+    interface UnresolvedApproval {
+      toolCallId: string;
+      toolName: string;
+      runId: string;
+    }
+    const unresolvedByRun = new Map<string, UnresolvedApproval[]>();
+    
+    for (const msg of messages) {
+      if (msg.message_type !== 'approval_request_message') continue;
+      
+      const toolCalls = (msg.tool_calls as Array<{ tool_call_id: string; name: string }>) 
+        || (msg.tool_call ? [msg.tool_call as { tool_call_id: string; name: string }] : []);
+      const runId = msg.run_id as string | undefined;
+      
+      for (const tc of toolCalls) {
+        if (!tc.tool_call_id || resolvedToolCalls.has(tc.tool_call_id)) continue;
+        
+        const key = runId || 'unknown';
+        if (!unresolvedByRun.has(key)) unresolvedByRun.set(key, []);
+        unresolvedByRun.get(key)!.push({
+          toolCallId: tc.tool_call_id,
+          toolName: tc.name || 'unknown',
+          runId: key,
+        });
+      }
+    }
+    
+    if (unresolvedByRun.size === 0) {
+      return { recovered: false, details: 'No unresolved approval requests found' };
+    }
+    
+    // Check each run's status - only resolve orphaned approvals from terminated runs
+    let recoveredCount = 0;
+    const details: string[] = [];
+    
+    for (const [runId, approvals] of unresolvedByRun) {
+      if (runId === 'unknown') {
+        // No run_id on the approval message - can't verify, skip
+        details.push(`Skipped ${approvals.length} approval(s) with no run_id`);
+        continue;
+      }
+      
+      try {
+        const run = await client.runs.retrieve(runId);
+        const status = run.status;
+        
+        if (status === 'failed' || status === 'cancelled') {
+          console.log(`[Letta API] Found ${approvals.length} orphaned approval(s) from ${status} run ${runId}`);
+          
+          // Send denial for each unresolved tool call
+          const approvalResponses = approvals.map(a => ({
+            approve: false as const,
+            tool_call_id: a.toolCallId,
+            type: 'approval' as const,
+            reason: `Auto-denied: originating run was ${status}`,
+          }));
+          
+          await client.conversations.messages.create(conversationId, {
+            messages: [{
+              type: 'approval',
+              approvals: approvalResponses,
+            }],
+            streaming: false,
+          });
+          
+          recoveredCount += approvals.length;
+          details.push(`Denied ${approvals.length} approval(s) from ${status} run ${runId}`);
+        } else {
+          details.push(`Run ${runId} is ${status} - not orphaned`);
+        }
+      } catch (runError) {
+        console.warn(`[Letta API] Failed to check run ${runId}:`, runError);
+        details.push(`Failed to check run ${runId}`);
+      }
+    }
+    
+    const detailStr = details.join('; ');
+    if (recoveredCount > 0) {
+      console.log(`[Letta API] Recovered ${recoveredCount} orphaned approval(s): ${detailStr}`);
+      return { recovered: true, details: detailStr };
+    }
+    
+    return { recovered: false, details: detailStr };
+  } catch (e) {
+    console.error('[Letta API] Failed to recover orphaned conversation approval:', e);
+    return { recovered: false, details: `Error: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 export async function disableAllToolApprovals(agentId: string): Promise<number> {
   try {
     const tools = await getAgentTools(agentId);
