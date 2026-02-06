@@ -157,7 +157,22 @@ export class LettaBot {
       );
       
       if (pendingApprovals.length === 0) {
-        // No pending approvals, reset counter and continue
+        // Standard check found nothing - try conversation-level inspection as fallback.
+        // This catches cases where agent.pending_approval is null but the conversation
+        // has an unresolved approval_request_message from a terminated run.
+        if (this.store.conversationId) {
+          const convResult = await recoverOrphanedConversationApproval(
+            this.store.agentId!,
+            this.store.conversationId
+          );
+          if (convResult.recovered) {
+            console.log(`[Bot] Conversation-level recovery succeeded: ${convResult.details}`);
+            console.log('[Bot] Disabling tool approval requirements...');
+            await disableAllToolApprovals(this.store.agentId!);
+            return { recovered: true, shouldReset: false };
+          }
+        }
+        // No pending approvals found by either method
         this.store.resetRecoveryAttempts();
         return { recovered: false, shouldReset: false };
       }
@@ -533,9 +548,26 @@ export class LettaBot {
             // Check for potential stuck state (empty result usually means pending approval or error)
             if (resultMsg.success && resultMsg.result === '' && !response.trim()) {
               console.error('[Bot] Warning: Agent returned empty result with no response.');
-              console.error('[Bot] This may indicate the agent is processing internally or encountered an issue.');
               console.error('[Bot] Agent ID:', this.store.agentId);
               console.error('[Bot] Conversation ID:', this.store.conversationId);
+              
+              // Attempt conversation-level recovery and retry once
+              if (!retried && this.store.agentId && this.store.conversationId) {
+                console.log('[Bot] Empty result - attempting orphaned approval recovery...');
+                session.close();
+                clearInterval(typingInterval);
+                watchdog.stop();
+                const convResult = await recoverOrphanedConversationApproval(
+                  this.store.agentId,
+                  this.store.conversationId
+                );
+                if (convResult.recovered) {
+                  console.log(`[Bot] Recovery succeeded (${convResult.details}), retrying message...`);
+                  await disableAllToolApprovals(this.store.agentId);
+                  return this.processMessage(msg, adapter, /* retried */ true);
+                }
+                console.warn(`[Bot] No orphaned approvals found: ${convResult.details}`);
+              }
             }
             
             // Save agent ID and conversation ID
