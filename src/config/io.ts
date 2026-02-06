@@ -138,6 +138,9 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.channels.slack?.botToken) {
     env.SLACK_BOT_TOKEN = config.channels.slack.botToken;
   }
+  if (config.channels.slack?.dmPolicy) {
+    env.SLACK_DM_POLICY = config.channels.slack.dmPolicy;
+  }
   if (config.channels.slack?.groupPollIntervalMin !== undefined) {
     env.SLACK_GROUP_POLL_INTERVAL_MIN = String(config.channels.slack.groupPollIntervalMin);
   }

@@ -125,10 +125,14 @@ export class TelegramAdapter implements ChannelAdapter {
       const userId = ctx.from?.id;
       if (!userId) return;
 
-      // Bypass pairing for group/supergroup chats
+      // Group gating: check if group is approved before processing
       const chatType = ctx.chat?.type;
       if (chatType === 'group' || chatType === 'supergroup') {
-        await next();
+        const dmPolicy = this.config.dmPolicy || 'pairing';
+        if (dmPolicy === 'open' || await isGroupApproved('telegram', String(ctx.chat!.id))) {
+          await next();
+        }
+        // Silently drop messages from unapproved groups
         return;
       }
 

@@ -86,6 +86,7 @@ export interface SlackConfig {
   enabled: boolean;
   appToken?: string;
   botToken?: string;
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
   groupPollIntervalMin?: number;  // Batch interval in minutes (default: 10, 0 = immediate)
   instantGroups?: string[];       // Channel IDs that bypass batching

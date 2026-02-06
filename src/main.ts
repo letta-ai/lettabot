@@ -254,6 +254,7 @@ const config = {
     enabled: !!process.env.SLACK_BOT_TOKEN && !!process.env.SLACK_APP_TOKEN,
     botToken: process.env.SLACK_BOT_TOKEN || '',
     appToken: process.env.SLACK_APP_TOKEN || '',
+    dmPolicy: (process.env.SLACK_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
     allowedUsers: process.env.SLACK_ALLOWED_USERS?.split(',').filter(Boolean) || [],
     groupPollIntervalMin: process.env.SLACK_GROUP_POLL_INTERVAL_MIN !== undefined
       ? parseInt(process.env.SLACK_GROUP_POLL_INTERVAL_MIN, 10)
@@ -425,6 +426,7 @@ async function main() {
     const slack = new SlackAdapter({
       botToken: config.slack.botToken,
       appToken: config.slack.appToken,
+      dmPolicy: config.slack.dmPolicy,
       allowedUsers: config.slack.allowedUsers.length > 0 ? config.slack.allowedUsers : undefined,
       attachmentsDir,
       attachmentsMaxBytes: config.attachmentsMaxBytes,

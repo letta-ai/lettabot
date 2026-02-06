@@ -17,6 +17,7 @@ let App: typeof import('@slack/bolt').App;
 export interface SlackConfig {
   botToken: string;       // xoxb-...
   appToken: string;       // xapp-... (for Socket Mode)
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[]; // Slack user IDs (e.g., U01234567)
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
@@ -277,7 +278,7 @@ export class SlackAdapter implements ChannelAdapter {
   }
   
   getDmPolicy(): string {
-    return 'open';
+    return this.config.dmPolicy || 'pairing';
   }
 
   async sendTypingIndicator(_chatId: string): Promise<void> {
