@@ -13,6 +13,8 @@ import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, disab
 import { installSkillsToAgent } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
+import { isGroupApproved, approveGroup } from '../pairing/group-store.js';
+import { isUserAllowed } from '../pairing/store.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { StreamWatchdog } from './stream-watchdog.js';
@@ -247,6 +249,22 @@ export class LettaBot {
 
     // Route group messages to batcher if configured
     if (msg.isGroup && this.groupBatcher) {
+      // Check group approval when dmPolicy is 'pairing'
+      const dmPolicy = adapter.getDmPolicy?.() || 'open';
+      if (dmPolicy === 'pairing') {
+        const approved = await isGroupApproved(msg.channel, msg.chatId);
+        if (!approved) {
+          const allowed = await isUserAllowed(msg.channel, msg.userId);
+          if (allowed) {
+            await approveGroup(msg.channel, msg.chatId);
+            console.log(`[Bot] Group ${msg.channel}:${msg.chatId} approved by paired user ${msg.userId}`);
+          } else {
+            console.log(`[Bot] Ignoring group message from unpaired user in unapproved group`);
+            return;
+          }
+        }
+      }
+
       // Check if this group is configured for instant processing
       const isInstant = this.instantGroupIds.has(`${msg.channel}:${msg.chatId}`)
         || (msg.serverId && this.instantGroupIds.has(`${msg.channel}:${msg.serverId}`));
