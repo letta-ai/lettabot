@@ -14,6 +14,7 @@ import {
   upsertPairingRequest,
   formatPairingMessage,
 } from '../pairing/store.js';
+import { isGroupApproved, approveGroup } from '../pairing/group-store.js';
 import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 
@@ -79,17 +80,64 @@ export class TelegramAdapter implements ChannelAdapter {
   }
   
   private setupHandlers(): void {
-    // Middleware: Check access based on dmPolicy
+    // Detect when bot is added/removed from groups (proactive group gating)
+    this.bot.on('my_chat_member', async (ctx) => {
+      const chatMember = ctx.myChatMember;
+      if (!chatMember) return;
+
+      const chatType = chatMember.chat.type;
+      if (chatType !== 'group' && chatType !== 'supergroup') return;
+
+      const newStatus = chatMember.new_chat_member.status;
+      if (newStatus !== 'member' && newStatus !== 'administrator') return;
+
+      const chatId = String(chatMember.chat.id);
+      const fromId = String(chatMember.from.id);
+      const dmPolicy = this.config.dmPolicy || 'pairing';
+
+      // No gating when policy is not pairing
+      if (dmPolicy !== 'pairing') {
+        await approveGroup('telegram', chatId);
+        console.log(`[Telegram] Group ${chatId} auto-approved (dmPolicy=${dmPolicy})`);
+        return;
+      }
+
+      // Check if the user who added the bot is paired
+      const configAllowlist = this.config.allowedUsers?.map(String);
+      const allowed = await isUserAllowed('telegram', fromId, configAllowlist);
+
+      if (allowed) {
+        await approveGroup('telegram', chatId);
+        console.log(`[Telegram] Group ${chatId} approved by paired user ${fromId}`);
+      } else {
+        console.log(`[Telegram] Unpaired user ${fromId} tried to add bot to group ${chatId}, leaving`);
+        try {
+          await ctx.api.sendMessage(chatId, 'This bot can only be added to groups by paired users.');
+          await ctx.api.leaveChat(chatId);
+        } catch (err) {
+          console.error('[Telegram] Failed to leave group:', err);
+        }
+      }
+    });
+
+    // Middleware: Check access based on dmPolicy (bypass for groups)
     this.bot.use(async (ctx, next) => {
       const userId = ctx.from?.id;
       if (!userId) return;
-      
+
+      // Bypass pairing for group/supergroup chats
+      const chatType = ctx.chat?.type;
+      if (chatType === 'group' || chatType === 'supergroup') {
+        await next();
+        return;
+      }
+
       const access = await this.checkAccess(
         String(userId),
         ctx.from?.username,
         ctx.from?.first_name
       );
-      
+
       if (access === 'allowed') {
         await next();
         return;
@@ -158,19 +206,49 @@ export class TelegramAdapter implements ChannelAdapter {
       const userId = ctx.from?.id;
       const chatId = ctx.chat.id;
       const text = ctx.message.text;
-      
+
       if (!userId) return;
       if (text.startsWith('/')) return;  // Skip other commands
-      
+
+      // Group detection
+      const chatType = ctx.chat.type;
+      const isGroup = chatType === 'group' || chatType === 'supergroup';
+      const groupName = isGroup && 'title' in ctx.chat ? ctx.chat.title : undefined;
+
+      // Mention detection for groups
+      let wasMentioned = false;
+      if (isGroup) {
+        const botUsername = this.bot.botInfo?.username;
+        if (botUsername) {
+          // Check entities for bot_command or mention matching our username
+          const entities = ctx.message.entities || [];
+          wasMentioned = entities.some((e) => {
+            if (e.type === 'mention') {
+              const mentioned = text.substring(e.offset, e.offset + e.length);
+              return mentioned.toLowerCase() === `@${botUsername.toLowerCase()}`;
+            }
+            return false;
+          });
+          // Fallback: text-based check
+          if (!wasMentioned) {
+            wasMentioned = text.toLowerCase().includes(`@${botUsername.toLowerCase()}`);
+          }
+        }
+      }
+
       if (this.onMessage) {
         await this.onMessage({
           channel: 'telegram',
           chatId: String(chatId),
           userId: String(userId),
           userName: ctx.from.username || ctx.from.first_name,
+          userHandle: ctx.from.username,
           messageId: String(ctx.message.message_id),
           text,
           timestamp: new Date(),
+          isGroup,
+          groupName,
+          wasMentioned,
         });
       }
     });
@@ -396,6 +474,10 @@ export class TelegramAdapter implements ChannelAdapter {
     ]);
   }
   
+  getDmPolicy(): string {
+    return this.config.dmPolicy || 'pairing';
+  }
+
   async sendTypingIndicator(chatId: string): Promise<void> {
     await this.bot.api.sendChatAction(chatId, 'typing');
   }

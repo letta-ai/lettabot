@@ -119,6 +119,7 @@ import { SlackAdapter } from './channels/slack.js';
 import { WhatsAppAdapter } from './channels/whatsapp/index.js';
 import { SignalAdapter } from './channels/signal.js';
 import { DiscordAdapter } from './channels/discord.js';
+import { GroupBatcher } from './core/group-batcher.js';
 import { CronService } from './cron/service.js';
 import { HeartbeatService } from './cron/heartbeat.js';
 import { PollingService } from './polling/service.js';
@@ -244,12 +245,20 @@ const config = {
     token: process.env.TELEGRAM_BOT_TOKEN || '',
     dmPolicy: (process.env.TELEGRAM_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
     allowedUsers: process.env.TELEGRAM_ALLOWED_USERS?.split(',').filter(Boolean).map(Number) || [],
+    groupPollIntervalMin: process.env.TELEGRAM_GROUP_POLL_INTERVAL_MIN !== undefined
+      ? parseInt(process.env.TELEGRAM_GROUP_POLL_INTERVAL_MIN, 10)
+      : 10,
+    instantGroups: process.env.TELEGRAM_INSTANT_GROUPS?.split(',').filter(Boolean) || [],
   },
   slack: {
     enabled: !!process.env.SLACK_BOT_TOKEN && !!process.env.SLACK_APP_TOKEN,
     botToken: process.env.SLACK_BOT_TOKEN || '',
     appToken: process.env.SLACK_APP_TOKEN || '',
     allowedUsers: process.env.SLACK_ALLOWED_USERS?.split(',').filter(Boolean) || [],
+    groupPollIntervalMin: process.env.SLACK_GROUP_POLL_INTERVAL_MIN !== undefined
+      ? parseInt(process.env.SLACK_GROUP_POLL_INTERVAL_MIN, 10)
+      : 10,
+    instantGroups: process.env.SLACK_INSTANT_GROUPS?.split(',').filter(Boolean) || [],
   },
   whatsapp: {
     enabled: process.env.WHATSAPP_ENABLED === 'true',
@@ -257,6 +266,10 @@ const config = {
     dmPolicy: (process.env.WHATSAPP_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
     allowedUsers: process.env.WHATSAPP_ALLOWED_USERS?.split(',').filter(Boolean) || [],
     selfChatMode: process.env.WHATSAPP_SELF_CHAT_MODE !== 'false', // Default true (safe - only self-chat)
+    groupPollIntervalMin: process.env.WHATSAPP_GROUP_POLL_INTERVAL_MIN !== undefined
+      ? parseInt(process.env.WHATSAPP_GROUP_POLL_INTERVAL_MIN, 10)
+      : 10,
+    instantGroups: process.env.WHATSAPP_INSTANT_GROUPS?.split(',').filter(Boolean) || [],
   },
   signal: {
     enabled: !!process.env.SIGNAL_PHONE_NUMBER,
@@ -267,12 +280,20 @@ const config = {
     dmPolicy: (process.env.SIGNAL_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
     allowedUsers: process.env.SIGNAL_ALLOWED_USERS?.split(',').filter(Boolean) || [],
     selfChatMode: process.env.SIGNAL_SELF_CHAT_MODE !== 'false', // Default true
+    groupPollIntervalMin: process.env.SIGNAL_GROUP_POLL_INTERVAL_MIN !== undefined
+      ? parseInt(process.env.SIGNAL_GROUP_POLL_INTERVAL_MIN, 10)
+      : 10,
+    instantGroups: process.env.SIGNAL_INSTANT_GROUPS?.split(',').filter(Boolean) || [],
   },
   discord: {
     enabled: !!process.env.DISCORD_BOT_TOKEN,
     token: process.env.DISCORD_BOT_TOKEN || '',
     dmPolicy: (process.env.DISCORD_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
     allowedUsers: process.env.DISCORD_ALLOWED_USERS?.split(',').filter(Boolean) || [],
+    groupPollIntervalMin: process.env.DISCORD_GROUP_POLL_INTERVAL_MIN !== undefined
+      ? parseInt(process.env.DISCORD_GROUP_POLL_INTERVAL_MIN, 10)
+      : 10,
+    instantGroups: process.env.DISCORD_INSTANT_GROUPS?.split(',').filter(Boolean) || [],
   },
   
   // Cron
@@ -457,6 +478,46 @@ async function main() {
     bot.registerChannel(discord);
   }
   
+  // Create and wire group batcher
+  const groupIntervals = new Map<string, number>();
+  if (config.telegram.enabled) {
+    groupIntervals.set('telegram', config.telegram.groupPollIntervalMin ?? 10);
+  }
+  if (config.slack.enabled) {
+    groupIntervals.set('slack', config.slack.groupPollIntervalMin ?? 10);
+  }
+  if (config.whatsapp.enabled) {
+    groupIntervals.set('whatsapp', config.whatsapp.groupPollIntervalMin ?? 10);
+  }
+  if (config.signal.enabled) {
+    groupIntervals.set('signal', config.signal.groupPollIntervalMin ?? 10);
+  }
+  if (config.discord.enabled) {
+    groupIntervals.set('discord', config.discord.groupPollIntervalMin ?? 10);
+  }
+  // Build instant group IDs set (channel:id format)
+  const instantGroupIds = new Set<string>();
+  const channelInstantGroups: Array<[string, string[]]> = [
+    ['telegram', config.telegram.instantGroups],
+    ['slack', config.slack.instantGroups],
+    ['whatsapp', config.whatsapp.instantGroups],
+    ['signal', config.signal.instantGroups],
+    ['discord', config.discord.instantGroups],
+  ];
+  for (const [channel, ids] of channelInstantGroups) {
+    for (const id of ids) {
+      instantGroupIds.add(`${channel}:${id}`);
+    }
+  }
+  if (instantGroupIds.size > 0) {
+    console.log(`[Groups] Instant groups: ${[...instantGroupIds].join(', ')}`);
+  }
+
+  const groupBatcher = new GroupBatcher((msg, adapter) => {
+    bot.processGroupBatch(msg, adapter);
+  });
+  bot.setGroupBatcher(groupBatcher, groupIntervals, instantGroupIds);
+
   // Start cron service if enabled
   // Note: CronService uses getDataDir() for cron-jobs.json to match the CLI
   let cronService: CronService | null = null;
@@ -536,6 +597,7 @@ async function main() {
   // Handle shutdown
   const shutdown = async () => {
     console.log('\nShutting down...');
+    groupBatcher.stop();
     heartbeatService?.stop();
     cronService?.stop();
     await bot.stop();
