@@ -593,16 +593,19 @@ export async function recoverOrphanedConversationApproval(
       try {
         const run = await client.runs.retrieve(runId);
         const status = run.status;
+        const stopReason = run.stop_reason;
+        const isTerminated = status === 'failed' || status === 'cancelled';
+        const isAbandonedApproval = status === 'completed' && stopReason === 'requires_approval';
         
-        if (status === 'failed' || status === 'cancelled') {
-          console.log(`[Letta API] Found ${approvals.length} orphaned approval(s) from ${status} run ${runId}`);
+        if (isTerminated || isAbandonedApproval) {
+          console.log(`[Letta API] Found ${approvals.length} orphaned approval(s) from ${status}/${stopReason} run ${runId}`);
           
           // Send denial for each unresolved tool call
           const approvalResponses = approvals.map(a => ({
             approve: false as const,
             tool_call_id: a.toolCallId,
             type: 'approval' as const,
-            reason: `Auto-denied: originating run was ${status}`,
+            reason: `Auto-denied: originating run was ${status}/${stopReason}`,
           }));
           
           await client.conversations.messages.create(conversationId, {
@@ -616,7 +619,7 @@ export async function recoverOrphanedConversationApproval(
           recoveredCount += approvals.length;
           details.push(`Denied ${approvals.length} approval(s) from ${status} run ${runId}`);
         } else {
-          details.push(`Run ${runId} is ${status} - not orphaned`);
+          details.push(`Run ${runId} is ${status}/${stopReason} - not orphaned`);
         }
       } catch (runError) {
         console.warn(`[Letta API] Failed to check run ${runId}:`, runError);
