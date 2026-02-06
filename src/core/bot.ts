@@ -478,6 +478,15 @@ export class LettaBot {
             await finalizeMessage();
           }
           
+          // Detect tool-call loops: abort if agent calls too many tools without producing a result
+          const maxToolCalls = this.config.maxToolCalls ?? 100;
+          if (streamMsg.type === 'tool_call' && (msgTypeCounts['tool_call'] || 0) >= maxToolCalls) {
+            console.error(`[Bot] Agent stuck in tool loop (${msgTypeCounts['tool_call']} tool calls, limit=${maxToolCalls}), aborting`);
+            session.abort().catch(() => {});
+            response = '(Agent got stuck in a tool loop and was stopped. Try sending your message again.)';
+            break;
+          }
+
           // Log meaningful events (always, not just on type change for tools)
           if (streamMsg.type === 'tool_call') {
             const toolName = (streamMsg as any).toolName || 'unknown';

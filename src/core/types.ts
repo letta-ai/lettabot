@@ -121,10 +121,13 @@ export interface BotConfig {
   model?: string; // e.g., 'anthropic/claude-sonnet-4-5-20250929'
   agentName?: string; // Name for the agent (set via API after creation)
   allowedTools: string[];
-  
+
   // Skills
   skills?: SkillsConfig;
-  
+
+  // Safety
+  maxToolCalls?: number; // Abort if agent calls this many tools in one turn (default: 100)
+
   // Security
   allowedUsers?: string[];  // Empty = allow all
 }

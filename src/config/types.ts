@@ -43,6 +43,7 @@ export interface LettaBotConfig {
       enabled: boolean;
       intervalMin?: number;
     };
+    maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)
   };
 
   // Integrations (Google Workspace, etc.)

@@ -329,6 +329,7 @@ async function main() {
     model: config.model,
     agentName: process.env.AGENT_NAME || 'LettaBot',
     allowedTools: config.allowedTools,
+    maxToolCalls: process.env.MAX_TOOL_CALLS ? Number(process.env.MAX_TOOL_CALLS) : undefined,
     skills: {
       cronEnabled: config.cronEnabled,
       googleEnabled: config.polling.gmail.enabled,
