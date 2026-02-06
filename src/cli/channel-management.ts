@@ -2,87 +2,68 @@
  * Channel Management CLI
  * 
  * Ergonomic commands for adding, removing, and managing channels.
- * Follows the pattern from skills/sync.ts.
+ * Uses shared setup functions from src/channels/setup.ts.
  */
 
-import { spawnSync } from 'node:child_process';
 import * as p from '@clack/prompts';
 import { loadConfig, saveConfig, resolveConfigPath } from '../config/index.js';
-import type { LettaBotConfig, TelegramConfig, SlackConfig, DiscordConfig, WhatsAppConfig, SignalConfig } from '../config/types.js';
+import { 
+  CHANNELS, 
+  getChannelHint, 
+  getSetupFunction,
+  type ChannelId 
+} from '../channels/setup.js';
 
-// Valid channel names
-export const CHANNEL_NAMES = ['telegram', 'slack', 'discord', 'whatsapp', 'signal'] as const;
-export type ChannelName = typeof CHANNEL_NAMES[number];
+// ============================================================================
+// Status Helpers
+// ============================================================================
 
-interface ChannelInfo {
-  name: ChannelName;
+interface ChannelStatus {
+  id: ChannelId;
   displayName: string;
   enabled: boolean;
   hint: string;
   details?: string;
 }
 
-/**
- * Get current status of all channels
- */
-function getChannelStatus(): ChannelInfo[] {
-  const config = loadConfig();
-  const signalInstalled = spawnSync('which', ['signal-cli'], { stdio: 'pipe' }).status === 0;
+function getChannelDetails(id: ChannelId, channelConfig: any): string | undefined {
+  if (!channelConfig?.enabled) return undefined;
   
-  return [
-    {
-      name: 'telegram',
-      displayName: 'Telegram',
-      enabled: config.channels.telegram?.enabled || false,
-      hint: 'Easiest to set up',
-      details: config.channels.telegram?.enabled 
-        ? `${config.channels.telegram.dmPolicy || 'pairing'} mode` 
-        : undefined,
-    },
-    {
-      name: 'slack',
-      displayName: 'Slack',
-      enabled: config.channels.slack?.enabled || false,
-      hint: 'Socket Mode app',
-      details: config.channels.slack?.enabled 
-        ? config.channels.slack.allowedUsers?.length 
-          ? `${config.channels.slack.allowedUsers.length} allowed users`
-          : 'workspace access'
-        : undefined,
-    },
-    {
-      name: 'discord',
-      displayName: 'Discord',
-      enabled: config.channels.discord?.enabled || false,
-      hint: 'Bot token + Message Content intent',
-      details: config.channels.discord?.enabled 
-        ? `${config.channels.discord.dmPolicy || 'pairing'} mode` 
-        : undefined,
-    },
-    {
-      name: 'whatsapp',
-      displayName: 'WhatsApp',
-      enabled: config.channels.whatsapp?.enabled || false,
-      hint: 'QR code pairing',
-      details: config.channels.whatsapp?.enabled 
-        ? config.channels.whatsapp.selfChat !== false ? 'self-chat mode' : 'dedicated number'
-        : undefined,
-    },
-    {
-      name: 'signal',
-      displayName: 'Signal',
-      enabled: config.channels.signal?.enabled || false,
-      hint: signalInstalled ? 'signal-cli daemon' : '⚠️ signal-cli not installed',
-      details: config.channels.signal?.enabled 
-        ? config.channels.signal.selfChat !== false ? 'self-chat mode' : 'dedicated number'
-        : undefined,
-    },
-  ];
+  switch (id) {
+    case 'telegram':
+    case 'discord':
+      return `${channelConfig.dmPolicy || 'pairing'} mode`;
+    case 'slack':
+      return channelConfig.allowedUsers?.length 
+        ? `${channelConfig.allowedUsers.length} allowed users`
+        : 'workspace access';
+    case 'whatsapp':
+    case 'signal':
+      return channelConfig.selfChat !== false ? 'self-chat mode' : 'dedicated number';
+    default:
+      return undefined;
+  }
 }
 
-/**
- * List all channels and their status
- */
+function getChannelStatus(): ChannelStatus[] {
+  const config = loadConfig();
+  
+  return CHANNELS.map(ch => {
+    const channelConfig = config.channels[ch.id as keyof typeof config.channels];
+    return {
+      id: ch.id,
+      displayName: ch.displayName,
+      enabled: channelConfig?.enabled || false,
+      hint: getChannelHint(ch.id),
+      details: getChannelDetails(ch.id, channelConfig),
+    };
+  });
+}
+
+// ============================================================================
+// Commands
+// ============================================================================
+
 export async function listChannels(): Promise<void> {
   const channels = getChannelStatus();
   
@@ -100,16 +81,12 @@ export async function listChannels(): Promise<void> {
   console.log('');
 }
 
-/**
- * Interactive channel management menu
- */
 export async function interactiveChannelMenu(): Promise<void> {
   p.intro('🔌 Channel Management');
   
   const channels = getChannelStatus();
   const enabledCount = channels.filter(c => c.enabled).length;
   
-  // Show current status
   const statusLines = channels.map(ch => {
     const status = ch.enabled ? '✓' : '✗';
     const details = ch.enabled && ch.details ? ` (${ch.details})` : '';
@@ -143,15 +120,11 @@ export async function interactiveChannelMenu(): Promise<void> {
       
       const channel = await p.select({
         message: 'Which channel would you like to add?',
-        options: disabled.map(c => ({
-          value: c.name,
-          label: c.displayName,
-          hint: c.hint,
-        })),
+        options: disabled.map(c => ({ value: c.id, label: c.displayName, hint: c.hint })),
       });
       
       if (!p.isCancel(channel)) {
-        await addChannel(channel as ChannelName);
+        await addChannel(channel as ChannelId);
       }
       break;
     }
@@ -165,15 +138,11 @@ export async function interactiveChannelMenu(): Promise<void> {
       
       const channel = await p.select({
         message: 'Which channel would you like to remove?',
-        options: enabled.map(c => ({
-          value: c.name,
-          label: c.displayName,
-          hint: c.details || '',
-        })),
+        options: enabled.map(c => ({ value: c.id, label: c.displayName, hint: c.details || '' })),
       });
       
       if (!p.isCancel(channel)) {
-        await removeChannel(channel as ChannelName);
+        await removeChannel(channel as ChannelId);
       }
       break;
     }
@@ -187,15 +156,11 @@ export async function interactiveChannelMenu(): Promise<void> {
       
       const channel = await p.select({
         message: 'Which channel would you like to edit?',
-        options: enabled.map(c => ({
-          value: c.name,
-          label: c.displayName,
-          hint: c.details || '',
-        })),
+        options: enabled.map(c => ({ value: c.id, label: c.displayName, hint: c.details || '' })),
       });
       
       if (!p.isCancel(channel)) {
-        await addChannel(channel as ChannelName); // Re-run setup to edit
+        await addChannel(channel as ChannelId);
       }
       break;
     }
@@ -204,11 +169,8 @@ export async function interactiveChannelMenu(): Promise<void> {
   p.outro('');
 }
 
-/**
- * Add/setup a specific channel
- */
-export async function addChannel(channelName?: string): Promise<void> {
-  if (!channelName) {
+export async function addChannel(channelId?: string): Promise<void> {
+  if (!channelId) {
     p.intro('🔌 Add Channel');
     
     const channels = getChannelStatus();
@@ -220,80 +182,65 @@ export async function addChannel(channelName?: string): Promise<void> {
       return;
     }
     
-    const channel = await p.select({
+    const selected = await p.select({
       message: 'Which channel would you like to add?',
-      options: disabled.map(c => ({
-        value: c.name,
-        label: c.displayName,
-        hint: c.hint,
-      })),
+      options: disabled.map(c => ({ value: c.id, label: c.displayName, hint: c.hint })),
     });
     
-    if (p.isCancel(channel)) {
+    if (p.isCancel(selected)) {
       p.cancel('Cancelled');
       return;
     }
     
-    channelName = channel as string;
+    channelId = selected as string;
   }
   
-  if (!CHANNEL_NAMES.includes(channelName as ChannelName)) {
-    console.error(`Unknown channel: ${channelName}`);
-    console.error(`Valid channels: ${CHANNEL_NAMES.join(', ')}`);
+  const channelIds = CHANNELS.map(c => c.id);
+  if (!channelIds.includes(channelId as ChannelId)) {
+    console.error(`Unknown channel: ${channelId}`);
+    console.error(`Valid channels: ${channelIds.join(', ')}`);
     process.exit(1);
   }
   
   const config = loadConfig();
+  const existingConfig = config.channels[channelId as keyof typeof config.channels];
   
-  switch (channelName) {
-    case 'telegram':
-      await setupTelegram(config);
-      break;
-    case 'slack':
-      await setupSlack(config);
-      break;
-    case 'discord':
-      await setupDiscord(config);
-      break;
-    case 'whatsapp':
-      await setupWhatsApp(config);
-      break;
-    case 'signal':
-      await setupSignal(config);
-      break;
-  }
+  // Get and run the setup function
+  const setup = getSetupFunction(channelId as ChannelId);
+  const newConfig = await setup(existingConfig);
   
-  // Save config
+  // Save
+  (config.channels as any)[channelId] = newConfig;
   saveConfig(config);
   p.log.success(`Configuration saved to ${resolveConfigPath()}`);
 }
 
-/**
- * Remove/disable a channel
- */
-export async function removeChannel(channelName?: string): Promise<void> {
-  if (!channelName) {
+export async function removeChannel(channelId?: string): Promise<void> {
+  const channelIds = CHANNELS.map(c => c.id);
+  
+  if (!channelId) {
     console.error('Usage: lettabot channels remove <channel>');
-    console.error(`Valid channels: ${CHANNEL_NAMES.join(', ')}`);
+    console.error(`Valid channels: ${channelIds.join(', ')}`);
     process.exit(1);
   }
   
-  if (!CHANNEL_NAMES.includes(channelName as ChannelName)) {
-    console.error(`Unknown channel: ${channelName}`);
-    console.error(`Valid channels: ${CHANNEL_NAMES.join(', ')}`);
+  if (!channelIds.includes(channelId as ChannelId)) {
+    console.error(`Unknown channel: ${channelId}`);
+    console.error(`Valid channels: ${channelIds.join(', ')}`);
     process.exit(1);
   }
   
   const config = loadConfig();
-  const channelConfig = config.channels[channelName as ChannelName];
+  const channelConfig = config.channels[channelId as keyof typeof config.channels];
   
   if (!channelConfig?.enabled) {
-    console.log(`${channelName} is already disabled.`);
+    console.log(`${channelId} is already disabled.`);
     return;
   }
   
+  const meta = CHANNELS.find(c => c.id === channelId)!;
   const confirmed = await p.confirm({
-    message: `Remove ${channelName}? This will disable the channel.`,
+    message: `Remove ${meta.displayName}? This will disable the channel.`,
     initialValue: false,
   });
   
@@ -302,397 +249,9 @@ export async function removeChannel(channelName?: string): Promise<void> {
     return;
   }
   
-  // Disable the channel
-  if (config.channels[channelName as ChannelName]) {
-    (config.channels[channelName as ChannelName] as any).enabled = false;
-  }
-  
+  (config.channels as any)[channelId] = { enabled: false };
   saveConfig(config);
-  p.log.success(`${channelName} disabled`);
-}
-
-// ============================================================================
-// Individual Channel Setup Functions
-// ============================================================================
-
-async function setupTelegram(config: LettaBotConfig): Promise<void> {
-  const existing = config.channels.telegram;
-  
-  p.note(
-    '1. Message @BotFather on Telegram\n' +
-    '2. Send /newbot and follow prompts\n' +
-    '3. Copy the bot token',
-    'Telegram Setup'
-  );
-  
-  const token = await p.text({
-    message: 'Telegram Bot Token',
-    placeholder: '123456:ABC-DEF...',
-    initialValue: existing?.token || '',
-  });
-  
-  if (p.isCancel(token)) {
-    p.cancel('Cancelled');
-    process.exit(0);
-  }
-  
-  // DM Policy
-  const dmPolicy = await p.select({
-    message: 'Who can message the bot?',
-    options: [
-      { value: 'pairing', label: 'Pairing (recommended)', hint: 'Requires CLI approval' },
-      { value: 'allowlist', label: 'Allowlist only', hint: 'Specific user IDs' },
-      { value: 'open', label: 'Open', hint: 'Anyone (not recommended)' },
-    ],
-    initialValue: existing?.dmPolicy || 'pairing',
-  });
-  
-  if (p.isCancel(dmPolicy)) {
-    p.cancel('Cancelled');
-    process.exit(0);
-  }
-  
-  let allowedUsers: string[] | undefined;
-  
-  if (dmPolicy === 'pairing') {
-    p.log.info('Users will get a code. Approve with: lettabot pairing approve telegram CODE');
-  } else if (dmPolicy === 'allowlist') {
-    const users = await p.text({
-      message: 'Allowed Telegram user IDs (comma-separated)',
-      placeholder: '123456789,987654321',
-      initialValue: existing?.allowedUsers?.join(',') || '',
-    });
-    if (!p.isCancel(users) && users) {
-      allowedUsers = users.split(',').map(s => s.trim()).filter(Boolean);
-    }
-  }
-  
-  config.channels.telegram = {
-    enabled: true,
-    token: token || undefined,
-    dmPolicy: dmPolicy as 'pairing' | 'allowlist' | 'open',
-    allowedUsers,
-  };
-}
-
-async function setupSlack(config: LettaBotConfig): Promise<void> {
-  const existing = config.channels.slack;
-  const hasExistingTokens = existing?.appToken || existing?.botToken;
-  
-  p.note(
-    'Requires two tokens from api.slack.com/apps:\n' +
-    '  • App Token (xapp-...) - Socket Mode\n' +
-    '  • Bot Token (xoxb-...) - Bot permissions',
-    'Slack Requirements'
-  );
-  
-  const wizardChoice = await p.select({
-    message: 'Slack setup',
-    options: [
-      { value: 'wizard', label: 'Guided setup', hint: 'Step-by-step instructions with validation' },
-      { value: 'manual', label: 'Manual entry', hint: 'I already have tokens' },
-    ],
-    initialValue: hasExistingTokens ? 'manual' : 'wizard',
-  });
-  
-  if (p.isCancel(wizardChoice)) {
-    p.cancel('Cancelled');
-    process.exit(0);
-  }
-  
-  if (wizardChoice === 'wizard') {
-    const { runSlackWizard } = await import('../setup/slack-wizard.js');
-    const result = await runSlackWizard({
-      appToken: existing?.appToken,
-      botToken: existing?.botToken,
-      allowedUsers: existing?.allowedUsers,
-    });
-    
-    if (result) {
-      config.channels.slack = {
-        enabled: true,
-        appToken: result.appToken,
-        botToken: result.botToken,
-        allowedUsers: result.allowedUsers,
-      };
-    }
-  } else {
-    const { validateSlackTokens, stepAccessControl, validateAppToken, validateBotToken } = await import('../setup/slack-wizard.js');
-    
-    p.note(
-      'Get tokens from api.slack.com/apps:\n' +
-      '• Enable Socket Mode → App-Level Token (xapp-...)\n' +
-      '• Install App → Bot User OAuth Token (xoxb-...)\n\n' +
-      'See docs/slack-setup.md for detailed instructions',
-      'Slack Setup'
-    );
-    
-    const appToken = await p.text({
-      message: 'Slack App Token (xapp-...)',
-      initialValue: existing?.appToken || '',
-      validate: validateAppToken,
-    });
-    
-    if (p.isCancel(appToken)) {
-      p.cancel('Cancelled');
-      process.exit(0);
-    }
-    
-    const botToken = await p.text({
-      message: 'Slack Bot Token (xoxb-...)',
-      initialValue: existing?.botToken || '',
-      validate: validateBotToken,
-    });
-    
-    if (p.isCancel(botToken)) {
-      p.cancel('Cancelled');
-      process.exit(0);
-    }
-    
-    // Validate tokens
-    if (appToken && botToken) {
-      await validateSlackTokens(appToken, botToken);
-    }
-    
-    const allowedUsers = await stepAccessControl(existing?.allowedUsers);
-    
-    config.channels.slack = {
-      enabled: true,
-      appToken: appToken || undefined,
-      botToken: botToken || undefined,
-      allowedUsers,
-    };
-  }
-}
-
-async function setupDiscord(config: LettaBotConfig): Promise<void> {
-  const existing = config.channels.discord;
-  
-  p.note(
-    '1. Go to discord.com/developers/applications\n' +
-    '2. Click "New Application" (or select existing)\n' +
-    '3. Go to "Bot" → Copy the Bot Token\n' +
-    '4. Enable "Message Content Intent" (under Privileged Gateway Intents)\n' +
-    '5. Go to "OAuth2" → "URL Generator"\n' +
-    '   • Scopes: bot\n' +
-    '   • Permissions: Send Messages, Read Message History, View Channels\n' +
-    '6. Copy the generated URL and open it to invite the bot to your server',
-    'Discord Setup'
-  );
-  
-  const token = await p.text({
-    message: 'Discord Bot Token',
-    placeholder: 'Bot → Reset Token → Copy',
-    initialValue: existing?.token || '',
-  });
-  
-  if (p.isCancel(token)) {
-    p.cancel('Cancelled');
-    process.exit(0);
-  }
-  
-  // Try to show invite URL
-  if (token) {
-    try {
-      const appId = Buffer.from(token.split('.')[0], 'base64').toString();
-      if (/^\d+$/.test(appId)) {
-        const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${appId}&permissions=68608&scope=bot`;
-        p.log.info(`Invite URL: ${inviteUrl}`);
-        p.log.message('Open this URL in your browser to add the bot to your server.');
-      }
-    } catch {
-      // Token parsing failed
-    }
-  }
-  
-  // DM Policy
-  const dmPolicy = await p.select({
-    message: 'Who can message the bot?',
-    options: [
-      { value: 'pairing', label: 'Pairing (recommended)', hint: 'Requires CLI approval' },
-      { value: 'allowlist', label: 'Allowlist only', hint: 'Specific user IDs' },
-      { value: 'open', label: 'Open', hint: 'Anyone (not recommended)' },
-    ],
-    initialValue: existing?.dmPolicy || 'pairing',
-  });
-  
-  if (p.isCancel(dmPolicy)) {
-    p.cancel('Cancelled');
-    process.exit(0);
-  }
-  
-  let allowedUsers: string[] | undefined;
-  
-  if (dmPolicy === 'pairing') {
-    p.log.info('Users will get a code. Approve with: lettabot pairing approve discord CODE');
-  } else if (dmPolicy === 'allowlist') {
-    const users = await p.text({
-      message: 'Allowed Discord user IDs (comma-separated)',
-      placeholder: '123456789012345678,987654321098765432',
-      initialValue: existing?.allowedUsers?.join(',') || '',
-    });
-    if (!p.isCancel(users) && users) {
-      allowedUsers = users.split(',').map(s => s.trim()).filter(Boolean);
-    }
-  }
-  
-  config.channels.discord = {
-    enabled: true,
-    token: token || undefined,
-    dmPolicy: dmPolicy as 'pairing' | 'allowlist' | 'open',
-    allowedUsers,
-  };
-}
-
-async function setupWhatsApp(config: LettaBotConfig): Promise<void> {
-  const existing = config.channels.whatsapp;
-  
-  p.note(
-    'QR code will appear on first run - scan with your phone.\n' +
-    'Phone: Settings → Linked Devices → Link a Device\n\n' +
-    '⚠️  Security: Links as a full device to your WhatsApp account.\n' +
-    'Can see ALL messages, not just ones sent to the bot.\n' +
-    'Consider using a dedicated number for better isolation.',
-    'WhatsApp'
-  );
-  
-  const selfChat = await p.select({
-    message: 'Whose number is this?',
-    options: [
-      { value: 'personal', label: 'My personal number (recommended)', hint: 'SAFE: Only "Message Yourself" chat' },
-      { value: 'dedicated', label: 'Dedicated bot number', hint: 'Bot responds to anyone who messages' },
-    ],
-    initialValue: existing?.selfChat !== false ? 'personal' : 'dedicated',
-  });
-  
-  if (p.isCancel(selfChat)) {
-    p.cancel('Cancelled');
-    process.exit(0);
-  }
-  
-  const isSelfChat = selfChat === 'personal';
-  
-  if (!isSelfChat) {
-    p.log.warn('Dedicated number mode: Bot will respond to ALL incoming messages.');
-    p.log.warn('Only use this if this number is EXCLUSIVELY for the bot.');
-  }
-  
-  let dmPolicy: 'pairing' | 'allowlist' | 'open' = 'pairing';
-  let allowedUsers: string[] | undefined;
-  
-  // Dedicated numbers need allowlist
-  if (!isSelfChat) {
-    dmPolicy = 'allowlist';
-    const users = await p.text({
-      message: 'Allowed phone numbers (comma-separated, with +)',
-      placeholder: '+15551234567,+15559876543',
-      initialValue: existing?.allowedUsers?.join(',') || '',
-    });
-    if (!p.isCancel(users) && users) {
-      allowedUsers = users.split(',').map(s => s.trim()).filter(Boolean);
-    }
-    if (!allowedUsers?.length) {
-      p.log.warn('No allowed numbers set. Bot will reject all messages until you add numbers to lettabot.yaml');
-    }
-  }
-  
-  config.channels.whatsapp = {
-    enabled: true,
-    selfChat: isSelfChat,
-    dmPolicy,
-    allowedUsers,
-  };
-  
-  p.log.info('Run "lettabot server" to see the QR code and complete pairing.');
-}
-
-async function setupSignal(config: LettaBotConfig): Promise<void> {
-  const existing = config.channels.signal;
-  
-  // Check if signal-cli is installed
-  const signalInstalled = spawnSync('which', ['signal-cli'], { stdio: 'pipe' }).status === 0;
-  
-  if (!signalInstalled) {
-    p.log.warn('signal-cli is not installed.');
-    p.log.info('Install with: brew install signal-cli');
-    
-    const continueAnyway = await p.confirm({
-      message: 'Continue setup anyway?',
-      initialValue: false,
-    });
-    
-    if (p.isCancel(continueAnyway) || !continueAnyway) {
-      p.cancel('Cancelled');
-      process.exit(0);
-    }
-  }
-  
-  p.note(
-    'See docs/signal-setup.md for detailed instructions.\n' +
-    'Requires signal-cli registered with your phone number.\n\n' +
-    '⚠️  Security: Has full access to your Signal account.\n' +
-    'Can see all messages and send as you.',
-    'Signal Setup'
-  );
-  
-  const phone = await p.text({
-    message: 'Signal phone number',
-    placeholder: '+1XXXXXXXXXX',
-    initialValue: existing?.phone || '',
-  });
-  
-  if (p.isCancel(phone)) {
-    p.cancel('Cancelled');
-    process.exit(0);
-  }
-  
-  const selfChat = await p.select({
-    message: 'Whose number is this?',
-    options: [
-      { value: 'personal', label: 'My personal number (recommended)', hint: 'SAFE: Only "Note to Self" chat' },
-      { value: 'dedicated', label: 'Dedicated bot number', hint: 'Bot responds to anyone who messages' },
-    ],
-    initialValue: existing?.selfChat !== false ? 'personal' : 'dedicated',
-  });
-  
-  if (p.isCancel(selfChat)) {
-    p.cancel('Cancelled');
-    process.exit(0);
-  }
-  
-  const isSelfChat = selfChat === 'personal';
-  
-  if (!isSelfChat) {
-    p.log.warn('Dedicated number mode: Bot will respond to ALL incoming messages.');
-    p.log.warn('Only use this if this number is EXCLUSIVELY for the bot.');
-  }
-  
-  let dmPolicy: 'pairing' | 'allowlist' | 'open' = 'pairing';
-  let allowedUsers: string[] | undefined;
-  
-  // Dedicated numbers need allowlist
-  if (!isSelfChat) {
-    dmPolicy = 'allowlist';
-    const users = await p.text({
-      message: 'Allowed phone numbers (comma-separated, with +)',
-      placeholder: '+15551234567,+15559876543',
-      initialValue: existing?.allowedUsers?.join(',') || '',
-    });
-    if (!p.isCancel(users) && users) {
-      allowedUsers = users.split(',').map(s => s.trim()).filter(Boolean);
-    }
-    if (!allowedUsers?.length) {
-      p.log.warn('No allowed numbers set. Bot will reject all messages until you add numbers to lettabot.yaml');
-    }
-  }
-  
-  config.channels.signal = {
-    enabled: true,
-    phone: phone || undefined,
-    selfChat: isSelfChat,
-    dmPolicy,
-    allowedUsers,
-  };
+  p.log.success(`${meta.displayName} disabled`);
 }
 
 // ============================================================================
@@ -705,18 +264,14 @@ export async function channelManagementCommand(subCommand?: string, channelName?
     case 'ls':
       await listChannels();
       break;
-      
     case 'add':
       await addChannel(channelName);
       break;
-      
     case 'remove':
     case 'rm':
       await removeChannel(channelName);
       break;
-      
     default:
-      // No subcommand = interactive menu
       await interactiveChannelMenu();
       break;
   }
