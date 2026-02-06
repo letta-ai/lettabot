@@ -41,6 +41,11 @@ async function buildMultimodalMessage(
   formattedText: string,
   msg: InboundMessage,
 ): Promise<SendMessage> {
+  // Respect opt-out: when INLINE_IMAGES=false, skip multimodal and only send file paths in envelope
+  if (process.env.INLINE_IMAGES === 'false') {
+    return formattedText;
+  }
+
   const imageAttachments = (msg.attachments ?? []).filter(
     (a) => a.kind === 'image'
       && (a.localPath || a.url)
@@ -65,6 +70,10 @@ async function buildMultimodalMessage(
     } catch (err) {
       console.warn(`[Bot] Failed to load image ${attachment.name || 'unknown'}: ${err instanceof Error ? err.message : err}`);
     }
+  }
+
+  if (content.length > 1) {
+    console.log(`[Bot] Sending ${content.length - 1} inline image(s) to LLM`);
   }
 
   return content.length > 1 ? content : formattedText;
@@ -695,6 +704,13 @@ export class LettaBot {
         sentAnyMessage = true;
         response = '';
       }
+
+      // Detect unsupported multimodal: images were sent but server replaced them
+      const sentImages = Array.isArray(messageToSend);
+      if (sentImages && response.includes('[Image omitted]')) {
+        console.warn('[Bot] Model does not support images — server replaced inline images with "[Image omitted]". Consider using a vision-capable model or setting features.inlineImages: false in config.');
+      }
+
 
       // Send final response
       if (response.trim()) {
