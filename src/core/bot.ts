@@ -14,7 +14,7 @@ import { installSkillsToAgent } from '../skills/loader.js';
 import { formatMessageEnvelope, type SessionContextOptions } from './formatter.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
-import { StreamWatchdog } from './stream-watchdog.js';
+
 
 /**
  * Detect if an error is a 409 CONFLICT from an orphaned approval.
@@ -426,21 +426,6 @@ export class LettaBot {
       let receivedAnyData = false; // Track if we got ANY stream data
       const msgTypeCounts: Record<string, number> = {};
       
-      // Stream watchdog - abort if idle for too long
-      const watchdog = new StreamWatchdog({
-        onAbort: () => {
-          session.abort().catch((err) => {
-            console.error('[Bot] Stream abort failed:', err);
-          });
-          try {
-            session.close();
-          } catch (err) {
-            console.error('[Bot] Stream close failed:', err);
-          }
-        },
-      });
-      watchdog.start();
-      
       // Helper to finalize and send current accumulated response
       const finalizeMessage = async () => {
         // Check for silent marker - agent chose not to reply
@@ -490,7 +475,6 @@ export class LettaBot {
             if (toolCallId) seenToolCallIds.add(toolCallId);
           }
           const msgUuid = (streamMsg as any).uuid;
-          watchdog.ping();
           receivedAnyData = true;
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
@@ -578,7 +562,6 @@ export class LettaBot {
                 console.log('[Bot] Empty result - attempting orphaned approval recovery...');
                 session.close();
                 clearInterval(typingInterval);
-                watchdog.stop();
                 const convResult = await recoverOrphanedConversationApproval(
                   this.store.agentId,
                   this.store.conversationId
@@ -617,7 +600,6 @@ export class LettaBot {
 
         }
       } finally {
-        watchdog.stop();
         clearInterval(typingInterval);
       }
       
@@ -811,40 +793,20 @@ export class LettaBot {
       }
       
       let response = '';
-      const watchdog = new StreamWatchdog({
-        onAbort: () => {
-          console.warn('[Bot] sendToAgent stream idle timeout, aborting session...');
-          session.abort().catch((err) => {
-            console.error('[Bot] sendToAgent abort failed:', err);
-          });
-          try {
-            session.close();
-          } catch (err) {
-            console.error('[Bot] sendToAgent close failed:', err);
-          }
-        },
-      });
-      watchdog.start();
-      
-      try {
-        for await (const msg of session.stream()) {
-          watchdog.ping();
-          if (msg.type === 'assistant') {
-            response += msg.content;
-          }
-          
-          if (msg.type === 'result') {
-            if (session.agentId && session.agentId !== this.store.agentId) {
-              const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
-              this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
-            } else if (session.conversationId && session.conversationId !== this.store.conversationId) {
-              this.store.conversationId = session.conversationId;
-            }
-            break;
-          }
+      for await (const msg of session.stream()) {
+        if (msg.type === 'assistant') {
+          response += msg.content;
         }
-      } finally {
-        watchdog.stop();
+        
+        if (msg.type === 'result') {
+          if (session.agentId && session.agentId !== this.store.agentId) {
+            const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
+            this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
+          } else if (session.conversationId && session.conversationId !== this.store.conversationId) {
+            this.store.conversationId = session.conversationId;
+          }
+          break;
+        }
       }
       
       return response;
