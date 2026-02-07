@@ -84,6 +84,12 @@ transcription:
 attachments:
   maxMB: 20
   maxAgeDays: 14
+
+# API server (health checks, CLI messaging)
+api:
+  port: 8080                     # Default: 8080 (or PORT env var)
+  # host: 0.0.0.0               # Uncomment for Docker/Railway
+  # corsOrigin: https://my.app   # Uncomment for cross-origin access
 ```
 
 ## Server Configuration
@@ -229,6 +235,9 @@ The top-level `polling` section takes priority if both are present.
 |--------------|--------------------------|
 | `GMAIL_ACCOUNT` | `polling.gmail.account` |
 | `POLLING_INTERVAL_MS` | `polling.intervalMs` |
+| `PORT` | `api.port` |
+| `API_HOST` | `api.host` |
+| `API_CORS_ORIGIN` | `api.corsOrigin` |
 
 ## Transcription Configuration
 
@@ -250,6 +259,23 @@ attachments:
 ```
 
 Attachments are stored in `/tmp/lettabot/attachments/`.
+
+## API Server Configuration
+
+The built-in API server provides health checks and CLI messaging endpoints.
+
+```yaml
+api:
+  port: 9090          # Default: 8080
+  host: 0.0.0.0       # Default: 127.0.0.1 (localhost only)
+  corsOrigin: "*"      # Default: same-origin only
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `api.port` | number | `8080` | Port for the API/health server |
+| `api.host` | string | `127.0.0.1` | Bind address. Use `0.0.0.0` for Docker/Railway |
+| `api.corsOrigin` | string | _(none)_ | CORS origin header for cross-origin access |
 
 ## Environment Variables
 
