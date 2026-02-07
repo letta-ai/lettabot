@@ -137,6 +137,10 @@ The bot can receive and process:
 
 Attachments are downloaded to `/tmp/lettabot/attachments/telegram/` and the agent can view images using its Read tool.
 
+### Long Messages
+
+Telegram limits messages to 4096 characters. LettaBot automatically splits longer responses into multiple messages at paragraph or line boundaries, so no content is lost.
+
 ### Reactions
 
 LettaBot can react to messages using the `lettabot-react` CLI:
