@@ -27,8 +27,9 @@ server:
 # Agent settings
 agent:
   name: LettaBot
-  model: claude-sonnet-4
   # id: agent-...                # Optional: use existing agent
+  # Note: model is configured on the Letta agent server-side.
+  # Use `lettabot model set <handle>` to change it.
 
 # Channel configurations
 channels:
@@ -116,7 +117,10 @@ docker run -v ~/.letta/.persist/pgdata:/var/lib/postgresql/data \
 |--------|------|-------------|
 | `agent.id` | string | Use existing agent (skips creation) |
 | `agent.name` | string | Name for new agent |
-| `agent.model` | string | Model ID (e.g., `claude-sonnet-4`) |
+
+> **Note:** The model is configured on the Letta agent server-side, not in the config file.
+> Use `lettabot model show` to see the current model and `lettabot model set <handle>` to change it.
+> During initial setup (`lettabot onboard`), you'll be prompted to select a model for new agents.
 
 ## Channel Configuration
 
@@ -262,7 +266,6 @@ Environment variables override config file values:
 | `LETTA_BASE_URL` | `server.baseUrl` |
 | `LETTA_AGENT_ID` | `agent.id` |
 | `LETTA_AGENT_NAME` | `agent.name` |
-| `LETTA_MODEL` | `agent.model` |
 | `TELEGRAM_BOT_TOKEN` | `channels.telegram.token` |
 | `TELEGRAM_DM_POLICY` | `channels.telegram.dmPolicy` |
 | `SLACK_BOT_TOKEN` | `channels.slack.botToken` |

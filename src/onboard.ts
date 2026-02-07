@@ -21,7 +21,6 @@ function readConfigFromEnv(existingConfig: any): any {
     apiKey: process.env.LETTA_API_KEY || existingConfig.server?.apiKey,
     agentId: process.env.LETTA_AGENT_ID || existingConfig.agent?.id,
     agentName: process.env.LETTA_AGENT_NAME || existingConfig.agent?.name || 'lettabot',
-    model: process.env.LETTA_MODEL || existingConfig.agent?.model || 'claude-sonnet-4',
     
     telegram: {
       enabled: !!process.env.TELEGRAM_BOT_TOKEN,
@@ -74,7 +73,7 @@ async function saveConfigFromEnv(config: any, configPath: string): Promise<void>
     agent: {
       id: config.agentId,
       name: config.agentName,
-      model: config.model,
+      // model is configured on the Letta agent server-side, not saved to config
     },
     channels: {
       telegram: config.telegram.enabled ? {
@@ -1276,7 +1275,6 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     agentChoice: hasExistingConfig ? 'env' : 'skip',
     agentName: existingConfig.agent.name,
     agentId: existingConfig.agent.id,
-    model: existingConfig.agent.model,
     providers: existingConfig.providers?.map(p => ({ id: p.id, name: p.name, apiKey: p.apiKey })),
   };
   
@@ -1307,7 +1305,6 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   
   // Apply config to env
   if (config.agentName) env.AGENT_NAME = config.agentName;
-  if (config.model) env.MODEL = config.model;
   
   if (config.telegram.enabled && config.telegram.token) {
     env.TELEGRAM_BOT_TOKEN = config.telegram.token;
@@ -1413,7 +1410,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   // Show summary
   const summary = [
     `Agent: ${config.agentId ? `${config.agentName} (${config.agentId.slice(0, 20)}...)` : config.agentName || '(will create on first message)'}`,
-    `Model: ${config.model || 'default'}`,
+    ...(config.model ? [`Model: ${config.model} (for initial agent creation only)`] : []),
     '',
     'Channels:',
     config.telegram.enabled ? `  ✓ Telegram (${formatAccess(config.telegram.dmPolicy, config.telegram.allowedUsers)})` : '  ✗ Telegram',
@@ -1442,7 +1439,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     },
     agent: {
       name: config.agentName || 'LettaBot',
-      model: config.model || 'zai/glm-4.7',
+      // model is configured on the Letta agent server-side, not saved to config
       ...(config.agentId ? { id: config.agentId } : {}),
     },
     channels: {

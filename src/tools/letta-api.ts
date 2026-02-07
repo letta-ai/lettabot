@@ -102,6 +102,34 @@ export async function agentExists(agentId: string): Promise<boolean> {
 }
 
 /**
+ * Get an agent's current model handle
+ */
+export async function getAgentModel(agentId: string): Promise<string | null> {
+  try {
+    const client = getClient();
+    const agent = await client.agents.retrieve(agentId);
+    return agent.model ?? null;
+  } catch (e) {
+    console.error('[Letta API] Failed to get agent model:', e);
+    return null;
+  }
+}
+
+/**
+ * Update an agent's model
+ */
+export async function updateAgentModel(agentId: string, model: string): Promise<boolean> {
+  try {
+    const client = getClient();
+    await client.agents.update(agentId, { model });
+    return true;
+  } catch (e) {
+    console.error('[Letta API] Failed to update agent model:', e);
+    return false;
+  }
+}
+
+/**
  * Update an agent's name
  */
 export async function updateAgentName(agentId: string, name: string): Promise<boolean> {

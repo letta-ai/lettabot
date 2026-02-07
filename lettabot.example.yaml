@@ -15,10 +15,8 @@ server:
 
 agent:
   name: LettaBot
-  # Model to use:
-  # - Free plan: zai/glm-4.7, minimax/MiniMax-M1-80k
-  # - BYOK: lc-anthropic/claude-sonnet-4-5-20250929, lc-openai/gpt-5.2
-  model: zai/glm-4.7
+  # Note: model is configured on the Letta agent server-side.
+  # Select a model during `lettabot onboard` or change it with `lettabot model set <handle>`.
 
 # BYOK Providers (optional, cloud mode only)
 # These will be synced to Letta Cloud on startup

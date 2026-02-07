@@ -121,7 +121,6 @@ export interface SkillsConfig {
 export interface BotConfig {
   // Letta
   workingDir: string;
-  model?: string; // e.g., 'anthropic/claude-sonnet-4-5-20250929'
   agentName?: string; // Name for the agent (set via API after creation)
   allowedTools: string[];
 

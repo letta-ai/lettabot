@@ -121,9 +121,8 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.agent.name) {
     env.AGENT_NAME = config.agent.name;
   }
-  if (config.agent.model) {
-    env.MODEL = config.agent.model;
-  }
+  // Note: agent.model is intentionally NOT mapped to env.
+  // The model is configured on the Letta agent server-side.
   
   // Channels
   if (config.channels.telegram?.token) {

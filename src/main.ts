@@ -20,7 +20,7 @@ import { getDataDir, getWorkingDir, hasRailwayVolume } from './utils/paths.js';
 const yamlConfig = loadConfig();
 const configSource = existsSync(resolveConfigPath()) ? resolveConfigPath() : 'defaults + environment variables';
 console.log(`[Config] Loaded from ${configSource}`);
-console.log(`[Config] Mode: ${yamlConfig.server.mode}, Agent: ${yamlConfig.agent.name}, Model: ${yamlConfig.agent.model}`);
+console.log(`[Config] Mode: ${yamlConfig.server.mode}, Agent: ${yamlConfig.agent.name}`);
 applyConfigToEnv(yamlConfig);
 
 // Sync BYOK providers on startup (async, don't block)
@@ -234,7 +234,6 @@ async function pruneAttachmentsDir(baseDir: string, maxAgeDays: number): Promise
 // Configuration from environment
 const config = {
   workingDir: getWorkingDir(),
-  model: process.env.MODEL, // e.g., 'claude-sonnet-4-20250514'
   allowedTools: (process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search').split(','),
   attachmentsMaxBytes: resolveAttachmentsMaxBytes(),
   attachmentsMaxAgeDays: resolveAttachmentsMaxAgeDays(),
@@ -357,7 +356,6 @@ async function main() {
   // Create bot with skills config (skills installed to agent-scoped location after agent creation)
   const bot = new LettaBot({
     workingDir: config.workingDir,
-    model: config.model,
     agentName: process.env.AGENT_NAME || 'LettaBot',
     allowedTools: config.allowedTools,
     maxToolCalls: process.env.MAX_TOOL_CALLS ? Number(process.env.MAX_TOOL_CALLS) : undefined,

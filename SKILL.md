@@ -35,7 +35,7 @@ lettabot server
 **Safe defaults used if not set:**
 - `LETTA_BASE_URL`: `https://api.letta.com`
 - `LETTA_AGENT_NAME`: `"lettabot"`
-- `LETTA_MODEL`: `"claude-sonnet-4"`
+- Model: selected during `lettabot onboard` or changed with `lettabot model set <handle>`
 - `*_DM_POLICY`: `"pairing"` (requires approval before messaging)
 - `WHATSAPP_SELF_CHAT_MODE`: `true` (only "Message Yourself" chat)
 - `SIGNAL_SELF_CHAT_MODE`: `true` (only "Note to Self")
@@ -70,7 +70,7 @@ The wizard will guide you through:
 |----------|-------------|---------|
 | `LETTA_AGENT_ID` | Use existing agent (skip agent creation) | Creates new agent |
 | `LETTA_AGENT_NAME` | Name for new agent | `"lettabot"` |
-| `LETTA_MODEL` | Model for new agent | `"claude-sonnet-4"` |
+| ~~`LETTA_MODEL`~~ | *Removed* - model is set on the agent server-side. Use `lettabot model set <handle>`. | - |
 
 ### Telegram
 
@@ -263,7 +263,7 @@ npm install && npm run build && npm link
 # 4. Set environment variables
 export LETTA_API_KEY="letta_..."
 export TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."
-# Defaults will be used for LETTA_BASE_URL, agent name, model, and DM policy
+# Defaults will be used for LETTA_BASE_URL, agent name, and DM policy
 
 # 5. Run non-interactive setup
 lettabot onboard --non-interactive

@@ -51,7 +51,6 @@ async function configure() {
     ['Server Mode', config.server.mode],
     ['API Key', config.server.apiKey ? '✓ Set' : '✗ Not set'],
     ['Agent Name', config.agent.name],
-    ['Model', config.agent.model],
     ['Telegram', config.channels.telegram?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Slack', config.channels.slack?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Discord', config.channels.discord?.enabled ? '✓ Enabled' : '✗ Disabled'],
@@ -190,6 +189,9 @@ Commands:
   onboard              Setup wizard (integrations, skills, configuration)
   server               Start the bot server
   configure            View and edit configuration
+  model                Interactive model selector
+  model show           Show current agent model
+  model set <handle>   Set model by handle (e.g., anthropic/claude-sonnet-4-5-20250929)
   channels             Manage channels (interactive menu)
   channels list        Show channel status
   channels add <ch>    Add a channel (telegram, slack, discord, whatsapp, signal)
@@ -254,6 +256,12 @@ async function main() {
         default:
           await runSkillsSync();
       }
+      break;
+    }
+    
+    case 'model': {
+      const { modelCommand } = await import('./commands/model.js');
+      await modelCommand(subCommand, args[2]);
       break;
     }
     
@@ -457,7 +465,7 @@ async function main() {
       
     case undefined:
       console.log('Usage: lettabot <command>\n');
-      console.log('Commands: onboard, server, configure, channels, skills, reset-conversation, destroy, help\n');
+      console.log('Commands: onboard, server, configure, model, channels, skills, reset-conversation, destroy, help\n');
       console.log('Run "lettabot help" for more information.');
       break;
       
