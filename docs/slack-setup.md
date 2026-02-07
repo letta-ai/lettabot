@@ -47,10 +47,13 @@ Socket Mode lets your bot connect without exposing a public endpoint.
 | Scope | Purpose |
 |-------|---------|
 | `app_mentions:read` | React when someone @mentions your bot |
+| `channels:history` | Read thread history in public channels |
 | `chat:write` | Send messages |
+| `groups:history` | Read thread history in private channels |
 | `im:history` | Read DM message history |
 | `im:read` | View DM channel info |
 | `im:write` | Start DM conversations |
+| `users:read` | Resolve display names in thread context |
 
 ## Step 4: Enable Events
 
@@ -125,6 +128,7 @@ Registered channel: Slack
 ### Thread Replies
 - If you mention the bot in a thread, it will reply in that thread
 - If you mention the bot in a channel (not a thread), it starts a new thread from your message
+- When mentioned mid-thread, the bot automatically reads prior messages so it understands the conversation context
 
 ## Cross-Channel Memory
 

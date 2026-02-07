@@ -335,4 +335,77 @@ describe('formatMessageEnvelope', () => {
       expect(sessionIdx).toBeLessThan(metadataIdx);
     });
   });
+
+  describe('thread context', () => {
+    it('includes thread context section when threadContext is provided', () => {
+      const msg = createMessage({
+        channel: 'slack',
+        threadContext: [
+          {
+            userId: 'U001',
+            userName: 'Alice',
+            text: 'Has anyone looked at the new API?',
+            timestamp: new Date('2026-02-02T11:55:00Z'),
+          },
+          {
+            userId: 'U002',
+            userName: 'Bob',
+            text: 'Yeah, the auth flow changed',
+            timestamp: new Date('2026-02-02T11:57:00Z'),
+          },
+        ],
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('## Thread Context (2 prior messages)');
+      expect(result).toContain('Alice');
+      expect(result).toContain('Has anyone looked at the new API?');
+      expect(result).toContain('Bob');
+    });
+
+    it('marks bot messages with (you)', () => {
+      const msg = createMessage({
+        channel: 'slack',
+        threadContext: [
+          {
+            userId: 'U001',
+            userName: 'Alice',
+            text: 'Can you help?',
+            timestamp: new Date('2026-02-02T11:55:00Z'),
+          },
+          {
+            userId: 'UBOT',
+            userName: 'LettaBot',
+            text: 'Sure, what do you need?',
+            timestamp: new Date('2026-02-02T11:56:00Z'),
+            isBotMessage: true,
+          },
+        ],
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('LettaBot (you)');
+      expect(result).not.toContain('Alice (you)');
+    });
+
+    it('uses singular label for single message', () => {
+      const msg = createMessage({
+        channel: 'slack',
+        threadContext: [
+          {
+            userId: 'U001',
+            userName: 'Alice',
+            text: 'Hey',
+            timestamp: new Date('2026-02-02T11:55:00Z'),
+          },
+        ],
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('## Thread Context (1 prior message)');
+    });
+
+    it('omits thread context section when not provided', () => {
+      const msg = createMessage();
+      const result = formatMessageEnvelope(msg);
+      expect(result).not.toContain('## Thread Context');
+    });
+  });
 });

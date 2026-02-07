@@ -5,7 +5,7 @@
  * Uses <system-reminder> XML tags matching Letta Code CLI conventions.
  */
 
-import type { InboundMessage } from './types.js';
+import type { InboundMessage, ThreadContextMessage } from './types.js';
 import { normalizePhoneForStorage } from '../utils/phone.js';
 
 // XML tag constants (matching Letta Code CLI conventions from constants.ts)
@@ -284,6 +284,27 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
 }
 
 /**
+ * Build thread context lines from backfilled thread history.
+ * Shows prior messages in the thread so the agent has full context
+ * when mentioned in an existing conversation.
+ */
+function buildThreadContextLines(messages: ThreadContextMessage[]): string[] {
+  if (!messages || messages.length === 0) return [];
+  const lines: string[] = [];
+  for (const msg of messages) {
+    const timeStr = msg.timestamp.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+    const sender = msg.userName || msg.userId;
+    const label = msg.isBotMessage ? `${sender} (you)` : sender;
+    lines.push(`- **${label}** [${timeStr}]: ${msg.text}`);
+  }
+  return lines;
+}
+
+/**
  * Build session context block for the first message in a chat session.
  */
 export function buildSessionContext(options: SessionContextOptions): string[] {
@@ -349,6 +370,13 @@ export function formatMessageEnvelope(
   const contextLines = buildChatContextLines(msg, opts);
   if (contextLines.length > 0) {
     sections.push(`## Chat Context\n${contextLines.join('\n')}`);
+  }
+
+  // Thread context section (prior messages in thread, backfilled)
+  if (msg.threadContext && msg.threadContext.length > 0) {
+    const threadLines = buildThreadContextLines(msg.threadContext);
+    const count = msg.threadContext.length;
+    sections.push(`## Thread Context (${count} prior message${count === 1 ? '' : 's'})\n${threadLines.join('\n')}`);
   }
 
   // Build the full system-reminder block

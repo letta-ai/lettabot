@@ -62,6 +62,19 @@ export interface InboundReaction {
 }
 
 /**
+ * A message from thread history, used for thread context backfill.
+ * When the bot is mentioned in an existing thread, prior messages
+ * are fetched and included so the agent has full conversation context.
+ */
+export interface ThreadContextMessage {
+  userId: string;
+  userName?: string;
+  text: string;
+  timestamp: Date;
+  isBotMessage?: boolean;
+}
+
+/**
  * Inbound message from any channel
  */
 export interface InboundMessage {
@@ -83,6 +96,7 @@ export interface InboundMessage {
   reaction?: InboundReaction;
   isBatch?: boolean;                  // Is this a batched group message?
   batchedMessages?: InboundMessage[]; // Original individual messages (for batch formatting)
+  threadContext?: ThreadContextMessage[];  // Prior messages in thread (backfilled)
 }
 
 /**

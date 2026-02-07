@@ -5,7 +5,7 @@
  */
 
 import type { ChannelAdapter } from './types.js';
-import type { InboundAttachment, InboundMessage, InboundReaction, OutboundFile, OutboundMessage } from '../core/types.js';
+import type { InboundAttachment, InboundMessage, InboundReaction, OutboundFile, OutboundMessage, ThreadContextMessage } from '../core/types.js';
 import { createReadStream } from 'node:fs';
 import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
@@ -32,6 +32,8 @@ export class SlackAdapter implements ChannelAdapter {
   private running = false;
   private attachmentsDir?: string;
   private attachmentsMaxBytes?: number;
+  private botUserId?: string;
+  private userNameCache = new Map<string, string>();
   
   onMessage?: (msg: InboundMessage) => Promise<void>;
   onCommand?: (command: string) => Promise<string | null>;
@@ -54,6 +56,17 @@ export class SlackAdapter implements ChannelAdapter {
       appToken: this.config.appToken,
       socketMode: true,
     });
+    
+    // Resolve bot user ID for identifying own messages in threads
+    try {
+      const authResult = await this.app.client.auth.test();
+      this.botUserId = authResult.user_id as string | undefined;
+      if (this.botUserId) {
+        console.log(`[Slack] Bot user ID: ${this.botUserId}`);
+      }
+    } catch (err) {
+      console.warn('[Slack] Failed to resolve bot user ID:', err);
+    }
     
     // Handle messages
     this.app.message(async ({ message, say, client }) => {
@@ -147,7 +160,7 @@ export class SlackAdapter implements ChannelAdapter {
     });
 
     // Handle app mentions (@bot)
-    this.app.event('app_mention', async ({ event }) => {
+    this.app.event('app_mention', async ({ event, client }) => {
       const userId = event.user || '';
       const text = (event.text || '').replace(/<@[A-Z0-9]+>/g, '').trim(); // Remove mention
       const channelId = event.channel;
@@ -180,6 +193,20 @@ export class SlackAdapter implements ChannelAdapter {
         // app_mention is always in a channel (group)
         const isGroup = !channelId.startsWith('D');
         
+        // Backfill thread context when mentioned in an existing thread
+        let threadContext: ThreadContextMessage[] | undefined;
+        if (event.thread_ts) {
+          threadContext = await this.fetchThreadContext(
+            client,
+            channelId,
+            event.thread_ts,
+            event.ts || '',
+          );
+          if (threadContext.length > 0) {
+            console.log(`[Slack] Thread backfill: ${threadContext.length} messages from thread ${event.thread_ts}`);
+          }
+        }
+        
         await this.onMessage({
           channel: 'slack',
           chatId: channelId,
@@ -193,6 +220,7 @@ export class SlackAdapter implements ChannelAdapter {
           groupName: isGroup ? channelId : undefined,
           wasMentioned: true, // app_mention is always a mention
           attachments,
+          threadContext,
         });
       }
     });
@@ -284,6 +312,120 @@ export class SlackAdapter implements ChannelAdapter {
   async sendTypingIndicator(_chatId: string): Promise<void> {
     // Slack doesn't have a typing indicator API for bots
     // This is a no-op
+  }
+
+  /**
+   * Fetch prior messages in a thread for context backfill.
+   * Called when the bot is @mentioned in an existing thread so the agent
+   * can see what the conversation was about before responding.
+   */
+  private async fetchThreadContext(
+    client: { conversations: { replies: (args: any) => Promise<any> }; users: { info: (args: any) => Promise<any> } },
+    channelId: string,
+    threadTs: string,
+    currentMessageTs: string,
+  ): Promise<ThreadContextMessage[]> {
+    try {
+      const result = await client.conversations.replies({
+        channel: channelId,
+        ts: threadTs,
+        limit: 50,
+      });
+
+      const raw = result.messages;
+      if (!raw?.length) return [];
+
+      // Collect unique user IDs for name resolution
+      const userIds = [...new Set<string>(
+        raw
+          .filter((m: any) => m.user && !m.subtype)
+          .map((m: any) => m.user as string)
+      )];
+      const names = await this.resolveUserNames(client, userIds);
+
+      // Find the bot's last message in the thread so we only backfill
+      // messages the agent hasn't seen yet (avoids duplication on repeat mentions)
+      const lastBotTs = raw
+        .filter((m: any) => m.user === this.botUserId && !m.subtype)
+        .at(-1)?.ts as string | undefined;
+
+      // Build context, skipping the triggering message and system subtypes
+      const context: ThreadContextMessage[] = [];
+      let totalChars = 0;
+      const MAX_TOTAL_CHARS = 4000;
+      const MAX_MSG_CHARS = 500;
+
+      for (const m of raw) {
+        if (m.ts === currentMessageTs) continue;
+        if (m.subtype) continue;
+        // Skip messages the agent already saw (at or before its last response)
+        if (lastBotTs && m.ts <= lastBotTs) continue;
+
+        let text = (m.text || '') as string;
+
+        // Resolve <@U123> user mentions in message text to display names
+        text = text.replace(/<@([A-Z0-9]+)>/g, (_match: string, uid: string) => {
+          return `@${names.get(uid) || uid}`;
+        });
+
+        if (text.length > MAX_MSG_CHARS) {
+          text = text.slice(0, MAX_MSG_CHARS) + '...';
+        }
+
+        totalChars += text.length;
+        if (totalChars > MAX_TOTAL_CHARS) break;
+
+        context.push({
+          userId: m.user || 'unknown',
+          userName: names.get(m.user) || m.user,
+          text,
+          timestamp: new Date(Number(m.ts) * 1000),
+          isBotMessage: m.user === this.botUserId,
+        });
+      }
+
+      return context;
+    } catch (err) {
+      console.warn('[Slack] Failed to fetch thread context:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Resolve Slack user IDs to display names, with caching.
+   * Requires users:read scope; falls back to raw user ID on failure.
+   */
+  private async resolveUserNames(
+    client: { users: { info: (args: any) => Promise<any> } },
+    userIds: string[],
+  ): Promise<Map<string, string>> {
+    const names = new Map<string, string>();
+    const toResolve: string[] = [];
+
+    for (const id of userIds) {
+      const cached = this.userNameCache.get(id);
+      if (cached) {
+        names.set(id, cached);
+      } else {
+        toResolve.push(id);
+      }
+    }
+
+    await Promise.all(toResolve.map(async (id) => {
+      try {
+        const result = await client.users.info({ user: id });
+        const name = result.user?.profile?.display_name
+          || result.user?.real_name
+          || result.user?.name
+          || id;
+        this.userNameCache.set(id, name);
+        names.set(id, name);
+      } catch {
+        names.set(id, id);
+      }
+    }));
+
+    return names;
   }
 
   private async handleReactionEvent(
