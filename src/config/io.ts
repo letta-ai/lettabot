@@ -183,6 +183,17 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.attachments?.maxAgeDays !== undefined) {
     env.ATTACHMENTS_MAX_AGE_DAYS = String(config.attachments.maxAgeDays);
   }
+
+  // API server
+  if (config.api?.port !== undefined) {
+    env.PORT = String(config.api.port);
+  }
+  if (config.api?.host) {
+    env.API_HOST = config.api.host;
+  }
+  if (config.api?.corsOrigin) {
+    env.API_CORS_ORIGIN = config.api.corsOrigin;
+  }
   
   return env;
 }

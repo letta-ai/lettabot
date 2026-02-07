@@ -644,10 +644,14 @@ export class LettaBot {
         } catch (sendError) {
           console.error('[Bot] Error sending response:', sendError);
           if (!messageId) {
-            await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
-            sentAnyMessage = true;
-            // Reset recovery counter on successful response
-            this.store.resetRecoveryAttempts();
+            try {
+              await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
+              sentAnyMessage = true;
+              // Reset recovery counter on successful response
+              this.store.resetRecoveryAttempts();
+            } catch (retryError) {
+              console.error('[Bot] Retry send also failed:', retryError);
+            }
           }
         }
       }
@@ -688,11 +692,15 @@ export class LettaBot {
       
     } catch (error) {
       console.error('[Bot] Error processing message:', error);
-      await adapter.sendMessage({
-        chatId: msg.chatId,
-        text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        threadId: msg.threadId,
-      });
+      try {
+        await adapter.sendMessage({
+          chatId: msg.chatId,
+          text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          threadId: msg.threadId,
+        });
+      } catch (sendError) {
+        console.error('[Bot] Failed to send error message to channel:', sendError);
+      }
     } finally {
       session!?.close();
     }

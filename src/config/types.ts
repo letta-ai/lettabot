@@ -59,6 +59,13 @@ export interface LettaBotConfig {
     maxMB?: number;
     maxAgeDays?: number;
   };
+
+  // API server (health checks, CLI messaging)
+  api?: {
+    port?: number;       // Default: 8080 (or PORT env var)
+    host?: string;       // Default: 127.0.0.1 (secure). Use '0.0.0.0' for Docker/Railway
+    corsOrigin?: string; // CORS origin. Default: same-origin only
+  };
 }
 
 export interface TranscriptionConfig {

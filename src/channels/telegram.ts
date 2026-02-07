@@ -360,24 +360,48 @@ export class TelegramAdapter implements ChannelAdapter {
   async sendMessage(msg: OutboundMessage): Promise<{ messageId: string }> {
     const { markdownToTelegramV2 } = await import('./telegram-format.js');
     
-    // Try MarkdownV2 first
-    try {
-      const formatted = await markdownToTelegramV2(msg.text);
-      const result = await this.bot.api.sendMessage(msg.chatId, formatted, {
-        parse_mode: 'MarkdownV2',
-        reply_to_message_id: msg.replyToMessageId ? Number(msg.replyToMessageId) : undefined,
-      });
-      return { messageId: String(result.message_id) };
-    } catch (e) {
-      // If MarkdownV2 fails, send raw text with notice
-      console.warn('[Telegram] MarkdownV2 send failed, falling back to raw text:', e);
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      const fallbackText = `${msg.text}\n\n(Telegram formatting failed: ${errorMsg.slice(0, 50)}. Report: github.com/letta-ai/lettabot/issues)`;
-      const result = await this.bot.api.sendMessage(msg.chatId, fallbackText, {
-        reply_to_message_id: msg.replyToMessageId ? Number(msg.replyToMessageId) : undefined,
-      });
-      return { messageId: String(result.message_id) };
+    // Split long messages into chunks (Telegram limit: 4096 chars)
+    const chunks = splitMessageText(msg.text);
+    let lastMessageId = '';
+    
+    for (const chunk of chunks) {
+      // Only first chunk replies to the original message
+      const replyId = !lastMessageId && msg.replyToMessageId ? Number(msg.replyToMessageId) : undefined;
+      
+      // Try MarkdownV2 first
+      try {
+        const formatted = await markdownToTelegramV2(chunk);
+        // MarkdownV2 escaping can expand text beyond 4096 - re-split if needed
+        if (formatted.length > TELEGRAM_MAX_LENGTH) {
+          const subChunks = splitFormattedText(formatted);
+          for (const sub of subChunks) {
+            const result = await this.bot.api.sendMessage(msg.chatId, sub, {
+              parse_mode: 'MarkdownV2',
+              reply_to_message_id: replyId,
+            });
+            lastMessageId = String(result.message_id);
+          }
+        } else {
+          const result = await this.bot.api.sendMessage(msg.chatId, formatted, {
+            parse_mode: 'MarkdownV2',
+            reply_to_message_id: replyId,
+          });
+          lastMessageId = String(result.message_id);
+        }
+      } catch (e) {
+        // If MarkdownV2 fails, send raw text (also split if needed)
+        console.warn('[Telegram] MarkdownV2 send failed, falling back to raw text:', e);
+        const plainChunks = splitFormattedText(chunk);
+        for (const plain of plainChunks) {
+          const result = await this.bot.api.sendMessage(msg.chatId, plain, {
+            reply_to_message_id: replyId,
+          });
+          lastMessageId = String(result.message_id);
+        }
+      }
     }
+    
+    return { messageId: lastMessageId };
   }
 
   async sendFile(file: OutboundFile): Promise<{ messageId: string }> {
@@ -620,3 +644,86 @@ const TELEGRAM_REACTION_EMOJIS = [
 type TelegramReactionEmoji = typeof TELEGRAM_REACTION_EMOJIS[number];
 
 const TELEGRAM_REACTION_SET = new Set<string>(TELEGRAM_REACTION_EMOJIS);
+
+// Telegram message length limit
+const TELEGRAM_MAX_LENGTH = 4096;
+// Leave room for MarkdownV2 escaping overhead when splitting raw text
+const TELEGRAM_SPLIT_THRESHOLD = 3800;
+
+/**
+ * Split raw markdown text into chunks that will fit within Telegram's limit
+ * after MarkdownV2 formatting. Splits at paragraph boundaries (double newlines),
+ * falling back to single newlines, then hard-splitting at the threshold.
+ */
+function splitMessageText(text: string): string[] {
+  if (text.length <= TELEGRAM_SPLIT_THRESHOLD) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > TELEGRAM_SPLIT_THRESHOLD) {
+    let splitIdx = -1;
+
+    // Try paragraph boundary (double newline)
+    const searchRegion = remaining.slice(0, TELEGRAM_SPLIT_THRESHOLD);
+    const lastParagraph = searchRegion.lastIndexOf('\n\n');
+    if (lastParagraph > TELEGRAM_SPLIT_THRESHOLD * 0.3) {
+      splitIdx = lastParagraph;
+    }
+
+    // Fall back to single newline
+    if (splitIdx === -1) {
+      const lastNewline = searchRegion.lastIndexOf('\n');
+      if (lastNewline > TELEGRAM_SPLIT_THRESHOLD * 0.3) {
+        splitIdx = lastNewline;
+      }
+    }
+
+    // Hard split as last resort
+    if (splitIdx === -1) {
+      splitIdx = TELEGRAM_SPLIT_THRESHOLD;
+    }
+
+    chunks.push(remaining.slice(0, splitIdx).trimEnd());
+    remaining = remaining.slice(splitIdx).trimStart();
+  }
+
+  if (remaining.trim()) {
+    chunks.push(remaining.trim());
+  }
+
+  return chunks;
+}
+
+/**
+ * Split already-formatted text (MarkdownV2 or plain) at the hard 4096 limit.
+ * Used as a safety net when formatting expands text beyond the limit.
+ * Tries to split at newlines to avoid breaking mid-word.
+ */
+function splitFormattedText(text: string): string[] {
+  if (text.length <= TELEGRAM_MAX_LENGTH) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > TELEGRAM_MAX_LENGTH) {
+    const searchRegion = remaining.slice(0, TELEGRAM_MAX_LENGTH);
+    let splitIdx = searchRegion.lastIndexOf('\n');
+    if (splitIdx < TELEGRAM_MAX_LENGTH * 0.3) {
+      // No good newline found - hard split
+      splitIdx = TELEGRAM_MAX_LENGTH;
+    }
+    chunks.push(remaining.slice(0, splitIdx));
+    remaining = remaining.slice(splitIdx).replace(/^\n/, '');
+  }
+
+  if (remaining) {
+    chunks.push(remaining);
+  }
+
+  return chunks;
+}
