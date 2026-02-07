@@ -98,10 +98,13 @@ oauth_config:
   scopes:
     bot:
       - app_mentions:read
+      - channels:history
       - chat:write
+      - groups:history
       - im:history
       - im:read
       - im:write
+      - users:read
 settings:
   org_deploy_enabled: false
   socket_mode_enabled: true
@@ -117,7 +120,7 @@ settings:
   p.note(
     'Creates app with everything pre-configured:\n' +
     '  • Socket Mode enabled\n' +
-    '  • 5 bot scopes (app_mentions:read, chat:write, im:*)\n' +
+    '  • 8 bot scopes (mentions, channels/groups history, chat, im, users)\n' +
     '  • 2 event subscriptions (app_mention, message.im)\n\n' +
     'Just review and click "Create"!',
     'One-Click Setup'
