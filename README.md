@@ -237,6 +237,18 @@ The agent sees a clear `[SILENT MODE]` banner when triggered by heartbeats/cron,
 
 If your agent isn't sending messages during heartbeats, check the [ADE](https://app.letta.com) to see what the agent is doing and whether it's attempting to use `lettabot-message`.
 
+## Agent CLI Tools
+
+LettaBot includes small CLIs the agent can invoke via Bash (or you can run directly):
+
+```bash
+lettabot-message send --text "Hello from a background task"
+lettabot-react add --emoji :eyes: --channel discord --chat 123 --message 456
+lettabot-history fetch --limit 25 --channel discord --chat 123456789
+```
+
+See [CLI Tools](docs/cli-tools.md) for details and limitations.
+
 ## Connect to Letta Code 
 Any LettaBot agent can also be directly chatted with through [Letta Code](https://github.com/letta-ai/letta-code). Use the `/status` command to find your `agent_id`, and run: 
 ```sh
