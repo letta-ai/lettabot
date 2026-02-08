@@ -4,7 +4,7 @@
  * Single agent, single conversation - chat continues across all channels.
  */
 
-import { createAgent, createSession, resumeSession, type Session } from '@letta-ai/letta-code-sdk';
+import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage } from '@letta-ai/letta-code-sdk';
 import { mkdirSync } from 'node:fs';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
@@ -31,6 +31,52 @@ function isApprovalConflictError(error: unknown): boolean {
   const statusError = error as { status?: number };
   if (statusError?.status === 409) return true;
   return false;
+}
+
+const SUPPORTED_IMAGE_MIMES = new Set([
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+]);
+
+async function buildMultimodalMessage(
+  formattedText: string,
+  msg: InboundMessage,
+): Promise<SendMessage> {
+  // Respect opt-out: when INLINE_IMAGES=false, skip multimodal and only send file paths in envelope
+  if (process.env.INLINE_IMAGES === 'false') {
+    return formattedText;
+  }
+
+  const imageAttachments = (msg.attachments ?? []).filter(
+    (a) => a.kind === 'image'
+      && (a.localPath || a.url)
+      && (!a.mimeType || SUPPORTED_IMAGE_MIMES.has(a.mimeType))
+  );
+
+  if (imageAttachments.length === 0) {
+    return formattedText;
+  }
+
+  const content: MessageContentItem[] = [
+    { type: 'text', text: formattedText },
+  ];
+
+  for (const attachment of imageAttachments) {
+    try {
+      if (attachment.localPath) {
+        content.push(imageFromFile(attachment.localPath));
+      } else if (attachment.url) {
+        content.push(await imageFromURL(attachment.url));
+      }
+    } catch (err) {
+      console.warn(`[Bot] Failed to load image ${attachment.name || 'unknown'}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  if (content.length > 1) {
+    console.log(`[Bot] Sending ${content.length - 1} inline image(s) to LLM`);
+  }
+
+  return content.length > 1 ? content : formattedText;
 }
 
 export class LettaBot {
@@ -440,11 +486,12 @@ export class LettaBot {
       } : undefined;
 
       // Send message to agent with metadata envelope
-      const formattedMessage = msg.isBatch && msg.batchedMessages
+      const formattedText = msg.isBatch && msg.batchedMessages
         ? formatGroupBatchEnvelope(msg.batchedMessages)
-        : formatMessageEnvelope(msg);
+        : formatMessageEnvelope(msg, {}, sessionContext);
+      const messageToSend = await buildMultimodalMessage(formattedText, msg);
       try {
-        await withTimeout(session.send(formattedMessage), 'Session send');
+        await withTimeout(session.send(messageToSend), 'Session send');
       } catch (sendError) {
         // Check for 409 CONFLICT from orphaned approval_request_message
         if (!retried && isApprovalConflictError(sendError) && this.store.agentId && this.store.conversationId) {
@@ -657,6 +704,13 @@ export class LettaBot {
         sentAnyMessage = true;
         response = '';
       }
+
+      // Detect unsupported multimodal: images were sent but server replaced them
+      const sentImages = Array.isArray(messageToSend);
+      if (sentImages && response.includes('[Image omitted]')) {
+        console.warn('[Bot] Model does not support images — server replaced inline images with "[Image omitted]". Consider using a vision-capable model or setting features.inlineImages: false in config.');
+      }
+
 
       // Send final response
       if (response.trim()) {
