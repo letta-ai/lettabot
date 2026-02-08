@@ -83,6 +83,7 @@ export interface InboundMessage {
   reaction?: InboundReaction;
   isBatch?: boolean;                  // Is this a batched group message?
   batchedMessages?: InboundMessage[]; // Original individual messages (for batch formatting)
+  isListeningMode?: boolean;          // Listening mode: agent processes for memory but response is suppressed
 }
 
 /**

@@ -45,6 +45,7 @@ export class LettaBot {
   private groupBatcher?: GroupBatcher;
   private groupIntervals: Map<string, number> = new Map(); // channel -> intervalMin
   private instantGroupIds: Set<string> = new Set(); // channel:id keys for instant processing
+  private listeningGroupIds: Set<string> = new Set(); // channel:id keys for listen-only mode
   private processing = false;
   
   constructor(config: BotConfig) {
@@ -72,11 +73,14 @@ export class LettaBot {
   /**
    * Set the group batcher and per-channel intervals.
    */
-  setGroupBatcher(batcher: GroupBatcher, intervals: Map<string, number>, instantGroupIds?: Set<string>): void {
+  setGroupBatcher(batcher: GroupBatcher, intervals: Map<string, number>, instantGroupIds?: Set<string>, listeningGroupIds?: Set<string>): void {
     this.groupBatcher = batcher;
     this.groupIntervals = intervals;
     if (instantGroupIds) {
       this.instantGroupIds = instantGroupIds;
+    }
+    if (listeningGroupIds) {
+      this.listeningGroupIds = listeningGroupIds;
     }
     console.log('[Bot] Group batcher configured');
   }
@@ -94,6 +98,14 @@ export class LettaBot {
     const effective = (count === 1 && msg.batchedMessages)
       ? msg.batchedMessages[0]
       : msg;
+
+    // Check if this group is in listening mode
+    const isListening = this.listeningGroupIds.has(`${msg.channel}:${msg.chatId}`)
+      || (msg.serverId && this.listeningGroupIds.has(`${msg.channel}:${msg.serverId}`));
+    if (isListening && !msg.wasMentioned) {
+      effective.isListeningMode = true;
+    }
+
     this.messageQueue.push({ msg: effective, adapter });
     if (!this.processing) {
       this.processQueue().catch(err => console.error('[Queue] Fatal error in processQueue:', err));
@@ -313,27 +325,34 @@ export class LettaBot {
     // Track when user last sent a message (for heartbeat skip logic)
     this.lastUserMessageTime = new Date();
     
-    // Track last message target for heartbeat delivery
-    this.store.lastMessageTarget = {
-      channel: msg.channel,
-      chatId: msg.chatId,
-      messageId: msg.messageId,
-      updatedAt: new Date().toISOString(),
-    };
-    
-    console.log('[Bot] Sending typing indicator');
-    // Start typing indicator
-    await adapter.sendTypingIndicator(msg.chatId);
-    console.log('[Bot] Typing indicator sent');
-    
+    // Skip heartbeat target update for listening mode (don't redirect heartbeats)
+    if (!msg.isListeningMode) {
+      // Track last message target for heartbeat delivery
+      this.store.lastMessageTarget = {
+        channel: msg.channel,
+        chatId: msg.chatId,
+        messageId: msg.messageId,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    // Skip typing indicator for listening mode
+    if (!msg.isListeningMode) {
+      console.log('[Bot] Sending typing indicator');
+      await adapter.sendTypingIndicator(msg.chatId);
+      console.log('[Bot] Typing indicator sent');
+    }
+
     // Attempt recovery from stuck approval state before starting session
     const recovery = await this.attemptRecovery();
     if (recovery.shouldReset) {
-      await adapter.sendMessage({
-        chatId: msg.chatId,
-        text: '(Session recovery failed after multiple attempts. Try: lettabot reset-conversation)',
-        threadId: msg.threadId,
-      });
+      if (!msg.isListeningMode) {
+        await adapter.sendMessage({
+          chatId: msg.chatId,
+          text: '(Session recovery failed after multiple attempts. Try: lettabot reset-conversation)',
+          threadId: msg.threadId,
+        });
+      }
       return;
     }
     if (recovery.recovered) {
@@ -441,7 +460,7 @@ export class LettaBot {
 
       // Send message to agent with metadata envelope
       const formattedMessage = msg.isBatch && msg.batchedMessages
-        ? formatGroupBatchEnvelope(msg.batchedMessages)
+        ? formatGroupBatchEnvelope(msg.batchedMessages, {}, msg.isListeningMode)
         : formatMessageEnvelope(msg);
       try {
         await withTimeout(session.send(formattedMessage), 'Session send');
@@ -656,6 +675,12 @@ export class LettaBot {
         console.log('[Bot] Agent chose not to reply (no-reply marker)');
         sentAnyMessage = true;
         response = '';
+      }
+
+      // Listening mode: agent processed for memory, suppress response delivery
+      if (msg.isListeningMode) {
+        console.log(`[Bot] Listening mode: processed ${msg.channel}:${msg.chatId} for memory (response suppressed)`);
+        return;
       }
 
       // Send final response
