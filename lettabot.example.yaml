@@ -35,10 +35,18 @@ channels:
     enabled: true
     token: YOUR-TELEGRAM-BOT-TOKEN
     dmPolicy: pairing  # 'pairing', 'allowlist', or 'open'
+    # groupPollIntervalMin: 5       # Batch interval for group messages (default: 10)
+    # instantGroups: ["-100123456"] # Groups that bypass batching
+    # listeningGroups: ["-100123456"] # Groups where bot observes but only replies when @mentioned
   # slack:
   #   enabled: true
   #   appToken: xapp-...
   #   botToken: xoxb-...
+  #   listeningGroups: ["C0123456789"]  # Channels where bot observes only
+  # discord:
+  #   enabled: true
+  #   token: YOUR-DISCORD-BOT-TOKEN
+  #   listeningGroups: ["1234567890123456789"]  # Server/channel IDs where bot observes only
   # whatsapp:
   #   enabled: true
   #   selfChat: false
