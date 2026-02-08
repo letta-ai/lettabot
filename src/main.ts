@@ -115,6 +115,7 @@ await refreshTokensIfNeeded();
 
 import { LettaBot } from './core/bot.js';
 import { TelegramAdapter } from './channels/telegram.js';
+import { TelegramMTProtoAdapter } from './channels/telegram-mtproto.js';
 import { SlackAdapter } from './channels/slack.js';
 import { WhatsAppAdapter } from './channels/whatsapp/index.js';
 import { SignalAdapter } from './channels/signal.js';
@@ -250,6 +251,17 @@ const config = {
       : 10,
     instantGroups: process.env.TELEGRAM_INSTANT_GROUPS?.split(',').filter(Boolean) || [],
   },
+  telegramMtproto: {
+    enabled: !!process.env.TELEGRAM_API_ID && !!process.env.TELEGRAM_API_HASH && !!process.env.TELEGRAM_PHONE_NUMBER,
+    apiId: parseInt(process.env.TELEGRAM_API_ID || '0', 10),
+    apiHash: process.env.TELEGRAM_API_HASH || '',
+    phoneNumber: process.env.TELEGRAM_PHONE_NUMBER || '',
+    databaseDirectory: process.env.TELEGRAM_MTPROTO_DB_DIR || './data/telegram-mtproto',
+    dmPolicy: (process.env.TELEGRAM_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
+    allowedUsers: process.env.TELEGRAM_ALLOWED_USERS?.split(',').filter(Boolean).map(Number) || [],
+    groupPolicy: (process.env.TELEGRAM_GROUP_POLICY || 'both') as 'mention' | 'reply' | 'both' | 'off',
+    adminChatId: process.env.TELEGRAM_ADMIN_CHAT_ID ? parseInt(process.env.TELEGRAM_ADMIN_CHAT_ID, 10) : undefined,
+  },
   slack: {
     enabled: !!process.env.SLACK_BOT_TOKEN && !!process.env.SLACK_APP_TOKEN,
     botToken: process.env.SLACK_BOT_TOKEN || '',
@@ -329,9 +341,17 @@ const config = {
 };
 
 // Validate at least one channel is configured
-if (!config.telegram.enabled && !config.slack.enabled && !config.whatsapp.enabled && !config.signal.enabled && !config.discord.enabled) {
+if (!config.telegram.enabled && !config.telegramMtproto.enabled && !config.slack.enabled && !config.whatsapp.enabled && !config.signal.enabled && !config.discord.enabled) {
   console.error('\n  Error: No channels configured.');
   console.error('  Set TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN+SLACK_APP_TOKEN, WHATSAPP_ENABLED=true, SIGNAL_PHONE_NUMBER, or DISCORD_BOT_TOKEN\n');
+  process.exit(1);
+}
+
+// Validate mutual exclusion: cannot use both Telegram Bot API and MTProto simultaneously
+if (config.telegram.enabled && config.telegramMtproto.enabled) {
+  console.error('\n  Error: Cannot use both TELEGRAM_BOT_TOKEN and TELEGRAM_API_ID simultaneously.');
+  console.error('  The Bot API adapter and MTProto adapter cannot run together.');
+  console.error('  Choose one: set TELEGRAM_BOT_TOKEN for bot mode, or TELEGRAM_API_ID/TELEGRAM_API_HASH/TELEGRAM_PHONE_NUMBER for user mode.\n');
   process.exit(1);
 }
 
@@ -430,6 +450,20 @@ async function main() {
       attachmentsMaxBytes: config.attachmentsMaxBytes,
     });
     bot.registerChannel(telegram);
+  }
+
+  if (config.telegramMtproto.enabled) {
+    const telegramMtproto = new TelegramMTProtoAdapter({
+      apiId: config.telegramMtproto.apiId,
+      apiHash: config.telegramMtproto.apiHash,
+      phoneNumber: config.telegramMtproto.phoneNumber,
+      databaseDirectory: config.telegramMtproto.databaseDirectory,
+      dmPolicy: config.telegramMtproto.dmPolicy,
+      allowedUsers: config.telegramMtproto.allowedUsers.length > 0 ? config.telegramMtproto.allowedUsers : undefined,
+      groupPolicy: config.telegramMtproto.groupPolicy,
+      adminChatId: config.telegramMtproto.adminChatId,
+    });
+    bot.registerChannel(telegramMtproto);
   }
   
   if (config.slack.enabled) {

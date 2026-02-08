@@ -193,10 +193,20 @@ Reply **approve** or **deny** to this message.`;
    */
   private async initializeClient(): Promise<void> {
     // Dynamic import to avoid issues if packages aren't installed
-    tdlModule = await import('tdl');
-    const prebuiltModule = await import('prebuilt-tdlib');
-
-    getTdjson = prebuiltModule.getTdjson;
+    try {
+      tdlModule = await import('tdl');
+      const prebuiltModule = await import('prebuilt-tdlib');
+      getTdjson = prebuiltModule.getTdjson;
+    } catch (err: any) {
+      if (err.code === 'ERR_MODULE_NOT_FOUND' || err.code === 'MODULE_NOT_FOUND') {
+        throw new Error(
+          'Telegram MTProto adapter requires tdl and prebuilt-tdlib packages.\n' +
+          'Install them with: npm install tdl prebuilt-tdlib\n' +
+          'See: https://github.com/Bannerets/tdl#installation'
+        );
+      }
+      throw err;
+    }
 
     // CRITICAL: Configure tdl BEFORE creating client
     tdlModule.configure({ tdjson: getTdjson() });
@@ -747,10 +757,14 @@ Reply **approve** or **deny** to this message.`;
     this.sentMessageIds.add(result.id);
 
     // Limit set size to prevent memory leak (keep last 1000 messages)
+    // Delete 100 oldest entries at once to avoid constant single deletions
     if (this.sentMessageIds.size > 1000) {
-      const oldest = this.sentMessageIds.values().next().value;
-      if (oldest !== undefined) {
-        this.sentMessageIds.delete(oldest);
+      const iterator = this.sentMessageIds.values();
+      for (let i = 0; i < 100; i++) {
+        const oldest = iterator.next().value;
+        if (oldest !== undefined) {
+          this.sentMessageIds.delete(oldest);
+        }
       }
     }
 
@@ -794,22 +808,24 @@ Reply **approve** or **deny** to this message.`;
 
   /**
    * Safely convert chatId to number, checking for safe integer bounds
+   * @throws Error if chatId exceeds JavaScript safe integer bounds
    */
   private safeChatId(chatId: string): number {
     const num = Number(chatId);
     if (!Number.isSafeInteger(num)) {
-      console.warn(`[Telegram MTProto] Chat ID ${chatId} exceeds safe integer bounds`);
+      throw new Error(`Chat ID ${chatId} exceeds safe integer bounds (max: ${Number.MAX_SAFE_INTEGER}). This chat cannot be used with TDLib's number-based API.`);
     }
     return num;
   }
 
   /**
    * Safely convert messageId to number
+   * @throws Error if messageId exceeds JavaScript safe integer bounds
    */
   private safeMessageId(messageId: string): number {
     const num = Number(messageId);
     if (!Number.isSafeInteger(num)) {
-      console.warn(`[Telegram MTProto] Message ID ${messageId} exceeds safe integer bounds`);
+      throw new Error(`Message ID ${messageId} exceeds safe integer bounds (max: ${Number.MAX_SAFE_INTEGER}).`);
     }
     return num;
   }
