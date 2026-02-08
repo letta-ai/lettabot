@@ -15,6 +15,7 @@ import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOpt
 import type { GroupBatcher } from './group-batcher.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
+import type { SwarmManager } from '../swarm/swarm-manager.js';
 
 
 /**
@@ -46,7 +47,8 @@ export class LettaBot {
   private groupIntervals: Map<string, number> = new Map(); // channel -> intervalMin
   private instantGroupIds: Set<string> = new Set(); // channel:id keys for instant processing
   private processing = false;
-  
+  private swarmManager?: SwarmManager;
+
   constructor(config: BotConfig) {
     this.config = config;
     
@@ -69,6 +71,15 @@ export class LettaBot {
     console.log(`Registered channel: ${adapter.name}`);
   }
   
+  /**
+   * Set the swarm manager for multi-agent routing.
+   * When set and store mode is 'swarm', handleMessage() delegates to SwarmManager.
+   */
+  setSwarmManager(manager: SwarmManager): void {
+    this.swarmManager = manager;
+    console.log('[Bot] Swarm manager configured');
+  }
+
   /**
    * Set the group batcher and per-channel intervals.
    */
@@ -253,6 +264,20 @@ export class LettaBot {
    */
   private async handleMessage(msg: InboundMessage, adapter: ChannelAdapter): Promise<void> {
     console.log(`[${msg.channel}] Message from ${msg.userId}: ${msg.text}`);
+
+    // Route to swarm manager if in swarm mode
+    if (this.swarmManager) {
+      const route = this.swarmManager.routeMessage(msg);
+      if (route) {
+        console.log(`[Bot] Swarm routing: ${msg.channel}:${msg.userId} → agent ${route.agentId}`);
+        this.swarmManager.enqueueMessage(route.agentId, msg);
+        this.swarmManager.processQueues().catch(err =>
+          console.error('[Bot] Swarm queue error:', err));
+        return;
+      }
+      // Fall through to single-agent path if no route found
+      console.log('[Bot] Swarm: no route found, falling back to single-agent path');
+    }
 
     // Route group messages to batcher if configured
     if (msg.isGroup && this.groupBatcher) {

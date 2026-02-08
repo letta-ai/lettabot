@@ -503,6 +503,42 @@ export class CronService {
   }
   
   /**
+   * Schedule a TEAM-Elites evolution job.
+   * The callback is invoked on each scheduled tick.
+   */
+  addEvolutionJob(cronExpr: string, callback: () => Promise<void>): void {
+    if (!schedule) {
+      console.error('[Cron] Cannot add evolution job: service not started');
+      return;
+    }
+
+    const jobId = 'evolution-loop';
+    // Cancel existing evolution job if any
+    const existing = this.scheduledJobs.get(jobId);
+    if (existing) {
+      existing.cancel();
+    }
+
+    const scheduledJob = schedule.scheduleJob(cronExpr, async () => {
+      logEvent('evolution_start', { jobId });
+      try {
+        await callback();
+        logEvent('evolution_complete', { jobId });
+      } catch (error) {
+        logEvent('evolution_error', {
+          jobId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+
+    if (scheduledJob) {
+      this.scheduledJobs.set(jobId, scheduledJob);
+      console.log(`[Cron] Evolution job scheduled: ${cronExpr}`);
+    }
+  }
+
+  /**
    * Get service status
    */
   getStatus(): {
