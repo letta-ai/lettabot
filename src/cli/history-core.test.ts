@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchDiscordHistory, fetchHistory, loadLastTarget, parseFetchArgs } from './history-core.js';
+import { fetchDiscordHistory, fetchHistory, isValidLimit, loadLastTarget, parseFetchArgs } from './history-core.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -30,6 +30,17 @@ describe('parseFetchArgs', () => {
       before: '456',
       limit: 25,
     });
+  });
+});
+
+describe('isValidLimit', () => {
+  it('accepts positive integers only', () => {
+    expect(isValidLimit(1)).toBe(true);
+    expect(isValidLimit(50)).toBe(true);
+    expect(isValidLimit(0)).toBe(false);
+    expect(isValidLimit(-1)).toBe(false);
+    expect(isValidLimit(1.5)).toBe(false);
+    expect(isValidLimit(Number.NaN)).toBe(false);
   });
 });
 

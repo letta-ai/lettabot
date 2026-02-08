@@ -11,6 +11,10 @@ interface AgentStore {
 
 export const DEFAULT_LIMIT = 50;
 
+export function isValidLimit(limit: number): boolean {
+  return Number.isInteger(limit) && limit > 0;
+}
+
 export function loadLastTarget(storePath: string): LastTarget | null {
   try {
     if (existsSync(storePath)) {

@@ -12,7 +12,7 @@ const config = loadConfig();
 applyConfigToEnv(config);
 import { resolve } from 'node:path';
 import { getDataDir } from '../utils/paths.js';
-import { fetchHistory, loadLastTarget, parseFetchArgs } from './history-core.js';
+import { fetchHistory, isValidLimit, loadLastTarget, parseFetchArgs } from './history-core.js';
 
 const STORE_PATH = resolve(getDataDir(), 'lettabot-agent.json');
 
@@ -22,6 +22,12 @@ async function fetchCommand(args: string[]): Promise<void> {
   let chatId = parsed.chatId || '';
   const before = parsed.before || '';
   const limit = parsed.limit;
+
+  if (!isValidLimit(limit)) {
+    console.error('Error: --limit must be a positive integer');
+    console.error('Usage: lettabot-history fetch --limit 50 [--channel discord] [--chat 123456] [--before 789]');
+    process.exit(1);
+  }
 
   if (!channel || !chatId) {
     const lastTarget = loadLastTarget(STORE_PATH);
