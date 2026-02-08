@@ -599,24 +599,49 @@ This code expires in 1 hour.`;
       const voiceAttachment = attachments?.find(a => a.contentType?.startsWith('audio/'));
       if (voiceAttachment?.id) {
         console.log(`[Signal] Voice attachment detected: ${voiceAttachment.contentType}, id: ${voiceAttachment.id}`);
+        
+        // Always persist voice audio to attachments directory
+        let savedAudioPath: string | undefined;
+        const signalAttDir = join(homedir(), '.local/share/signal-cli/attachments');
+        const voiceSourcePath = join(signalAttDir, voiceAttachment.id);
+        
+        if (this.config.attachmentsDir) {
+          const rawExt = voiceAttachment.contentType?.split('/')[1] || 'ogg';
+          // Clean extension: "aac" not "aac.aac" (filename may already have extension)
+          const ext = rawExt.replace(/;.*$/, ''); // strip codec params like "ogg;codecs=opus"
+          const voiceFileName = `voice-${voiceAttachment.id}.${ext}`;
+          const voiceTargetPath = buildAttachmentPath(this.config.attachmentsDir, 'signal', chatId, voiceFileName);
+          try {
+            const voiceFileReady = await waitForFile(voiceSourcePath, 5000);
+            if (voiceFileReady) {
+              await copyFile(voiceSourcePath, voiceTargetPath);
+              savedAudioPath = voiceTargetPath;
+              console.log(`[Signal] Voice audio saved to ${voiceTargetPath}`);
+            }
+          } catch (err) {
+            console.warn('[Signal] Failed to save voice audio:', err);
+          }
+        }
+        
         try {
           const { loadConfig } = await import('../config/index.js');
           const config = loadConfig();
           if (!config.transcription?.apiKey && !process.env.OPENAI_API_KEY) {
             if (chatId) {
+              const audioInfo = savedAudioPath ? ` Audio saved to: ${savedAudioPath}` : '';
               await this.sendMessage({ 
                 chatId, 
-                text: 'Voice messages require OpenAI API key for transcription. See: https://github.com/letta-ai/lettabot#voice-messages' 
+                text: `Voice messages require OpenAI API key for transcription.${audioInfo} See: https://github.com/letta-ai/lettabot#voice-messages` 
               });
             }
           } else {
             // Read attachment from signal-cli attachments directory
             // Note: signal-cli may still be downloading when SSE event fires, so we wait
             const { readFileSync } = await import('node:fs');
-            const { homedir } = await import('node:os');
-            const { join } = await import('node:path');
+            const { homedir: hd } = await import('node:os');
+            const { join: pjoin } = await import('node:path');
             
-            const attachmentPath = join(homedir(), '.local/share/signal-cli/attachments', voiceAttachment.id);
+            const attachmentPath = pjoin(hd(), '.local/share/signal-cli/attachments', voiceAttachment.id);
             console.log(`[Signal] Waiting for attachment: ${attachmentPath}`);
             
             // Wait for file to be available (signal-cli may still be downloading)
@@ -634,26 +659,26 @@ This code expires in 1 hour.`;
             const ext = voiceAttachment.contentType?.split('/')[1] || 'ogg';
             const result = await transcribeAudio(buffer, `voice.${ext}`, { audioPath: attachmentPath });
             
+            const audioRef = savedAudioPath ? ` (audio: ${savedAudioPath})` : '';
+            
             if (result.success) {
               if (result.text) {
                 console.log(`[Signal] Transcribed voice message: "${result.text.slice(0, 50)}..."`);
                 messageText = (messageText ? messageText + '\n' : '') + `[Voice message]: ${result.text}`;
               } else {
                 console.warn(`[Signal] Transcription returned empty text`);
-                messageText = (messageText ? messageText + '\n' : '') + `[Voice message - transcription returned empty]`;
+                messageText = (messageText ? messageText + '\n' : '') + `[Voice message - transcription returned empty${audioRef}]`;
               }
             } else {
               const errorMsg = result.error || 'Unknown transcription error';
               console.error(`[Signal] Transcription failed: ${errorMsg}`);
-              const errorInfo = result.audioPath 
-                ? `[Voice message - transcription failed: ${errorMsg}. Audio saved to: ${result.audioPath}]`
-                : `[Voice message - transcription failed: ${errorMsg}]`;
-              messageText = (messageText ? messageText + '\n' : '') + errorInfo;
+              messageText = (messageText ? messageText + '\n' : '') + `[Voice message - transcription failed: ${errorMsg}${audioRef}]`;
             }
           }
         } catch (error) {
           console.error('[Signal] Error transcribing voice message:', error);
-          messageText = (messageText ? messageText + '\n' : '') + `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`;
+          const audioRef = savedAudioPath ? ` Audio saved to: ${savedAudioPath}` : '';
+          messageText = (messageText ? messageText + '\n' : '') + `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}.${audioRef}]`;
         }
       } else if (attachments?.some(a => a.contentType?.startsWith('audio/'))) {
         // Audio attachment exists but has no ID
