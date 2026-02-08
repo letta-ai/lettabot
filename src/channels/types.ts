@@ -26,6 +26,7 @@ export interface ChannelAdapter {
   // Capabilities (optional)
   supportsEditing?(): boolean;
   sendFile?(file: OutboundFile): Promise<{ messageId: string }>;
+  addReaction?(chatId: string, messageId: string, emoji: string): Promise<void>;
   getDmPolicy?(): string;
   
   // Event handlers (set by bot core)
