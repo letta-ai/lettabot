@@ -8,6 +8,7 @@
     "lettabot-schedule": "./dist/cron/cli.js",
     "lettabot-message": "./dist/cli/message.js",
     "lettabot-react": "./dist/cli/react.js",
+    "lettabot-history": "./dist/cli/history.js",
     "lettabot-channels": "./dist/cli/channels.js"
   },
   "scripts": {
