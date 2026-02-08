@@ -1,0 +1,20 @@
+{
+  "status": "in_progress",
+  "startedAt": "2026-02-08T00:00:00.000Z",
+  "updatedAt": "2026-02-08T00:00:00.000Z",
+  "designDoc": "docs/team-elites-design.md",
+  "modules": {
+    "team-types":          { "step": "pending", "commits": {} },
+    "swarm-store":         { "step": "pending", "commits": {} },
+    "niche-matcher":       { "step": "pending", "commits": {} },
+    "hub-client":          { "step": "pending", "commits": {} },
+    "variation-operators": { "step": "pending", "commits": {} },
+    "fitness-evaluator":   { "step": "pending", "commits": {} },
+    "evolution-engine":    { "step": "pending", "commits": {} },
+    "swarm-manager":       { "step": "pending", "commits": {} },
+    "bot-integration":     { "step": "pending", "commits": {} },
+    "integration":         { "step": "pending", "commits": {} }
+  },
+  "gates": [],
+  "testCounts": { "total": 0, "expected": 68, "passing": 0, "failing": 0 }
+}
