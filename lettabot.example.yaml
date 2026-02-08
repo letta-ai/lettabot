@@ -50,6 +50,12 @@ features:
   heartbeat:
     enabled: false
     intervalMin: 30
+  # swarm:
+  #   enabled: false
+  #   hubUrl: http://localhost:1731/mcp    # Thoughtbox Hub URL
+  #   schedule: '0 */6 * * *'             # Evolution every 6 hours
+  #   populationSize: 5                    # Candidates per generation
+  #   maxAgents: 25                        # Max concurrent agents
 
 # Attachment handling (defaults to 20MB if omitted)
 # attachments:

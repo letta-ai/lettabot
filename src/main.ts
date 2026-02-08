@@ -124,6 +124,14 @@ import { CronService } from './cron/service.js';
 import { HeartbeatService } from './cron/heartbeat.js';
 import { PollingService } from './polling/service.js';
 import { agentExists, findAgentByName, ensureNoToolApprovals } from './tools/letta-api.js';
+import { SwarmStore } from './swarm/swarm-store.js';
+import { SwarmManager } from './swarm/swarm-manager.js';
+import { matchNiche } from './swarm/niche-matcher.js';
+import { HubClient } from './swarm/hub-client.js';
+import { EvolutionEngine } from './swarm/evolution-engine.js';
+import { DEFAULT_EVOLUTION_CONFIG } from './swarm/types.js';
+import type { NicheDescriptor, Domain } from './swarm/types.js';
+import type { ChannelId } from './core/types.js';
 // Skills are now installed to agent-scoped location after agent creation (see bot.ts)
 
 // Check if config exists (skip in Railway/Docker where env vars are used directly)
@@ -308,6 +316,19 @@ const config = {
     target: parseHeartbeatTarget(process.env.HEARTBEAT_TARGET),
   },
   
+  // Swarm
+  swarm: {
+    enabled: process.env.SWARM_ENABLED === 'true',
+    hubUrl: process.env.SWARM_HUB_URL || 'http://localhost:1731/mcp',
+    schedule: process.env.SWARM_SCHEDULE || DEFAULT_EVOLUTION_CONFIG.schedule,
+    populationSize: process.env.SWARM_POPULATION_SIZE
+      ? parseInt(process.env.SWARM_POPULATION_SIZE, 10)
+      : DEFAULT_EVOLUTION_CONFIG.populationSize,
+    maxAgents: process.env.SWARM_MAX_AGENTS
+      ? parseInt(process.env.SWARM_MAX_AGENTS, 10)
+      : DEFAULT_EVOLUTION_CONFIG.maxAgents,
+  },
+
   // Polling - system-level background checks
   // Priority: YAML polling section > YAML integrations.google (legacy) > env vars
   polling: (() => {
@@ -566,6 +587,68 @@ async function main() {
     pollingService.start();
   }
   
+  // Start swarm mode if enabled
+  if (config.swarm.enabled) {
+    console.log('[Swarm] Initializing TEAM-Elites swarm mode...');
+
+    // Create SwarmStore (uses same data dir as Store)
+    const swarmStore = new SwarmStore(getDataDir());
+    swarmStore.mode = 'swarm';
+
+    // Create SwarmManager and wire into bot
+    const swarmManager = new SwarmManager(swarmStore, matchNiche);
+    bot.setSwarmManager(swarmManager);
+
+    // Derive niches from enabled channels x all domains
+    const enabledChannels: ChannelId[] = [];
+    if (config.telegram.enabled) enabledChannels.push('telegram');
+    if (config.slack.enabled) enabledChannels.push('slack');
+    if (config.whatsapp.enabled) enabledChannels.push('whatsapp');
+    if (config.signal.enabled) enabledChannels.push('signal');
+    if (config.discord.enabled) enabledChannels.push('discord');
+
+    const domains: Domain[] = ['coding', 'research', 'scheduling', 'communication', 'general'];
+    const niches: NicheDescriptor[] = enabledChannels.flatMap(channel =>
+      domains.map(domain => ({ channel, domain, key: `${channel}-${domain}` }))
+    );
+
+    // Create HubClient + EvolutionEngine
+    const hubClient = new HubClient(config.swarm.hubUrl);
+    const evolutionEngine = new EvolutionEngine(hubClient, swarmStore, {
+      schedule: config.swarm.schedule,
+      populationSize: config.swarm.populationSize,
+      maxAgents: config.swarm.maxAgents,
+      fitnessWeights: DEFAULT_EVOLUTION_CONFIG.fitnessWeights,
+    });
+
+    // Initialize archive (register with Hub, create workspace + problems)
+    try {
+      await evolutionEngine.initializeArchive(niches);
+      console.log(`[Swarm] Archive initialized: ${niches.length} niches across ${enabledChannels.length} channels`);
+      console.log(`[Swarm] Hub agent: ${swarmStore.hubAgentId}`);
+    } catch (err) {
+      console.error('[Swarm] Failed to initialize archive (Hub may be unavailable):', err);
+      console.error('[Swarm] Swarm routing is active but evolution will not run until Hub is reachable.');
+    }
+
+    // Schedule evolution cron job
+    if (!cronService) {
+      cronService = new CronService(bot);
+      await cronService.start();
+    }
+    cronService.addEvolutionJob(config.swarm.schedule, async () => {
+      console.log('[Swarm] Running evolution generation...');
+      try {
+        await evolutionEngine.runGeneration(niches);
+        console.log('[Swarm] Evolution generation complete');
+      } catch (err) {
+        console.error('[Swarm] Evolution generation failed:', err);
+      }
+    });
+
+    console.log(`[Swarm] Evolution scheduled: ${config.swarm.schedule}`);
+  }
+
   // Start all channels
   await bot.start();
   
@@ -596,6 +679,7 @@ async function main() {
   }
   console.log(`Channels: ${status.channels.join(', ')}`);
   console.log(`Cron: ${config.cronEnabled ? 'enabled' : 'disabled'}`);
+  console.log(`Swarm: ${config.swarm.enabled ? `enabled (schedule: ${config.swarm.schedule})` : 'disabled'}`);
   console.log(`Heartbeat: ${config.heartbeat.enabled ? `every ${config.heartbeat.intervalMinutes} min` : 'disabled'}`);
   console.log(`Polling: ${config.polling.enabled ? `every ${config.polling.intervalMs / 1000}s` : 'disabled'}`);
   if (config.polling.gmail.enabled) {

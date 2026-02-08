@@ -44,6 +44,13 @@ export interface LettaBotConfig {
       intervalMin?: number;
     };
     maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)
+    swarm?: {
+      enabled: boolean;
+      hubUrl?: string;           // Thoughtbox Hub URL (default: http://localhost:1731/mcp)
+      schedule?: string;         // Evolution cron expression (default: '0 */6 * * *')
+      populationSize?: number;   // Candidates per generation (default: 5)
+      maxAgents?: number;        // Max concurrent agents (default: 25)
+    };
   };
 
   // Polling - system-level background checks (Gmail, etc.)

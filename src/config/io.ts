@@ -206,6 +206,21 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.features?.maxToolCalls !== undefined) {
     env.MAX_TOOL_CALLS = String(config.features.maxToolCalls);
   }
+  if (config.features?.swarm?.enabled) {
+    env.SWARM_ENABLED = 'true';
+    if (config.features.swarm.hubUrl) {
+      env.SWARM_HUB_URL = config.features.swarm.hubUrl;
+    }
+    if (config.features.swarm.schedule) {
+      env.SWARM_SCHEDULE = config.features.swarm.schedule;
+    }
+    if (config.features.swarm.populationSize !== undefined) {
+      env.SWARM_POPULATION_SIZE = String(config.features.swarm.populationSize);
+    }
+    if (config.features.swarm.maxAgents !== undefined) {
+      env.SWARM_MAX_AGENTS = String(config.features.swarm.maxAgents);
+    }
+  }
   
   // Polling - top-level polling config (preferred)
   if (config.polling?.gmail?.enabled && config.polling.gmail.account) {
