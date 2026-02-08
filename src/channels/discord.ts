@@ -313,6 +313,17 @@ Ask the bot owner to approve with:
     await message.edit(text);
   }
 
+  async addReaction(chatId: string, messageId: string, emoji: string): Promise<void> {
+    if (!this.client) throw new Error('Discord not started');
+    const channel = await this.client.channels.fetch(chatId);
+    if (!channel || !channel.isTextBased()) {
+      throw new Error(`Discord channel not found or not text-based: ${chatId}`);
+    }
+
+    const message = await channel.messages.fetch(messageId);
+    await message.react(emoji);
+  }
+
   async sendTypingIndicator(chatId: string): Promise<void> {
     if (!this.client) return;
     try {
