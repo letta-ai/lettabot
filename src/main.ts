@@ -143,6 +143,7 @@ import { normalizeAgents } from './config/types.js';
 import { LettaGateway } from './core/gateway.js';
 import { LettaBot } from './core/bot.js';
 import { TelegramAdapter } from './channels/telegram.js';
+import { TelegramMTProtoAdapter } from './channels/telegram-mtproto.js';
 import { SlackAdapter } from './channels/slack.js';
 import { WhatsAppAdapter } from './channels/whatsapp/index.js';
 import { SignalAdapter } from './channels/signal.js';
@@ -267,15 +268,42 @@ function createChannelsForAgent(
 ): import('./channels/types.js').ChannelAdapter[] {
   const adapters: import('./channels/types.js').ChannelAdapter[] = [];
 
-  if (agentConfig.channels.telegram?.token) {
+  // Mutual exclusion: cannot use both Telegram Bot API and MTProto simultaneously
+  const hasTelegramBot = !!agentConfig.channels.telegram?.token;
+  const hasTelegramMtproto = !!(agentConfig.channels['telegram-mtproto'] as any)?.apiId;
+
+  if (hasTelegramBot && hasTelegramMtproto) {
+    console.error(`\n  Error: Agent "${agentConfig.name}" has both telegram and telegram-mtproto configured.`);
+    console.error('  The Bot API adapter and MTProto adapter cannot run together.');
+    console.error('  Choose one: telegram (bot token) or telegram-mtproto (user account).\n');
+    process.exit(1);
+  }
+
+  if (hasTelegramBot) {
     adapters.push(new TelegramAdapter({
-      token: agentConfig.channels.telegram.token,
-      dmPolicy: agentConfig.channels.telegram.dmPolicy || 'pairing',
-      allowedUsers: agentConfig.channels.telegram.allowedUsers && agentConfig.channels.telegram.allowedUsers.length > 0
-        ? agentConfig.channels.telegram.allowedUsers.map(u => typeof u === 'string' ? parseInt(u, 10) : u)
+      token: agentConfig.channels.telegram!.token!,
+      dmPolicy: agentConfig.channels.telegram!.dmPolicy || 'pairing',
+      allowedUsers: agentConfig.channels.telegram!.allowedUsers && agentConfig.channels.telegram!.allowedUsers.length > 0
+        ? agentConfig.channels.telegram!.allowedUsers.map(u => typeof u === 'string' ? parseInt(u, 10) : u)
         : undefined,
       attachmentsDir,
       attachmentsMaxBytes,
+    }));
+  }
+
+  if (hasTelegramMtproto) {
+    const mtprotoConfig = agentConfig.channels['telegram-mtproto'] as any;
+    adapters.push(new TelegramMTProtoAdapter({
+      apiId: mtprotoConfig.apiId,
+      apiHash: mtprotoConfig.apiHash,
+      phoneNumber: mtprotoConfig.phoneNumber,
+      databaseDirectory: mtprotoConfig.databaseDirectory || './data/telegram-mtproto',
+      dmPolicy: mtprotoConfig.dmPolicy || 'pairing',
+      allowedUsers: mtprotoConfig.allowedUsers && mtprotoConfig.allowedUsers.length > 0
+        ? mtprotoConfig.allowedUsers.map((u: string | number) => typeof u === 'string' ? parseInt(u, 10) : u)
+        : undefined,
+      groupPolicy: mtprotoConfig.groupPolicy || 'both',
+      adminChatId: mtprotoConfig.adminChatId,
     }));
   }
 
@@ -374,6 +402,14 @@ function createGroupBatcher(
       instantIds.add(`telegram:${id}`);
     }
   }
+  // telegram-mtproto uses 'telegram' as channel name but has its own config
+  const mtprotoConfig = agentConfig.channels['telegram-mtproto'];
+  if (mtprotoConfig) {
+    intervals.set('telegram', resolveDebounceMs(mtprotoConfig as any));
+    for (const id of mtprotoConfig.instantGroups || []) {
+      instantIds.add(`telegram:${id}`);
+    }
+  }
   if (agentConfig.channels.slack) {
     intervals.set('slack', resolveDebounceMs(agentConfig.channels.slack));
     for (const id of agentConfig.channels.slack.instantGroups || []) {
@@ -420,6 +456,7 @@ const globalConfig = {
   attachmentsMaxAgeDays: resolveAttachmentsMaxAgeDays(),
   cronEnabled: process.env.CRON_ENABLED === 'true',  // Legacy env var fallback
 };
+
 
 // Validate LETTA_API_KEY is set for cloud mode (selfhosted mode doesn't require it)
 if (yamlConfig.server.mode !== 'selfhosted' && !process.env.LETTA_API_KEY) {
@@ -511,7 +548,7 @@ async function main() {
         initialStatus = bot.getStatus();
       }
     }
-    
+
     // Container deploy: discover by name
     if (!initialStatus.agentId && isContainerDeploy) {
       const found = await findAgentByName(agentConfig.name);
@@ -521,7 +558,7 @@ async function main() {
         initialStatus = bot.getStatus();
       }
     }
-    
+
     if (!initialStatus.agentId) {
       console.log(`[Agent:${agentConfig.name}] No agent found - will create on first message`);
     }
