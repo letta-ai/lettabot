@@ -340,18 +340,34 @@ const config = {
   })(),
 };
 
+// Detect any MTProto-related config (for strict mutual exclusion check)
+const hasAnyMtprotoConfig = !!(
+  process.env.TELEGRAM_API_ID ||
+  process.env.TELEGRAM_API_HASH ||
+  process.env.TELEGRAM_PHONE_NUMBER
+);
+
 // Validate at least one channel is configured
 if (!config.telegram.enabled && !config.telegramMtproto.enabled && !config.slack.enabled && !config.whatsapp.enabled && !config.signal.enabled && !config.discord.enabled) {
   console.error('\n  Error: No channels configured.');
-  console.error('  Set TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN+SLACK_APP_TOKEN, WHATSAPP_ENABLED=true, SIGNAL_PHONE_NUMBER, or DISCORD_BOT_TOKEN\n');
+  console.error('  Set one of:');
+  console.error('    - TELEGRAM_BOT_TOKEN (Bot API)');
+  console.error('    - TELEGRAM_API_ID + TELEGRAM_API_HASH + TELEGRAM_PHONE_NUMBER (user account mode)');
+  console.error('    - SLACK_BOT_TOKEN + SLACK_APP_TOKEN');
+  console.error('    - WHATSAPP_ENABLED=true');
+  console.error('    - SIGNAL_PHONE_NUMBER');
+  console.error('    - DISCORD_BOT_TOKEN\n');
   process.exit(1);
 }
 
-// Validate mutual exclusion: cannot use both Telegram Bot API and MTProto simultaneously
-if (config.telegram.enabled && config.telegramMtproto.enabled) {
-  console.error('\n  Error: Cannot use both TELEGRAM_BOT_TOKEN and TELEGRAM_API_ID simultaneously.');
-  console.error('  The Bot API adapter and MTProto adapter cannot run together.');
-  console.error('  Choose one: set TELEGRAM_BOT_TOKEN for bot mode, or TELEGRAM_API_ID/TELEGRAM_API_HASH/TELEGRAM_PHONE_NUMBER for user mode.\n');
+// Validate mutual exclusion: cannot mix Telegram Bot API and MTProto config
+// Fail fast on ANY MTProto signal when Bot API is configured (avoid ambiguous config drift)
+if (config.telegram.enabled && hasAnyMtprotoConfig) {
+  console.error('\n  Error: Cannot mix TELEGRAM_BOT_TOKEN with user account configuration.');
+  console.error('  You must choose one Telegram mode:');
+  console.error('    - Bot mode: set only TELEGRAM_BOT_TOKEN');
+  console.error('    - Personal account mode: set TELEGRAM_API_ID + TELEGRAM_API_HASH + TELEGRAM_PHONE_NUMBER');
+  console.error('  Remove the conflicting variables and try again.\n');
   process.exit(1);
 }
 
