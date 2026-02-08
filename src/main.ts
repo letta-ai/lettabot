@@ -151,6 +151,18 @@ function parseHeartbeatTarget(raw?: string): { channel: string; chatId: string }
   return { channel: channel.toLowerCase(), chatId };
 }
 
+function parseGmailAccounts(raw?: string | string[]): string[] {
+  if (!raw) return [];
+  const values = Array.isArray(raw) ? raw : raw.split(',');
+  const seen = new Set<string>();
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+  }
+  return Array.from(seen);
+}
+
 const DEFAULT_ATTACHMENTS_MAX_MB = 20;
 const DEFAULT_ATTACHMENTS_MAX_AGE_DAYS = 14;
 const ATTACHMENTS_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -311,9 +323,26 @@ const config = {
   // Polling - system-level background checks
   // Priority: YAML polling section > YAML integrations.google (legacy) > env vars
   polling: (() => {
-    const gmailAccount = yamlConfig.polling?.gmail?.account
-      || process.env.GMAIL_ACCOUNT || '';
-    const gmailEnabled = yamlConfig.polling?.gmail?.enabled ?? !!gmailAccount;
+    const pollingAccounts = parseGmailAccounts(
+      yamlConfig.polling?.gmail?.accounts || yamlConfig.polling?.gmail?.account
+    );
+    const legacyAccounts = (() => {
+      const legacy = yamlConfig.integrations?.google;
+      if (legacy?.accounts?.length) {
+        const gmailAccounts = legacy.accounts
+          .filter(a => !a.services || a.services.length === 0 || a.services.includes('gmail'))
+          .map(a => a.account);
+        return parseGmailAccounts(gmailAccounts);
+      }
+      return parseGmailAccounts(legacy?.account);
+    })();
+    const envAccounts = parseGmailAccounts(process.env.GMAIL_ACCOUNT);
+    const gmailAccounts = pollingAccounts.length > 0
+      ? pollingAccounts
+      : legacyAccounts.length > 0
+        ? legacyAccounts
+        : envAccounts;
+    const gmailEnabled = yamlConfig.polling?.gmail?.enabled ?? gmailAccounts.length > 0;
     const intervalMs = yamlConfig.polling?.intervalMs
       ?? parseInt(process.env.POLLING_INTERVAL_MS || '60000', 10);
     const enabled = yamlConfig.polling?.enabled ?? gmailEnabled;
@@ -322,7 +351,7 @@ const config = {
       intervalMs,
       gmail: {
         enabled: gmailEnabled,
-        account: gmailAccount,
+        accounts: gmailAccounts,
       },
     };
   })(),
@@ -599,7 +628,10 @@ async function main() {
   console.log(`Heartbeat: ${config.heartbeat.enabled ? `every ${config.heartbeat.intervalMinutes} min` : 'disabled'}`);
   console.log(`Polling: ${config.polling.enabled ? `every ${config.polling.intervalMs / 1000}s` : 'disabled'}`);
   if (config.polling.gmail.enabled) {
-    console.log(`  └─ Gmail: ${config.polling.gmail.account}`);
+    const gmailLabel = config.polling.gmail.accounts.length > 0
+      ? config.polling.gmail.accounts.join(', ')
+      : '(no accounts)';
+    console.log(`  └─ Gmail: ${gmailLabel}`);
   }
   if (config.heartbeat.enabled) {
     console.log(`Heartbeat target: ${config.heartbeat.target ? `${config.heartbeat.target.channel}:${config.heartbeat.target.chatId}` : 'last messaged'}`);

@@ -15,7 +15,7 @@ export interface PollingConfig {
   workingDir: string;  // For persisting state
   gmail?: {
     enabled: boolean;
-    account: string;
+    accounts: string[];
   };
 }
 
@@ -25,7 +25,7 @@ export class PollingService {
   private config: PollingConfig;
   
   // Track seen email IDs to detect new emails (persisted to disk)
-  private seenEmailIds: Set<string> = new Set();
+  private seenEmailIdsByAccount: Map<string, Set<string>> = new Map();
   private seenEmailsPath: string;
   
   constructor(bot: LettaBot, config: PollingConfig) {
@@ -42,8 +42,26 @@ export class PollingService {
     try {
       if (existsSync(this.seenEmailsPath)) {
         const data = JSON.parse(readFileSync(this.seenEmailsPath, 'utf-8'));
-        this.seenEmailIds = new Set(data.ids || []);
-        console.log(`[Polling] Loaded ${this.seenEmailIds.size} seen email IDs`);
+        if (data && typeof data === 'object' && data.accounts && typeof data.accounts === 'object') {
+          for (const [account, accountData] of Object.entries(data.accounts)) {
+            const ids = Array.isArray((accountData as { ids?: string[] }).ids)
+              ? (accountData as { ids?: string[] }).ids!
+              : [];
+            this.seenEmailIdsByAccount.set(account, new Set(ids));
+          }
+          console.log(`[Polling] Loaded seen email IDs for ${this.seenEmailIdsByAccount.size} account(s)`);
+          return;
+        }
+
+        // Legacy single-account format: { ids: [...] }
+        if (data && Array.isArray(data.ids)) {
+          const accounts = this.config.gmail?.accounts || [];
+          const targetAccount = accounts[0];
+          if (targetAccount) {
+            this.seenEmailIdsByAccount.set(targetAccount, new Set(data.ids));
+            console.log(`[Polling] Loaded legacy seen emails for ${targetAccount}`);
+          }
+        }
       }
     } catch (e) {
       console.error('[Polling] Failed to load seen emails:', e);
@@ -55,9 +73,17 @@ export class PollingService {
    */
   private saveSeenEmails(): void {
     try {
+      const accounts: Record<string, { ids: string[]; updatedAt: string }> = {};
+      const now = new Date().toISOString();
+      for (const [account, ids] of this.seenEmailIdsByAccount.entries()) {
+        accounts[account] = {
+          ids: Array.from(ids),
+          updatedAt: now,
+        };
+      }
       writeFileSync(this.seenEmailsPath, JSON.stringify({
-        ids: Array.from(this.seenEmailIds),
-        updatedAt: new Date().toISOString(),
+        accounts,
+        updatedAt: now,
       }, null, 2));
     } catch (e) {
       console.error('[Polling] Failed to save seen emails:', e);
@@ -74,7 +100,13 @@ export class PollingService {
     }
     
     const enabledPollers: string[] = [];
-    if (this.config.gmail?.enabled) enabledPollers.push('Gmail');
+    if (this.config.gmail?.enabled) {
+      if (this.config.gmail.accounts.length > 0) {
+        enabledPollers.push(`Gmail (${this.config.gmail.accounts.length} account${this.config.gmail.accounts.length === 1 ? '' : 's'})`);
+      } else {
+        console.log('[Polling] Gmail enabled but no accounts configured');
+      }
+    }
     
     if (enabledPollers.length === 0) {
       console.log('[Polling] No pollers enabled');
@@ -106,16 +138,21 @@ export class PollingService {
    */
   private async poll(): Promise<void> {
     if (this.config.gmail?.enabled) {
-      await this.pollGmail();
+      for (const account of this.config.gmail.accounts) {
+        await this.pollGmail(account);
+      }
     }
   }
   
   /**
    * Poll Gmail for new unread messages
    */
-  private async pollGmail(): Promise<void> {
-    const account = this.config.gmail?.account;
+  private async pollGmail(account: string): Promise<void> {
     if (!account) return;
+    if (!this.seenEmailIdsByAccount.has(account)) {
+      this.seenEmailIdsByAccount.set(account, new Set());
+    }
+    const seenEmailIds = this.seenEmailIdsByAccount.get(account)!;
     
     try {
       // Check for unread emails (use longer window to catch any we might have missed)
@@ -147,7 +184,7 @@ export class PollingService {
         const id = line.split(/\s+/)[0]; // First column is ID
         if (id) {
           currentEmailIds.add(id);
-          if (!this.seenEmailIds.has(id)) {
+          if (!seenEmailIds.has(id)) {
             newEmails.push(line);
           }
         }
@@ -155,17 +192,17 @@ export class PollingService {
       
       // Add new IDs to seen set (don't replace - we want to remember all seen emails)
       for (const id of currentEmailIds) {
-        this.seenEmailIds.add(id);
+        seenEmailIds.add(id);
       }
       this.saveSeenEmails();
       
       // Only notify if there are NEW emails we haven't seen before
       if (newEmails.length === 0) {
-        console.log(`[Polling] 📧 No new emails (${currentEmailIds.size} unread total)`);
+        console.log(`[Polling] 📧 No new emails for ${account} (${currentEmailIds.size} unread total)`);
         return;
       }
       
-      console.log(`[Polling] 📧 Found ${newEmails.length} NEW email(s)!`);
+      console.log(`[Polling] 📧 Found ${newEmails.length} NEW email(s) for ${account}!`);
       
       // Build output with header + new emails only
       const header = lines[0];
@@ -179,7 +216,7 @@ export class PollingService {
         '║  To send a message, use: lettabot-message send --text "..."    ║',
         '╚════════════════════════════════════════════════════════════════╝',
         '',
-        `[email] ${newEmails.length} new unread email(s):`,
+        `[email] ${newEmails.length} new unread email(s) for ${account}:`,
         '',
         newEmailsOutput,
         '',

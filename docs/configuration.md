@@ -199,15 +199,18 @@ polling:
   intervalMs: 60000            # Check every 60 seconds (default: 60000)
   gmail:
     enabled: true
-    account: user@example.com  # Gmail account to poll
+    accounts:                  # Gmail accounts to poll
+      - user@example.com
+      - other@example.com
 ```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `polling.enabled` | boolean | auto | Master switch. Defaults to `true` if any sub-config is enabled |
 | `polling.intervalMs` | number | `60000` | Polling interval in milliseconds |
-| `polling.gmail.enabled` | boolean | auto | Enable Gmail polling. Auto-detected from `account` |
+| `polling.gmail.enabled` | boolean | auto | Enable Gmail polling. Auto-detected from `account` or `accounts` |
 | `polling.gmail.account` | string | - | Gmail account to poll for unread messages |
+| `polling.gmail.accounts` | string[] | - | Gmail accounts to poll for unread messages |
 
 ### Legacy config path
 
@@ -217,7 +220,9 @@ For backward compatibility, Gmail polling can also be configured under `integrat
 integrations:
   google:
     enabled: true
-    account: user@example.com
+    accounts:
+      - account: user@example.com
+        services: [gmail, calendar]
     pollIntervalSec: 60
 ```
 
@@ -227,7 +232,7 @@ The top-level `polling` section takes priority if both are present.
 
 | Env Variable | Polling Config Equivalent |
 |--------------|--------------------------|
-| `GMAIL_ACCOUNT` | `polling.gmail.account` |
+| `GMAIL_ACCOUNT` | `polling.gmail.account` (comma-separated list allowed) |
 | `POLLING_INTERVAL_MS` | `polling.intervalMs` |
 
 ## Transcription Configuration
@@ -272,7 +277,7 @@ Environment variables override config file values:
 | `WHATSAPP_SELF_CHAT_MODE` | `channels.whatsapp.selfChat` |
 | `SIGNAL_PHONE_NUMBER` | `channels.signal.phone` |
 | `OPENAI_API_KEY` | `transcription.apiKey` |
-| `GMAIL_ACCOUNT` | `polling.gmail.account` |
+| `GMAIL_ACCOUNT` | `polling.gmail.account` (comma-separated list allowed) |
 | `POLLING_INTERVAL_MS` | `polling.intervalMs` |
 
 See [SKILL.md](../SKILL.md) for complete environment variable reference.
