@@ -711,7 +711,6 @@ export class LettaBot {
         console.warn('[Bot] Model does not support images — server replaced inline images with "[Image omitted]". Consider using a vision-capable model or setting features.inlineImages: false in config.');
       }
 
-
       // Send final response
       if (response.trim()) {
         try {
