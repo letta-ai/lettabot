@@ -6,24 +6,55 @@
  * provide a conservative fallback if it is missing or fails at runtime.
  */
 
+type SlackifyFn = (markdown: string) => string;
+
+let slackifyFn: SlackifyFn | null = null;
+let slackifyLoadFailed = false;
+let slackifyLoadPromise: Promise<SlackifyFn | null> | null = null;
+
+async function loadSlackify(): Promise<SlackifyFn | null> {
+  if (slackifyFn) return slackifyFn;
+  if (slackifyLoadFailed) return null;
+  if (slackifyLoadPromise) return slackifyLoadPromise;
+
+  slackifyLoadPromise = (async () => {
+    try {
+      // Avoid a string-literal specifier so TypeScript doesn't require the module
+      // to exist at build time when optional deps are omitted.
+      const moduleId: string = 'slackify-markdown';
+      const mod = await import(moduleId);
+      const loaded =
+        (mod as unknown as { slackifyMarkdown?: SlackifyFn }).slackifyMarkdown
+        || (mod as unknown as { default?: SlackifyFn }).default;
+
+      if (typeof loaded !== 'function') {
+        throw new Error('slackify-markdown: missing slackifyMarkdown export');
+      }
+
+      slackifyFn = loaded;
+      return loaded;
+    } catch (e) {
+      slackifyLoadFailed = true;
+      const reason = e instanceof Error ? e.message : String(e);
+      console.warn(`[Slack] slackify-markdown unavailable; using fallback formatter (${reason})`);
+      return null;
+    }
+  })();
+
+  return slackifyLoadPromise;
+}
+
 /**
  * Convert Markdown to Slack mrkdwn.
  */
 export async function markdownToSlackMrkdwn(markdown: string): Promise<string> {
+  const converter = await loadSlackify();
+  if (!converter) {
+    return fallbackMarkdownToSlackMrkdwn(markdown);
+  }
+
   try {
-    // Avoid a string-literal specifier so TypeScript doesn't require the module
-    // to exist at build time when optional deps are omitted.
-    const moduleId: string = 'slackify-markdown';
-    const mod = await import(moduleId);
-    const slackify =
-      (mod as unknown as { slackifyMarkdown?: (s: string) => string }).slackifyMarkdown
-      || (mod as unknown as { default?: (s: string) => string }).default;
-
-    if (typeof slackify !== 'function') {
-      throw new Error('slackify-markdown: missing slackifyMarkdown export');
-    }
-
-    return slackify(markdown);
+    return converter(markdown);
   } catch (e) {
     console.error('[Slack] Markdown conversion failed, using fallback:', e);
     return fallbackMarkdownToSlackMrkdwn(markdown);
