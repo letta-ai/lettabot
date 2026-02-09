@@ -32,6 +32,23 @@ function isApprovalConflictError(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Detect if an error indicates a missing conversation or agent.
+ * Only these errors should trigger the "create new conversation" fallback.
+ * Auth, network, and protocol errors should NOT be retried.
+ */
+function isConversationMissingError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes('not found')) return true;
+    if (msg.includes('conversation') && (msg.includes('missing') || msg.includes('does not exist'))) return true;
+    if (msg.includes('agent') && msg.includes('not found')) return true;
+  }
+  const statusError = error as { status?: number };
+  if (statusError?.status === 404) return true;
+  return false;
+}
+
 const SUPPORTED_IMAGE_MIMES = new Set([
   'image/png', 'image/jpeg', 'image/gif', 'image/webp',
 ]);
@@ -225,9 +242,11 @@ export class LettaBot implements AgentSession {
         throw error;
       }
 
-      // Conversation not found - try creating a new one
-      if (this.store.agentId) {
-        console.warn('[Bot] Session send failed, creating a new conversation...');
+      // Conversation/agent not found - try creating a new conversation.
+      // Only retry on errors that indicate missing conversation/agent, not
+      // on auth, network, or protocol errors (which would just fail again).
+      if (this.store.agentId && isConversationMissingError(error)) {
+        console.warn('[Bot] Conversation not found, creating a new conversation...');
         session.close();
         session = createSession(this.store.agentId, this.baseSessionOptions);
         await session.send(message);
