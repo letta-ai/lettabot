@@ -544,7 +544,8 @@ export class LettaBot implements AgentSession {
             const preview = response.length > 50 ? response.slice(0, 50) + '...' : response;
             console.log(`[Bot] Sent: "${preview}"`);
           } catch {
-            // Ignore send errors
+            // Edit failures (e.g. "message not modified") are OK if we already sent the message
+            if (messageId) sentAnyMessage = true;
           }
         }
         // Reset for next message bubble
@@ -630,9 +631,10 @@ export class LettaBot implements AgentSession {
                 } else {
                   const result = await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
                   messageId = result.messageId;
+                  sentAnyMessage = true;
                 }
               } catch {
-                // Ignore edit errors
+                // Ignore edit errors (e.g. rate limits)
               }
               lastUpdate = Date.now();
             }
