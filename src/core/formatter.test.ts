@@ -198,7 +198,7 @@ describe('formatMessageEnvelope', () => {
     it('includes Slack format hint', () => {
       const msg = createMessage({ channel: 'slack' });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('**Format support**: mrkdwn:');
+      expect(result).toContain('**Format support**: Markdown (auto-converted to Slack mrkdwn):');
     });
 
     it('includes Telegram format hint', () => {

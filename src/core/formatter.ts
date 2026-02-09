@@ -18,7 +18,7 @@ export const SYSTEM_REMINDER_CLOSE = `</${SYSTEM_REMINDER_TAG}>`;
  * Each channel has different markdown support - hints help agent format appropriately.
  */
 const CHANNEL_FORMATS: Record<string, string> = {
-  slack: 'mrkdwn: *bold* _italic_ `code` - NO: headers, tables',
+  slack: 'Markdown (auto-converted to Slack mrkdwn): **bold** _italic_ `code` [links](url) ```code blocks``` - NO: headers, tables',
   discord: '**bold** *italic* `code` [links](url) ```code blocks``` - NO: headers, tables',
   telegram: 'MarkdownV2: *bold* _italic_ `code` [links](url) - NO: headers, tables',
   whatsapp: '*bold* _italic_ `code` - NO: headers, code fences, links, tables',

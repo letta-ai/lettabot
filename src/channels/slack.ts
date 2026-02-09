@@ -10,6 +10,7 @@ import { createReadStream } from 'node:fs';
 import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { parseCommand, HELP_TEXT } from '../core/commands.js';
+import { markdownToSlackMrkdwn } from './slack-format.js';
 
 // Dynamic import to avoid requiring Slack deps if not used
 let App: typeof import('@slack/bolt').App;
@@ -112,10 +113,10 @@ export class SlackAdapter implements ChannelAdapter {
       const command = parseCommand(text);
       if (command) {
         if (command === 'help' || command === 'start') {
-          await say(HELP_TEXT);
+          await say(await markdownToSlackMrkdwn(HELP_TEXT));
         } else if (this.onCommand) {
           const result = await this.onCommand(command);
-          if (result) await say(result);
+          if (result) await say(await markdownToSlackMrkdwn(result));
         }
         return; // Don't pass commands to agent
       }
@@ -223,10 +224,11 @@ export class SlackAdapter implements ChannelAdapter {
   
   async sendMessage(msg: OutboundMessage): Promise<{ messageId: string }> {
     if (!this.app) throw new Error('Slack not started');
-    
+
+    const formatted = await markdownToSlackMrkdwn(msg.text);
     const result = await this.app.client.chat.postMessage({
       channel: msg.chatId,
-      text: msg.text,
+      text: formatted,
       thread_ts: msg.threadId,
     });
     
@@ -236,11 +238,12 @@ export class SlackAdapter implements ChannelAdapter {
   async sendFile(file: OutboundFile): Promise<{ messageId: string }> {
     if (!this.app) throw new Error('Slack not started');
 
+    const initialComment = file.caption ? await markdownToSlackMrkdwn(file.caption) : undefined;
     const basePayload = {
       channels: file.chatId,
       file: createReadStream(file.filePath),
       filename: basename(file.filePath),
-      initial_comment: file.caption,
+      initial_comment: initialComment,
     };
     const result = file.threadId
       ? await this.app.client.files.upload({ ...basePayload, thread_ts: file.threadId })
@@ -256,11 +259,12 @@ export class SlackAdapter implements ChannelAdapter {
   
   async editMessage(chatId: string, messageId: string, text: string): Promise<void> {
     if (!this.app) throw new Error('Slack not started');
-    
+
+    const formatted = await markdownToSlackMrkdwn(text);
     await this.app.client.chat.update({
       channel: chatId,
       ts: messageId,
-      text,
+      text: formatted,
     });
   }
 
