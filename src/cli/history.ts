@@ -10,11 +10,8 @@
 import { loadConfig, applyConfigToEnv } from '../config/index.js';
 const config = loadConfig();
 applyConfigToEnv(config);
-import { resolve } from 'node:path';
-import { getDataDir } from '../utils/paths.js';
-import { fetchHistory, isValidLimit, loadLastTarget, parseFetchArgs } from './history-core.js';
-
-const STORE_PATH = resolve(getDataDir(), 'lettabot-agent.json');
+import { fetchHistory, isValidLimit, parseFetchArgs } from './history-core.js';
+import { loadLastTarget, STORE_PATH } from './shared.js';
 
 async function fetchCommand(args: string[]): Promise<void> {
   const parsed = parseFetchArgs(args);

@@ -14,35 +14,8 @@
 import { loadConfig, applyConfigToEnv } from '../config/index.js';
 const config = loadConfig();
 applyConfigToEnv(config);
-import { resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
-import { getDataDir } from '../utils/paths.js';
-
-// Types
-interface LastTarget {
-  channel: string;
-  chatId: string;
-}
-
-interface AgentStore {
-  agentId?: string;
-  lastMessageTarget?: LastTarget;  // Note: field is "lastMessageTarget" not "lastTarget"
-}
-
-// Store path (same location as bot uses)
-const STORE_PATH = resolve(getDataDir(), 'lettabot-agent.json');
-
-function loadLastTarget(): LastTarget | null {
-  try {
-    if (existsSync(STORE_PATH)) {
-      const store: AgentStore = JSON.parse(readFileSync(STORE_PATH, 'utf-8'));
-      return store.lastMessageTarget || null;
-    }
-  } catch {
-    // Ignore
-  }
-  return null;
-}
+import { loadLastTarget, STORE_PATH } from './shared.js';
 
 // Channel senders
 async function sendTelegram(chatId: string, text: string): Promise<void> {

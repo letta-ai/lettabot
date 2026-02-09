@@ -1,30 +1,9 @@
-import { existsSync, readFileSync } from 'node:fs';
-
-export interface LastTarget {
-  channel: string;
-  chatId: string;
-}
-
-interface AgentStore {
-  lastMessageTarget?: LastTarget;
-}
+import type { LastTarget } from './shared.js';
 
 export const DEFAULT_LIMIT = 50;
 
 export function isValidLimit(limit: number): boolean {
   return Number.isInteger(limit) && limit > 0;
-}
-
-export function loadLastTarget(storePath: string): LastTarget | null {
-  try {
-    if (existsSync(storePath)) {
-      const store: AgentStore = JSON.parse(readFileSync(storePath, 'utf-8'));
-      return store.lastMessageTarget || null;
-    }
-  } catch {
-    // Ignore
-  }
-  return null;
 }
 
 export function parseFetchArgs(args: string[]): {
@@ -66,6 +45,7 @@ export function parseFetchArgs(args: string[]): {
 }
 
 export async function fetchDiscordHistory(chatId: string, limit: number, before?: string): Promise<string> {
+  limit = Math.min(limit, 100);
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) {
     throw new Error('DISCORD_BOT_TOKEN not set');
@@ -89,7 +69,7 @@ export async function fetchDiscordHistory(chatId: string, limit: number, before?
   const messages = await response.json() as Array<{
     id: string;
     content: string;
-    author?: { username?: string; discriminator?: string };
+    author?: { username?: string; globalName?: string };
     timestamp?: string;
   }>;
 
@@ -97,7 +77,7 @@ export async function fetchDiscordHistory(chatId: string, limit: number, before?
     count: messages.length,
     messages: messages.map((msg) => ({
       messageId: msg.id,
-      author: msg.author?.username ? `${msg.author.username}#${msg.author.discriminator || '0000'}` : 'unknown',
+      author: msg.author?.globalName || msg.author?.username || 'unknown',
       content: msg.content || '',
       timestamp: msg.timestamp,
     })),
@@ -107,6 +87,7 @@ export async function fetchDiscordHistory(chatId: string, limit: number, before?
 }
 
 export async function fetchSlackHistory(chatId: string, limit: number, before?: string): Promise<string> {
+  limit = Math.min(limit, 1000);
   const token = process.env.SLACK_BOT_TOKEN;
   if (!token) {
     throw new Error('SLACK_BOT_TOKEN not set');

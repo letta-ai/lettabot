@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchDiscordHistory, fetchHistory, isValidLimit, loadLastTarget, parseFetchArgs } from './history-core.js';
+import { fetchDiscordHistory, fetchHistory, fetchSlackHistory, isValidLimit, parseFetchArgs } from './history-core.js';
+import { loadLastTarget } from './shared.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -71,7 +72,7 @@ describe('fetchDiscordHistory', () => {
         {
           id: '111',
           content: 'Hello',
-          author: { username: 'alice', discriminator: '1234' },
+          author: { username: 'alice', globalName: 'Alice' },
           timestamp: '2026-01-01T00:00:00Z',
         },
       ]),
@@ -91,10 +92,45 @@ describe('fetchDiscordHistory', () => {
     expect(parsed.count).toBe(1);
     expect(parsed.messages[0]).toEqual({
       messageId: '111',
-      author: 'alice#1234',
+      author: 'Alice',
       content: 'Hello',
       timestamp: '2026-01-01T00:00:00Z',
     });
+  });
+});
+
+describe('fetchSlackHistory', () => {
+  it('formats Slack history responses', async () => {
+    process.env.SLACK_BOT_TOKEN = 'test-token';
+
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        messages: [
+          {
+            ts: '1704067200.000100',
+            text: 'Hello from Slack',
+            user: 'U123456',
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const output = await fetchSlackHistory('C999', 10);
+    const parsed = JSON.parse(output);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://slack.com/api/conversations.history',
+      expect.objectContaining({ method: 'POST' })
+    );
+    expect(parsed.count).toBe(1);
+    expect(parsed.messages[0].author).toBe('U123456');
+    expect(parsed.messages[0].content).toBe('Hello from Slack');
+    expect(parsed.messages[0].messageId).toBe('1704067200.000100');
+    // Verify ts -> ISO conversion
+    expect(parsed.messages[0].timestamp).toBeDefined();
   });
 });
 
