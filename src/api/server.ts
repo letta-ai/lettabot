@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import { validateApiKey } from './auth.js';
 import type { SendMessageRequest, SendMessageResponse, SendFileResponse } from './types.js';
 import { parseMultipart } from './multipart.js';
-import type { LettaBot } from '../core/bot.js';
+import type { AgentSession } from '../core/interfaces.js';
 import type { ChannelId } from '../core/types.js';
 
 const VALID_CHANNELS: ChannelId[] = ['telegram', 'slack', 'discord', 'whatsapp', 'signal'];
@@ -26,7 +26,7 @@ interface ServerOptions {
 /**
  * Create and start the HTTP API server
  */
-export function createApiServer(bot: LettaBot, options: ServerOptions): http.Server {
+export function createApiServer(bot: AgentSession, options: ServerOptions): http.Server {
   const server = http.createServer(async (req, res) => {
     // Set CORS headers (configurable origin, defaults to same-origin for security)
     const corsOrigin = options.corsOrigin || req.headers.origin || 'null';

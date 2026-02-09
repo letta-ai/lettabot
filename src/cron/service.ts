@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import type { LettaBot } from '../core/bot.js';
+import type { AgentSession } from '../core/interfaces.js';
 import type { CronJob, CronJobCreate, CronSchedule, CronConfig, HeartbeatConfig } from './types.js';
 import { DEFAULT_HEARTBEAT_MESSAGES } from './types.js';
 import { getDataDir } from '../utils/paths.js';
@@ -49,7 +49,7 @@ const DEFAULT_HEARTBEAT: HeartbeatConfig = {
 export class CronService {
   private jobs: Map<string, CronJob> = new Map();
   private scheduledJobs: Map<string, import('node-schedule').Job> = new Map();
-  private bot: LettaBot;
+  private bot: AgentSession;
   private storePath: string;
   private config: CronConfig;
   private started = false;
@@ -57,7 +57,7 @@ export class CronService {
   private fileWatcher: FSWatcher | null = null;
   private lastFileContent: string = '';
   
-  constructor(bot: LettaBot, config?: CronConfig) {
+  constructor(bot: AgentSession, config?: CronConfig) {
     this.bot = bot;
     this.config = config || {};
     this.storePath = config?.storePath 

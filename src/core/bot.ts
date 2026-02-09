@@ -8,6 +8,7 @@ import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL,
 import { mkdirSync } from 'node:fs';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
+import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
 import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
 import { installSkillsToAgent } from '../skills/loader.js';
@@ -79,7 +80,7 @@ async function buildMultimodalMessage(
   return content.length > 1 ? content : formattedText;
 }
 
-export class LettaBot {
+export class LettaBot implements AgentSession {
   private store: Store;
   private config: BotConfig;
   private channels: Map<string, ChannelAdapter> = new Map();

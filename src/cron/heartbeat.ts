@@ -9,7 +9,7 @@
 
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import type { LettaBot } from '../core/bot.js';
+import type { AgentSession } from '../core/interfaces.js';
 import type { TriggerContext } from '../core/types.js';
 import { buildHeartbeatPrompt } from '../core/prompts.js';
 import { getDataDir } from '../utils/paths.js';
@@ -57,11 +57,11 @@ export interface HeartbeatConfig {
  * Heartbeat Service
  */
 export class HeartbeatService {
-  private bot: LettaBot;
+  private bot: AgentSession;
   private config: HeartbeatConfig;
   private intervalId: NodeJS.Timeout | null = null;
   
-  constructor(bot: LettaBot, config: HeartbeatConfig) {
+  constructor(bot: AgentSession, config: HeartbeatConfig) {
     this.bot = bot;
     this.config = config;
   }
