@@ -66,3 +66,15 @@ export interface MessageDeliverer {
     kind?: 'image' | 'file';
   }): Promise<string | undefined>;
 }
+
+/**
+ * Extended interface for the API server.
+ * Supports both outbound delivery (to channels) and inbound chat (to agents).
+ * Satisfied by LettaGateway.
+ */
+export interface AgentRouter extends MessageDeliverer {
+  /** Send a message to a named agent and return the response text */
+  sendToAgent(agentName: string | undefined, text: string, context?: TriggerContext): Promise<string>;
+  /** Get all registered agent names */
+  getAgentNames(): string[];
+}

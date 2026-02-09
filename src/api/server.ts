@@ -6,9 +6,9 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import { validateApiKey } from './auth.js';
-import type { SendMessageRequest, SendMessageResponse, SendFileResponse } from './types.js';
+import type { SendMessageRequest, SendMessageResponse, SendFileResponse, ChatRequest, ChatResponse } from './types.js';
 import { parseMultipart } from './multipart.js';
-import type { MessageDeliverer } from '../core/interfaces.js';
+import type { AgentRouter } from '../core/interfaces.js';
 import type { ChannelId } from '../core/types.js';
 
 const VALID_CHANNELS: ChannelId[] = ['telegram', 'slack', 'discord', 'whatsapp', 'signal'];
@@ -26,7 +26,7 @@ interface ServerOptions {
 /**
  * Create and start the HTTP API server
  */
-export function createApiServer(deliverer: MessageDeliverer, options: ServerOptions): http.Server {
+export function createApiServer(deliverer: AgentRouter, options: ServerOptions): http.Server {
   const server = http.createServer(async (req, res) => {
     // Set CORS headers (configurable origin, defaults to same-origin for security)
     const corsOrigin = options.corsOrigin || req.headers.origin || 'null';
@@ -117,6 +117,75 @@ export function createApiServer(deliverer: MessageDeliverer, options: ServerOpti
       } catch (error: any) {
         console.error('[API] Error handling request:', error);
         sendError(res, 500, error.message || 'Internal server error');
+      }
+      return;
+    }
+
+    // Route: POST /api/v1/chat (send a message to the agent, get response)
+    if (req.url === '/api/v1/chat' && req.method === 'POST') {
+      try {
+        if (!validateApiKey(req.headers, options.apiKey)) {
+          sendError(res, 401, 'Unauthorized');
+          return;
+        }
+
+        const contentType = req.headers['content-type'] || '';
+        if (!contentType.includes('application/json')) {
+          sendError(res, 400, 'Content-Type must be application/json');
+          return;
+        }
+
+        const body = await readBody(req, MAX_BODY_SIZE);
+        let chatReq: ChatRequest;
+        try {
+          chatReq = JSON.parse(body);
+        } catch {
+          sendError(res, 400, 'Invalid JSON body');
+          return;
+        }
+
+        if (!chatReq.message || typeof chatReq.message !== 'string') {
+          sendError(res, 400, 'Missing required field: message');
+          return;
+        }
+
+        if (chatReq.message.length > MAX_TEXT_LENGTH) {
+          sendError(res, 400, `Message too long (max ${MAX_TEXT_LENGTH} chars)`);
+          return;
+        }
+
+        // Resolve agent name (defaults to first agent)
+        const agentName = chatReq.agent;
+        const agentNames = deliverer.getAgentNames();
+        const resolvedName = agentName || agentNames[0];
+
+        if (agentName && !agentNames.includes(agentName)) {
+          sendError(res, 404, `Agent not found: ${agentName}. Available: ${agentNames.join(', ')}`);
+          return;
+        }
+
+        console.log(`[API] Chat request for agent "${resolvedName}": ${chatReq.message.slice(0, 100)}...`);
+
+        const response = await deliverer.sendToAgent(agentName, chatReq.message, {
+          type: 'webhook',
+          outputMode: 'silent',
+        });
+
+        const chatRes: ChatResponse = {
+          success: true,
+          response,
+          agentName: resolvedName,
+        };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(chatRes));
+      } catch (error: any) {
+        console.error('[API] Chat error:', error);
+        const chatRes: ChatResponse = {
+          success: false,
+          error: error.message || 'Internal server error',
+        };
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(chatRes));
       }
       return;
     }

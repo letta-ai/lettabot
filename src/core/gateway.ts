@@ -7,9 +7,10 @@
  * See: docs/multi-agent-architecture.md
  */
 
-import type { AgentSession, MessageDeliverer } from './interfaces.js';
+import type { AgentSession, AgentRouter } from './interfaces.js';
+import type { TriggerContext } from './types.js';
 
-export class LettaGateway implements MessageDeliverer {
+export class LettaGateway implements AgentRouter {
   private agents: Map<string, AgentSession> = new Map();
 
   /**
@@ -69,6 +70,29 @@ export class LettaGateway implements MessageDeliverer {
         console.error(`[Gateway] Failed to stop ${name}:`, e);
       }
     }
+  }
+
+  /**
+   * Send a message to a named agent and return the response.
+   * If no name is given, routes to the first registered agent.
+   */
+  async sendToAgent(agentName: string | undefined, text: string, context?: TriggerContext): Promise<string> {
+    const agent = this.resolveAgent(agentName);
+    return agent.sendToAgent(text, context);
+  }
+
+  /**
+   * Resolve an agent by name, defaulting to the first registered agent.
+   */
+  private resolveAgent(name?: string): AgentSession {
+    if (!name) {
+      const first = this.agents.values().next().value;
+      if (!first) throw new Error('No agents configured');
+      return first;
+    }
+    const agent = this.agents.get(name);
+    if (!agent) throw new Error(`Agent not found: ${name}`);
+    return agent;
   }
 
   /**

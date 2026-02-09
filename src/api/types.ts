@@ -31,3 +31,18 @@ export interface SendFileResponse {
   error?: string;
   field?: string;
 }
+
+/**
+ * POST /api/v1/chat - Send a message to the agent
+ */
+export interface ChatRequest {
+  message: string;
+  agent?: string;  // Agent name, defaults to first configured agent
+}
+
+export interface ChatResponse {
+  success: boolean;
+  response?: string;
+  agentName?: string;
+  error?: string;
+}
