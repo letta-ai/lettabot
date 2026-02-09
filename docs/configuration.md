@@ -289,6 +289,43 @@ features:
 
 Heartbeats are background tasks where the agent can review pending work.
 
+#### Custom Heartbeat Prompt
+
+You can customize what the agent is told during heartbeats. The custom text replaces the default body while keeping the silent mode envelope (time, trigger metadata, and messaging instructions).
+
+Inline in YAML:
+
+```yaml
+features:
+  heartbeat:
+    enabled: true
+    intervalMin: 60
+    prompt: "Check your todo list and work on the highest priority item."
+```
+
+From a file (re-read each tick, so edits take effect without restart):
+
+```yaml
+features:
+  heartbeat:
+    enabled: true
+    intervalMin: 60
+    promptFile: ./prompts/heartbeat.md
+```
+
+Via environment variable:
+
+```bash
+HEARTBEAT_PROMPT="Review recent conversations" npm start
+```
+
+Precedence: `prompt` (inline YAML) > `HEARTBEAT_PROMPT` (env var) > `promptFile` (file) > built-in default.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.heartbeat.prompt` | string | _(none)_ | Custom heartbeat prompt text |
+| `features.heartbeat.promptFile` | string | _(none)_ | Path to prompt file (relative to working dir) |
+
 ### Cron Jobs
 
 ```yaml
@@ -297,6 +334,23 @@ features:
 ```
 
 Enable scheduled tasks. See [Cron Setup](./cron-setup.md).
+
+### No-Reply (Opt-Out)
+
+The agent can choose not to respond to a message by sending exactly:
+
+```
+<no-reply/>
+```
+
+When the bot receives this marker, it suppresses the response and nothing is sent to the channel. This is useful in group chats where the agent shouldn't reply to every message.
+
+The agent is taught about this behavior in two places:
+
+- **System prompt**: A "Choosing Not to Reply" section explains when to use it (messages not directed at the agent, simple acknowledgments, conversations between other users, etc.)
+- **Message envelope**: Group messages include a hint reminding the agent of the `<no-reply/>` option. DMs do not include this hint.
+
+The bot also handles this gracefully during streaming -- it holds back partial output while the response could still become `<no-reply/>`, so users never see a partial match leak through.
 
 ## Polling Configuration
 

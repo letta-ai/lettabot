@@ -31,6 +31,8 @@ export interface AgentConfig {
     heartbeat?: {
       enabled: boolean;
       intervalMin?: number;
+      prompt?: string;       // Custom heartbeat prompt (replaces default body)
+      promptFile?: string;   // Path to prompt file (re-read each tick for live editing)
     };
     maxToolCalls?: number;
   };
@@ -81,6 +83,8 @@ export interface LettaBotConfig {
     heartbeat?: {
       enabled: boolean;
       intervalMin?: number;
+      prompt?: string;       // Custom heartbeat prompt (replaces default body)
+      promptFile?: string;   // Path to prompt file (re-read each tick for live editing)
     };
     inlineImages?: boolean;   // Send images directly to the LLM (default: true). Set false to only send file paths.
     maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)

@@ -54,6 +54,32 @@ If you have nothing to do → just end your turn (no output needed)
 }
 
 /**
+ * Custom heartbeat prompt - wraps user-provided text with silent mode envelope
+ */
+export function buildCustomHeartbeatPrompt(
+  customPrompt: string,
+  time: string,
+  timezone: string,
+  intervalMinutes: number
+): string {
+  return `
+${SILENT_MODE_PREFIX}
+
+TRIGGER: Scheduled heartbeat
+TIME: ${time} (${timezone})
+NEXT HEARTBEAT: in ${intervalMinutes} minutes
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
+To actually contact your human, run:
+  lettabot-message send --text "Your message here"
+
+${customPrompt}
+`.trim();
+}
+
+/**
  * Cron job prompt (silent mode) - for background scheduled tasks
  */
 export function buildCronPrompt(

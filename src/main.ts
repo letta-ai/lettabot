@@ -545,7 +545,8 @@ async function main() {
     const heartbeatService = new HeartbeatService(bot, {
       enabled: heartbeatConfig?.enabled ?? false,
       intervalMinutes: heartbeatConfig?.intervalMin ?? 30,
-      prompt: process.env.HEARTBEAT_PROMPT,
+      prompt: heartbeatConfig?.prompt || process.env.HEARTBEAT_PROMPT,
+      promptFile: heartbeatConfig?.promptFile,
       workingDir: globalConfig.workingDir,
       target: parseHeartbeatTarget(process.env.HEARTBEAT_TARGET),
     });
