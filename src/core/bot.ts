@@ -633,8 +633,10 @@ export class LettaBot implements AgentSession {
                   messageId = result.messageId;
                   sentAnyMessage = true;
                 }
-              } catch {
-                // Ignore edit errors (e.g. rate limits)
+              } catch (editErr) {
+                // Log but don't fail - streaming edits are best-effort
+                // (e.g. rate limits, MarkdownV2 formatting issues mid-stream)
+                console.warn('[Bot] Streaming edit failed:', editErr instanceof Error ? editErr.message : editErr);
               }
               lastUpdate = Date.now();
             }
@@ -729,15 +731,15 @@ export class LettaBot implements AgentSession {
           console.log(`[Bot] Sent: "${preview}"`);
         } catch (sendError) {
           console.error('[Bot] Error sending response:', sendError);
-          if (!messageId) {
-            try {
-              await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
-              sentAnyMessage = true;
-              // Reset recovery counter on successful response
-              this.store.resetRecoveryAttempts();
-            } catch (retryError) {
-              console.error('[Bot] Retry send also failed:', retryError);
-            }
+          // If edit failed (messageId exists), send the complete response as a new message
+          // so the user isn't left with a truncated streaming edit
+          try {
+            await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
+            sentAnyMessage = true;
+            // Reset recovery counter on successful response
+            this.store.resetRecoveryAttempts();
+          } catch (retryError) {
+            console.error('[Bot] Retry send also failed:', retryError);
           }
         }
       }

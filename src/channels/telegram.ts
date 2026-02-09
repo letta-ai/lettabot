@@ -501,8 +501,14 @@ export class TelegramAdapter implements ChannelAdapter {
   
   async editMessage(chatId: string, messageId: string, text: string): Promise<void> {
     const { markdownToTelegramV2 } = await import('./telegram-format.js');
-    const formatted = await markdownToTelegramV2(text);
-    await this.bot.api.editMessageText(chatId, Number(messageId), formatted, { parse_mode: 'MarkdownV2' });
+    try {
+      const formatted = await markdownToTelegramV2(text);
+      await this.bot.api.editMessageText(chatId, Number(messageId), formatted, { parse_mode: 'MarkdownV2' });
+    } catch (e) {
+      // If MarkdownV2 fails, fall back to plain text (mirrors sendMessage fallback)
+      console.warn('[Telegram] MarkdownV2 edit failed, falling back to raw text:', e);
+      await this.bot.api.editMessageText(chatId, Number(messageId), text);
+    }
   }
 
   async addReaction(chatId: string, messageId: string, emoji: string): Promise<void> {
