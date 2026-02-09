@@ -1,6 +1,6 @@
 {
   "name": "lettabot",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "type": "module",
   "main": "dist/main.js",
   "bin": {
@@ -14,7 +14,8 @@
     "setup": "tsx src/setup.ts",
     "dev": "tsx src/main.ts",
     "build": "tsc",
-    "postinstall": "npx patch-package",
+    "prepare": "npx patch-package || true",
+    "prepublishOnly": "npm run build && npm run test:run",
     "start": "node dist/main.js",
     "test": "vitest",
     "test:run": "vitest run",
@@ -31,15 +32,33 @@
     "skills:find": "npx skills find"
   },
   "keywords": [
-    "telegram",
-    "bot",
     "letta",
     "ai",
-    "agent"
+    "agent",
+    "chatbot",
+    "telegram",
+    "slack",
+    "whatsapp",
+    "signal",
+    "discord",
+    "multi-agent"
   ],
-  "author": "",
+  "author": "Letta <team@letta.com>",
   "license": "Apache-2.0",
-  "description": "Multi-channel AI assistant with persistent memory - Telegram, Slack, WhatsApp",
+  "description": "Multi-channel AI assistant with persistent memory - Telegram, Slack, WhatsApp, Signal, Discord",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/lettabot.git"
+  },
+  "homepage": "https://github.com/letta-ai/lettabot",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist/",
+    ".skills/",
+    "patches/"
+  ],
   "dependencies": {
     "@clack/prompts": "^0.11.0",
     "@hapi/boom": "^10.0.1",
