@@ -158,11 +158,11 @@ describe('normalizeAgents', () => {
 
   describe('env var fallback (container deploys)', () => {
     const envVars = [
-      'TELEGRAM_BOT_TOKEN', 'TELEGRAM_DM_POLICY',
-      'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_DM_POLICY',
-      'WHATSAPP_ENABLED', 'WHATSAPP_SELF_CHAT_MODE', 'WHATSAPP_DM_POLICY',
-      'SIGNAL_PHONE_NUMBER', 'SIGNAL_SELF_CHAT_MODE', 'SIGNAL_DM_POLICY',
-      'DISCORD_BOT_TOKEN', 'DISCORD_DM_POLICY',
+      'TELEGRAM_BOT_TOKEN', 'TELEGRAM_DM_POLICY', 'TELEGRAM_ALLOWED_USERS',
+      'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_DM_POLICY', 'SLACK_ALLOWED_USERS',
+      'WHATSAPP_ENABLED', 'WHATSAPP_SELF_CHAT_MODE', 'WHATSAPP_DM_POLICY', 'WHATSAPP_ALLOWED_USERS',
+      'SIGNAL_PHONE_NUMBER', 'SIGNAL_SELF_CHAT_MODE', 'SIGNAL_DM_POLICY', 'SIGNAL_ALLOWED_USERS',
+      'DISCORD_BOT_TOKEN', 'DISCORD_DM_POLICY', 'DISCORD_ALLOWED_USERS',
     ];
     const savedEnv: Record<string, string | undefined> = {};
 
@@ -252,6 +252,52 @@ describe('normalizeAgents', () => {
       expect(agents[0].channels.whatsapp?.enabled).toBe(true);
       expect(agents[0].channels.signal?.phone).toBe('+1234567890');
       expect(agents[0].channels.discord?.token).toBe('discord-token');
+    });
+
+    it('should pick up allowedUsers from env vars for all channels', () => {
+      process.env.TELEGRAM_BOT_TOKEN = 'tg-token';
+      process.env.TELEGRAM_DM_POLICY = 'allowlist';
+      process.env.TELEGRAM_ALLOWED_USERS = '515978553, 123456';
+
+      process.env.SLACK_BOT_TOKEN = 'slack-bot';
+      process.env.SLACK_APP_TOKEN = 'slack-app';
+      process.env.SLACK_DM_POLICY = 'allowlist';
+      process.env.SLACK_ALLOWED_USERS = 'U123,U456';
+
+      process.env.DISCORD_BOT_TOKEN = 'discord-token';
+      process.env.DISCORD_DM_POLICY = 'allowlist';
+      process.env.DISCORD_ALLOWED_USERS = '999888777';
+
+      process.env.WHATSAPP_ENABLED = 'true';
+      process.env.WHATSAPP_DM_POLICY = 'allowlist';
+      process.env.WHATSAPP_ALLOWED_USERS = '+1234567890,+0987654321';
+
+      process.env.SIGNAL_PHONE_NUMBER = '+1555000000';
+      process.env.SIGNAL_DM_POLICY = 'allowlist';
+      process.env.SIGNAL_ALLOWED_USERS = '+1555111111';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].channels.telegram?.dmPolicy).toBe('allowlist');
+      expect(agents[0].channels.telegram?.allowedUsers).toEqual(['515978553', '123456']);
+
+      expect(agents[0].channels.slack?.dmPolicy).toBe('allowlist');
+      expect(agents[0].channels.slack?.allowedUsers).toEqual(['U123', 'U456']);
+
+      expect(agents[0].channels.discord?.dmPolicy).toBe('allowlist');
+      expect(agents[0].channels.discord?.allowedUsers).toEqual(['999888777']);
+
+      expect(agents[0].channels.whatsapp?.dmPolicy).toBe('allowlist');
+      expect(agents[0].channels.whatsapp?.allowedUsers).toEqual(['+1234567890', '+0987654321']);
+
+      expect(agents[0].channels.signal?.dmPolicy).toBe('allowlist');
+      expect(agents[0].channels.signal?.allowedUsers).toEqual(['+1555111111']);
     });
   });
 

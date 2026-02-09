@@ -257,11 +257,16 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
   const channels = normalizeChannels(config.channels);
 
   // Env var fallback for container deploys without lettabot.yaml (e.g. Railway)
+  // Helper: parse comma-separated env var into string array (or undefined)
+  const parseList = (envVar?: string): string[] | undefined =>
+    envVar ? envVar.split(',').map(s => s.trim()).filter(Boolean) : undefined;
+
   if (!channels.telegram && process.env.TELEGRAM_BOT_TOKEN) {
     channels.telegram = {
       enabled: true,
       token: process.env.TELEGRAM_BOT_TOKEN,
       dmPolicy: (process.env.TELEGRAM_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.TELEGRAM_ALLOWED_USERS),
     };
   }
   if (!channels.slack && process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN) {
@@ -270,6 +275,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       botToken: process.env.SLACK_BOT_TOKEN,
       appToken: process.env.SLACK_APP_TOKEN,
       dmPolicy: (process.env.SLACK_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.SLACK_ALLOWED_USERS),
     };
   }
   if (!channels.whatsapp && process.env.WHATSAPP_ENABLED === 'true') {
@@ -277,6 +283,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       enabled: true,
       selfChat: process.env.WHATSAPP_SELF_CHAT_MODE !== 'false',
       dmPolicy: (process.env.WHATSAPP_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.WHATSAPP_ALLOWED_USERS),
     };
   }
   if (!channels.signal && process.env.SIGNAL_PHONE_NUMBER) {
@@ -285,6 +292,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       phone: process.env.SIGNAL_PHONE_NUMBER,
       selfChat: process.env.SIGNAL_SELF_CHAT_MODE !== 'false',
       dmPolicy: (process.env.SIGNAL_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.SIGNAL_ALLOWED_USERS),
     };
   }
   if (!channels.discord && process.env.DISCORD_BOT_TOKEN) {
@@ -292,6 +300,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       enabled: true,
       token: process.env.DISCORD_BOT_TOKEN,
       dmPolicy: (process.env.DISCORD_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.DISCORD_ALLOWED_USERS),
     };
   }
 
