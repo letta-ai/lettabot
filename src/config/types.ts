@@ -215,9 +215,35 @@ export const DEFAULT_CONFIG: LettaBotConfig = {
  * Channels with `enabled: false` are dropped during normalization.
  */
 export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
-  // Multi-agent mode: already has agents[]
+  const normalizeChannels = (channels?: AgentConfig['channels']): AgentConfig['channels'] => {
+    const normalized: AgentConfig['channels'] = {};
+    if (!channels) return normalized;
+
+    if (channels.telegram?.enabled !== false && channels.telegram?.token) {
+      normalized.telegram = channels.telegram;
+    }
+    if (channels.slack?.enabled !== false && channels.slack?.botToken && channels.slack?.appToken) {
+      normalized.slack = channels.slack;
+    }
+    if (channels.whatsapp?.enabled !== false && channels.whatsapp?.enabled) {
+      normalized.whatsapp = channels.whatsapp;
+    }
+    if (channels.signal?.enabled !== false && channels.signal?.phone) {
+      normalized.signal = channels.signal;
+    }
+    if (channels.discord?.enabled !== false && channels.discord?.token) {
+      normalized.discord = channels.discord;
+    }
+
+    return normalized;
+  };
+
+  // Multi-agent mode: normalize channels for each configured agent
   if (config.agents && config.agents.length > 0) {
-    return config.agents;
+    return config.agents.map(agent => ({
+      ...agent,
+      channels: normalizeChannels(agent.channels),
+    }));
   }
 
   // Legacy single-agent mode: normalize to agents[]
@@ -225,25 +251,8 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
   const model = config.agent?.model;
   const id = config.agent?.id;
 
-  // Filter out disabled channels
-  const channels: AgentConfig['channels'] = {};
-  if (config.channels) {
-    if (config.channels.telegram?.enabled !== false && config.channels.telegram?.token) {
-      channels.telegram = config.channels.telegram;
-    }
-    if (config.channels.slack?.enabled !== false && config.channels.slack?.botToken) {
-      channels.slack = config.channels.slack;
-    }
-    if (config.channels.whatsapp?.enabled !== false && config.channels.whatsapp?.enabled) {
-      channels.whatsapp = config.channels.whatsapp;
-    }
-    if (config.channels.signal?.enabled !== false && config.channels.signal?.phone) {
-      channels.signal = config.channels.signal;
-    }
-    if (config.channels.discord?.enabled !== false && config.channels.discord?.token) {
-      channels.discord = config.channels.discord;
-    }
-  }
+  // Filter out disabled/misconfigured channels
+  const channels = normalizeChannels(config.channels);
 
   return [{
     name: agentName,

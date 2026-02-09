@@ -216,4 +216,13 @@ describe('Store', () => {
     expect(store.isServerMismatch('http://localhost:8284')).toBe(true);
     expect(store.isServerMismatch('https://api.letta.com')).toBe(true);
   });
+
+  it('should not apply LETTA_AGENT_ID override to non-default agent keys', () => {
+    process.env.LETTA_AGENT_ID = 'global-agent';
+    const defaultStore = new Store(testStorePath, 'LettaBot');
+    const namedStore = new Store(testStorePath, 'Bot2');
+
+    expect(defaultStore.agentId).toBe('global-agent');
+    expect(namedStore.agentId).toBeNull();
+  });
 });

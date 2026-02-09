@@ -100,8 +100,12 @@ export class Store {
   }
   
   get agentId(): string | null {
-    // Allow env var override (useful for local server testing with specific agent)
-    return this.agentData().agentId || process.env.LETTA_AGENT_ID || null;
+    // Keep legacy env var override only for default single-agent key.
+    // In multi-agent mode, a global LETTA_AGENT_ID would leak across agents.
+    if (this.agentName === 'LettaBot') {
+      return this.agentData().agentId || process.env.LETTA_AGENT_ID || null;
+    }
+    return this.agentData().agentId || null;
   }
   
   set agentId(id: string | null) {

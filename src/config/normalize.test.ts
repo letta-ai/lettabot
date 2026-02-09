@@ -47,18 +47,20 @@ describe('normalizeAgents', () => {
     expect(agents[0].channels.slack).toBeUndefined();
   });
 
-  it('should pass through multi-agent config unchanged', () => {
+  it('should normalize multi-agent config channels', () => {
     const agentsArray: AgentConfig[] = [
       {
         name: 'Bot1',
         channels: {
           telegram: { enabled: true, token: 'token1' },
+          slack: { enabled: true, botToken: 'missing-app-token' },
         },
       },
       {
         name: 'Bot2',
         channels: {
-          slack: { enabled: true, botToken: 'token2' },
+          slack: { enabled: true, botToken: 'token2', appToken: 'app2' },
+          discord: { enabled: false, token: 'disabled' },
         },
       },
     ];
@@ -73,8 +75,11 @@ describe('normalizeAgents', () => {
 
     const agents = normalizeAgents(config);
 
-    expect(agents).toEqual(agentsArray);
     expect(agents).toHaveLength(2);
+    expect(agents[0].channels.telegram?.token).toBe('token1');
+    expect(agents[0].channels.slack).toBeUndefined();
+    expect(agents[1].channels.slack?.botToken).toBe('token2');
+    expect(agents[1].channels.discord).toBeUndefined();
   });
 
   it('should produce empty channels object when no channels configured', () => {
@@ -116,7 +121,8 @@ describe('normalizeAgents', () => {
         },
         slack: {
           enabled: true,
-          // Missing botToken
+          botToken: 'has-bot-token-only',
+          // Missing appToken
         },
         signal: {
           enabled: true,
