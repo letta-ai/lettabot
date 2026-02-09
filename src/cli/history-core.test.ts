@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchDiscordHistory, fetchHistory, fetchSlackHistory, isValidLimit, parseFetchArgs } from './history-core.js';
-import { loadLastTarget } from './shared.js';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -45,22 +41,8 @@ describe('isValidLimit', () => {
   });
 });
 
-describe('loadLastTarget', () => {
-  it('loads the last message target from the store path', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'lettabot-history-'));
-    const storePath = join(dir, 'lettabot-agent.json');
-    writeFileSync(
-      storePath,
-      JSON.stringify({ lastMessageTarget: { channel: 'slack', chatId: 'C123' } }),
-      'utf-8'
-    );
-
-    const target = loadLastTarget(storePath);
-    expect(target).toEqual({ channel: 'slack', chatId: 'C123' });
-
-    rmSync(dir, { recursive: true, force: true });
-  });
-});
+// loadLastTarget is now backed by the Store class (handles v1/v2 transparently).
+// Store-level tests in src/core/store.test.ts cover lastMessageTarget persistence.
 
 describe('fetchDiscordHistory', () => {
   it('formats Discord history responses', async () => {

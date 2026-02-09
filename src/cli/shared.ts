@@ -1,6 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { getDataDir } from '../utils/paths.js';
+import { Store } from '../core/store.js';
 
 export interface LastTarget {
   channel: string;
@@ -8,21 +6,11 @@ export interface LastTarget {
   messageId?: string;
 }
 
-interface AgentStore {
-  agentId?: string;
-  lastMessageTarget?: LastTarget;
-}
-
-export const STORE_PATH = resolve(getDataDir(), 'lettabot-agent.json');
-
-export function loadLastTarget(storePath: string = STORE_PATH): LastTarget | null {
-  try {
-    if (existsSync(storePath)) {
-      const store: AgentStore = JSON.parse(readFileSync(storePath, 'utf-8'));
-      return store.lastMessageTarget || null;
-    }
-  } catch {
-    // Ignore
-  }
-  return null;
+/**
+ * Load the last message target from the agent store.
+ * Uses Store class which handles both v1 and v2 formats transparently.
+ */
+export function loadLastTarget(): LastTarget | null {
+  const store = new Store('lettabot-agent.json');
+  return store.lastMessageTarget || null;
 }

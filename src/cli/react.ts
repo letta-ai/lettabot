@@ -13,7 +13,7 @@
 import { loadConfig, applyConfigToEnv } from '../config/index.js';
 const config = loadConfig();
 applyConfigToEnv(config);
-import { loadLastTarget, STORE_PATH } from './shared.js';
+import { loadLastTarget } from './shared.js';
 
 const EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
   eyes: '👀',

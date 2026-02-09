@@ -15,7 +15,7 @@ import { loadConfig, applyConfigToEnv } from '../config/index.js';
 const config = loadConfig();
 applyConfigToEnv(config);
 import { existsSync, readFileSync } from 'node:fs';
-import { loadLastTarget, STORE_PATH } from './shared.js';
+import { loadLastTarget } from './shared.js';
 
 // Channel senders
 async function sendTelegram(chatId: string, text: string): Promise<void> {

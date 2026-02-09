@@ -11,7 +11,7 @@ import { loadConfig, applyConfigToEnv } from '../config/index.js';
 const config = loadConfig();
 applyConfigToEnv(config);
 import { fetchHistory, isValidLimit, parseFetchArgs } from './history-core.js';
-import { loadLastTarget, STORE_PATH } from './shared.js';
+import { loadLastTarget } from './shared.js';
 
 async function fetchCommand(args: string[]): Promise<void> {
   const parsed = parseFetchArgs(args);
@@ -27,7 +27,7 @@ async function fetchCommand(args: string[]): Promise<void> {
   }
 
   if (!channel || !chatId) {
-    const lastTarget = loadLastTarget(STORE_PATH);
+    const lastTarget = loadLastTarget();
     if (lastTarget) {
       channel = channel || lastTarget.channel;
       chatId = chatId || lastTarget.chatId;
