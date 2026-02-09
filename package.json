@@ -19,7 +19,7 @@
     "prepublishOnly": "npm run build && npm run test:run",
     "start": "node dist/main.js",
     "test": "vitest",
-    "test:run": "vitest run",
+    "test:run": "vitest run --exclude 'e2e/**'",
     "test:e2e": "vitest run e2e/",
     "skills": "tsx src/cli.ts skills",
     "skills:list": "tsx src/cli.ts skills list",
