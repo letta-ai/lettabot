@@ -20,8 +20,12 @@ import { getDataDir, getWorkingDir, hasRailwayVolume } from './utils/paths.js';
 const yamlConfig = loadConfig();
 const configSource = existsSync(resolveConfigPath()) ? resolveConfigPath() : 'defaults + environment variables';
 console.log(`[Config] Loaded from ${configSource}`);
-console.log(`[Config] Mode: ${yamlConfig.server.mode}, Agent: ${yamlConfig.agent.name}`);
-if (yamlConfig.agent.model) {
+if (yamlConfig.agents?.length) {
+  console.log(`[Config] Mode: ${yamlConfig.server.mode}, Agents: ${yamlConfig.agents.map(a => a.name).join(', ')}`);
+} else {
+  console.log(`[Config] Mode: ${yamlConfig.server.mode}, Agent: ${yamlConfig.agent.name}`);
+}
+if (yamlConfig.agent?.model) {
   console.warn('[Config] WARNING: agent.model in lettabot.yaml is deprecated and ignored. Use `lettabot model set <handle>` instead.');
 }
 applyConfigToEnv(yamlConfig);
@@ -36,24 +40,43 @@ const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
 
 if (existsSync(STORE_PATH)) {
   try {
-    const store = JSON.parse(readFileSync(STORE_PATH, 'utf-8'));
+    const raw = JSON.parse(readFileSync(STORE_PATH, 'utf-8'));
     
-    // Check for server mismatch
-    if (store.agentId && store.baseUrl) {
-      const storedUrl = store.baseUrl.replace(/\/$/, '');
-      const currentUrl = currentBaseUrl.replace(/\/$/, '');
-      
-      if (storedUrl !== currentUrl) {
-        console.warn(`\n⚠️  Server mismatch detected!`);
-        console.warn(`   Stored agent was created on: ${storedUrl}`);
-        console.warn(`   Current server: ${currentUrl}`);
-        console.warn(`   The agent ${store.agentId} may not exist on this server.`);
-        console.warn(`   Run 'lettabot onboard' to select or create an agent for this server.\n`);
+    // V2 format: get first agent's ID
+    if (raw.version === 2 && raw.agents) {
+      const firstAgent = Object.values(raw.agents)[0] as any;
+      if (firstAgent?.agentId) {
+        process.env.LETTA_AGENT_ID = firstAgent.agentId;
       }
-    }
-    
-    if (store.agentId) {
-      process.env.LETTA_AGENT_ID = store.agentId;
+      // Check server mismatch on first agent
+      if (firstAgent?.agentId && firstAgent?.baseUrl) {
+        const storedUrl = firstAgent.baseUrl.replace(/\/$/, '');
+        const currentUrl = currentBaseUrl.replace(/\/$/, '');
+        
+        if (storedUrl !== currentUrl) {
+          console.warn(`\n⚠️  Server mismatch detected!`);
+          console.warn(`   Stored agent was created on: ${storedUrl}`);
+          console.warn(`   Current server: ${currentUrl}`);
+          console.warn(`   The agent ${firstAgent.agentId} may not exist on this server.`);
+          console.warn(`   Run 'lettabot onboard' to select or create an agent for this server.\n`);
+        }
+      }
+    } else if (raw.agentId) {
+      // V1 format (legacy)
+      process.env.LETTA_AGENT_ID = raw.agentId;
+      // Check server mismatch
+      if (raw.agentId && raw.baseUrl) {
+        const storedUrl = raw.baseUrl.replace(/\/$/, '');
+        const currentUrl = currentBaseUrl.replace(/\/$/, '');
+        
+        if (storedUrl !== currentUrl) {
+          console.warn(`\n⚠️  Server mismatch detected!`);
+          console.warn(`   Stored agent was created on: ${storedUrl}`);
+          console.warn(`   Current server: ${currentUrl}`);
+          console.warn(`   The agent ${raw.agentId} may not exist on this server.`);
+          console.warn(`   Run 'lettabot onboard' to select or create an agent for this server.\n`);
+        }
+      }
     }
   } catch {}
 }
@@ -116,12 +139,15 @@ async function refreshTokensIfNeeded(): Promise<void> {
 // Run token refresh before importing SDK (which reads LETTA_API_KEY)
 await refreshTokensIfNeeded();
 
+import { normalizeAgents } from './config/types.js';
+import { LettaGateway } from './core/gateway.js';
 import { LettaBot } from './core/bot.js';
 import { TelegramAdapter } from './channels/telegram.js';
 import { SlackAdapter } from './channels/slack.js';
 import { WhatsAppAdapter } from './channels/whatsapp/index.js';
 import { SignalAdapter } from './channels/signal.js';
 import { DiscordAdapter } from './channels/discord.js';
+import { GroupBatcher } from './core/group-batcher.js';
 import { CronService } from './cron/service.js';
 import { HeartbeatService } from './cron/heartbeat.js';
 import { PollingService } from './polling/service.js';
@@ -231,80 +257,158 @@ async function pruneAttachmentsDir(baseDir: string, maxAgeDays: number): Promise
   }
 }
 
+/**
+ * Create channel adapters for an agent from its config
+ */
+function createChannelsForAgent(
+  agentConfig: import('./config/types.js').AgentConfig,
+  attachmentsDir: string,
+  attachmentsMaxBytes: number,
+): import('./channels/types.js').ChannelAdapter[] {
+  const adapters: import('./channels/types.js').ChannelAdapter[] = [];
+
+  if (agentConfig.channels.telegram?.token) {
+    adapters.push(new TelegramAdapter({
+      token: agentConfig.channels.telegram.token,
+      dmPolicy: agentConfig.channels.telegram.dmPolicy || 'pairing',
+      allowedUsers: agentConfig.channels.telegram.allowedUsers && agentConfig.channels.telegram.allowedUsers.length > 0
+        ? agentConfig.channels.telegram.allowedUsers.map(u => typeof u === 'string' ? parseInt(u, 10) : u)
+        : undefined,
+      attachmentsDir,
+      attachmentsMaxBytes,
+    }));
+  }
+
+  if (agentConfig.channels.slack?.botToken && agentConfig.channels.slack?.appToken) {
+    adapters.push(new SlackAdapter({
+      botToken: agentConfig.channels.slack.botToken,
+      appToken: agentConfig.channels.slack.appToken,
+      dmPolicy: agentConfig.channels.slack.dmPolicy || 'pairing',
+      allowedUsers: agentConfig.channels.slack.allowedUsers && agentConfig.channels.slack.allowedUsers.length > 0
+        ? agentConfig.channels.slack.allowedUsers
+        : undefined,
+      attachmentsDir,
+      attachmentsMaxBytes,
+    }));
+  }
+
+  if (agentConfig.channels.whatsapp?.enabled) {
+    const selfChatMode = agentConfig.channels.whatsapp.selfChat ?? true;
+    if (!selfChatMode) {
+      console.warn('[WhatsApp] WARNING: selfChatMode is OFF - bot will respond to ALL incoming messages!');
+      console.warn('[WhatsApp] Only use this if this is a dedicated bot number, not your personal WhatsApp.');
+    }
+    adapters.push(new WhatsAppAdapter({
+      sessionPath: process.env.WHATSAPP_SESSION_PATH || './data/whatsapp-session',
+      dmPolicy: agentConfig.channels.whatsapp.dmPolicy || 'pairing',
+      allowedUsers: agentConfig.channels.whatsapp.allowedUsers && agentConfig.channels.whatsapp.allowedUsers.length > 0
+        ? agentConfig.channels.whatsapp.allowedUsers
+        : undefined,
+      selfChatMode,
+      attachmentsDir,
+      attachmentsMaxBytes,
+    }));
+  }
+
+  if (agentConfig.channels.signal?.phone) {
+    const selfChatMode = agentConfig.channels.signal.selfChat ?? true;
+    if (!selfChatMode) {
+      console.warn('[Signal] WARNING: selfChatMode is OFF - bot will respond to ALL incoming messages!');
+      console.warn('[Signal] Only use this if this is a dedicated bot number, not your personal Signal.');
+    }
+    adapters.push(new SignalAdapter({
+      phoneNumber: agentConfig.channels.signal.phone,
+      cliPath: process.env.SIGNAL_CLI_PATH || 'signal-cli',
+      httpHost: process.env.SIGNAL_HTTP_HOST || '127.0.0.1',
+      httpPort: parseInt(process.env.SIGNAL_HTTP_PORT || '8090', 10),
+      dmPolicy: agentConfig.channels.signal.dmPolicy || 'pairing',
+      allowedUsers: agentConfig.channels.signal.allowedUsers && agentConfig.channels.signal.allowedUsers.length > 0
+        ? agentConfig.channels.signal.allowedUsers
+        : undefined,
+      selfChatMode,
+      attachmentsDir,
+      attachmentsMaxBytes,
+    }));
+  }
+
+  if (agentConfig.channels.discord?.token) {
+    adapters.push(new DiscordAdapter({
+      token: agentConfig.channels.discord.token,
+      dmPolicy: agentConfig.channels.discord.dmPolicy || 'pairing',
+      allowedUsers: agentConfig.channels.discord.allowedUsers && agentConfig.channels.discord.allowedUsers.length > 0
+        ? agentConfig.channels.discord.allowedUsers
+        : undefined,
+      attachmentsDir,
+      attachmentsMaxBytes,
+    }));
+  }
+
+  return adapters;
+}
+
+/**
+ * Create and configure a group batcher for an agent
+ */
+function createGroupBatcher(
+  agentConfig: import('./config/types.js').AgentConfig,
+  bot: import('./core/interfaces.js').AgentSession,
+): { batcher: GroupBatcher | null; intervals: Map<string, number>; instantIds: Set<string> } {
+  const intervals = new Map<string, number>();
+  const instantIds = new Set<string>();
+
+  // Collect intervals from channel configs
+  if (agentConfig.channels.telegram) {
+    intervals.set('telegram', agentConfig.channels.telegram.groupPollIntervalMin ?? 10);
+    for (const id of agentConfig.channels.telegram.instantGroups || []) {
+      instantIds.add(`telegram:${id}`);
+    }
+  }
+  if (agentConfig.channels.slack) {
+    intervals.set('slack', agentConfig.channels.slack.groupPollIntervalMin ?? 10);
+    for (const id of agentConfig.channels.slack.instantGroups || []) {
+      instantIds.add(`slack:${id}`);
+    }
+  }
+  if (agentConfig.channels.whatsapp) {
+    intervals.set('whatsapp', agentConfig.channels.whatsapp.groupPollIntervalMin ?? 10);
+    for (const id of agentConfig.channels.whatsapp.instantGroups || []) {
+      instantIds.add(`whatsapp:${id}`);
+    }
+  }
+  if (agentConfig.channels.signal) {
+    intervals.set('signal', agentConfig.channels.signal.groupPollIntervalMin ?? 10);
+    for (const id of agentConfig.channels.signal.instantGroups || []) {
+      instantIds.add(`signal:${id}`);
+    }
+  }
+  if (agentConfig.channels.discord) {
+    intervals.set('discord', agentConfig.channels.discord.groupPollIntervalMin ?? 10);
+    for (const id of agentConfig.channels.discord.instantGroups || []) {
+      instantIds.add(`discord:${id}`);
+    }
+  }
+
+  if (instantIds.size > 0) {
+    console.log(`[Groups] Instant groups: ${[...instantIds].join(', ')}`);
+  }
+
+  const batcher = intervals.size > 0 ? new GroupBatcher((msg, adapter) => {
+    bot.processGroupBatch(msg, adapter);
+  }) : null;
+
+  return { batcher, intervals, instantIds };
+}
+
 // Skills are installed to agent-scoped directory when agent is created (see core/bot.ts)
 
-// Configuration from environment
-const config = {
+// Global config (shared across all agents)
+const globalConfig = {
   workingDir: getWorkingDir(),
   allowedTools: (process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search').split(','),
   attachmentsMaxBytes: resolveAttachmentsMaxBytes(),
   attachmentsMaxAgeDays: resolveAttachmentsMaxAgeDays(),
-  
-  // Channel configs
-  telegram: {
-    enabled: !!process.env.TELEGRAM_BOT_TOKEN,
-    token: process.env.TELEGRAM_BOT_TOKEN || '',
-    dmPolicy: (process.env.TELEGRAM_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
-    allowedUsers: process.env.TELEGRAM_ALLOWED_USERS?.split(',').filter(Boolean).map(Number) || [],
-  },
-  slack: {
-    enabled: !!process.env.SLACK_BOT_TOKEN && !!process.env.SLACK_APP_TOKEN,
-    botToken: process.env.SLACK_BOT_TOKEN || '',
-    appToken: process.env.SLACK_APP_TOKEN || '',
-    allowedUsers: process.env.SLACK_ALLOWED_USERS?.split(',').filter(Boolean) || [],
-  },
-  whatsapp: {
-    enabled: process.env.WHATSAPP_ENABLED === 'true',
-    sessionPath: process.env.WHATSAPP_SESSION_PATH || './data/whatsapp-session',
-    dmPolicy: (process.env.WHATSAPP_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
-    allowedUsers: process.env.WHATSAPP_ALLOWED_USERS?.split(',').filter(Boolean) || [],
-    selfChatMode: process.env.WHATSAPP_SELF_CHAT_MODE !== 'false', // Default true (safe - only self-chat)
-  },
-  signal: {
-    enabled: !!process.env.SIGNAL_PHONE_NUMBER,
-    phoneNumber: process.env.SIGNAL_PHONE_NUMBER || '',
-    cliPath: process.env.SIGNAL_CLI_PATH || 'signal-cli',
-    httpHost: process.env.SIGNAL_HTTP_HOST || '127.0.0.1',
-    httpPort: parseInt(process.env.SIGNAL_HTTP_PORT || '8090', 10),
-    dmPolicy: (process.env.SIGNAL_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
-    allowedUsers: process.env.SIGNAL_ALLOWED_USERS?.split(',').filter(Boolean) || [],
-    selfChatMode: process.env.SIGNAL_SELF_CHAT_MODE !== 'false', // Default true
-  },
-  discord: {
-    enabled: !!process.env.DISCORD_BOT_TOKEN,
-    token: process.env.DISCORD_BOT_TOKEN || '',
-    dmPolicy: (process.env.DISCORD_DM_POLICY || 'pairing') as 'pairing' | 'allowlist' | 'open',
-    allowedUsers: process.env.DISCORD_ALLOWED_USERS?.split(',').filter(Boolean) || [],
-  },
-  
-  // Cron
-  cronEnabled: process.env.CRON_ENABLED === 'true',
-  
-  // Heartbeat - simpler config
-  heartbeat: {
-    enabled: !!process.env.HEARTBEAT_INTERVAL_MIN,
-    intervalMinutes: parseInt(process.env.HEARTBEAT_INTERVAL_MIN || '0', 10) || 30,
-    prompt: process.env.HEARTBEAT_PROMPT,
-    target: parseHeartbeatTarget(process.env.HEARTBEAT_TARGET),
-  },
-  
-  // Polling - system-level background checks
-  polling: {
-    enabled: !!process.env.GMAIL_ACCOUNT, // Enable if any poller is configured
-    intervalMs: parseInt(process.env.POLLING_INTERVAL_MS || '60000', 10), // Default 1 minute
-    gmail: {
-      enabled: !!process.env.GMAIL_ACCOUNT,
-      account: process.env.GMAIL_ACCOUNT || '',
-    },
-  },
+  cronEnabled: process.env.CRON_ENABLED === 'true',  // Legacy env var fallback
 };
-
-// Validate at least one channel is configured
-if (!config.telegram.enabled && !config.slack.enabled && !config.whatsapp.enabled && !config.signal.enabled && !config.discord.enabled) {
-  console.error('\n  Error: No channels configured.');
-  console.error('  Set TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN+SLACK_APP_TOKEN, WHATSAPP_ENABLED=true, SIGNAL_PHONE_NUMBER, or DISCORD_BOT_TOKEN\n');
-  process.exit(1);
-}
 
 // Validate LETTA_API_KEY is set for cloud mode (selfhosted mode doesn't require it)
 if (yamlConfig.server.mode !== 'selfhosted' && !process.env.LETTA_API_KEY) {
@@ -323,224 +427,199 @@ async function main() {
     console.log(`[Storage] Railway volume detected at ${process.env.RAILWAY_VOLUME_MOUNT_PATH}`);
   }
   console.log(`[Storage] Data directory: ${dataDir}`);
-  console.log(`[Storage] Working directory: ${config.workingDir}`);
+  console.log(`[Storage] Working directory: ${globalConfig.workingDir}`);
   
-  // Create bot with skills config (skills installed to agent-scoped location after agent creation)
-  const bot = new LettaBot({
-    workingDir: config.workingDir,
-    agentName: process.env.AGENT_NAME || 'LettaBot',
-    allowedTools: config.allowedTools,
-    maxToolCalls: process.env.MAX_TOOL_CALLS ? Number(process.env.MAX_TOOL_CALLS) : undefined,
-    skills: {
-      cronEnabled: config.cronEnabled,
-      googleEnabled: config.polling.gmail.enabled,
-    },
-  });
+  // Normalize config to agents array
+  const agents = normalizeAgents(yamlConfig);
+  const isMultiAgent = agents.length > 1;
+  console.log(`[Config] ${agents.length} agent(s) configured: ${agents.map(a => a.name).join(', ')}`);
+  
+  // Validate at least one agent has channels
+  const totalChannels = agents.reduce((sum, a) => sum + Object.keys(a.channels).length, 0);
+  if (totalChannels === 0) {
+    console.error('\n  Error: No channels configured in any agent.');
+    console.error('  Configure channels in lettabot.yaml or set environment variables.\n');
+    process.exit(1);
+  }
 
-  const attachmentsDir = resolve(config.workingDir, 'attachments');
-  pruneAttachmentsDir(attachmentsDir, config.attachmentsMaxAgeDays).catch((err) => {
+  const attachmentsDir = resolve(globalConfig.workingDir, 'attachments');
+  pruneAttachmentsDir(attachmentsDir, globalConfig.attachmentsMaxAgeDays).catch((err) => {
     console.warn('[Attachments] Prune failed:', err);
   });
-  if (config.attachmentsMaxAgeDays > 0) {
+  if (globalConfig.attachmentsMaxAgeDays > 0) {
     const timer = setInterval(() => {
-      pruneAttachmentsDir(attachmentsDir, config.attachmentsMaxAgeDays).catch((err) => {
+      pruneAttachmentsDir(attachmentsDir, globalConfig.attachmentsMaxAgeDays).catch((err) => {
         console.warn('[Attachments] Prune failed:', err);
       });
     }, ATTACHMENTS_PRUNE_INTERVAL_MS);
     timer.unref?.();
   }
   
-  // Verify agent exists (clear stale ID if deleted)
-  let initialStatus = bot.getStatus();
-  if (initialStatus.agentId) {
-    const exists = await agentExists(initialStatus.agentId);
-    if (!exists) {
-      console.log(`[Agent] Stored agent ${initialStatus.agentId} not found on server`);
-      bot.reset();
-      // Also clear env var so search-by-name can run
-      delete process.env.LETTA_AGENT_ID;
+  const gateway = new LettaGateway();
+  const services: { 
+    cronServices: CronService[], 
+    heartbeatServices: HeartbeatService[], 
+    pollingServices: PollingService[], 
+    groupBatchers: GroupBatcher[] 
+  } = {
+    cronServices: [],
+    heartbeatServices: [],
+    pollingServices: [],
+    groupBatchers: [],
+  };
+  
+  for (const agentConfig of agents) {
+    console.log(`\n[Setup] Configuring agent: ${agentConfig.name}`);
+    
+    // Create LettaBot for this agent
+    const bot = new LettaBot({
+      workingDir: globalConfig.workingDir,
+      agentName: agentConfig.name,
+      allowedTools: globalConfig.allowedTools,
+      maxToolCalls: agentConfig.features?.maxToolCalls,
+      skills: {
+        cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
+        googleEnabled: !!agentConfig.integrations?.google?.enabled || !!agentConfig.polling?.gmail?.enabled,
+      },
+    });
+    
+    // Apply explicit agent ID from config (before store verification)
+    let initialStatus = bot.getStatus();
+    if (agentConfig.id && !initialStatus.agentId) {
+      console.log(`[Agent:${agentConfig.name}] Using configured agent ID: ${agentConfig.id}`);
+      bot.setAgentId(agentConfig.id);
       initialStatus = bot.getStatus();
     }
-  }
-  
-  // Container deploy: try to find existing agent by name if no ID set
-  const agentName = process.env.AGENT_NAME || 'LettaBot';
-  if (!initialStatus.agentId && isContainerDeploy) {
-    console.log(`[Agent] Searching for existing agent named "${agentName}"...`);
-    const found = await findAgentByName(agentName);
-    if (found) {
-      console.log(`[Agent] Found existing agent: ${found.id}`);
-      process.env.LETTA_AGENT_ID = found.id;
-      // Reinitialize bot with found agent
-      bot.setAgentId(found.id);
-      initialStatus = bot.getStatus();
+    
+    // Verify agent exists (clear stale ID if deleted)
+    if (initialStatus.agentId) {
+      const exists = await agentExists(initialStatus.agentId);
+      if (!exists) {
+        console.log(`[Agent:${agentConfig.name}] Stored agent ${initialStatus.agentId} not found on server`);
+        bot.reset();
+        initialStatus = bot.getStatus();
+      }
     }
-  }
-  
-  // Agent will be created on first user message (lazy initialization)
-  if (!initialStatus.agentId) {
-    console.log(`[Agent] No agent found - will create "${agentName}" on first message`);
-  }
-  
-  // Proactively disable tool approvals for headless operation
-  // Prevents stuck states from server-side requires_approval=true (SDK issue #25)
-  if (initialStatus.agentId) {
-    ensureNoToolApprovals(initialStatus.agentId).catch(err => {
-      console.warn('[Agent] Failed to check tool approvals:', err);
-    });
-  }
-  
-  // Register enabled channels
-  if (config.telegram.enabled) {
-    const telegram = new TelegramAdapter({
-      token: config.telegram.token,
-      dmPolicy: config.telegram.dmPolicy,
-      allowedUsers: config.telegram.allowedUsers.length > 0 ? config.telegram.allowedUsers : undefined,
-      attachmentsDir,
-      attachmentsMaxBytes: config.attachmentsMaxBytes,
-    });
-    bot.registerChannel(telegram);
-  }
-  
-  if (config.slack.enabled) {
-    const slack = new SlackAdapter({
-      botToken: config.slack.botToken,
-      appToken: config.slack.appToken,
-      allowedUsers: config.slack.allowedUsers.length > 0 ? config.slack.allowedUsers : undefined,
-      attachmentsDir,
-      attachmentsMaxBytes: config.attachmentsMaxBytes,
-    });
-    bot.registerChannel(slack);
-  }
-  
-  if (config.whatsapp.enabled) {
-    if (!config.whatsapp.selfChatMode) {
-      console.warn('[WhatsApp] WARNING: selfChatMode is OFF - bot will respond to ALL incoming messages!');
-      console.warn('[WhatsApp] Only use this if this is a dedicated bot number, not your personal WhatsApp.');
+    
+    // Container deploy: discover by name
+    if (!initialStatus.agentId && isContainerDeploy) {
+      const found = await findAgentByName(agentConfig.name);
+      if (found) {
+        console.log(`[Agent:${agentConfig.name}] Found existing agent: ${found.id}`);
+        bot.setAgentId(found.id);
+        initialStatus = bot.getStatus();
+      }
     }
-    const whatsapp = new WhatsAppAdapter({
-      sessionPath: config.whatsapp.sessionPath,
-      dmPolicy: config.whatsapp.dmPolicy,
-      allowedUsers: config.whatsapp.allowedUsers.length > 0 ? config.whatsapp.allowedUsers : undefined,
-      selfChatMode: config.whatsapp.selfChatMode,
-      attachmentsDir,
-      attachmentsMaxBytes: config.attachmentsMaxBytes,
-    });
-    bot.registerChannel(whatsapp);
-  }
-  
-  if (config.signal.enabled) {
-    if (!config.signal.selfChatMode) {
-      console.warn('[Signal] WARNING: selfChatMode is OFF - bot will respond to ALL incoming messages!');
-      console.warn('[Signal] Only use this if this is a dedicated bot number, not your personal Signal.');
+    
+    if (!initialStatus.agentId) {
+      console.log(`[Agent:${agentConfig.name}] No agent found - will create on first message`);
     }
-    const signal = new SignalAdapter({
-      phoneNumber: config.signal.phoneNumber,
-      cliPath: config.signal.cliPath,
-      httpHost: config.signal.httpHost,
-      httpPort: config.signal.httpPort,
-      dmPolicy: config.signal.dmPolicy,
-      allowedUsers: config.signal.allowedUsers.length > 0 ? config.signal.allowedUsers : undefined,
-      selfChatMode: config.signal.selfChatMode,
-      attachmentsDir,
-      attachmentsMaxBytes: config.attachmentsMaxBytes,
+    
+    // Disable tool approvals
+    if (initialStatus.agentId) {
+      ensureNoToolApprovals(initialStatus.agentId).catch(err => {
+        console.warn(`[Agent:${agentConfig.name}] Failed to check tool approvals:`, err);
+      });
+    }
+    
+    // Create and register channels
+    const adapters = createChannelsForAgent(agentConfig, attachmentsDir, globalConfig.attachmentsMaxBytes);
+    for (const adapter of adapters) {
+      bot.registerChannel(adapter);
+    }
+    
+    // Setup group batching
+    const { batcher, intervals, instantIds } = createGroupBatcher(agentConfig, bot);
+    if (batcher) {
+      bot.setGroupBatcher(batcher, intervals, instantIds);
+      services.groupBatchers.push(batcher);
+    }
+    
+    // Per-agent cron
+    if (agentConfig.features?.cron ?? globalConfig.cronEnabled) {
+      const cronService = new CronService(bot);
+      await cronService.start();
+      services.cronServices.push(cronService);
+    }
+    
+    // Per-agent heartbeat
+    const heartbeatConfig = agentConfig.features?.heartbeat;
+    const heartbeatService = new HeartbeatService(bot, {
+      enabled: heartbeatConfig?.enabled ?? false,
+      intervalMinutes: heartbeatConfig?.intervalMin ?? 30,
+      prompt: heartbeatConfig?.prompt || process.env.HEARTBEAT_PROMPT,
+      promptFile: heartbeatConfig?.promptFile,
+      workingDir: globalConfig.workingDir,
+      target: parseHeartbeatTarget(process.env.HEARTBEAT_TARGET),
     });
-    bot.registerChannel(signal);
-  }
-
-  if (config.discord.enabled) {
-    const discord = new DiscordAdapter({
-      token: config.discord.token,
-      dmPolicy: config.discord.dmPolicy,
-      allowedUsers: config.discord.allowedUsers.length > 0 ? config.discord.allowedUsers : undefined,
-      attachmentsDir,
-      attachmentsMaxBytes: config.attachmentsMaxBytes,
-    });
-    bot.registerChannel(discord);
-  }
-  
-  // Start cron service if enabled
-  // Note: CronService uses getDataDir() for cron-jobs.json to match the CLI
-  let cronService: CronService | null = null;
-  if (config.cronEnabled) {
-    cronService = new CronService(bot);
-    await cronService.start();
-  }
-  
-  // Create heartbeat service (always available for /heartbeat command)
-  const heartbeatService = new HeartbeatService(bot, {
-    enabled: config.heartbeat.enabled,
-    intervalMinutes: config.heartbeat.intervalMinutes,
-    prompt: config.heartbeat.prompt,
-    workingDir: config.workingDir,
-    target: config.heartbeat.target,
-  });
-  
-  // Start auto-heartbeats only if interval is configured
-  if (config.heartbeat.enabled) {
-    heartbeatService.start();
+    if (heartbeatConfig?.enabled) {
+      heartbeatService.start();
+      services.heartbeatServices.push(heartbeatService);
+    }
+    bot.onTriggerHeartbeat = () => heartbeatService.trigger();
+    
+    // Per-agent polling
+    const pollConfig = agentConfig.polling || (agentConfig.integrations?.google ? {
+      enabled: agentConfig.integrations.google.enabled,
+      intervalMs: (agentConfig.integrations.google.pollIntervalSec || 60) * 1000,
+      gmail: {
+        enabled: agentConfig.integrations.google.enabled,
+        account: agentConfig.integrations.google.account || '',
+      },
+    } : undefined);
+    
+    if (pollConfig?.enabled && pollConfig.gmail?.enabled) {
+      const pollingService = new PollingService(bot, {
+        intervalMs: pollConfig.intervalMs || 60000,
+        workingDir: globalConfig.workingDir,
+        gmail: {
+          enabled: pollConfig.gmail.enabled,
+          account: pollConfig.gmail.account || '',
+        },
+      });
+      pollingService.start();
+      services.pollingServices.push(pollingService);
+    }
+    
+    gateway.addAgent(agentConfig.name, bot);
   }
   
-  // Wire up /heartbeat command (always available)
-  bot.onTriggerHeartbeat = () => heartbeatService.trigger();
-  
-  // Start polling service if enabled (Gmail, etc.)
-  let pollingService: PollingService | null = null;
-  if (config.polling.enabled) {
-    pollingService = new PollingService(bot, {
-      intervalMs: config.polling.intervalMs,
-      workingDir: config.workingDir,
-      gmail: config.polling.gmail,
-    });
-    pollingService.start();
-  }
-  
-  // Start all channels
-  await bot.start();
+  // Start all agents
+  await gateway.start();
   
   // Load/generate API key for CLI authentication
   const apiKey = loadOrGenerateApiKey();
   console.log(`[API] Key: ${apiKey.slice(0, 8)}... (set LETTABOT_API_KEY to customize)`);
 
-  // Start API server (replaces health server, includes health checks)
-  // Provides endpoints for CLI to send messages across Docker boundaries
+  // Start API server - uses gateway for delivery
   const apiPort = parseInt(process.env.PORT || '8080', 10);
   const apiHost = process.env.API_HOST; // undefined = 127.0.0.1 (secure default)
   const apiCorsOrigin = process.env.API_CORS_ORIGIN; // undefined = same-origin only
-  const apiServer = createApiServer(bot, {
+  const apiServer = createApiServer(gateway, {
     port: apiPort,
     apiKey: apiKey,
     host: apiHost,
     corsOrigin: apiCorsOrigin,
   });
   
-  // Log status
-  const status = bot.getStatus();
+  // Status logging
   console.log('\n=================================');
-  console.log('LettaBot is running!');
+  console.log(`LettaBot is running! (${gateway.size} agent${gateway.size > 1 ? 's' : ''})`);
   console.log('=================================');
-  console.log(`Agent ID: ${status.agentId || '(will be created on first message)'}`);
-  if (isContainerDeploy && status.agentId) {
-    console.log(`[Agent] Using agent "${agentName}" (auto-discovered by name)`);
-  }
-  console.log(`Channels: ${status.channels.join(', ')}`);
-  console.log(`Cron: ${config.cronEnabled ? 'enabled' : 'disabled'}`);
-  console.log(`Heartbeat: ${config.heartbeat.enabled ? `every ${config.heartbeat.intervalMinutes} min` : 'disabled'}`);
-  console.log(`Polling: ${config.polling.enabled ? `every ${config.polling.intervalMs / 1000}s` : 'disabled'}`);
-  if (config.polling.gmail.enabled) {
-    console.log(`  └─ Gmail: ${config.polling.gmail.account}`);
-  }
-  if (config.heartbeat.enabled) {
-    console.log(`Heartbeat target: ${config.heartbeat.target ? `${config.heartbeat.target.channel}:${config.heartbeat.target.chatId}` : 'last messaged'}`);
+  for (const name of gateway.getAgentNames()) {
+    const status = gateway.getAgent(name)!.getStatus();
+    console.log(`  ${name}: ${status.agentId || '(pending)'} [${status.channels.join(', ')}]`);
   }
   console.log('=================================\n');
   
-  // Handle shutdown
+  // Shutdown
   const shutdown = async () => {
     console.log('\nShutting down...');
-    heartbeatService?.stop();
-    cronService?.stop();
-    await bot.stop();
+    services.groupBatchers.forEach(b => b.stop());
+    services.heartbeatServices.forEach(h => h.stop());
+    services.cronServices.forEach(c => c.stop());
+    services.pollingServices.forEach(p => p.stop());
+    await gateway.stop();
     process.exit(0);
   };
   

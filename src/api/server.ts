@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import { validateApiKey } from './auth.js';
 import type { SendMessageRequest, SendMessageResponse, SendFileResponse } from './types.js';
 import { parseMultipart } from './multipart.js';
-import type { LettaBot } from '../core/bot.js';
+import type { MessageDeliverer } from '../core/interfaces.js';
 import type { ChannelId } from '../core/types.js';
 
 const VALID_CHANNELS: ChannelId[] = ['telegram', 'slack', 'discord', 'whatsapp', 'signal'];
@@ -26,7 +26,7 @@ interface ServerOptions {
 /**
  * Create and start the HTTP API server
  */
-export function createApiServer(bot: LettaBot, options: ServerOptions): http.Server {
+export function createApiServer(deliverer: MessageDeliverer, options: ServerOptions): http.Server {
   const server = http.createServer(async (req, res) => {
     // Set CORS headers (configurable origin, defaults to same-origin for security)
     const corsOrigin = options.corsOrigin || req.headers.origin || 'null';
@@ -87,8 +87,8 @@ export function createApiServer(bot: LettaBot, options: ServerOptions): http.Ser
 
         const file = files.length > 0 ? files[0] : undefined;
 
-        // Send via unified bot method
-        const messageId = await bot.deliverToChannel(
+        // Send via unified deliverer method
+        const messageId = await deliverer.deliverToChannel(
           fields.channel as ChannelId,
           fields.chatId,
           {

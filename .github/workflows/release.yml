@@ -69,10 +69,9 @@ jobs:
           echo "## Install" >> notes.md
           echo "" >> notes.md
           echo '```bash' >> notes.md
-          echo "git clone https://github.com/letta-ai/lettabot.git" >> notes.md
-          echo "cd lettabot" >> notes.md
-          echo "git checkout ${CURRENT_TAG}" >> notes.md
-          echo "npm install && npm run build && npm link" >> notes.md
+          echo "npx lettabot onboard" >> notes.md
+          echo "# or" >> notes.md
+          echo "npm install -g lettabot" >> notes.md
           echo '```' >> notes.md
 
           # Add full changelog link
@@ -103,5 +102,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # TODO: Ping letta-code agent to write a richer summary once
-      # letta-code-action supports release events / custom prompts
+      - name: Publish to npm
+        if: env.NPM_TOKEN != ''
+        run: |
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+
+          # Set version from git tag (strip 'v' prefix)
+          VERSION=${CURRENT_TAG#v}
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+          # Determine npm tag (pre-releases get 'next', stable gets 'latest')
+          if echo "$CURRENT_TAG" | grep -qE '(alpha|beta|rc)'; then
+            npm publish --tag next --access public
+          else
+            npm publish --access public
+          fi
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

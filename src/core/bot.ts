@@ -4,17 +4,19 @@
  * Single agent, single conversation - chat continues across all channels.
  */
 
-import { createAgent, createSession, resumeSession, type Session } from '@letta-ai/letta-code-sdk';
+import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage } from '@letta-ai/letta-code-sdk';
 import { mkdirSync } from 'node:fs';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
+import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
 import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
 import { installSkillsToAgent } from '../skills/loader.js';
-import { formatMessageEnvelope, type SessionContextOptions } from './formatter.js';
+import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
+import type { GroupBatcher } from './group-batcher.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
-import { StreamWatchdog } from './stream-watchdog.js';
+
 
 /**
  * Detect if an error is a 409 CONFLICT from an orphaned approval.
@@ -32,7 +34,53 @@ function isApprovalConflictError(error: unknown): boolean {
   return false;
 }
 
-export class LettaBot {
+const SUPPORTED_IMAGE_MIMES = new Set([
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+]);
+
+async function buildMultimodalMessage(
+  formattedText: string,
+  msg: InboundMessage,
+): Promise<SendMessage> {
+  // Respect opt-out: when INLINE_IMAGES=false, skip multimodal and only send file paths in envelope
+  if (process.env.INLINE_IMAGES === 'false') {
+    return formattedText;
+  }
+
+  const imageAttachments = (msg.attachments ?? []).filter(
+    (a) => a.kind === 'image'
+      && (a.localPath || a.url)
+      && (!a.mimeType || SUPPORTED_IMAGE_MIMES.has(a.mimeType))
+  );
+
+  if (imageAttachments.length === 0) {
+    return formattedText;
+  }
+
+  const content: MessageContentItem[] = [
+    { type: 'text', text: formattedText },
+  ];
+
+  for (const attachment of imageAttachments) {
+    try {
+      if (attachment.localPath) {
+        content.push(imageFromFile(attachment.localPath));
+      } else if (attachment.url) {
+        content.push(await imageFromURL(attachment.url));
+      }
+    } catch (err) {
+      console.warn(`[Bot] Failed to load image ${attachment.name || 'unknown'}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  if (content.length > 1) {
+    console.log(`[Bot] Sending ${content.length - 1} inline image(s) to LLM`);
+  }
+
+  return content.length > 1 ? content : formattedText;
+}
+
+export class LettaBot implements AgentSession {
   private store: Store;
   private config: BotConfig;
   private channels: Map<string, ChannelAdapter> = new Map();
@@ -41,6 +89,9 @@ export class LettaBot {
   
   // Callback to trigger heartbeat (set by main.ts)
   public onTriggerHeartbeat?: () => Promise<void>;
+  private groupBatcher?: GroupBatcher;
+  private groupIntervals: Map<string, number> = new Map(); // channel -> intervalMin
+  private instantGroupIds: Set<string> = new Set(); // channel:id keys for instant processing
   private processing = false;
   
   constructor(config: BotConfig) {
@@ -50,7 +101,7 @@ export class LettaBot {
     mkdirSync(config.workingDir, { recursive: true });
     
     // Store in project root (same as main.ts reads for LETTA_AGENT_ID)
-    this.store = new Store('lettabot-agent.json');
+    this.store = new Store('lettabot-agent.json', config.agentName);
     
     console.log(`LettaBot initialized. Agent ID: ${this.store.agentId || '(new)'}`);
   }
@@ -65,6 +116,37 @@ export class LettaBot {
     console.log(`Registered channel: ${adapter.name}`);
   }
   
+  /**
+   * Set the group batcher and per-channel intervals.
+   */
+  setGroupBatcher(batcher: GroupBatcher, intervals: Map<string, number>, instantGroupIds?: Set<string>): void {
+    this.groupBatcher = batcher;
+    this.groupIntervals = intervals;
+    if (instantGroupIds) {
+      this.instantGroupIds = instantGroupIds;
+    }
+    console.log('[Bot] Group batcher configured');
+  }
+
+  /**
+   * Inject a batched group message into the queue and trigger processing.
+   * Called by GroupBatcher's onFlush callback.
+   */
+  processGroupBatch(msg: InboundMessage, adapter: ChannelAdapter): void {
+    const count = msg.batchedMessages?.length || 0;
+    console.log(`[Bot] Group batch: ${count} messages from ${msg.channel}:${msg.chatId}`);
+
+    // Unwrap single-message batches so they use formatMessageEnvelope (DM-style)
+    // instead of the chat-log batch format
+    const effective = (count === 1 && msg.batchedMessages)
+      ? msg.batchedMessages[0]
+      : msg;
+    this.messageQueue.push({ msg: effective, adapter });
+    if (!this.processing) {
+      this.processQueue().catch(err => console.error('[Queue] Fatal error in processQueue:', err));
+    }
+  }
+
   /**
    * Handle slash commands
    */
@@ -218,7 +300,18 @@ export class LettaBot {
    */
   private async handleMessage(msg: InboundMessage, adapter: ChannelAdapter): Promise<void> {
     console.log(`[${msg.channel}] Message from ${msg.userId}: ${msg.text}`);
-    
+
+    // Route group messages to batcher if configured
+    if (msg.isGroup && this.groupBatcher) {
+      // Check if this group is configured for instant processing
+      const isInstant = this.instantGroupIds.has(`${msg.channel}:${msg.chatId}`)
+        || (msg.serverId && this.instantGroupIds.has(`${msg.channel}:${msg.serverId}`));
+      const intervalMin = isInstant ? 0 : (this.groupIntervals.get(msg.channel) ?? 10);
+      console.log(`[Bot] Group message routed to batcher (interval=${intervalMin}min, mentioned=${msg.wasMentioned}, instant=${!!isInstant})`);
+      this.groupBatcher.enqueue(msg, adapter, intervalMin);
+      return;
+    }
+
     // Add to queue
     this.messageQueue.push({ msg, adapter });
     console.log(`[Queue] Added to queue, length: ${this.messageQueue.length}, processing: ${this.processing}`);
@@ -393,9 +486,12 @@ export class LettaBot {
       } : undefined;
 
       // Send message to agent with metadata envelope
-      const formattedMessage = formatMessageEnvelope(msg, {}, sessionContext);
+      const formattedText = msg.isBatch && msg.batchedMessages
+        ? formatGroupBatchEnvelope(msg.batchedMessages)
+        : formatMessageEnvelope(msg, {}, sessionContext);
+      const messageToSend = await buildMultimodalMessage(formattedText, msg);
       try {
-        await withTimeout(session.send(formattedMessage), 'Session send');
+        await withTimeout(session.send(messageToSend), 'Session send');
       } catch (sendError) {
         // Check for 409 CONFLICT from orphaned approval_request_message
         if (!retried && isApprovalConflictError(sendError) && this.store.agentId && this.store.conversationId) {
@@ -425,21 +521,6 @@ export class LettaBot {
       let receivedAnyData = false; // Track if we got ANY stream data
       const msgTypeCounts: Record<string, number> = {};
       
-      // Stream watchdog - abort if idle for too long
-      const watchdog = new StreamWatchdog({
-        onAbort: () => {
-          session.abort().catch((err) => {
-            console.error('[Bot] Stream abort failed:', err);
-          });
-          try {
-            session.close();
-          } catch (err) {
-            console.error('[Bot] Stream close failed:', err);
-          }
-        },
-      });
-      watchdog.start();
-      
       // Helper to finalize and send current accumulated response
       const finalizeMessage = async () => {
         // Check for silent marker - agent chose not to reply
@@ -462,7 +543,8 @@ export class LettaBot {
             const preview = response.length > 50 ? response.slice(0, 50) + '...' : response;
             console.log(`[Bot] Sent: "${preview}"`);
           } catch {
-            // Ignore send errors
+            // Edit failures (e.g. "message not modified") are OK if we already sent the message
+            if (messageId) sentAnyMessage = true;
           }
         }
         // Reset for next message bubble
@@ -476,10 +558,19 @@ export class LettaBot {
         adapter.sendTypingIndicator(msg.chatId).catch(() => {});
       }, 4000);
       
+      const seenToolCallIds = new Set<string>();
       try {
         for await (const streamMsg of session.stream()) {
+          // Deduplicate tool_call chunks: the server streams tool_call_message
+          // events token-by-token as arguments are generated, so a single tool
+          // call produces many wire events with the same toolCallId.
+          // Only count/log the first chunk per unique toolCallId.
+          if (streamMsg.type === 'tool_call') {
+            const toolCallId = (streamMsg as any).toolCallId;
+            if (toolCallId && seenToolCallIds.has(toolCallId)) continue;
+            if (toolCallId) seenToolCallIds.add(toolCallId);
+          }
           const msgUuid = (streamMsg as any).uuid;
-          watchdog.ping();
           receivedAnyData = true;
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
@@ -539,9 +630,12 @@ export class LettaBot {
                 } else {
                   const result = await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
                   messageId = result.messageId;
+                  sentAnyMessage = true;
                 }
-              } catch {
-                // Ignore edit errors
+              } catch (editErr) {
+                // Log but don't fail - streaming edits are best-effort
+                // (e.g. rate limits, MarkdownV2 formatting issues mid-stream)
+                console.warn('[Bot] Streaming edit failed:', editErr instanceof Error ? editErr.message : editErr);
               }
               lastUpdate = Date.now();
             }
@@ -567,7 +661,6 @@ export class LettaBot {
                 console.log('[Bot] Empty result - attempting orphaned approval recovery...');
                 session.close();
                 clearInterval(typingInterval);
-                watchdog.stop();
                 const convResult = await recoverOrphanedConversationApproval(
                   this.store.agentId,
                   this.store.conversationId
@@ -606,7 +699,6 @@ export class LettaBot {
 
         }
       } finally {
-        watchdog.stop();
         clearInterval(typingInterval);
       }
       
@@ -615,6 +707,12 @@ export class LettaBot {
         console.log('[Bot] Agent chose not to reply (no-reply marker)');
         sentAnyMessage = true;
         response = '';
+      }
+
+      // Detect unsupported multimodal: images were sent but server replaced them
+      const sentImages = Array.isArray(messageToSend);
+      if (sentImages && response.includes('[Image omitted]')) {
+        console.warn('[Bot] Model does not support images — server replaced inline images with "[Image omitted]". Consider using a vision-capable model or setting features.inlineImages: false in config.');
       }
 
       // Send final response
@@ -632,11 +730,15 @@ export class LettaBot {
           console.log(`[Bot] Sent: "${preview}"`);
         } catch (sendError) {
           console.error('[Bot] Error sending response:', sendError);
-          if (!messageId) {
+          // If edit failed (messageId exists), send the complete response as a new message
+          // so the user isn't left with a truncated streaming edit
+          try {
             await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
             sentAnyMessage = true;
             // Reset recovery counter on successful response
             this.store.resetRecoveryAttempts();
+          } catch (retryError) {
+            console.error('[Bot] Retry send also failed:', retryError);
           }
         }
       }
@@ -677,11 +779,15 @@ export class LettaBot {
       
     } catch (error) {
       console.error('[Bot] Error processing message:', error);
-      await adapter.sendMessage({
-        chatId: msg.chatId,
-        text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        threadId: msg.threadId,
-      });
+      try {
+        await adapter.sendMessage({
+          chatId: msg.chatId,
+          text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          threadId: msg.threadId,
+        });
+      } catch (sendError) {
+        console.error('[Bot] Failed to send error message to channel:', sendError);
+      }
     } finally {
       session!?.close();
     }
@@ -799,40 +905,20 @@ export class LettaBot {
       }
       
       let response = '';
-      const watchdog = new StreamWatchdog({
-        onAbort: () => {
-          console.warn('[Bot] sendToAgent stream idle timeout, aborting session...');
-          session.abort().catch((err) => {
-            console.error('[Bot] sendToAgent abort failed:', err);
-          });
-          try {
-            session.close();
-          } catch (err) {
-            console.error('[Bot] sendToAgent close failed:', err);
-          }
-        },
-      });
-      watchdog.start();
-      
-      try {
-        for await (const msg of session.stream()) {
-          watchdog.ping();
-          if (msg.type === 'assistant') {
-            response += msg.content;
-          }
-          
-          if (msg.type === 'result') {
-            if (session.agentId && session.agentId !== this.store.agentId) {
-              const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
-              this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
-            } else if (session.conversationId && session.conversationId !== this.store.conversationId) {
-              this.store.conversationId = session.conversationId;
-            }
-            break;
-          }
+      for await (const msg of session.stream()) {
+        if (msg.type === 'assistant') {
+          response += msg.content;
         }
-      } finally {
-        watchdog.stop();
+        
+        if (msg.type === 'result') {
+          if (session.agentId && session.agentId !== this.store.agentId) {
+            const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
+            this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
+          } else if (session.conversationId && session.conversationId !== this.store.conversationId) {
+            this.store.conversationId = session.conversationId;
+          }
+          break;
+        }
       }
       
       return response;

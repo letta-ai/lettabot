@@ -58,7 +58,12 @@ export function loadConfig(): LettaBotConfig {
   try {
     const content = readFileSync(configPath, 'utf-8');
     const parsed = YAML.parse(content) as Partial<LettaBotConfig>;
-    
+
+    // Fix instantGroups: YAML parses large numeric IDs (e.g. Discord snowflakes)
+    // as JavaScript numbers, losing precision for values > Number.MAX_SAFE_INTEGER.
+    // Re-extract from document AST to preserve the original string representation.
+    fixInstantGroupIds(content, parsed);
+
     // Merge with defaults
     return {
       ...DEFAULT_CONFIG,
@@ -132,6 +137,15 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.channels.slack?.botToken) {
     env.SLACK_BOT_TOKEN = config.channels.slack.botToken;
   }
+  if (config.channels.slack?.dmPolicy) {
+    env.SLACK_DM_POLICY = config.channels.slack.dmPolicy;
+  }
+  if (config.channels.slack?.groupPollIntervalMin !== undefined) {
+    env.SLACK_GROUP_POLL_INTERVAL_MIN = String(config.channels.slack.groupPollIntervalMin);
+  }
+  if (config.channels.slack?.instantGroups?.length) {
+    env.SLACK_INSTANT_GROUPS = config.channels.slack.instantGroups.join(',');
+  }
   if (config.channels.whatsapp?.enabled) {
     env.WHATSAPP_ENABLED = 'true';
     if (config.channels.whatsapp.selfChat) {
@@ -140,12 +154,30 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
       env.WHATSAPP_SELF_CHAT_MODE = 'false';
     }
   }
+  if (config.channels.whatsapp?.groupPollIntervalMin !== undefined) {
+    env.WHATSAPP_GROUP_POLL_INTERVAL_MIN = String(config.channels.whatsapp.groupPollIntervalMin);
+  }
+  if (config.channels.whatsapp?.instantGroups?.length) {
+    env.WHATSAPP_INSTANT_GROUPS = config.channels.whatsapp.instantGroups.join(',');
+  }
   if (config.channels.signal?.phone) {
     env.SIGNAL_PHONE_NUMBER = config.channels.signal.phone;
     // Signal selfChat defaults to true, so only set env if explicitly false
     if (config.channels.signal.selfChat === false) {
       env.SIGNAL_SELF_CHAT_MODE = 'false';
     }
+  }
+  if (config.channels.signal?.groupPollIntervalMin !== undefined) {
+    env.SIGNAL_GROUP_POLL_INTERVAL_MIN = String(config.channels.signal.groupPollIntervalMin);
+  }
+  if (config.channels.signal?.instantGroups?.length) {
+    env.SIGNAL_INSTANT_GROUPS = config.channels.signal.instantGroups.join(',');
+  }
+  if (config.channels.telegram?.groupPollIntervalMin !== undefined) {
+    env.TELEGRAM_GROUP_POLL_INTERVAL_MIN = String(config.channels.telegram.groupPollIntervalMin);
+  }
+  if (config.channels.telegram?.instantGroups?.length) {
+    env.TELEGRAM_INSTANT_GROUPS = config.channels.telegram.instantGroups.join(',');
   }
   if (config.channels.discord?.token) {
     env.DISCORD_BOT_TOKEN = config.channels.discord.token;
@@ -156,6 +188,12 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
       env.DISCORD_ALLOWED_USERS = config.channels.discord.allowedUsers.join(',');
     }
   }
+  if (config.channels.discord?.groupPollIntervalMin !== undefined) {
+    env.DISCORD_GROUP_POLL_INTERVAL_MIN = String(config.channels.discord.groupPollIntervalMin);
+  }
+  if (config.channels.discord?.instantGroups?.length) {
+    env.DISCORD_INSTANT_GROUPS = config.channels.discord.instantGroups.join(',');
+  }
   
   // Features
   if (config.features?.cron) {
@@ -164,15 +202,26 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.features?.heartbeat?.enabled) {
     env.HEARTBEAT_INTERVAL_MIN = String(config.features.heartbeat.intervalMin || 30);
   }
+  if (config.features?.inlineImages === false) {
+    env.INLINE_IMAGES = 'false';
+  }
   if (config.features?.maxToolCalls !== undefined) {
     env.MAX_TOOL_CALLS = String(config.features.maxToolCalls);
   }
-  
-  // Integrations - Google (Gmail polling)
-  if (config.integrations?.google?.enabled && config.integrations.google.account) {
+
+  // Polling - top-level polling config (preferred)
+  if (config.polling?.gmail?.enabled && config.polling.gmail.account) {
+    env.GMAIL_ACCOUNT = config.polling.gmail.account;
+  }
+  if (config.polling?.intervalMs) {
+    env.POLLING_INTERVAL_MS = String(config.polling.intervalMs);
+  }
+
+  // Integrations - Google (legacy path for Gmail polling, lower priority)
+  if (!env.GMAIL_ACCOUNT && config.integrations?.google?.enabled && config.integrations.google.account) {
     env.GMAIL_ACCOUNT = config.integrations.google.account;
   }
-  if (config.integrations?.google?.pollIntervalSec) {
+  if (!env.POLLING_INTERVAL_MS && config.integrations?.google?.pollIntervalSec) {
     env.POLLING_INTERVAL_MS = String(config.integrations.google.pollIntervalSec * 1000);
   }
 
@@ -181,6 +230,17 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   }
   if (config.attachments?.maxAgeDays !== undefined) {
     env.ATTACHMENTS_MAX_AGE_DAYS = String(config.attachments.maxAgeDays);
+  }
+
+  // API server
+  if (config.api?.port !== undefined) {
+    env.PORT = String(config.api.port);
+  }
+  if (config.api?.host) {
+    env.API_HOST = config.api.host;
+  }
+  if (config.api?.corsOrigin) {
+    env.API_CORS_ORIGIN = config.api.corsOrigin;
   }
   
   return env;
@@ -258,6 +318,52 @@ export async function syncProviders(config: LettaBotConfig): Promise<void> {
       }
     } catch (err) {
       console.error(`[Config] Failed to sync provider ${provider.name}:`, err);
+    }
+  }
+}
+
+/**
+ * Fix instantGroups arrays that may contain large numeric IDs parsed by YAML.
+ * Discord snowflake IDs exceed Number.MAX_SAFE_INTEGER, so YAML parses them
+ * as lossy JavaScript numbers. We re-read from the document AST to get the
+ * original string representation.
+ */
+function fixInstantGroupIds(yamlContent: string, parsed: Partial<LettaBotConfig>): void {
+  if (!parsed.channels) return;
+
+  try {
+    const doc = YAML.parseDocument(yamlContent);
+    const channels = ['telegram', 'slack', 'whatsapp', 'signal', 'discord'] as const;
+
+    for (const ch of channels) {
+      const seq = doc.getIn(['channels', ch, 'instantGroups'], true);
+      if (YAML.isSeq(seq)) {
+        const fixed = seq.items.map((item: unknown) => {
+          if (YAML.isScalar(item)) {
+            // For numbers, use the original source text to avoid precision loss
+            if (typeof item.value === 'number' && item.source) {
+              return item.source;
+            }
+            return String(item.value);
+          }
+          return String(item);
+        });
+        const cfg = parsed.channels[ch];
+        if (cfg) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (cfg as any).instantGroups = fixed;
+        }
+      }
+    }
+  } catch {
+    // Fallback: just ensure entries are strings (won't fix precision, but safe)
+    const channels = ['telegram', 'slack', 'whatsapp', 'signal', 'discord'] as const;
+    for (const ch of channels) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cfg = parsed.channels?.[ch] as any;
+      if (cfg && Array.isArray(cfg.instantGroups)) {
+        cfg.instantGroups = cfg.instantGroups.map((v: unknown) => String(v));
+      }
     }
   }
 }

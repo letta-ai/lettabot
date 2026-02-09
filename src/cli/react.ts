@@ -13,34 +13,7 @@
 import { loadConfig, applyConfigToEnv } from '../config/index.js';
 const config = loadConfig();
 applyConfigToEnv(config);
-import { resolve } from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
-import { getDataDir } from '../utils/paths.js';
-
-interface LastTarget {
-  channel: string;
-  chatId: string;
-  messageId?: string;
-}
-
-interface AgentStore {
-  agentId?: string;
-  lastMessageTarget?: LastTarget;
-}
-
-const STORE_PATH = resolve(getDataDir(), 'lettabot-agent.json');
-
-function loadLastTarget(): LastTarget | null {
-  try {
-    if (existsSync(STORE_PATH)) {
-      const store: AgentStore = JSON.parse(readFileSync(STORE_PATH, 'utf-8'));
-      return store.lastMessageTarget || null;
-    }
-  } catch {
-    // Ignore
-  }
-  return null;
-}
+import { loadLastTarget } from './shared.js';
 
 const EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
   eyes: '👀',

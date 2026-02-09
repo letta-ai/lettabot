@@ -7,11 +7,11 @@
  * The agent must use `lettabot-message` CLI via Bash to contact the user.
  */
 
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import type { LettaBot } from '../core/bot.js';
+import type { AgentSession } from '../core/interfaces.js';
 import type { TriggerContext } from '../core/types.js';
-import { buildHeartbeatPrompt } from '../core/prompts.js';
+import { buildHeartbeatPrompt, buildCustomHeartbeatPrompt } from '../core/prompts.js';
 import { getDataDir } from '../utils/paths.js';
 
 
@@ -46,6 +46,9 @@ export interface HeartbeatConfig {
   // Custom heartbeat prompt (optional)
   prompt?: string;
   
+  // Path to prompt file (re-read each tick for live editing)
+  promptFile?: string;
+  
   // Target for delivery (optional - defaults to last messaged)
   target?: {
     channel: string;
@@ -57,11 +60,11 @@ export interface HeartbeatConfig {
  * Heartbeat Service
  */
 export class HeartbeatService {
-  private bot: LettaBot;
+  private bot: AgentSession;
   private config: HeartbeatConfig;
   private intervalId: NodeJS.Timeout | null = null;
   
-  constructor(bot: LettaBot, config: HeartbeatConfig) {
+  constructor(bot: AgentSession, config: HeartbeatConfig) {
     this.bot = bot;
     this.config = config;
   }
@@ -168,8 +171,20 @@ export class HeartbeatService {
     };
     
     try {
-      // Build the heartbeat message with clear SILENT MODE indication
-      const message = buildHeartbeatPrompt(formattedTime, timezone, this.config.intervalMinutes);
+      // Resolve custom prompt: inline config > promptFile (re-read each tick) > default
+      let customPrompt = this.config.prompt;
+      if (!customPrompt && this.config.promptFile) {
+        try {
+          const promptPath = resolve(this.config.workingDir, this.config.promptFile);
+          customPrompt = readFileSync(promptPath, 'utf-8').trim();
+        } catch (err) {
+          console.error(`[Heartbeat] Failed to read promptFile "${this.config.promptFile}":`, err);
+        }
+      }
+
+      const message = customPrompt
+        ? buildCustomHeartbeatPrompt(customPrompt, formattedTime, timezone, this.config.intervalMinutes)
+        : buildHeartbeatPrompt(formattedTime, timezone, this.config.intervalMinutes);
       
       console.log(`[Heartbeat] Sending prompt (SILENT MODE):\n${'─'.repeat(50)}\n${message}\n${'─'.repeat(50)}\n`);
       

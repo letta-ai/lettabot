@@ -17,6 +17,7 @@ let App: typeof import('@slack/bolt').App;
 export interface SlackConfig {
   botToken: string;       // xoxb-...
   appToken: string;       // xapp-... (for Socket Mode)
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[]; // Slack user IDs (e.g., U01234567)
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
@@ -139,11 +140,12 @@ export class SlackAdapter implements ChannelAdapter {
           threadId: threadTs,
           isGroup,
           groupName: isGroup ? channelId : undefined,  // Would need conversations.info for name
+          wasMentioned: false, // Regular messages; app_mention handles mentions
           attachments,
         });
       }
     });
-    
+
     // Handle app mentions (@bot)
     this.app.event('app_mention', async ({ event }) => {
       const userId = event.user || '';
@@ -189,6 +191,7 @@ export class SlackAdapter implements ChannelAdapter {
           threadId: threadTs,
           isGroup,
           groupName: isGroup ? channelId : undefined,
+          wasMentioned: true, // app_mention is always a mention
           attachments,
         });
       }
@@ -274,6 +277,10 @@ export class SlackAdapter implements ChannelAdapter {
     });
   }
   
+  getDmPolicy(): string {
+    return this.config.dmPolicy || 'pairing';
+  }
+
   async sendTypingIndicator(_chatId: string): Promise<void> {
     // Slack doesn't have a typing indicator API for bots
     // This is a no-op

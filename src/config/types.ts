@@ -6,6 +6,44 @@
  * 2. Letta Cloud: Uses apiKey, optional BYOK providers
  */
 
+/**
+ * Configuration for a single agent in multi-agent mode.
+ * Each agent has its own name, channels, and features.
+ */
+export interface AgentConfig {
+  /** Agent name (used for display, agent creation, and store keying) */
+  name: string;
+  /** Use existing agent ID (skip creation) */
+  id?: string;
+  /** Model for initial agent creation */
+  model?: string;
+  /** Channels this agent connects to */
+  channels: {
+    telegram?: TelegramConfig;
+    slack?: SlackConfig;
+    whatsapp?: WhatsAppConfig;
+    signal?: SignalConfig;
+    discord?: DiscordConfig;
+  };
+  /** Features for this agent */
+  features?: {
+    cron?: boolean;
+    heartbeat?: {
+      enabled: boolean;
+      intervalMin?: number;
+      prompt?: string;       // Custom heartbeat prompt (replaces default body)
+      promptFile?: string;   // Path to prompt file (re-read each tick for live editing)
+    };
+    maxToolCalls?: number;
+  };
+  /** Polling config */
+  polling?: PollingYamlConfig;
+  /** Integrations */
+  integrations?: {
+    google?: GoogleConfig;
+  };
+}
+
 export interface LettaBotConfig {
   // Server connection
   server: {
@@ -16,6 +54,9 @@ export interface LettaBotConfig {
     // Only for cloud mode
     apiKey?: string;
   };
+
+  // Multi-agent configuration
+  agents?: AgentConfig[];
 
   // Agent configuration
   agent: {
@@ -44,11 +85,19 @@ export interface LettaBotConfig {
     heartbeat?: {
       enabled: boolean;
       intervalMin?: number;
+      prompt?: string;       // Custom heartbeat prompt (replaces default body)
+      promptFile?: string;   // Path to prompt file (re-read each tick for live editing)
     };
+    inlineImages?: boolean;   // Send images directly to the LLM (default: true). Set false to only send file paths.
     maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)
   };
 
+  // Polling - system-level background checks (Gmail, etc.)
+  polling?: PollingYamlConfig;
+
   // Integrations (Google Workspace, etc.)
+  // NOTE: integrations.google is a legacy path for polling config.
+  // Prefer the top-level `polling` section instead.
   integrations?: {
     google?: GoogleConfig;
   };
@@ -61,12 +110,28 @@ export interface LettaBotConfig {
     maxMB?: number;
     maxAgeDays?: number;
   };
+
+  // API server (health checks, CLI messaging)
+  api?: {
+    port?: number;       // Default: 8080 (or PORT env var)
+    host?: string;       // Default: 127.0.0.1 (secure). Use '0.0.0.0' for Docker/Railway
+    corsOrigin?: string; // CORS origin. Default: same-origin only
+  };
 }
 
 export interface TranscriptionConfig {
   provider: 'openai';  // Only OpenAI supported currently
   apiKey?: string;     // Falls back to OPENAI_API_KEY env var
   model?: string;      // Defaults to 'whisper-1'
+}
+
+export interface PollingYamlConfig {
+  enabled?: boolean;      // Master switch (default: auto-detected from sub-configs)
+  intervalMs?: number;    // Polling interval in milliseconds (default: 60000)
+  gmail?: {
+    enabled?: boolean;    // Enable Gmail polling
+    account?: string;     // Gmail account to poll (e.g., user@example.com)
+  };
 }
 
 export interface ProviderConfig {
@@ -81,13 +146,18 @@ export interface TelegramConfig {
   token?: string;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
+  groupPollIntervalMin?: number;  // Batch interval in minutes (default: 10, 0 = immediate)
+  instantGroups?: string[];       // Group chat IDs that bypass batching
 }
 
 export interface SlackConfig {
   enabled: boolean;
   appToken?: string;
   botToken?: string;
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
+  groupPollIntervalMin?: number;  // Batch interval in minutes (default: 10, 0 = immediate)
+  instantGroups?: string[];       // Channel IDs that bypass batching
 }
 
 export interface WhatsAppConfig {
@@ -99,6 +169,8 @@ export interface WhatsAppConfig {
   groupAllowFrom?: string[];
   mentionPatterns?: string[];
   groups?: Record<string, { requireMention?: boolean }>;
+  groupPollIntervalMin?: number;  // Batch interval in minutes (default: 10, 0 = immediate)
+  instantGroups?: string[];       // Group JIDs that bypass batching
 }
 
 export interface SignalConfig {
@@ -110,6 +182,8 @@ export interface SignalConfig {
   // Group gating
   mentionPatterns?: string[];  // Regex patterns for mention detection (e.g., ["@bot"])
   groups?: Record<string, { requireMention?: boolean }>;  // Per-group settings, "*" for defaults
+  groupPollIntervalMin?: number;  // Batch interval in minutes (default: 10, 0 = immediate)
+  instantGroups?: string[];       // Group IDs that bypass batching
 }
 
 export interface DiscordConfig {
@@ -117,6 +191,8 @@ export interface DiscordConfig {
   token?: string;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
+  groupPollIntervalMin?: number;  // Batch interval in minutes (default: 10, 0 = immediate)
+  instantGroups?: string[];       // Guild/server IDs or channel IDs that bypass batching
 }
 
 export interface GoogleConfig {
@@ -137,3 +213,110 @@ export const DEFAULT_CONFIG: LettaBotConfig = {
   },
   channels: {},
 };
+
+/**
+ * Normalize config to multi-agent format.
+ *
+ * If the config uses legacy single-agent format (agent: + channels:),
+ * it's converted to an agents[] array with one entry.
+ * Channels with `enabled: false` are dropped during normalization.
+ */
+export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
+  const normalizeChannels = (channels?: AgentConfig['channels']): AgentConfig['channels'] => {
+    const normalized: AgentConfig['channels'] = {};
+    if (!channels) return normalized;
+
+    if (channels.telegram?.enabled !== false && channels.telegram?.token) {
+      normalized.telegram = channels.telegram;
+    }
+    if (channels.slack?.enabled !== false && channels.slack?.botToken && channels.slack?.appToken) {
+      normalized.slack = channels.slack;
+    }
+    // WhatsApp has no credential to check (uses QR pairing), so just check enabled
+    if (channels.whatsapp?.enabled) {
+      normalized.whatsapp = channels.whatsapp;
+    }
+    if (channels.signal?.enabled !== false && channels.signal?.phone) {
+      normalized.signal = channels.signal;
+    }
+    if (channels.discord?.enabled !== false && channels.discord?.token) {
+      normalized.discord = channels.discord;
+    }
+
+    return normalized;
+  };
+
+  // Multi-agent mode: normalize channels for each configured agent
+  if (config.agents && config.agents.length > 0) {
+    return config.agents.map(agent => ({
+      ...agent,
+      channels: normalizeChannels(agent.channels),
+    }));
+  }
+
+  // Legacy single-agent mode: normalize to agents[]
+  const agentName = config.agent?.name || 'LettaBot';
+  const model = config.agent?.model;
+  const id = config.agent?.id;
+
+  // Filter out disabled/misconfigured channels
+  const channels = normalizeChannels(config.channels);
+
+  // Env var fallback for container deploys without lettabot.yaml (e.g. Railway)
+  // Helper: parse comma-separated env var into string array (or undefined)
+  const parseList = (envVar?: string): string[] | undefined =>
+    envVar ? envVar.split(',').map(s => s.trim()).filter(Boolean) : undefined;
+
+  if (!channels.telegram && process.env.TELEGRAM_BOT_TOKEN) {
+    channels.telegram = {
+      enabled: true,
+      token: process.env.TELEGRAM_BOT_TOKEN,
+      dmPolicy: (process.env.TELEGRAM_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.TELEGRAM_ALLOWED_USERS),
+    };
+  }
+  if (!channels.slack && process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN) {
+    channels.slack = {
+      enabled: true,
+      botToken: process.env.SLACK_BOT_TOKEN,
+      appToken: process.env.SLACK_APP_TOKEN,
+      dmPolicy: (process.env.SLACK_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.SLACK_ALLOWED_USERS),
+    };
+  }
+  if (!channels.whatsapp && process.env.WHATSAPP_ENABLED === 'true') {
+    channels.whatsapp = {
+      enabled: true,
+      selfChat: process.env.WHATSAPP_SELF_CHAT_MODE !== 'false',
+      dmPolicy: (process.env.WHATSAPP_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.WHATSAPP_ALLOWED_USERS),
+    };
+  }
+  if (!channels.signal && process.env.SIGNAL_PHONE_NUMBER) {
+    channels.signal = {
+      enabled: true,
+      phone: process.env.SIGNAL_PHONE_NUMBER,
+      selfChat: process.env.SIGNAL_SELF_CHAT_MODE !== 'false',
+      dmPolicy: (process.env.SIGNAL_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.SIGNAL_ALLOWED_USERS),
+    };
+  }
+  if (!channels.discord && process.env.DISCORD_BOT_TOKEN) {
+    channels.discord = {
+      enabled: true,
+      token: process.env.DISCORD_BOT_TOKEN,
+      dmPolicy: (process.env.DISCORD_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.DISCORD_ALLOWED_USERS),
+    };
+  }
+
+  return [{
+    name: agentName,
+    id,
+    model,
+    channels,
+    features: config.features,
+    polling: config.polling,
+    integrations: config.integrations,
+  }];
+}

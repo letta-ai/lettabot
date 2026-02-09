@@ -8,7 +8,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { LettaBot } from '../core/bot.js';
+import type { AgentSession } from '../core/interfaces.js';
 
 export interface PollingConfig {
   intervalMs: number;  // Polling interval in milliseconds
@@ -21,14 +21,14 @@ export interface PollingConfig {
 
 export class PollingService {
   private intervalId: ReturnType<typeof setInterval> | null = null;
-  private bot: LettaBot;
+  private bot: AgentSession;
   private config: PollingConfig;
   
   // Track seen email IDs to detect new emails (persisted to disk)
   private seenEmailIds: Set<string> = new Set();
   private seenEmailsPath: string;
   
-  constructor(bot: LettaBot, config: PollingConfig) {
+  constructor(bot: AgentSession, config: PollingConfig) {
     this.bot = bot;
     this.config = config;
     this.seenEmailsPath = join(config.workingDir, 'seen-emails.json');
