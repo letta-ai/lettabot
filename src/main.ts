@@ -481,8 +481,15 @@ async function main() {
       },
     });
     
-    // Verify agent exists (clear stale ID if deleted)
+    // Apply explicit agent ID from config (before store verification)
     let initialStatus = bot.getStatus();
+    if (agentConfig.id && !initialStatus.agentId) {
+      console.log(`[Agent:${agentConfig.name}] Using configured agent ID: ${agentConfig.id}`);
+      bot.setAgentId(agentConfig.id);
+      initialStatus = bot.getStatus();
+    }
+    
+    // Verify agent exists (clear stale ID if deleted)
     if (initialStatus.agentId) {
       const exists = await agentExists(initialStatus.agentId);
       if (!exists) {

@@ -101,7 +101,7 @@ export class LettaBot implements AgentSession {
     mkdirSync(config.workingDir, { recursive: true });
     
     // Store in project root (same as main.ts reads for LETTA_AGENT_ID)
-    this.store = new Store('lettabot-agent.json');
+    this.store = new Store('lettabot-agent.json', config.agentName);
     
     console.log(`LettaBot initialized. Agent ID: ${this.store.agentId || '(new)'}`);
   }
