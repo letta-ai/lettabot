@@ -77,9 +77,7 @@
     "node-schedule": "^2.1.1",
     "open": "^11.0.0",
     "openai": "^6.17.0",
-    "prebuilt-tdlib": "^0.1008060.0",
     "qrcode-terminal": "^0.12.0",
-    "tdl": "^8.0.2",
     "telegramify-markdown": "^1.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
@@ -90,7 +88,9 @@
     "@slack/bolt": "^4.6.0",
     "@whiskeysockets/baileys": "6.7.21",
     "discord.js": "^14.25.1",
-    "slackify-markdown": "^5.0.0"
+    "prebuilt-tdlib": "^0.1008060.0",
+    "slackify-markdown": "^5.0.0",
+    "tdl": "^8.0.2"
   },
   "devDependencies": {
     "@types/update-notifier": "^6.0.8",

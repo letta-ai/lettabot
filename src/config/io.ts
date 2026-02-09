@@ -131,6 +131,32 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
       env.TELEGRAM_DM_POLICY = config.channels.telegram.dmPolicy;
     }
   }
+  // Telegram MTProto (user account mode)
+  const mtproto = config.channels['telegram-mtproto'];
+  if (mtproto?.enabled && mtproto.phoneNumber) {
+    env.TELEGRAM_MTPROTO_PHONE = mtproto.phoneNumber;
+    if (mtproto.apiId) {
+      env.TELEGRAM_MTPROTO_API_ID = String(mtproto.apiId);
+    }
+    if (mtproto.apiHash) {
+      env.TELEGRAM_MTPROTO_API_HASH = mtproto.apiHash;
+    }
+    if (mtproto.databaseDirectory) {
+      env.TELEGRAM_MTPROTO_DB_DIR = mtproto.databaseDirectory;
+    }
+    if (mtproto.dmPolicy) {
+      env.TELEGRAM_MTPROTO_DM_POLICY = mtproto.dmPolicy;
+    }
+    if (mtproto.allowedUsers?.length) {
+      env.TELEGRAM_MTPROTO_ALLOWED_USERS = mtproto.allowedUsers.join(',');
+    }
+    if (mtproto.groupPolicy) {
+      env.TELEGRAM_MTPROTO_GROUP_POLICY = mtproto.groupPolicy;
+    }
+    if (mtproto.adminChatId) {
+      env.TELEGRAM_MTPROTO_ADMIN_CHAT_ID = String(mtproto.adminChatId);
+    }
+  }
   if (config.channels.slack?.appToken) {
     env.SLACK_APP_TOKEN = config.channels.slack.appToken;
   }

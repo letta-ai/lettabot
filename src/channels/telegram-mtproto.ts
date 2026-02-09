@@ -829,4 +829,88 @@ Reply **approve** or **deny** to this message.`;
     }
     return num;
   }
+
+  // ==================== Public API for Letta Tools ====================
+
+  /**
+   * Get public user info (for Letta telegram_get_user_info tool)
+   */
+  async getPublicUserInfo(userId: number): Promise<{ username: string | null; firstName: string | null; lastName: string | null }> {
+    if (!this.client) throw new Error('Client not initialized');
+
+    try {
+      const user = await this.client.invoke({ _: 'getUser', user_id: userId });
+      return {
+        username: user.usernames?.editable_username || user.username || null,
+        firstName: user.first_name || null,
+        lastName: user.last_name || null,
+      };
+    } catch (err) {
+      console.warn(`[Telegram MTProto] Could not get user info for ${userId}:`, err);
+      throw err;
+    }
+  }
+
+  /**
+   * Initiate a direct message to a user (for Letta telegram_send_dm tool)
+   * Creates a private chat if needed, then sends the message.
+   */
+  async initiateDirectMessage(userId: number, text: string): Promise<{ chatId: string; messageId: string }> {
+    if (!this.client) throw new Error('Client not initialized');
+
+    // Create private chat (or get existing)
+    const chat = await this.client.invoke({ _: 'createPrivateChat', user_id: userId, force: false });
+    const chatId = chat.id;
+
+    // Send the message
+    const formatted = markdownToTdlib(text);
+    const result = await this.client.invoke({
+      _: 'sendMessage',
+      chat_id: chatId,
+      input_message_content: {
+        _: 'inputMessageText',
+        text: formatted,
+        link_preview_options: null,
+        clear_draft: false,
+      },
+    });
+
+    // Track message for reply detection
+    this.sentMessageIds.add(result.id);
+    if (this.sentMessageIds.size > 1000) {
+      const oldest = this.sentMessageIds.values().next().value;
+      if (oldest !== undefined) {
+        this.sentMessageIds.delete(oldest);
+      }
+    }
+
+    return { chatId: String(chatId), messageId: String(result.id) };
+  }
+
+  /**
+   * Search for a user by username (for Letta telegram_find_user tool)
+   */
+  async searchUser(username: string): Promise<{ userId: number; username: string | null; firstName: string | null } | null> {
+    if (!this.client) throw new Error('Client not initialized');
+
+    try {
+      // Remove @ prefix if present
+      const cleanUsername = username.replace(/^@/, '');
+      const result = await this.client.invoke({ _: 'searchPublicChat', username: cleanUsername });
+
+      if (result.type?._ === 'chatTypePrivate') {
+        const userId = result.type.user_id;
+        const userInfo = await this.getPublicUserInfo(userId);
+        return {
+          userId,
+          username: userInfo.username,
+          firstName: userInfo.firstName,
+        };
+      }
+      return null;
+    } catch (err) {
+      console.warn(`[Telegram MTProto] Could not find user @${username}:`, err);
+      return null;
+    }
+  }
 }

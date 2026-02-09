@@ -154,6 +154,18 @@ export interface TelegramConfig {
   instantGroups?: string[];       // Group chat IDs that bypass batching
 }
 
+export interface TelegramMTProtoConfig {
+  enabled: boolean;
+  phoneNumber?: string;          // E.164 format: +1234567890
+  apiId?: number;                // From my.telegram.org
+  apiHash?: string;              // From my.telegram.org
+  databaseDirectory?: string;    // Default: ./data/telegram-mtproto
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
+  allowedUsers?: number[];       // Telegram user IDs
+  groupPolicy?: 'mention' | 'reply' | 'both' | 'off';
+  adminChatId?: number;          // Chat ID for pairing request notifications
+}
+
 export interface SlackConfig {
   enabled: boolean;
   appToken?: string;
@@ -215,7 +227,7 @@ export interface TelegramMTProtoConfig {
   apiHash?: string;              // From my.telegram.org
   databaseDirectory?: string;    // Default: ./data/telegram-mtproto
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
-  allowedUsers?: (number | string)[];  // Telegram user IDs
+  allowedUsers?: number[];              // Telegram user IDs
   groupPolicy?: 'mention' | 'reply' | 'both' | 'off';
   adminChatId?: number;          // Chat ID for pairing request notifications
   groupDebounceSec?: number;     // Debounce interval in seconds (default: 5, 0 = immediate)
@@ -321,7 +333,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       phoneNumber: process.env.TELEGRAM_PHONE_NUMBER,
       databaseDirectory: process.env.TELEGRAM_MTPROTO_DB_DIR || './data/telegram-mtproto',
       dmPolicy: (process.env.TELEGRAM_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
-      allowedUsers: parseList(process.env.TELEGRAM_ALLOWED_USERS),
+      allowedUsers: parseList(process.env.TELEGRAM_ALLOWED_USERS)?.map(s => parseInt(s, 10)).filter(n => !isNaN(n)),
       groupPolicy: (process.env.TELEGRAM_GROUP_POLICY as 'mention' | 'reply' | 'both' | 'off') || 'both',
       adminChatId: process.env.TELEGRAM_ADMIN_CHAT_ID ? parseInt(process.env.TELEGRAM_ADMIN_CHAT_ID, 10) : undefined,
     };

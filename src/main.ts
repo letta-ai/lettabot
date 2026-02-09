@@ -666,7 +666,7 @@ async function main() {
     host: apiHost,
     corsOrigin: apiCorsOrigin,
   });
-  
+
   // Status logging
   console.log('\n=================================');
   console.log(`LettaBot is running! (${gateway.size} agent${gateway.size > 1 ? 's' : ''})`);

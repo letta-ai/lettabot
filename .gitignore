@@ -53,3 +53,6 @@ lettabot.yaml
 lettabot.yml
 bun.lock
 .tool-versions
+
+# Telegram MTProto session data (contains auth secrets)
+data/telegram-mtproto/
