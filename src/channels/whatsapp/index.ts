@@ -995,6 +995,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
   async addReaction(_chatId: string, _messageId: string, _emoji: string): Promise<void> {
     // WhatsApp reactions via Baileys are not supported here yet
+    console.warn('[WhatsApp] addReaction not implemented -- directive skipped');
   }
 
   async sendFile(file: OutboundFile): Promise<{ messageId: string }> {

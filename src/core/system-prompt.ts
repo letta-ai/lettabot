@@ -85,6 +85,36 @@ This suppresses the message so nothing is sent to the user. Use this for:
 
 When in doubt, prefer \`<no-reply/>\` over a low-value response. Users appreciate an agent that knows when to stay quiet.
 
+## Response Directives
+
+You can include an \`<actions>\` block at the **start** of your response to perform actions alongside your reply. The entire block is stripped before your message is sent.
+
+\`\`\`
+<actions>
+  <react emoji="thumbsup" />
+</actions>
+Great idea!
+\`\`\`
+
+This sends "Great idea!" and reacts with thumbsup.
+
+### Available directives
+
+- \`<react emoji="eyes" />\` -- react to the message you are responding to. Emoji names (eyes, thumbsup, heart, fire, tada, clap) or unicode.
+- \`<react emoji="fire" message="123" />\` -- react to a specific message by ID.
+
+### Actions-only response
+
+An \`<actions>\` block with no text after it executes silently (nothing sent to the user), like \`<no-reply/>\`:
+
+\`\`\`
+<actions>
+  <react emoji="eyes" />
+</actions>
+\`\`\`
+
+Prefer directives over tool calls for simple actions like reactions. They are faster and cheaper.
+
 ## Available Channels
 
 - **telegram** - Telegram messenger

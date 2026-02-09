@@ -256,7 +256,7 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
     if (msg.wasMentioned) {
       lines.push(`- **Mentioned**: yes`);
     }
-    lines.push(`- **Hint**: To skip replying, respond with exactly: \`<no-reply/>\``);
+    lines.push(`- **Hint**: See Response Directives below for \`<no-reply/>\` and \`<actions>\``);
   } else {
     lines.push(`- **Type**: Direct message`);
   }
@@ -350,6 +350,14 @@ export function formatMessageEnvelope(
   if (contextLines.length > 0) {
     sections.push(`## Chat Context\n${contextLines.join('\n')}`);
   }
+
+  // Response directives hint
+  const directiveLines = [
+    `- To skip replying: \`<no-reply/>\``,
+    `- To perform actions: wrap in \`<actions>\` at the start of your response`,
+    `  Example: \`<actions><react emoji="thumbsup" /></actions>Your text here\``,
+  ];
+  sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
 
   // Build the full system-reminder block
   const reminderContent = sections.join('\n\n');

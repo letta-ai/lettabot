@@ -181,16 +181,20 @@ describe('formatMessageEnvelope', () => {
       expect(result).toContain('**Mentioned**: yes');
     });
 
-    it('includes no-reply hint for group chats', () => {
+    it('includes directives hint for group chats', () => {
       const msg = createMessage({ isGroup: true });
       const result = formatMessageEnvelope(msg);
+      expect(result).toContain('Response Directives');
       expect(result).toContain('<no-reply/>');
+      expect(result).toContain('<actions>');
     });
 
-    it('omits no-reply hint for DMs', () => {
+    it('includes directives hint for DMs', () => {
       const msg = createMessage({ isGroup: false });
       const result = formatMessageEnvelope(msg);
-      expect(result).not.toContain('no-reply');
+      expect(result).toContain('Response Directives');
+      expect(result).toContain('<no-reply/>');
+      expect(result).toContain('<actions>');
     });
   });
 
