@@ -6,6 +6,42 @@
  * 2. Letta Cloud: Uses apiKey, optional BYOK providers
  */
 
+/**
+ * Configuration for a single agent in multi-agent mode.
+ * Each agent has its own name, channels, and features.
+ */
+export interface AgentConfig {
+  /** Agent name (used for display, agent creation, and store keying) */
+  name: string;
+  /** Use existing agent ID (skip creation) */
+  id?: string;
+  /** Model for initial agent creation */
+  model?: string;
+  /** Channels this agent connects to */
+  channels: {
+    telegram?: TelegramConfig;
+    slack?: SlackConfig;
+    whatsapp?: WhatsAppConfig;
+    signal?: SignalConfig;
+    discord?: DiscordConfig;
+  };
+  /** Features for this agent */
+  features?: {
+    cron?: boolean;
+    heartbeat?: {
+      enabled: boolean;
+      intervalMin?: number;
+    };
+    maxToolCalls?: number;
+  };
+  /** Polling config */
+  polling?: PollingYamlConfig;
+  /** Integrations */
+  integrations?: {
+    google?: GoogleConfig;
+  };
+}
+
 export interface LettaBotConfig {
   // Server connection
   server: {
@@ -16,6 +52,9 @@ export interface LettaBotConfig {
     // Only for cloud mode
     apiKey?: string;
   };
+
+  // Multi-agent configuration
+  agents?: AgentConfig[];
 
   // Agent configuration
   agent: {
@@ -167,3 +206,52 @@ export const DEFAULT_CONFIG: LettaBotConfig = {
   },
   channels: {},
 };
+
+/**
+ * Normalize config to multi-agent format.
+ *
+ * If the config uses legacy single-agent format (agent: + channels:),
+ * it's converted to an agents[] array with one entry.
+ * Channels with `enabled: false` are dropped during normalization.
+ */
+export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
+  // Multi-agent mode: already has agents[]
+  if (config.agents && config.agents.length > 0) {
+    return config.agents;
+  }
+
+  // Legacy single-agent mode: normalize to agents[]
+  const agentName = config.agent?.name || 'LettaBot';
+  const model = config.agent?.model;
+  const id = config.agent?.id;
+
+  // Filter out disabled channels
+  const channels: AgentConfig['channels'] = {};
+  if (config.channels) {
+    if (config.channels.telegram?.enabled !== false && config.channels.telegram?.token) {
+      channels.telegram = config.channels.telegram;
+    }
+    if (config.channels.slack?.enabled !== false && config.channels.slack?.botToken) {
+      channels.slack = config.channels.slack;
+    }
+    if (config.channels.whatsapp?.enabled !== false && config.channels.whatsapp?.enabled) {
+      channels.whatsapp = config.channels.whatsapp;
+    }
+    if (config.channels.signal?.enabled !== false && config.channels.signal?.phone) {
+      channels.signal = config.channels.signal;
+    }
+    if (config.channels.discord?.enabled !== false && config.channels.discord?.token) {
+      channels.discord = config.channels.discord;
+    }
+  }
+
+  return [{
+    name: agentName,
+    id,
+    model,
+    channels,
+    features: config.features,
+    polling: config.polling,
+    integrations: config.integrations,
+  }];
+}
