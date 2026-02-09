@@ -181,7 +181,7 @@ Each entry in `agents:` accepts:
 | `name` | string | Yes | Agent name (used for display, creation, and state isolation) |
 | `id` | string | No | Use existing agent ID (skips creation) |
 | `model` | string | No | Model for agent creation |
-| `channels` | object | Yes | Channel configs (same schema as top-level `channels:`) |
+| `channels` | object | No | Channel configs (same schema as top-level `channels:`). At least one agent must have channels. |
 | `features` | object | No | Per-agent features (cron, heartbeat, maxToolCalls) |
 | `polling` | object | No | Per-agent polling config (Gmail, etc.) |
 | `integrations` | object | No | Per-agent integrations (Google, etc.) |
@@ -189,7 +189,7 @@ Each entry in `agents:` accepts:
 ### How it works
 
 - Each agent is a separate Letta agent with its own conversation history and memory
-- Agents are fully isolated -- separate state, separate channels, separate services
+- Agents have isolated state, channels, and services (see [known limitations](#known-limitations) for exceptions)
 - The `LettaGateway` orchestrates startup, shutdown, and message delivery across agents
 - Legacy single-agent configs (`agent:` + `channels:`) continue to work unchanged
 
