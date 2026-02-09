@@ -11,7 +11,10 @@
  */
 export async function markdownToSlackMrkdwn(markdown: string): Promise<string> {
   try {
-    const mod = await import('slackify-markdown');
+    // Avoid a string-literal specifier so TypeScript doesn't require the module
+    // to exist at build time when optional deps are omitted.
+    const moduleId: string = 'slackify-markdown';
+    const mod = await import(moduleId);
     const slackify =
       (mod as unknown as { slackifyMarkdown?: (s: string) => string }).slackifyMarkdown
       || (mod as unknown as { default?: (s: string) => string }).default;
