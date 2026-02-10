@@ -281,6 +281,10 @@ export class SlackAdapter implements ChannelAdapter {
     return this.config.dmPolicy || 'pairing';
   }
 
+  getAllowedUsers(): string[] {
+    return this.config.allowedUsers || [];
+  }
+
   async sendTypingIndicator(_chatId: string): Promise<void> {
     // Slack doesn't have a typing indicator API for bots
     // This is a no-op

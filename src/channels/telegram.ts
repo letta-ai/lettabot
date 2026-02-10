@@ -525,6 +525,10 @@ export class TelegramAdapter implements ChannelAdapter {
     return this.config.dmPolicy || 'pairing';
   }
 
+  getAllowedUsers(): string[] {
+    return (this.config.allowedUsers || []).map(String);
+  }
+
   async sendTypingIndicator(chatId: string): Promise<void> {
     await this.bot.api.sendChatAction(chatId, 'typing');
   }

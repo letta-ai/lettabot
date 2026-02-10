@@ -27,6 +27,7 @@ export interface ChannelAdapter {
   supportsEditing?(): boolean;
   sendFile?(file: OutboundFile): Promise<{ messageId: string }>;
   getDmPolicy?(): string;
+  getAllowedUsers?(): string[];
   
   // Event handlers (set by bot core)
   onMessage?: (msg: InboundMessage) => Promise<void>;

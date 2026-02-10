@@ -307,6 +307,10 @@ This code expires in 1 hour.`;
     return this.config.dmPolicy || 'pairing';
   }
 
+  getAllowedUsers(): string[] {
+    return this.config.allowedUsers || [];
+  }
+
   supportsEditing(): boolean {
     return false;
   }

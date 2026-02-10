@@ -10,6 +10,8 @@ import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
+import { isGroupApproved, approveGroup } from '../pairing/group-store.js';
+import { isUserAllowed } from '../pairing/store.js';
 import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
 import { installSkillsToAgent } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
@@ -300,6 +302,23 @@ export class LettaBot implements AgentSession {
    */
   private async handleMessage(msg: InboundMessage, adapter: ChannelAdapter): Promise<void> {
     console.log(`[${msg.channel}] Message from ${msg.userId}: ${msg.text}`);
+
+    // Group access gating: when dmPolicy is 'pairing', only allow approved groups
+    if (msg.isGroup && adapter.getDmPolicy?.() === 'pairing') {
+      const approved = await isGroupApproved(msg.channel, msg.chatId);
+      if (!approved) {
+        // Auto-approve if the sender is a paired/allowed user
+        const configAllowlist = adapter.getAllowedUsers?.();
+        const senderAllowed = await isUserAllowed(msg.channel, msg.userId, configAllowlist);
+        if (senderAllowed) {
+          await approveGroup(msg.channel, msg.chatId);
+          console.log(`[Bot] Group ${msg.chatId} auto-approved via paired user ${msg.userId}`);
+        } else {
+          console.log(`[Bot] Group ${msg.chatId} not approved, ignoring message from ${msg.userId}`);
+          return;
+        }
+      }
+    }
 
     // Route group messages to batcher if configured
     if (msg.isGroup && this.groupBatcher) {

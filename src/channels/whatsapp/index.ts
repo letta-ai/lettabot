@@ -981,6 +981,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
     return this.config.dmPolicy || 'pairing';
   }
 
+  getAllowedUsers(): string[] {
+    return this.config.allowedUsers || [];
+  }
+
   supportsEditing(): boolean {
     return false;
   }
