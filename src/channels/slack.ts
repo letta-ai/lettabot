@@ -22,6 +22,7 @@ export interface SlackConfig {
   allowedUsers?: string[]; // Slack user IDs (e.g., U01234567)
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
+  groups?: Record<string, { requireMention?: boolean }>;  // Per-channel settings
 }
 
 export class SlackAdapter implements ChannelAdapter {
@@ -129,6 +130,19 @@ export class SlackAdapter implements ChannelAdapter {
         // Determine if this is a group/channel (not a DM)
         // DMs have channel IDs starting with 'D', channels start with 'C'
         const isGroup = !channelId.startsWith('D');
+
+        // Group gating: config-based allowlist + mention requirement
+        if (isGroup && this.config.groups) {
+          if (!this.isChannelAllowed(channelId)) {
+            return; // Channel not in allowlist -- silent drop
+          }
+          const requireMention = this.resolveRequireMention(channelId);
+          if (requireMention) {
+            // Non-mention message in channel that requires mentions.
+            // The app_mention handler will process actual @mentions.
+            return;
+          }
+        }
         
         await this.onMessage({
           channel: 'slack',
@@ -159,6 +173,11 @@ export class SlackAdapter implements ChannelAdapter {
           // Can't use say() in app_mention event the same way
           return;
         }
+      }
+
+      // Group gating: allowlist check (mention already satisfied by app_mention)
+      if (this.config.groups && !this.isChannelAllowed(channelId)) {
+        return; // Channel not in allowlist -- silent drop
       }
       
       // Handle slash commands
@@ -283,6 +302,24 @@ export class SlackAdapter implements ChannelAdapter {
   
   getDmPolicy(): string {
     return this.config.dmPolicy || 'pairing';
+  }
+
+  /** Check if a channel is allowed by the groups config allowlist */
+  private isChannelAllowed(channelId: string): boolean {
+    const groups = this.config.groups;
+    if (!groups) return true;
+    const allowlistEnabled = Object.keys(groups).length > 0;
+    if (!allowlistEnabled) return true;
+    return Object.hasOwn(groups, '*') || Object.hasOwn(groups, channelId);
+  }
+
+  /** Resolve requireMention for a channel (specific > wildcard > default true) */
+  private resolveRequireMention(channelId: string): boolean {
+    const groups = this.config.groups;
+    if (!groups) return true;
+    const groupConfig = groups[channelId];
+    const wildcardConfig = groups['*'];
+    return groupConfig?.requireMention ?? wildcardConfig?.requireMention ?? true;
   }
 
   async sendTypingIndicator(_chatId: string): Promise<void> {

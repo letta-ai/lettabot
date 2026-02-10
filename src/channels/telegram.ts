@@ -17,6 +17,7 @@ import {
 import { isGroupApproved, approveGroup } from '../pairing/group-store.js';
 import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
+import { applyTelegramGroupGating } from './telegram-group-gating.js';
 
 export interface TelegramConfig {
   token: string;
@@ -24,6 +25,8 @@ export interface TelegramConfig {
   allowedUsers?: number[];       // Telegram user IDs (config allowlist)
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
+  mentionPatterns?: string[];    // Regex patterns for mention detection
+  groups?: Record<string, { requireMention?: boolean }>;  // Per-group settings
 }
 
 export class TelegramAdapter implements ChannelAdapter {
@@ -50,6 +53,61 @@ export class TelegramAdapter implements ChannelAdapter {
     this.setupHandlers();
   }
   
+  /**
+   * Apply group gating for a message context.
+   * Returns null if the message should be dropped, or { isGroup, groupName, wasMentioned } if it should proceed.
+   */
+  private applyGroupGating(ctx: { chat: { type: string; id: number; title?: string }; message?: { text?: string; entities?: { type: string; offset: number; length: number }[] } }): { isGroup: boolean; groupName?: string; wasMentioned: boolean } | null {
+    const chatType = ctx.chat.type;
+    const isGroup = chatType === 'group' || chatType === 'supergroup';
+    const groupName = isGroup && 'title' in ctx.chat ? ctx.chat.title : undefined;
+
+    if (!isGroup) {
+      return { isGroup: false, wasMentioned: false };
+    }
+
+    const text = ctx.message?.text || '';
+    const botUsername = this.bot.botInfo?.username || '';
+
+    if (this.config.groups) {
+      const gatingResult = applyTelegramGroupGating({
+        text,
+        chatId: String(ctx.chat.id),
+        botUsername,
+        entities: ctx.message?.entities?.map(e => ({
+          type: e.type,
+          offset: e.offset,
+          length: e.length,
+        })),
+        groupsConfig: this.config.groups,
+        mentionPatterns: this.config.mentionPatterns,
+      });
+
+      if (!gatingResult.shouldProcess) {
+        console.log(`[Telegram] Group message filtered: ${gatingResult.reason}`);
+        return null;
+      }
+      return { isGroup, groupName, wasMentioned: gatingResult.wasMentioned ?? false };
+    }
+
+    // No groups config: detect mentions for batcher (no gating)
+    let wasMentioned = false;
+    if (botUsername) {
+      const entities = ctx.message?.entities || [];
+      wasMentioned = entities.some((e) => {
+        if (e.type === 'mention') {
+          const mentioned = text.substring(e.offset, e.offset + e.length);
+          return mentioned.toLowerCase() === `@${botUsername.toLowerCase()}`;
+        }
+        return false;
+      });
+      if (!wasMentioned) {
+        wasMentioned = text.toLowerCase().includes(`@${botUsername.toLowerCase()}`);
+      }
+    }
+    return { isGroup, groupName, wasMentioned };
+  }
+
   /**
    * Check if a user is authorized based on dmPolicy
    * Returns true if allowed, false if blocked, 'pairing' if pending pairing
@@ -214,31 +272,10 @@ export class TelegramAdapter implements ChannelAdapter {
       if (!userId) return;
       if (text.startsWith('/')) return;  // Skip other commands
 
-      // Group detection
-      const chatType = ctx.chat.type;
-      const isGroup = chatType === 'group' || chatType === 'supergroup';
-      const groupName = isGroup && 'title' in ctx.chat ? ctx.chat.title : undefined;
-
-      // Mention detection for groups
-      let wasMentioned = false;
-      if (isGroup) {
-        const botUsername = this.bot.botInfo?.username;
-        if (botUsername) {
-          // Check entities for bot_command or mention matching our username
-          const entities = ctx.message.entities || [];
-          wasMentioned = entities.some((e) => {
-            if (e.type === 'mention') {
-              const mentioned = text.substring(e.offset, e.offset + e.length);
-              return mentioned.toLowerCase() === `@${botUsername.toLowerCase()}`;
-            }
-            return false;
-          });
-          // Fallback: text-based check
-          if (!wasMentioned) {
-            wasMentioned = text.toLowerCase().includes(`@${botUsername.toLowerCase()}`);
-          }
-        }
-      }
+      // Group gating (runs AFTER pairing middleware)
+      const gating = this.applyGroupGating(ctx);
+      if (!gating) return; // Filtered by group gating
+      const { isGroup, groupName, wasMentioned } = gating;
 
       if (this.onMessage) {
         await this.onMessage({
@@ -309,6 +346,11 @@ export class TelegramAdapter implements ChannelAdapter {
 
       if (!userId) return;
 
+      // Group gating
+      const gating = this.applyGroupGating(ctx);
+      if (!gating) return;
+      const { isGroup, groupName, wasMentioned } = gating;
+
       // Check if transcription is configured (config or env)
       const { loadConfig } = await import('../config/index.js');
       const config = loadConfig();
@@ -350,6 +392,9 @@ export class TelegramAdapter implements ChannelAdapter {
             messageId: String(ctx.message.message_id),
             text: messageText,
             timestamp: new Date(),
+            isGroup,
+            groupName,
+            wasMentioned,
           });
         }
       } catch (error) {
@@ -364,6 +409,9 @@ export class TelegramAdapter implements ChannelAdapter {
             messageId: String(ctx.message.message_id),
             text: `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`,
             timestamp: new Date(),
+            isGroup,
+            groupName,
+            wasMentioned,
           });
         }
       }
@@ -375,6 +423,11 @@ export class TelegramAdapter implements ChannelAdapter {
       const userId = ctx.from?.id;
       const chatId = ctx.chat.id;
       if (!userId) return;
+
+      // Group gating
+      const gating = this.applyGroupGating(ctx);
+      if (!gating) return;
+      const { isGroup, groupName, wasMentioned } = gating;
 
       const { attachments, caption } = await this.collectAttachments(ctx.message, String(chatId));
       if (attachments.length === 0 && !caption) return;
@@ -388,6 +441,9 @@ export class TelegramAdapter implements ChannelAdapter {
           messageId: String(ctx.message.message_id),
           text: caption || '',
           timestamp: new Date(),
+          isGroup,
+          groupName,
+          wasMentioned,
           attachments,
         });
       }

@@ -276,6 +276,8 @@ function createChannelsForAgent(
         : undefined,
       attachmentsDir,
       attachmentsMaxBytes,
+      groups: agentConfig.channels.telegram.groups,
+      mentionPatterns: agentConfig.channels.telegram.mentionPatterns,
     }));
   }
 
@@ -289,6 +291,7 @@ function createChannelsForAgent(
         : undefined,
       attachmentsDir,
       attachmentsMaxBytes,
+      groups: agentConfig.channels.slack.groups,
     }));
   }
 
@@ -340,6 +343,7 @@ function createChannelsForAgent(
         : undefined,
       attachmentsDir,
       attachmentsMaxBytes,
+      groups: agentConfig.channels.discord.groups,
     }));
   }
 

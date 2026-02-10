@@ -39,15 +39,26 @@ channels:
     # groupPollIntervalMin: 5       # Batch interval for group messages (default: 10)
     # instantGroups: ["-100123456"] # Groups that bypass batching
     # listeningGroups: ["-100123456"] # Groups where bot observes but only replies when @mentioned
+    # Group access control (which groups can interact, mention requirement):
+    # groups:
+    #   "*": { requireMention: true }              # Default: only respond when @mentioned
+    #   "-1001234567890": { requireMention: false } # This group gets all messages
+    # mentionPatterns: ["hey bot"]                  # Additional regex patterns for mention detection
   # slack:
   #   enabled: true
   #   appToken: xapp-...
   #   botToken: xoxb-...
   #   listeningGroups: ["C0123456789"]  # Channels where bot observes only
+  #   # groups:
+  #   #   "*": { requireMention: true }  # Default: only respond when @mentioned
+  #   #   "C0123456789": { requireMention: false }
   # discord:
   #   enabled: true
   #   token: YOUR-DISCORD-BOT-TOKEN
   #   listeningGroups: ["1234567890123456789"]  # Server/channel IDs where bot observes only
+  #   # groups:
+  #   #   "*": { requireMention: true }  # Default: only respond when @mentioned
+  #   #   "1234567890123456789": { requireMention: false }  # Server or channel ID
   # whatsapp:
   #   enabled: true
   #   selfChat: false

@@ -23,6 +23,7 @@ export interface DiscordConfig {
   allowedUsers?: string[];  // Discord user IDs
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
+  groups?: Record<string, { requireMention?: boolean }>;  // Per-guild/channel settings
 }
 
 export class DiscordAdapter implements ChannelAdapter {
@@ -241,6 +242,33 @@ Ask the bot owner to approve with:
         const groupName = isGroup && 'name' in message.channel ? message.channel.name : undefined;
         const displayName = message.member?.displayName || message.author.globalName || message.author.username;
         const wasMentioned = isGroup && !!this.client?.user && message.mentions.has(this.client.user);
+
+        // Group gating: config-based allowlist + mention requirement
+        if (isGroup && this.config.groups) {
+          const groups = this.config.groups;
+          const chatId = message.channel.id;
+          const serverId = message.guildId;
+          const allowlistEnabled = Object.keys(groups).length > 0;
+
+          if (allowlistEnabled) {
+            const hasWildcard = Object.hasOwn(groups, '*');
+            const hasSpecific = Object.hasOwn(groups, chatId)
+              || (serverId && Object.hasOwn(groups, serverId));
+            if (!hasWildcard && !hasSpecific) {
+              console.log(`[Discord] Group ${chatId} not in allowlist, ignoring`);
+              return;
+            }
+          }
+
+          const groupConfig = groups[chatId]
+            ?? (serverId ? groups[serverId] : undefined)
+            ?? groups['*'];
+          const requireMention = groupConfig?.requireMention ?? true;
+
+          if (requireMention && !wasMentioned) {
+            return; // Mention required but not mentioned -- silent drop
+          }
+        }
 
         await this.onMessage({
           channel: 'discord',

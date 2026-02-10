@@ -763,6 +763,7 @@ This code expires in 1 hour.`;
       const isGroup = chatId.startsWith('group:');
       
       // Apply group gating - only respond when mentioned (unless configured otherwise)
+      let wasMentioned: boolean | undefined;
       if (isGroup && groupInfo?.groupId) {
         const mentions = dataMessage?.mentions || syncMessage?.mentions;
         const quote = dataMessage?.quote || syncMessage?.quote;
@@ -782,7 +783,8 @@ This code expires in 1 hour.`;
           return;
         }
         
-        if (gatingResult.wasMentioned) {
+        wasMentioned = gatingResult.wasMentioned;
+        if (wasMentioned) {
           console.log(`[Signal] Bot mentioned via ${gatingResult.method}`);
         }
       }
@@ -795,6 +797,7 @@ This code expires in 1 hour.`;
         timestamp: new Date(envelope.timestamp || Date.now()),
         isGroup,
         groupName: groupInfo?.groupName,
+        wasMentioned,
         attachments: collectedAttachments.length > 0 ? collectedAttachments : undefined,
       };
       

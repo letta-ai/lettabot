@@ -154,6 +154,8 @@ export interface TelegramConfig {
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Group chat IDs that bypass batching
   listeningGroups?: string[];     // Group IDs where bot only observes (replies only when mentioned)
+  mentionPatterns?: string[];     // Regex patterns for mention detection (e.g., ["@mybot"])
+  groups?: Record<string, { requireMention?: boolean }>;  // Per-group settings, "*" for defaults
 }
 
 export interface SlackConfig {
@@ -166,6 +168,7 @@ export interface SlackConfig {
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Channel IDs that bypass batching
   listeningGroups?: string[];     // Group IDs where bot only observes (replies only when mentioned)
+  groups?: Record<string, { requireMention?: boolean }>;  // Per-channel settings, "*" for defaults
 }
 
 export interface WhatsAppConfig {
@@ -207,6 +210,7 @@ export interface DiscordConfig {
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Guild/server IDs or channel IDs that bypass batching
   listeningGroups?: string[];     // Group IDs where bot only observes (replies only when mentioned)
+  groups?: Record<string, { requireMention?: boolean }>;  // Per-guild/channel settings, "*" for defaults
 }
 
 export interface GoogleAccountConfig {
