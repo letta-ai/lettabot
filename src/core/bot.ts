@@ -199,7 +199,10 @@ export class LettaBot implements AgentSession {
     }
     if (this.store.agentId) {
       process.env.LETTA_AGENT_ID = this.store.agentId;
-      return resumeSession(this.store.agentId, opts);
+      // Create a new conversation instead of resuming the default.
+      // This handles the case where the default conversation was deleted
+      // or never created (e.g., after migrations).
+      return createSession(this.store.agentId, opts);
     }
 
     // Create new agent -- persist immediately so we don't orphan it on later failures
