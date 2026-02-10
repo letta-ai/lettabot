@@ -711,8 +711,12 @@ export class LettaBot implements AgentSession {
             // Retry once when stream ends without any assistant text.
             // This catches both empty-success and terminal-error runs.
             // TODO(letta-code-sdk#31): Remove once SDK handles HITL approvals in bypassPermissions mode.
-            const shouldRetryForEmptyResult = streamMsg.success && resultText === '' && !hasResponse;
-            const shouldRetryForErrorResult = isTerminalError && !hasResponse;
+            // Only retry if we never sent anything to the user. hasResponse tracks
+            // the current buffer, but finalizeMessage() clears it on type changes.
+            // sentAnyMessage is the authoritative "did we deliver output" flag.
+            const nothingDelivered = !hasResponse && !sentAnyMessage;
+            const shouldRetryForEmptyResult = streamMsg.success && resultText === '' && nothingDelivered;
+            const shouldRetryForErrorResult = isTerminalError && nothingDelivered;
             if (shouldRetryForEmptyResult || shouldRetryForErrorResult) {
               if (shouldRetryForEmptyResult) {
                 console.error('[Bot] Warning: Agent returned empty result with no response.');
