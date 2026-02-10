@@ -187,7 +187,8 @@ Group settings apply to Telegram, Slack, Discord, WhatsApp, and Signal.
 - `listeningGroups`: Group IDs where the bot observes and only replies when mentioned
 
 **Environment variables (non-interactive onboarding):**
-- `<CHANNEL>_GROUP_POLL_INTERVAL_MIN` (deprecated)
+- `<CHANNEL>_GROUP_DEBOUNCE_SEC` (seconds, e.g. `5`)
+- `<CHANNEL>_GROUP_POLL_INTERVAL_MIN` (deprecated, use `_GROUP_DEBOUNCE_SEC` instead)
 - `<CHANNEL>_INSTANT_GROUPS` (comma-separated)
 - `<CHANNEL>_LISTENING_GROUPS` (comma-separated)
 

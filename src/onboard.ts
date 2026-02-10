@@ -39,7 +39,8 @@ function readConfigFromEnv(existingConfig: any): any {
       botToken: process.env.TELEGRAM_BOT_TOKEN || existingConfig.channels?.telegram?.token,
       dmPolicy: process.env.TELEGRAM_DM_POLICY || existingConfig.channels?.telegram?.dmPolicy || 'pairing',
       allowedUsers: process.env.TELEGRAM_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.telegram?.allowedUsers,
-      groupDebounceSec: existingConfig.channels?.telegram?.groupDebounceSec,
+      groupDebounceSec: parseOptionalInt(process.env.TELEGRAM_GROUP_DEBOUNCE_SEC)
+        ?? existingConfig.channels?.telegram?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.TELEGRAM_GROUP_POLL_INTERVAL_MIN)
         ?? existingConfig.channels?.telegram?.groupPollIntervalMin,
       instantGroups: parseCsvList(process.env.TELEGRAM_INSTANT_GROUPS)
@@ -54,7 +55,8 @@ function readConfigFromEnv(existingConfig: any): any {
       appToken: process.env.SLACK_APP_TOKEN || existingConfig.channels?.slack?.appToken,
       dmPolicy: process.env.SLACK_DM_POLICY || existingConfig.channels?.slack?.dmPolicy || 'pairing',
       allowedUsers: process.env.SLACK_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.slack?.allowedUsers,
-      groupDebounceSec: existingConfig.channels?.slack?.groupDebounceSec,
+      groupDebounceSec: parseOptionalInt(process.env.SLACK_GROUP_DEBOUNCE_SEC)
+        ?? existingConfig.channels?.slack?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.SLACK_GROUP_POLL_INTERVAL_MIN)
         ?? existingConfig.channels?.slack?.groupPollIntervalMin,
       instantGroups: parseCsvList(process.env.SLACK_INSTANT_GROUPS)
@@ -68,7 +70,8 @@ function readConfigFromEnv(existingConfig: any): any {
       botToken: process.env.DISCORD_BOT_TOKEN || existingConfig.channels?.discord?.token,
       dmPolicy: process.env.DISCORD_DM_POLICY || existingConfig.channels?.discord?.dmPolicy || 'pairing',
       allowedUsers: process.env.DISCORD_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.discord?.allowedUsers,
-      groupDebounceSec: existingConfig.channels?.discord?.groupDebounceSec,
+      groupDebounceSec: parseOptionalInt(process.env.DISCORD_GROUP_DEBOUNCE_SEC)
+        ?? existingConfig.channels?.discord?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.DISCORD_GROUP_POLL_INTERVAL_MIN)
         ?? existingConfig.channels?.discord?.groupPollIntervalMin,
       instantGroups: parseCsvList(process.env.DISCORD_INSTANT_GROUPS)
@@ -82,7 +85,8 @@ function readConfigFromEnv(existingConfig: any): any {
       selfChat: process.env.WHATSAPP_SELF_CHAT_MODE !== 'false' && (existingConfig.channels?.whatsapp?.selfChat !== false),
       dmPolicy: process.env.WHATSAPP_DM_POLICY || existingConfig.channels?.whatsapp?.dmPolicy || 'pairing',
       allowedUsers: process.env.WHATSAPP_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.whatsapp?.allowedUsers,
-      groupDebounceSec: existingConfig.channels?.whatsapp?.groupDebounceSec,
+      groupDebounceSec: parseOptionalInt(process.env.WHATSAPP_GROUP_DEBOUNCE_SEC)
+        ?? existingConfig.channels?.whatsapp?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.WHATSAPP_GROUP_POLL_INTERVAL_MIN)
         ?? existingConfig.channels?.whatsapp?.groupPollIntervalMin,
       instantGroups: parseCsvList(process.env.WHATSAPP_INSTANT_GROUPS)
@@ -97,7 +101,8 @@ function readConfigFromEnv(existingConfig: any): any {
       selfChat: process.env.SIGNAL_SELF_CHAT_MODE !== 'false' && (existingConfig.channels?.signal?.selfChat !== false),
       dmPolicy: process.env.SIGNAL_DM_POLICY || existingConfig.channels?.signal?.dmPolicy || 'pairing',
       allowedUsers: process.env.SIGNAL_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.signal?.allowedUsers,
-      groupDebounceSec: existingConfig.channels?.signal?.groupDebounceSec,
+      groupDebounceSec: parseOptionalInt(process.env.SIGNAL_GROUP_DEBOUNCE_SEC)
+        ?? existingConfig.channels?.signal?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.SIGNAL_GROUP_POLL_INTERVAL_MIN)
         ?? existingConfig.channels?.signal?.groupPollIntervalMin,
       instantGroups: parseCsvList(process.env.SIGNAL_INSTANT_GROUPS)

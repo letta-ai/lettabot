@@ -198,6 +198,18 @@ Signal ────┘
 
 - Start a conversation on Telegram
 - Continue it on Slack
+- Pick it up on WhatsApp
+- The agent remembers everything!
+
+| Channel | Guide | Requirements |
+|---------|-------|--------------|
+| Telegram | [Setup Guide](docs/getting-started.md) | Bot token from @BotFather |
+| Slack | [Setup Guide](docs/slack-setup.md) | Slack app with Socket Mode |
+| Discord | [Setup Guide](docs/discord-setup.md) | Discord bot + Message Content Intent |
+| WhatsApp | [Setup Guide](docs/whatsapp-setup.md) | Phone with WhatsApp |
+| Signal | [Setup Guide](docs/signal-setup.md) | signal-cli + phone number |
+
+At least one channel is required. Telegram is the easiest to start with.
 
 ### Group Settings (Optional)
 
@@ -212,18 +224,6 @@ channels:
 ```
 
 See `SKILL.md` for the full environment variable list and examples.
-- Pick it up on WhatsApp
-- The agent remembers everything!
-
-| Channel | Guide | Requirements |
-|---------|-------|--------------|
-| Telegram | [Setup Guide](docs/getting-started.md) | Bot token from @BotFather |
-| Slack | [Setup Guide](docs/slack-setup.md) | Slack app with Socket Mode |
-| Discord | [Setup Guide](docs/discord-setup.md) | Discord bot + Message Content Intent |
-| WhatsApp | [Setup Guide](docs/whatsapp-setup.md) | Phone with WhatsApp |
-| Signal | [Setup Guide](docs/signal-setup.md) | signal-cli + phone number |
-
-At least one channel is required. Telegram is the easiest to start with.
 
 ## Bot Commands
 
