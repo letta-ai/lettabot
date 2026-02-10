@@ -15,6 +15,18 @@ import { CHANNELS, getChannelHint, isSignalCliInstalled, setupTelegram, setupSla
 // Non-Interactive Helpers
 // ============================================================================
 
+function parseCsvList(value?: string): string[] | undefined {
+  if (!value) return undefined;
+  const items = value.split(',').map(s => s.trim()).filter(Boolean);
+  return items.length > 0 ? items : undefined;
+}
+
+function parseOptionalInt(value?: string): number | undefined {
+  if (!value) return undefined;
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function readConfigFromEnv(existingConfig: any): any {
   return {
     baseUrl: process.env.LETTA_BASE_URL || existingConfig.server?.baseUrl || 'https://api.letta.com',
@@ -27,6 +39,13 @@ function readConfigFromEnv(existingConfig: any): any {
       botToken: process.env.TELEGRAM_BOT_TOKEN || existingConfig.channels?.telegram?.token,
       dmPolicy: process.env.TELEGRAM_DM_POLICY || existingConfig.channels?.telegram?.dmPolicy || 'pairing',
       allowedUsers: process.env.TELEGRAM_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.telegram?.allowedUsers,
+      groupDebounceSec: existingConfig.channels?.telegram?.groupDebounceSec,
+      groupPollIntervalMin: parseOptionalInt(process.env.TELEGRAM_GROUP_POLL_INTERVAL_MIN)
+        ?? existingConfig.channels?.telegram?.groupPollIntervalMin,
+      instantGroups: parseCsvList(process.env.TELEGRAM_INSTANT_GROUPS)
+        ?? existingConfig.channels?.telegram?.instantGroups,
+      listeningGroups: parseCsvList(process.env.TELEGRAM_LISTENING_GROUPS)
+        ?? existingConfig.channels?.telegram?.listeningGroups,
     },
     
     slack: {
@@ -35,6 +54,13 @@ function readConfigFromEnv(existingConfig: any): any {
       appToken: process.env.SLACK_APP_TOKEN || existingConfig.channels?.slack?.appToken,
       dmPolicy: process.env.SLACK_DM_POLICY || existingConfig.channels?.slack?.dmPolicy || 'pairing',
       allowedUsers: process.env.SLACK_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.slack?.allowedUsers,
+      groupDebounceSec: existingConfig.channels?.slack?.groupDebounceSec,
+      groupPollIntervalMin: parseOptionalInt(process.env.SLACK_GROUP_POLL_INTERVAL_MIN)
+        ?? existingConfig.channels?.slack?.groupPollIntervalMin,
+      instantGroups: parseCsvList(process.env.SLACK_INSTANT_GROUPS)
+        ?? existingConfig.channels?.slack?.instantGroups,
+      listeningGroups: parseCsvList(process.env.SLACK_LISTENING_GROUPS)
+        ?? existingConfig.channels?.slack?.listeningGroups,
     },
     
     discord: {
@@ -42,6 +68,13 @@ function readConfigFromEnv(existingConfig: any): any {
       botToken: process.env.DISCORD_BOT_TOKEN || existingConfig.channels?.discord?.token,
       dmPolicy: process.env.DISCORD_DM_POLICY || existingConfig.channels?.discord?.dmPolicy || 'pairing',
       allowedUsers: process.env.DISCORD_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.discord?.allowedUsers,
+      groupDebounceSec: existingConfig.channels?.discord?.groupDebounceSec,
+      groupPollIntervalMin: parseOptionalInt(process.env.DISCORD_GROUP_POLL_INTERVAL_MIN)
+        ?? existingConfig.channels?.discord?.groupPollIntervalMin,
+      instantGroups: parseCsvList(process.env.DISCORD_INSTANT_GROUPS)
+        ?? existingConfig.channels?.discord?.instantGroups,
+      listeningGroups: parseCsvList(process.env.DISCORD_LISTENING_GROUPS)
+        ?? existingConfig.channels?.discord?.listeningGroups,
     },
     
     whatsapp: {
@@ -49,6 +82,13 @@ function readConfigFromEnv(existingConfig: any): any {
       selfChat: process.env.WHATSAPP_SELF_CHAT_MODE !== 'false' && (existingConfig.channels?.whatsapp?.selfChat !== false),
       dmPolicy: process.env.WHATSAPP_DM_POLICY || existingConfig.channels?.whatsapp?.dmPolicy || 'pairing',
       allowedUsers: process.env.WHATSAPP_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.whatsapp?.allowedUsers,
+      groupDebounceSec: existingConfig.channels?.whatsapp?.groupDebounceSec,
+      groupPollIntervalMin: parseOptionalInt(process.env.WHATSAPP_GROUP_POLL_INTERVAL_MIN)
+        ?? existingConfig.channels?.whatsapp?.groupPollIntervalMin,
+      instantGroups: parseCsvList(process.env.WHATSAPP_INSTANT_GROUPS)
+        ?? existingConfig.channels?.whatsapp?.instantGroups,
+      listeningGroups: parseCsvList(process.env.WHATSAPP_LISTENING_GROUPS)
+        ?? existingConfig.channels?.whatsapp?.listeningGroups,
     },
     
     signal: {
@@ -57,6 +97,13 @@ function readConfigFromEnv(existingConfig: any): any {
       selfChat: process.env.SIGNAL_SELF_CHAT_MODE !== 'false' && (existingConfig.channels?.signal?.selfChat !== false),
       dmPolicy: process.env.SIGNAL_DM_POLICY || existingConfig.channels?.signal?.dmPolicy || 'pairing',
       allowedUsers: process.env.SIGNAL_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.signal?.allowedUsers,
+      groupDebounceSec: existingConfig.channels?.signal?.groupDebounceSec,
+      groupPollIntervalMin: parseOptionalInt(process.env.SIGNAL_GROUP_POLL_INTERVAL_MIN)
+        ?? existingConfig.channels?.signal?.groupPollIntervalMin,
+      instantGroups: parseCsvList(process.env.SIGNAL_INSTANT_GROUPS)
+        ?? existingConfig.channels?.signal?.instantGroups,
+      listeningGroups: parseCsvList(process.env.SIGNAL_LISTENING_GROUPS)
+        ?? existingConfig.channels?.signal?.listeningGroups,
     },
   };
 }
@@ -81,6 +128,10 @@ async function saveConfigFromEnv(config: any, configPath: string): Promise<void>
         token: config.telegram.botToken,
         dmPolicy: config.telegram.dmPolicy,
         allowedUsers: config.telegram.allowedUsers,
+        groupDebounceSec: config.telegram.groupDebounceSec,
+        groupPollIntervalMin: config.telegram.groupPollIntervalMin,
+        instantGroups: config.telegram.instantGroups,
+        listeningGroups: config.telegram.listeningGroups,
       } : { enabled: false },
       
       slack: config.slack.enabled ? {
@@ -88,6 +139,10 @@ async function saveConfigFromEnv(config: any, configPath: string): Promise<void>
         botToken: config.slack.botToken,
         appToken: config.slack.appToken,
         allowedUsers: config.slack.allowedUsers,
+        groupDebounceSec: config.slack.groupDebounceSec,
+        groupPollIntervalMin: config.slack.groupPollIntervalMin,
+        instantGroups: config.slack.instantGroups,
+        listeningGroups: config.slack.listeningGroups,
       } : { enabled: false },
       
       discord: config.discord.enabled ? {
@@ -95,6 +150,10 @@ async function saveConfigFromEnv(config: any, configPath: string): Promise<void>
         token: config.discord.botToken,
         dmPolicy: config.discord.dmPolicy,
         allowedUsers: config.discord.allowedUsers,
+        groupDebounceSec: config.discord.groupDebounceSec,
+        groupPollIntervalMin: config.discord.groupPollIntervalMin,
+        instantGroups: config.discord.instantGroups,
+        listeningGroups: config.discord.listeningGroups,
       } : { enabled: false },
       
       whatsapp: config.whatsapp.enabled ? {
@@ -102,6 +161,10 @@ async function saveConfigFromEnv(config: any, configPath: string): Promise<void>
         selfChat: config.whatsapp.selfChat,
         dmPolicy: config.whatsapp.dmPolicy,
         allowedUsers: config.whatsapp.allowedUsers,
+        groupDebounceSec: config.whatsapp.groupDebounceSec,
+        groupPollIntervalMin: config.whatsapp.groupPollIntervalMin,
+        instantGroups: config.whatsapp.instantGroups,
+        listeningGroups: config.whatsapp.listeningGroups,
       } : { enabled: false },
       
       signal: config.signal.enabled ? {
@@ -110,6 +173,10 @@ async function saveConfigFromEnv(config: any, configPath: string): Promise<void>
         selfChat: config.signal.selfChat,
         dmPolicy: config.signal.dmPolicy,
         allowedUsers: config.signal.allowedUsers,
+        groupDebounceSec: config.signal.groupDebounceSec,
+        groupPollIntervalMin: config.signal.groupPollIntervalMin,
+        instantGroups: config.signal.instantGroups,
+        listeningGroups: config.signal.listeningGroups,
       } : { enabled: false },
     },
     features: {
@@ -147,11 +214,57 @@ interface OnboardConfig {
   providers?: Array<{ id: string; name: string; apiKey: string }>;
   
   // Channels (with access control)
-  telegram: { enabled: boolean; token?: string; dmPolicy?: 'pairing' | 'allowlist' | 'open'; allowedUsers?: string[] };
-  slack: { enabled: boolean; appToken?: string; botToken?: string; allowedUsers?: string[] };
-  whatsapp: { enabled: boolean; selfChat?: boolean; dmPolicy?: 'pairing' | 'allowlist' | 'open'; allowedUsers?: string[] };
-  signal: { enabled: boolean; phone?: string; selfChat?: boolean; dmPolicy?: 'pairing' | 'allowlist' | 'open'; allowedUsers?: string[] };
-  discord: { enabled: boolean; token?: string; dmPolicy?: 'pairing' | 'allowlist' | 'open'; allowedUsers?: string[] };
+  telegram: {
+    enabled: boolean;
+    token?: string;
+    dmPolicy?: 'pairing' | 'allowlist' | 'open';
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+  slack: {
+    enabled: boolean;
+    appToken?: string;
+    botToken?: string;
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+  whatsapp: {
+    enabled: boolean;
+    selfChat?: boolean;
+    dmPolicy?: 'pairing' | 'allowlist' | 'open';
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+  signal: {
+    enabled: boolean;
+    phone?: string;
+    selfChat?: boolean;
+    dmPolicy?: 'pairing' | 'allowlist' | 'open';
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+  discord: {
+    enabled: boolean;
+    token?: string;
+    dmPolicy?: 'pairing' | 'allowlist' | 'open';
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
   
   // Google Workspace (via gog CLI)
   google: { enabled: boolean; accounts: Array<{ account: string; services: string[] }> };
@@ -1525,6 +1638,10 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
           token: config.telegram.token,
           dmPolicy: config.telegram.dmPolicy,
           allowedUsers: config.telegram.allowedUsers,
+          groupDebounceSec: config.telegram.groupDebounceSec,
+          groupPollIntervalMin: config.telegram.groupPollIntervalMin,
+          instantGroups: config.telegram.instantGroups,
+          listeningGroups: config.telegram.listeningGroups,
         }
       } : {}),
       ...(config.slack.enabled ? {
@@ -1533,6 +1650,10 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
           appToken: config.slack.appToken,
           botToken: config.slack.botToken,
           allowedUsers: config.slack.allowedUsers,
+          groupDebounceSec: config.slack.groupDebounceSec,
+          groupPollIntervalMin: config.slack.groupPollIntervalMin,
+          instantGroups: config.slack.instantGroups,
+          listeningGroups: config.slack.listeningGroups,
         }
       } : {}),
       ...(config.discord.enabled ? {
@@ -1541,6 +1662,10 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
           token: config.discord.token,
           dmPolicy: config.discord.dmPolicy,
           allowedUsers: config.discord.allowedUsers,
+          groupDebounceSec: config.discord.groupDebounceSec,
+          groupPollIntervalMin: config.discord.groupPollIntervalMin,
+          instantGroups: config.discord.instantGroups,
+          listeningGroups: config.discord.listeningGroups,
         }
       } : {}),
       ...(config.whatsapp.enabled ? {
@@ -1549,6 +1674,10 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
           selfChat: config.whatsapp.selfChat,
           dmPolicy: config.whatsapp.dmPolicy,
           allowedUsers: config.whatsapp.allowedUsers,
+          groupDebounceSec: config.whatsapp.groupDebounceSec,
+          groupPollIntervalMin: config.whatsapp.groupPollIntervalMin,
+          instantGroups: config.whatsapp.instantGroups,
+          listeningGroups: config.whatsapp.listeningGroups,
         }
       } : {}),
       ...(config.signal.enabled ? {
@@ -1558,6 +1687,10 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
           selfChat: config.signal.selfChat,
           dmPolicy: config.signal.dmPolicy,
           allowedUsers: config.signal.allowedUsers,
+          groupDebounceSec: config.signal.groupDebounceSec,
+          groupPollIntervalMin: config.signal.groupPollIntervalMin,
+          instantGroups: config.signal.instantGroups,
+          listeningGroups: config.signal.listeningGroups,
         }
       } : {}),
     },

@@ -41,6 +41,88 @@ export function getChannelHint(id: ChannelId): string {
 // Setup Functions
 // ============================================================================
 
+function parseIdList(input?: string | null): string[] | undefined {
+  if (!input) return undefined;
+  const ids = input.split(',').map(s => s.trim()).filter(Boolean);
+  return ids.length > 0 ? ids : undefined;
+}
+
+async function promptGroupSettings(existing?: any): Promise<{
+  groupDebounceSec?: number;
+  groupPollIntervalMin?: number;
+  instantGroups?: string[];
+  listeningGroups?: string[];
+}> {
+  const hasExisting = existing?.groupDebounceSec !== undefined
+    || existing?.groupPollIntervalMin !== undefined
+    || (existing?.instantGroups && existing.instantGroups.length > 0)
+    || (existing?.listeningGroups && existing.listeningGroups.length > 0);
+
+  const configure = await p.confirm({
+    message: 'Configure group settings?',
+    initialValue: hasExisting,
+  });
+  if (p.isCancel(configure)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+
+  if (!configure) {
+    return {
+      groupDebounceSec: existing?.groupDebounceSec,
+      groupPollIntervalMin: existing?.groupPollIntervalMin,
+      instantGroups: existing?.instantGroups,
+      listeningGroups: existing?.listeningGroups,
+    };
+  }
+
+  const debounceRaw = await p.text({
+    message: 'Group debounce seconds (blank = default)',
+    placeholder: '5',
+    initialValue: existing?.groupDebounceSec !== undefined ? String(existing.groupDebounceSec) : '',
+    validate: (value) => {
+      const trimmed = value.trim();
+      if (!trimmed) return undefined;
+      const num = Number(trimmed);
+      if (!Number.isFinite(num) || num < 0) return 'Enter a non-negative number or leave blank';
+      return undefined;
+    },
+  });
+  if (p.isCancel(debounceRaw)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+
+  const instantRaw = await p.text({
+    message: 'Instant group IDs (comma-separated, optional)',
+    placeholder: '123,456',
+    initialValue: Array.isArray(existing?.instantGroups) ? existing.instantGroups.join(',') : '',
+  });
+  if (p.isCancel(instantRaw)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+
+  const listeningRaw = await p.text({
+    message: 'Listening group IDs (comma-separated, optional)',
+    placeholder: '123,456',
+    initialValue: Array.isArray(existing?.listeningGroups) ? existing.listeningGroups.join(',') : '',
+  });
+  if (p.isCancel(listeningRaw)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+
+  const debounceValue = debounceRaw?.trim() || '';
+
+  return {
+    groupDebounceSec: debounceValue ? Number(debounceValue) : undefined,
+    groupPollIntervalMin: existing?.groupPollIntervalMin,
+    instantGroups: parseIdList(instantRaw),
+    listeningGroups: parseIdList(listeningRaw),
+  };
+}
+
 export async function setupTelegram(existing?: any): Promise<any> {
   p.note(
     '1. Message @BotFather on Telegram\n' +
@@ -90,11 +172,14 @@ export async function setupTelegram(existing?: any): Promise<any> {
     }
   }
   
+  const groupSettings = await promptGroupSettings(existing);
+
   return {
     enabled: true,
     token: token || undefined,
     dmPolicy: dmPolicy as 'pairing' | 'allowlist' | 'open',
     allowedUsers,
+    ...groupSettings,
   };
 }
 
@@ -131,11 +216,13 @@ export async function setupSlack(existing?: any): Promise<any> {
     });
     
     if (result) {
+      const groupSettings = await promptGroupSettings(existing);
       return {
         enabled: true,
         appToken: result.appToken,
         botToken: result.botToken,
         allowedUsers: result.allowedUsers,
+        ...groupSettings,
       };
     }
     return { enabled: false }; // Wizard cancelled
@@ -179,12 +266,14 @@ export async function setupSlack(existing?: any): Promise<any> {
   }
   
   const allowedUsers = await stepAccessControl(existing?.allowedUsers);
+  const groupSettings = await promptGroupSettings(existing);
   
   return {
     enabled: true,
     appToken: appToken || undefined,
     botToken: botToken || undefined,
     allowedUsers,
+    ...groupSettings,
   };
 }
 
@@ -256,11 +345,14 @@ export async function setupDiscord(existing?: any): Promise<any> {
     }
   }
   
+  const groupSettings = await promptGroupSettings(existing);
+
   return {
     enabled: true,
     token: token || undefined,
     dmPolicy: dmPolicy as 'pairing' | 'allowlist' | 'open',
     allowedUsers,
+    ...groupSettings,
   };
 }
 
@@ -313,6 +405,8 @@ export async function setupWhatsApp(existing?: any): Promise<any> {
     }
   }
   
+  const groupSettings = await promptGroupSettings(existing);
+
   p.log.info('Run "lettabot server" to see the QR code and complete pairing.');
   
   return {
@@ -320,6 +414,7 @@ export async function setupWhatsApp(existing?: any): Promise<any> {
     selfChat: isSelfChat,
     dmPolicy,
     allowedUsers,
+    ...groupSettings,
   };
 }
 
@@ -399,12 +494,15 @@ export async function setupSignal(existing?: any): Promise<any> {
     }
   }
   
+  const groupSettings = await promptGroupSettings(existing);
+
   return {
     enabled: true,
     phone: phone || undefined,
     selfChat: isSelfChat,
     dmPolicy,
     allowedUsers,
+    ...groupSettings,
   };
 }
 
