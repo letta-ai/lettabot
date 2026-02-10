@@ -100,6 +100,29 @@ describe('saveConfig with agents[] format', () => {
     expect(loaded.transcription?.apiKey).toBe('whisper-key');
   });
 
+  it('should always include agent id in agents[] (onboarding contract)', () => {
+    // After onboarding, agent ID should always be present in the config.
+    // This test documents the contract: new configs have the ID eagerly set.
+    const config = {
+      server: { mode: 'cloud' as const, apiKey: 'test-key' },
+      agents: [{
+        name: 'LettaBot',
+        id: 'agent-eagerly-created',
+        channels: {
+          telegram: { enabled: true, token: 'tg-token' },
+        },
+        features: { cron: false, heartbeat: { enabled: false } },
+      }],
+    };
+
+    saveConfig(config, configPath);
+
+    const raw = readFileSync(configPath, 'utf-8');
+    const parsed = YAML.parse(raw);
+
+    expect(parsed.agents[0].id).toBe('agent-eagerly-created');
+  });
+
   it('should preserve providers at top level, not inside agents', () => {
     const config = {
       server: { mode: 'cloud' as const, apiKey: 'test-key' },

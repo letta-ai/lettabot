@@ -1500,6 +1500,44 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   // Review loop
   await reviewLoop(config, env);
   
+  // Create agent eagerly if user chose "new" and we don't have an ID yet
+  if (config.agentChoice === 'new' && !config.agentId) {
+    const { createAgent } = await import('@letta-ai/letta-code-sdk');
+    const { updateAgentName, ensureNoToolApprovals } = await import('./tools/letta-api.js');
+    const { installSkillsToAgent } = await import('./skills/loader.js');
+    const { loadMemoryBlocks } = await import('./core/memory.js');
+    const { SYSTEM_PROMPT } = await import('./core/system-prompt.js');
+    
+    const spinner = p.spinner();
+    spinner.start('Creating agent...');
+    try {
+      const agentId = await createAgent({
+        systemPrompt: SYSTEM_PROMPT,
+        memory: loadMemoryBlocks(config.agentName || 'LettaBot'),
+        ...(config.model ? { model: config.model } : {}),
+      });
+      
+      // Set name and install skills
+      if (config.agentName) {
+        await updateAgentName(agentId, config.agentName).catch(() => {});
+      }
+      installSkillsToAgent(agentId, {
+        cronEnabled: config.cron,
+        googleEnabled: config.google.enabled,
+      });
+      
+      // Disable tool approvals
+      ensureNoToolApprovals(agentId).catch(() => {});
+      
+      config.agentId = agentId;
+      spinner.stop(`Agent created: ${agentId}`);
+    } catch (err) {
+      spinner.stop('Failed to create agent');
+      p.log.error(`${err}`);
+      p.log.info('The agent will be created on first message instead.');
+    }
+  }
+  
   // Apply config to env
   if (config.agentName) env.AGENT_NAME = config.agentName;
   
