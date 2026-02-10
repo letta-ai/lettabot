@@ -504,7 +504,9 @@ export class TelegramAdapter implements ChannelAdapter {
     try {
       const formatted = await markdownToTelegramV2(text);
       await this.bot.api.editMessageText(chatId, Number(messageId), formatted, { parse_mode: 'MarkdownV2' });
-    } catch (e) {
+    } catch (e: any) {
+      // "message is not modified" means content is already up-to-date -- harmless, don't retry
+      if (e?.description?.includes('message is not modified')) return;
       // If MarkdownV2 fails, fall back to plain text (mirrors sendMessage fallback)
       console.warn('[Telegram] MarkdownV2 edit failed, falling back to raw text:', e);
       await this.bot.api.editMessageText(chatId, Number(messageId), text);
