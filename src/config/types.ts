@@ -150,6 +150,7 @@ export interface TelegramConfig {
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Group chat IDs that bypass batching
+  listeningGroups?: string[];     // Group IDs where bot only observes (replies only when mentioned)
 }
 
 export interface SlackConfig {
@@ -161,6 +162,7 @@ export interface SlackConfig {
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Channel IDs that bypass batching
+  listeningGroups?: string[];     // Group IDs where bot only observes (replies only when mentioned)
 }
 
 export interface WhatsAppConfig {
@@ -175,6 +177,7 @@ export interface WhatsAppConfig {
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Group JIDs that bypass batching
+  listeningGroups?: string[];     // Group IDs where bot only observes (replies only when mentioned)
 }
 
 export interface SignalConfig {
@@ -189,6 +192,7 @@ export interface SignalConfig {
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Group IDs that bypass batching
+  listeningGroups?: string[];     // Group IDs where bot only observes (replies only when mentioned)
 }
 
 export interface DiscordConfig {
@@ -199,6 +203,7 @@ export interface DiscordConfig {
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Guild/server IDs or channel IDs that bypass batching
+  listeningGroups?: string[];     // Group IDs where bot only observes (replies only when mentioned)
 }
 
 export interface GoogleAccountConfig {

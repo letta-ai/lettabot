@@ -16,7 +16,7 @@ export interface AgentSession {
   registerChannel(adapter: ChannelAdapter): void;
 
   /** Configure group message batching */
-  setGroupBatcher(batcher: GroupBatcher, intervals: Map<string, number>, instantGroupIds?: Set<string>): void;
+  setGroupBatcher(batcher: GroupBatcher, intervals: Map<string, number>, instantGroupIds?: Set<string>, listeningGroupIds?: Set<string>): void;
 
   /** Process a batched group message */
   processGroupBatch(msg: InboundMessage, adapter: ChannelAdapter): void;

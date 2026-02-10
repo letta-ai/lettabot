@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatMessageEnvelope, SYSTEM_REMINDER_OPEN, SYSTEM_REMINDER_CLOSE } from './formatter.js';
+import { formatMessageEnvelope, formatGroupBatchEnvelope, SYSTEM_REMINDER_OPEN, SYSTEM_REMINDER_CLOSE } from './formatter.js';
 import type { InboundMessage } from './types.js';
 
 // Helper to create base message
@@ -337,6 +337,77 @@ describe('formatMessageEnvelope', () => {
       const sessionIdx = result.indexOf('## Session Context');
       const metadataIdx = result.indexOf('## Message Metadata');
       expect(sessionIdx).toBeLessThan(metadataIdx);
+    });
+  });
+});
+
+describe('formatGroupBatchEnvelope', () => {
+  function createBatchMessages(count: number, overrides: Partial<InboundMessage> = {}): InboundMessage[] {
+    return Array.from({ length: count }, (_, i) => ({
+      channel: 'discord' as const,
+      chatId: '123456',
+      userId: `user${i}`,
+      userName: `User ${i}`,
+      text: `Message ${i}`,
+      timestamp: new Date('2026-02-02T12:00:00Z'),
+      isGroup: true,
+      groupName: 'general',
+      ...overrides,
+    }));
+  }
+
+  it('formats batch header with channel, chatId, group name, and count', () => {
+    const msgs = createBatchMessages(3);
+    const result = formatGroupBatchEnvelope(msgs);
+    expect(result).toContain('[GROUP CHAT');
+    expect(result).toContain('discord:123456');
+    expect(result).toContain('#general');
+    expect(result).toContain('3 messages');
+  });
+
+  it('formats each message as a chat log line', () => {
+    const msgs = createBatchMessages(2);
+    const result = formatGroupBatchEnvelope(msgs);
+    expect(result).toContain('User 0: Message 0');
+    expect(result).toContain('User 1: Message 1');
+  });
+
+  it('returns empty string for empty array', () => {
+    expect(formatGroupBatchEnvelope([])).toBe('');
+  });
+
+  describe('listening mode', () => {
+    it('includes OBSERVATION ONLY header when isListeningMode=true', () => {
+      const msgs = createBatchMessages(2);
+      const result = formatGroupBatchEnvelope(msgs, {}, true);
+      expect(result).toContain('[OBSERVATION ONLY - Update memories. Do not reply unless addressed.]');
+    });
+
+    it('does not include OBSERVATION ONLY header when isListeningMode=false', () => {
+      const msgs = createBatchMessages(2);
+      const result = formatGroupBatchEnvelope(msgs, {}, false);
+      expect(result).not.toContain('OBSERVATION ONLY');
+    });
+
+    it('does not include OBSERVATION ONLY header when isListeningMode is undefined', () => {
+      const msgs = createBatchMessages(2);
+      const result = formatGroupBatchEnvelope(msgs);
+      expect(result).not.toContain('OBSERVATION ONLY');
+    });
+
+    it('OBSERVATION ONLY header appears after the GROUP CHAT header', () => {
+      const msgs = createBatchMessages(2);
+      const result = formatGroupBatchEnvelope(msgs, {}, true);
+      const groupIdx = result.indexOf('[GROUP CHAT');
+      const obsIdx = result.indexOf('[OBSERVATION ONLY');
+      expect(groupIdx).toBeLessThan(obsIdx);
+    });
+
+    it('still includes chat log lines in listening mode', () => {
+      const msgs = createBatchMessages(2);
+      const result = formatGroupBatchEnvelope(msgs, {}, true);
+      expect(result).toContain('User 0: Message 0');
+      expect(result).toContain('User 1: Message 1');
     });
   });
 });

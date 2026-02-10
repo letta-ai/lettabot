@@ -363,51 +363,36 @@ function resolveDebounceMs(channel: { groupDebounceSec?: number; groupPollInterv
 function createGroupBatcher(
   agentConfig: import('./config/types.js').AgentConfig,
   bot: import('./core/interfaces.js').AgentSession,
-): { batcher: GroupBatcher | null; intervals: Map<string, number>; instantIds: Set<string> } {
+): { batcher: GroupBatcher | null; intervals: Map<string, number>; instantIds: Set<string>; listeningIds: Set<string> } {
   const intervals = new Map<string, number>(); // channel -> debounce ms
   const instantIds = new Set<string>();
+  const listeningIds = new Set<string>();
 
-  // Collect debounce intervals from channel configs (stored as ms)
-  if (agentConfig.channels.telegram) {
-    intervals.set('telegram', resolveDebounceMs(agentConfig.channels.telegram));
-    for (const id of agentConfig.channels.telegram.instantGroups || []) {
-      instantIds.add(`telegram:${id}`);
+  const channelNames = ['telegram', 'slack', 'whatsapp', 'signal', 'discord'] as const;
+  for (const channel of channelNames) {
+    const cfg = agentConfig.channels[channel];
+    if (!cfg) continue;
+    intervals.set(channel, resolveDebounceMs(cfg));
+    for (const id of (cfg as any).instantGroups || []) {
+      instantIds.add(`${channel}:${id}`);
     }
-  }
-  if (agentConfig.channels.slack) {
-    intervals.set('slack', resolveDebounceMs(agentConfig.channels.slack));
-    for (const id of agentConfig.channels.slack.instantGroups || []) {
-      instantIds.add(`slack:${id}`);
-    }
-  }
-  if (agentConfig.channels.whatsapp) {
-    intervals.set('whatsapp', resolveDebounceMs(agentConfig.channels.whatsapp));
-    for (const id of agentConfig.channels.whatsapp.instantGroups || []) {
-      instantIds.add(`whatsapp:${id}`);
-    }
-  }
-  if (agentConfig.channels.signal) {
-    intervals.set('signal', resolveDebounceMs(agentConfig.channels.signal));
-    for (const id of agentConfig.channels.signal.instantGroups || []) {
-      instantIds.add(`signal:${id}`);
-    }
-  }
-  if (agentConfig.channels.discord) {
-    intervals.set('discord', resolveDebounceMs(agentConfig.channels.discord));
-    for (const id of agentConfig.channels.discord.instantGroups || []) {
-      instantIds.add(`discord:${id}`);
+    for (const id of (cfg as any).listeningGroups || []) {
+      listeningIds.add(`${channel}:${id}`);
     }
   }
 
   if (instantIds.size > 0) {
     console.log(`[Groups] Instant groups: ${[...instantIds].join(', ')}`);
   }
+  if (listeningIds.size > 0) {
+    console.log(`[Groups] Listening groups: ${[...listeningIds].join(', ')}`);
+  }
 
   const batcher = intervals.size > 0 ? new GroupBatcher((msg, adapter) => {
     bot.processGroupBatch(msg, adapter);
   }) : null;
 
-  return { batcher, intervals, instantIds };
+  return { batcher, intervals, instantIds, listeningIds };
 }
 
 // Skills are installed to agent-scoped directory when agent is created (see core/bot.ts)
@@ -532,27 +517,27 @@ async function main() {
         console.warn(`[Agent:${agentConfig.name}] Failed to check tool approvals:`, err);
       });
     }
-    
+
     // Create and register channels
     const adapters = createChannelsForAgent(agentConfig, attachmentsDir, globalConfig.attachmentsMaxBytes);
     for (const adapter of adapters) {
       bot.registerChannel(adapter);
     }
-    
+
     // Setup group batching
-    const { batcher, intervals, instantIds } = createGroupBatcher(agentConfig, bot);
+    const { batcher, intervals, instantIds, listeningIds } = createGroupBatcher(agentConfig, bot);
     if (batcher) {
-      bot.setGroupBatcher(batcher, intervals, instantIds);
+      bot.setGroupBatcher(batcher, intervals, instantIds, listeningIds);
       services.groupBatchers.push(batcher);
     }
-    
+
     // Per-agent cron
     if (agentConfig.features?.cron ?? globalConfig.cronEnabled) {
       const cronService = new CronService(bot);
       await cronService.start();
       services.cronServices.push(cronService);
     }
-    
+
     // Per-agent heartbeat
     const heartbeatConfig = agentConfig.features?.heartbeat;
     const heartbeatService = new HeartbeatService(bot, {

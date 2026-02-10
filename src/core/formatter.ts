@@ -383,7 +383,8 @@ export function formatMessageEnvelope(
  */
 export function formatGroupBatchEnvelope(
   messages: InboundMessage[],
-  options: EnvelopeOptions = {}
+  options: EnvelopeOptions = {},
+  isListeningMode?: boolean,
 ): string {
   if (messages.length === 0) return '';
 
@@ -401,7 +402,10 @@ export function formatGroupBatchEnvelope(
     }
   }
   headerParts.push(`${messages.length} message${messages.length === 1 ? '' : 's'}`);
-  const header = `[${headerParts.join(' - ')}]`;
+  let header = `[${headerParts.join(' - ')}]`;
+  if (isListeningMode) {
+    header += '\n[OBSERVATION ONLY - Update memories. Do not reply unless addressed.]';
+  }
 
   // Chat log lines
   const lines = messages.map((msg) => {
