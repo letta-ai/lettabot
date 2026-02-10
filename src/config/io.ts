@@ -81,7 +81,7 @@ export function loadConfig(): LettaBotConfig {
 /**
  * Save config to YAML file
  */
-export function saveConfig(config: LettaBotConfig, path?: string): void {
+export function saveConfig(config: Partial<LettaBotConfig> & Pick<LettaBotConfig, 'server'>, path?: string): void {
   const configPath = path || resolveConfigPath();
   
   // Ensure directory exists
@@ -285,7 +285,7 @@ export function applyConfigToEnv(config: LettaBotConfig): void {
 /**
  * Create BYOK providers on Letta Cloud
  */
-export async function syncProviders(config: LettaBotConfig): Promise<void> {
+export async function syncProviders(config: Partial<LettaBotConfig> & Pick<LettaBotConfig, 'server'>): Promise<void> {
   if (config.server.mode !== 'cloud' || !config.server.apiKey) {
     return;
   }

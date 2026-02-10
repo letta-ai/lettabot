@@ -374,4 +374,37 @@ describe('normalizeAgents', () => {
     expect(agents[0].displayName).toBe('💜 Signo');
     expect(agents[1].displayName).toBe('👾 DevOps');
   });
+
+  it('should normalize onboarding-generated agents[] config (no legacy agent/channels)', () => {
+    // This matches the shape that onboarding now writes: agents[] at top level,
+    // with no legacy agent/channels/features fields.
+    const config = {
+      server: { mode: 'cloud' as const },
+      agents: [{
+        name: 'LettaBot',
+        id: 'agent-abc123',
+        channels: {
+          telegram: { enabled: true, token: 'tg-token', dmPolicy: 'pairing' as const },
+          whatsapp: { enabled: true, selfChat: true },
+        },
+        features: {
+          cron: true,
+          heartbeat: { enabled: true, intervalMin: 30 },
+        },
+      }],
+      // loadConfig() merges defaults for agent/channels, so they'll exist at runtime
+      agent: { name: 'LettaBot' },
+      channels: {},
+    } as LettaBotConfig;
+
+    const agents = normalizeAgents(config);
+
+    expect(agents).toHaveLength(1);
+    expect(agents[0].name).toBe('LettaBot');
+    expect(agents[0].id).toBe('agent-abc123');
+    expect(agents[0].channels.telegram?.token).toBe('tg-token');
+    expect(agents[0].channels.whatsapp?.enabled).toBe(true);
+    expect(agents[0].features?.cron).toBe(true);
+    expect(agents[0].features?.heartbeat?.intervalMin).toBe(30);
+  });
 });
