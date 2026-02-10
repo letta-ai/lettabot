@@ -150,7 +150,7 @@ import { DiscordAdapter } from './channels/discord.js';
 import { GroupBatcher } from './core/group-batcher.js';
 import { CronService } from './cron/service.js';
 import { HeartbeatService } from './cron/heartbeat.js';
-import { PollingService } from './polling/service.js';
+import { PollingService, parseGmailAccounts } from './polling/service.js';
 import { agentExists, findAgentByName, ensureNoToolApprovals } from './tools/letta-api.js';
 // Skills are now installed to agent-scoped location after agent creation (see bot.ts)
 
@@ -569,24 +569,42 @@ async function main() {
     }
     bot.onTriggerHeartbeat = () => heartbeatService.trigger();
     
-    // Per-agent polling
-    const pollConfig = agentConfig.polling || (agentConfig.integrations?.google ? {
-      enabled: agentConfig.integrations.google.enabled,
-      intervalMs: (agentConfig.integrations.google.pollIntervalSec || 60) * 1000,
-      gmail: {
-        enabled: agentConfig.integrations.google.enabled,
-        account: agentConfig.integrations.google.account || '',
-      },
-    } : undefined);
+    // Per-agent polling -- resolve accounts from polling > integrations.google (legacy) > env
+    const pollConfig = (() => {
+      const pollingAccounts = parseGmailAccounts(
+        agentConfig.polling?.gmail?.accounts || agentConfig.polling?.gmail?.account
+      );
+      const legacyAccounts = (() => {
+        const legacy = agentConfig.integrations?.google;
+        if (legacy?.accounts?.length) {
+          return parseGmailAccounts(legacy.accounts.map(a => a.account));
+        }
+        return parseGmailAccounts(legacy?.account);
+      })();
+      const envAccounts = parseGmailAccounts(process.env.GMAIL_ACCOUNT);
+      const gmailAccounts = pollingAccounts.length > 0
+        ? pollingAccounts
+        : legacyAccounts.length > 0
+          ? legacyAccounts
+          : envAccounts;
+      const gmailEnabled = agentConfig.polling?.gmail?.enabled
+        ?? agentConfig.integrations?.google?.enabled
+        ?? gmailAccounts.length > 0;
+      return {
+        enabled: agentConfig.polling?.enabled ?? gmailEnabled,
+        intervalMs: agentConfig.polling?.intervalMs
+          ?? (agentConfig.integrations?.google?.pollIntervalSec
+            ? agentConfig.integrations.google.pollIntervalSec * 1000
+            : 60000),
+        gmail: { enabled: gmailEnabled, accounts: gmailAccounts },
+      };
+    })();
     
-    if (pollConfig?.enabled && pollConfig.gmail?.enabled) {
+    if (pollConfig.enabled && pollConfig.gmail.enabled && pollConfig.gmail.accounts.length > 0) {
       const pollingService = new PollingService(bot, {
-        intervalMs: pollConfig.intervalMs || 60000,
+        intervalMs: pollConfig.intervalMs,
         workingDir: globalConfig.workingDir,
-        gmail: {
-          enabled: pollConfig.gmail.enabled,
-          account: pollConfig.gmail.account || '',
-        },
+        gmail: pollConfig.gmail,
       });
       pollingService.start();
       services.pollingServices.push(pollingService);

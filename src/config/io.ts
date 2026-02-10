@@ -210,16 +210,26 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   }
 
   // Polling - top-level polling config (preferred)
-  if (config.polling?.gmail?.enabled && config.polling.gmail.account) {
-    env.GMAIL_ACCOUNT = config.polling.gmail.account;
+  if (config.polling?.gmail?.enabled) {
+    const accounts = config.polling.gmail.accounts !== undefined
+      ? config.polling.gmail.accounts
+      : (config.polling.gmail.account ? [config.polling.gmail.account] : []);
+    if (accounts.length > 0) {
+      env.GMAIL_ACCOUNT = accounts.join(',');
+    }
   }
   if (config.polling?.intervalMs) {
     env.POLLING_INTERVAL_MS = String(config.polling.intervalMs);
   }
 
   // Integrations - Google (legacy path for Gmail polling, lower priority)
-  if (!env.GMAIL_ACCOUNT && config.integrations?.google?.enabled && config.integrations.google.account) {
-    env.GMAIL_ACCOUNT = config.integrations.google.account;
+  if (!env.GMAIL_ACCOUNT && config.integrations?.google?.enabled) {
+    const legacyAccounts = config.integrations.google.accounts
+      ? config.integrations.google.accounts.map(a => a.account)
+      : (config.integrations.google.account ? [config.integrations.google.account] : []);
+    if (legacyAccounts.length > 0) {
+      env.GMAIL_ACCOUNT = legacyAccounts.join(',');
+    }
   }
   if (!env.POLLING_INTERVAL_MS && config.integrations?.google?.pollIntervalSec) {
     env.POLLING_INTERVAL_MS = String(config.integrations.google.pollIntervalSec * 1000);

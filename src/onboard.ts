@@ -154,7 +154,7 @@ interface OnboardConfig {
   discord: { enabled: boolean; token?: string; dmPolicy?: 'pairing' | 'allowlist' | 'open'; allowedUsers?: string[] };
   
   // Google Workspace (via gog CLI)
-  google: { enabled: boolean; account?: string; services?: string[] };
+  google: { enabled: boolean; accounts: Array<{ account: string; services: string[] }> };
   
   // Features
   heartbeat: { enabled: boolean; interval?: string };
@@ -751,6 +751,7 @@ async function stepGoogle(config: OnboardConfig): Promise<void> {
   
   if (!setupGoogle) {
     config.google.enabled = false;
+    config.google.accounts = [];
     return;
   }
   
@@ -785,16 +786,19 @@ async function stepGoogle(config: OnboardConfig): Promise<void> {
           spinner.stop('Failed to install gog');
           p.log.error('Installation failed. Try manually: brew install steipete/tap/gogcli');
           config.google.enabled = false;
+          config.google.accounts = [];
           return;
         }
       } else {
         p.log.info('Install gog manually: brew install steipete/tap/gogcli');
         config.google.enabled = false;
+        config.google.accounts = [];
         return;
       }
     } else {
       p.log.info('Install gog manually from: https://gogcli.sh');
       config.google.enabled = false;
+      config.google.accounts = [];
       return;
     }
   }
@@ -836,6 +840,7 @@ async function stepGoogle(config: OnboardConfig): Promise<void> {
       if (!hasCredentials) {
         p.log.info('Run `gog auth credentials /path/to/client_secret.json` after downloading credentials.');
         config.google.enabled = false;
+        config.google.accounts = [];
         return;
       }
     }
@@ -860,60 +865,116 @@ async function stepGoogle(config: OnboardConfig): Promise<void> {
       }
     }
   }
+
+  const configuredAccounts = new Map<string, string[]>();
+  for (const entry of config.google.accounts) {
+    configuredAccounts.set(entry.account, entry.services || []);
+  }
   
-  let selectedAccount: string | undefined;
-  
-  if (accounts.length > 0) {
-    const accountChoice = await p.select({
-      message: 'Google account',
+  const newAccounts: Array<{ account: string; services: string[] }> = [];
+  let selectedAccounts: string[] = [];
+
+  if (accounts.length === 0) {
+    const firstAccount = await addGoogleAccount();
+    if (!firstAccount) {
+      config.google.enabled = false;
+      config.google.accounts = [];
+      return;
+    }
+    newAccounts.push(firstAccount);
+    while (true) {
+      const more = await p.confirm({
+        message: 'Add another Google account?',
+        initialValue: false,
+      });
+      if (p.isCancel(more)) { p.cancel('Setup cancelled'); process.exit(0); }
+      if (!more) break;
+      const added = await addGoogleAccount();
+      if (added) {
+        newAccounts.push(added);
+      } else {
+        break;
+      }
+    }
+  } else {
+    const accountChoices = await p.multiselect({
+      message: 'Google accounts to enable',
       options: [
         ...accounts.map(a => ({ value: a, label: a, hint: 'Existing account' })),
         { value: '__new__', label: 'Add new account', hint: 'Authorize another account' },
       ],
-      initialValue: config.google.account || accounts[0],
+      initialValues: config.google.accounts.map(a => a.account).filter(a => accounts.includes(a)),
+      required: true,
     });
-    if (p.isCancel(accountChoice)) { p.cancel('Setup cancelled'); process.exit(0); }
-    
-    if (accountChoice === '__new__') {
-      selectedAccount = await addGoogleAccount();
-    } else {
-      selectedAccount = accountChoice as string;
+    if (p.isCancel(accountChoices)) { p.cancel('Setup cancelled'); process.exit(0); }
+
+    selectedAccounts = (accountChoices as string[]).filter(a => a !== '__new__');
+    if ((accountChoices as string[]).includes('__new__')) {
+      while (true) {
+        const added = await addGoogleAccount();
+        if (added) {
+          newAccounts.push(added);
+        } else {
+          break;
+        }
+        const more = await p.confirm({
+          message: 'Add another Google account?',
+          initialValue: false,
+        });
+        if (p.isCancel(more)) { p.cancel('Setup cancelled'); process.exit(0); }
+        if (!more) break;
+      }
     }
-  } else {
-    selectedAccount = await addGoogleAccount();
   }
-  
-  if (!selectedAccount) {
+
+  const allAccounts = Array.from(new Set([
+    ...selectedAccounts,
+    ...newAccounts.map(a => a.account),
+  ]));
+
+  if (allAccounts.length === 0) {
     config.google.enabled = false;
+    config.google.accounts = [];
     return;
   }
-  
-  // Select services
-  const selectedServices = await p.multiselect({
-    message: 'Which Google services do you want to enable?',
-    options: GOG_SERVICES.map(s => ({
-      value: s,
-      label: s.charAt(0).toUpperCase() + s.slice(1),
-      hint: s === 'gmail' ? 'Read/send emails' : 
-            s === 'calendar' ? 'View/create events' :
-            s === 'drive' ? 'Access files' :
-            s === 'contacts' ? 'Look up contacts' :
-            s === 'docs' ? 'Read documents' :
-            'Read/edit spreadsheets',
-    })),
-    initialValues: config.google.services || ['gmail', 'calendar'],
-    required: true,
-  });
-  if (p.isCancel(selectedServices)) { p.cancel('Setup cancelled'); process.exit(0); }
-  
+
+  const newAccountsByEmail = new Map<string, string[]>();
+  for (const entry of newAccounts) {
+    newAccountsByEmail.set(entry.account, entry.services);
+  }
+
+  const finalizedAccounts: Array<{ account: string; services: string[] }> = [];
+  for (const account of allAccounts) {
+    const presetServices = newAccountsByEmail.get(account) || configuredAccounts.get(account) || ['gmail', 'calendar'];
+    const selectedServices = newAccountsByEmail.has(account) ? presetServices : await p.multiselect({
+      message: `Services to enable for ${account}`,
+      options: GOG_SERVICES.map(s => ({
+        value: s,
+        label: s.charAt(0).toUpperCase() + s.slice(1),
+        hint: s === 'gmail' ? 'Read/send emails' : 
+              s === 'calendar' ? 'View/create events' :
+              s === 'drive' ? 'Access files' :
+              s === 'contacts' ? 'Look up contacts' :
+              s === 'docs' ? 'Read documents' :
+              'Read/edit spreadsheets',
+      })),
+      initialValues: presetServices,
+      required: true,
+    });
+    if (p.isCancel(selectedServices)) { p.cancel('Setup cancelled'); process.exit(0); }
+    finalizedAccounts.push({
+      account,
+      services: selectedServices as string[],
+    });
+  }
+
   config.google.enabled = true;
-  config.google.account = selectedAccount;
-  config.google.services = selectedServices as string[];
+  config.google.accounts = finalizedAccounts;
   
-  p.log.success(`Google Workspace configured: ${selectedAccount}`);
+  p.log.success(`Google Workspace configured: ${finalizedAccounts.length} account(s)`);
 }
 
-async function addGoogleAccount(): Promise<string | undefined> {
+async function addGoogleAccount(): Promise<{ account: string; services: string[] } | undefined> {
   const email = await p.text({
     message: 'Google account email',
     placeholder: 'you@gmail.com',
@@ -951,7 +1012,7 @@ async function addGoogleAccount(): Promise<string | undefined> {
   
   if (result.status === 0) {
     spinner.stop('Account authorized');
-    return email;
+    return { account: email, services: services as string[] };
   } else {
     spinner.stop('Authorization failed');
     p.log.error('Failed to authorize account. Try manually: gog auth add ' + email);
@@ -1009,7 +1070,10 @@ function showSummary(config: OnboardConfig): void {
 
   // Google
   if (config.google.enabled) {
-    lines.push(`Google:    ${config.google.account} (${config.google.services?.join(', ') || 'all'})`);
+    const googleAccounts = config.google.accounts.map(a => (
+      `${a.account} (${a.services?.join(', ') || 'all'})`
+    ));
+    lines.push(`Google:    ${googleAccounts.join(', ')}`);
   }
 
   p.note(lines.join('\n'), 'Configuration');
@@ -1257,11 +1321,21 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
       selfChat: existingConfig.channels.signal?.selfChat ?? true, // Default true
       dmPolicy: existingConfig.channels.signal?.dmPolicy,
     },
-    google: {
-      enabled: existingConfig.integrations?.google?.enabled || false,
-      account: existingConfig.integrations?.google?.account,
-      services: existingConfig.integrations?.google?.services,
-    },
+    google: (() => {
+      const existingAccounts = existingConfig.integrations?.google?.accounts
+        ? existingConfig.integrations.google.accounts.map(a => ({
+            account: a.account,
+            services: a.services || [],
+          }))
+        : (existingConfig.integrations?.google?.account ? [{
+            account: existingConfig.integrations.google.account,
+            services: existingConfig.integrations.google.services || [],
+          }] : []);
+      return {
+        enabled: (existingConfig.integrations?.google?.enabled || false) || existingAccounts.length > 0,
+        accounts: existingAccounts,
+      };
+    })(),
     heartbeat: { 
       enabled: existingConfig.features?.heartbeat?.enabled || false,
       interval: existingConfig.features?.heartbeat?.intervalMin?.toString(),
@@ -1420,7 +1494,9 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     config.signal.enabled ? `  ✓ Signal (${formatAccess(config.signal.dmPolicy, config.signal.allowedUsers)})` : '  ✗ Signal',
     '',
     'Integrations:',
-    config.google.enabled ? `  ✓ Google (${config.google.account} - ${config.google.services?.join(', ') || 'all'})` : '  ✗ Google Workspace',
+    config.google.enabled && config.google.accounts.length > 0
+      ? `  ✓ Google (${config.google.accounts.map(a => `${a.account} - ${a.services?.join(', ') || 'all'}`).join(', ')})`
+      : '  ✗ Google Workspace',
     '',
     'Features:',
     config.heartbeat.enabled ? `  ✓ Heartbeat (${config.heartbeat.interval}min)` : '  ✗ Heartbeat',
@@ -1503,10 +1579,17 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
       integrations: {
         google: {
           enabled: true,
-          account: config.google.account,
-          services: config.google.services,
+          accounts: config.google.accounts,
         },
       },
+      ...((() => {
+        const gmailAccounts = config.google.accounts
+          .filter(a => a.services?.includes('gmail'))
+          .map(a => a.account);
+        return gmailAccounts.length > 0 ? {
+          polling: { gmail: { accounts: gmailAccounts } },
+        } : {};
+      })()),
     } : {}),
   };
   

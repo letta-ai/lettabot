@@ -131,6 +131,7 @@ export interface PollingYamlConfig {
   gmail?: {
     enabled?: boolean;    // Enable Gmail polling
     account?: string;     // Gmail account to poll (e.g., user@example.com)
+    accounts?: string[];  // Multiple Gmail accounts to poll
   };
 }
 
@@ -200,9 +201,15 @@ export interface DiscordConfig {
   instantGroups?: string[];       // Guild/server IDs or channel IDs that bypass batching
 }
 
+export interface GoogleAccountConfig {
+  account: string;
+  services?: string[];  // e.g., ['gmail', 'calendar', 'drive', 'contacts', 'docs', 'sheets']
+}
+
 export interface GoogleConfig {
   enabled: boolean;
   account?: string;
+  accounts?: GoogleAccountConfig[];
   services?: string[];  // e.g., ['gmail', 'calendar', 'drive', 'contacts', 'docs', 'sheets']
   pollIntervalSec?: number;  // Polling interval in seconds (default: 60)
 }
