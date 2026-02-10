@@ -694,20 +694,43 @@ export class LettaBot implements AgentSession {
           }
           
           if (streamMsg.type === 'result') {
-            if (typeof streamMsg.result === 'string' && streamMsg.result.trim().length > 0) {
-              response = streamMsg.result;
+            const resultText = typeof streamMsg.result === 'string' ? streamMsg.result : '';
+            if (resultText.trim().length > 0) {
+              response = resultText;
             }
-            console.log(`[Bot] Stream result: success=${streamMsg.success}, hasResponse=${response.trim().length > 0}`);
+            const hasResponse = response.trim().length > 0;
+            const isTerminalError = streamMsg.success === false || !!streamMsg.error;
+            console.log(`[Bot] Stream result: success=${streamMsg.success}, hasResponse=${hasResponse}, resultLen=${resultText.length}`);
             console.log(`[Bot] Stream message counts:`, msgTypeCounts);
             if (streamMsg.error) {
-              console.error(`[Bot] Result error: ${streamMsg.error}`);
+              const detail = resultText.trim();
+              if (detail) {
+                console.error(`[Bot] Result error: ${streamMsg.error} (${detail.slice(0, 200)})`);
+              } else {
+                console.error(`[Bot] Result error: ${streamMsg.error}`);
+              }
             }
-            
-            // Empty result recovery
-            if (streamMsg.success && streamMsg.result === '' && !response.trim()) {
-              console.error('[Bot] Warning: Agent returned empty result with no response.');
+
+            // Retry once when stream ends without any assistant text.
+            // This catches both empty-success and terminal-error runs.
+            // TODO(letta-code-sdk#31): Remove once SDK handles HITL approvals in bypassPermissions mode.
+            // Only retry if we never sent anything to the user. hasResponse tracks
+            // the current buffer, but finalizeMessage() clears it on type changes.
+            // sentAnyMessage is the authoritative "did we deliver output" flag.
+            const nothingDelivered = !hasResponse && !sentAnyMessage;
+            const shouldRetryForEmptyResult = streamMsg.success && resultText === '' && nothingDelivered;
+            const shouldRetryForErrorResult = isTerminalError && nothingDelivered;
+            if (shouldRetryForEmptyResult || shouldRetryForErrorResult) {
+              if (shouldRetryForEmptyResult) {
+                console.error('[Bot] Warning: Agent returned empty result with no response.');
+              }
+              if (shouldRetryForErrorResult) {
+                console.error('[Bot] Warning: Agent returned terminal error result with no response.');
+              }
+
               if (!retried && this.store.agentId && this.store.conversationId) {
-                console.log('[Bot] Empty result - attempting orphaned approval recovery...');
+                const reason = shouldRetryForErrorResult ? 'error result' : 'empty result';
+                console.log(`[Bot] ${reason} - attempting orphaned approval recovery...`);
                 session.close();
                 session = null;
                 clearInterval(typingInterval);
@@ -720,7 +743,19 @@ export class LettaBot implements AgentSession {
                   return this.processMessage(msg, adapter, true);
                 }
                 console.warn(`[Bot] No orphaned approvals found: ${convResult.details}`);
+
+                // Some client-side approval failures do not surface as pending approvals.
+                // Retry once anyway in case the previous run terminated mid-tool cycle.
+                if (shouldRetryForErrorResult) {
+                  console.log('[Bot] Retrying once after terminal error (no orphaned approvals detected)...');
+                  return this.processMessage(msg, adapter, true);
+                }
               }
+            }
+
+            if (isTerminalError && !hasResponse && !sentAnyMessage) {
+              const err = streamMsg.error || 'unknown error';
+              response = `(Agent run failed: ${err}. Try sending your message again.)`;
             }
             
             break;
@@ -837,7 +872,14 @@ export class LettaBot implements AgentSession {
           if (msg.type === 'assistant') {
             response += msg.content || '';
           }
-          if (msg.type === 'result') break;
+          if (msg.type === 'result') {
+            // TODO(letta-code-sdk#31): Remove once SDK handles HITL approvals in bypassPermissions mode.
+            if (msg.success === false || msg.error) {
+              const detail = typeof msg.result === 'string' ? msg.result.trim() : '';
+              throw new Error(detail ? `Agent run failed: ${msg.error || 'error'} (${detail})` : `Agent run failed: ${msg.error || 'error'}`);
+            }
+            break;
+          }
         }
         return response;
       } finally {

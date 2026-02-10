@@ -624,9 +624,13 @@ export async function recoverOrphanedConversationApproval(
         const stopReason = run.stop_reason;
         const isTerminated = status === 'failed' || status === 'cancelled';
         const isAbandonedApproval = status === 'completed' && stopReason === 'requires_approval';
+        // Active runs stuck on approval block the entire conversation.
+        // No client is going to approve them -- reject and cancel so
+        // lettabot can proceed.
+        const isStuckApproval = status === 'running' && stopReason === 'requires_approval';
         
-        if (isTerminated || isAbandonedApproval) {
-          console.log(`[Letta API] Found ${approvals.length} orphaned approval(s) from ${status}/${stopReason} run ${runId}`);
+        if (isTerminated || isAbandonedApproval || isStuckApproval) {
+          console.log(`[Letta API] Found ${approvals.length} blocking approval(s) from ${status}/${stopReason} run ${runId}`);
           
           // Send denial for each unresolved tool call
           const approvalResponses = approvals.map(a => ({
@@ -644,8 +648,20 @@ export async function recoverOrphanedConversationApproval(
             streaming: false,
           });
           
+          // Cancel active stuck runs after rejecting their approvals
+          let cancelled = false;
+          if (isStuckApproval) {
+            cancelled = await cancelRuns(agentId, [runId]);
+            if (cancelled) {
+              console.log(`[Letta API] Cancelled stuck run ${runId}`);
+            } else {
+              console.warn(`[Letta API] Failed to cancel stuck run ${runId}`);
+            }
+          }
+          
           recoveredCount += approvals.length;
-          details.push(`Denied ${approvals.length} approval(s) from ${status} run ${runId}`);
+          const suffix = isStuckApproval ? (cancelled ? ' (cancelled)' : ' (cancel failed)') : '';
+          details.push(`Denied ${approvals.length} approval(s) from ${status} run ${runId}${suffix}`);
         } else {
           details.push(`Run ${runId} is ${status}/${stopReason} - not orphaned`);
         }
