@@ -15,6 +15,8 @@ export interface AgentConfig {
   name: string;
   /** Use existing agent ID (skip creation) */
   id?: string;
+  /** Display name prefixed to outbound messages (e.g. "💜 Signo") */
+  displayName?: string;
   /** Model for initial agent creation */
   model?: string;
   /** Channels this agent connects to */
@@ -62,6 +64,7 @@ export interface LettaBotConfig {
   agent: {
     id?: string;
     name: string;
+    displayName?: string;
     // model is configured on the Letta agent server-side, not in config
     // Kept as optional for backward compat (ignored if present in existing configs)
     model?: string;
@@ -330,6 +333,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
   return [{
     name: agentName,
     id,
+    displayName: config.agent?.displayName,
     model,
     channels,
     features: config.features,

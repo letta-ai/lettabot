@@ -134,6 +134,19 @@ export class LettaBot implements AgentSession {
   }
 
   // =========================================================================
+  // Response prefix (for multi-agent group chat identification)
+  // =========================================================================
+
+  /**
+   * Prepend configured displayName prefix to outbound agent responses.
+   * Returns text unchanged if no prefix is configured.
+   */
+  private prefixResponse(text: string): string {
+    if (!this.config.displayName) return text;
+    return `${this.config.displayName}: ${text}`;
+  }
+
+  // =========================================================================
   // Session options (shared by processMessage and sendToAgent)
   // =========================================================================
 
@@ -630,10 +643,11 @@ export class LettaBot implements AgentSession {
         }
         if (response.trim()) {
           try {
+            const prefixed = this.prefixResponse(response);
             if (messageId) {
-              await adapter.editMessage(msg.chatId, messageId, response);
+              await adapter.editMessage(msg.chatId, messageId, prefixed);
             } else {
-              await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
+              await adapter.sendMessage({ chatId: msg.chatId, text: prefixed, threadId: msg.threadId });
             }
             sentAnyMessage = true;
           } catch {
@@ -703,10 +717,11 @@ export class LettaBot implements AgentSession {
             const streamText = stripActionsBlock(response).trim();
             if (canEdit && !mayBeHidden && streamText.length > 0 && Date.now() - lastUpdate > 500) {
               try {
+                const prefixedStream = this.prefixResponse(streamText);
                 if (messageId) {
-                  await adapter.editMessage(msg.chatId, messageId, streamText);
+                  await adapter.editMessage(msg.chatId, messageId, prefixedStream);
                 } else {
-                  const result = await adapter.sendMessage({ chatId: msg.chatId, text: streamText, threadId: msg.threadId });
+                  const result = await adapter.sendMessage({ chatId: msg.chatId, text: prefixedStream, threadId: msg.threadId });
                   messageId = result.messageId;
                   sentAnyMessage = true;
                 }
@@ -818,18 +833,19 @@ export class LettaBot implements AgentSession {
 
       // Send final response
       if (response.trim()) {
+        const prefixedFinal = this.prefixResponse(response);
         try {
           if (messageId) {
-            await adapter.editMessage(msg.chatId, messageId, response);
+            await adapter.editMessage(msg.chatId, messageId, prefixedFinal);
           } else {
-            await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
+            await adapter.sendMessage({ chatId: msg.chatId, text: prefixedFinal, threadId: msg.threadId });
           }
           sentAnyMessage = true;
           this.store.resetRecoveryAttempts();
         } catch {
           // Edit failed -- send as new message so user isn't left with truncated text
           try {
-            await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
+            await adapter.sendMessage({ chatId: msg.chatId, text: prefixedFinal, threadId: msg.threadId });
             sentAnyMessage = true;
             this.store.resetRecoveryAttempts();
           } catch (retryError) {
@@ -982,7 +998,7 @@ export class LettaBot implements AgentSession {
     }
 
     if (options.text) {
-      const result = await adapter.sendMessage({ chatId, text: options.text });
+      const result = await adapter.sendMessage({ chatId, text: this.prefixResponse(options.text) });
       return result.messageId;
     }
 

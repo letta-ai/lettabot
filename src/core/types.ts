@@ -125,6 +125,9 @@ export interface BotConfig {
   agentName?: string; // Name for the agent (set via API after creation)
   allowedTools: string[];
 
+  // Display
+  displayName?: string; // Prefix outbound messages (e.g. "💜 Signo")
+
   // Skills
   skills?: SkillsConfig;
 

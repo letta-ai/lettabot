@@ -126,6 +126,7 @@ The default config uses `agent:` and `channels:` at the top level for a single a
 |--------|------|-------------|
 | `agent.id` | string | Use existing agent (skips creation) |
 | `agent.name` | string | Name for new agent |
+| `agent.displayName` | string | Prefix outbound messages (e.g. `"💜 Signo"`) |
 
 > **Note:** The model is configured on the Letta agent server-side, not in the config file.
 > Use `lettabot model show` to see the current model and `lettabot model set <handle>` to change it.
@@ -146,6 +147,7 @@ server:
 
 agents:
   - name: work-assistant
+    # displayName: "🔧 Work"    # Optional: prefix outbound messages
     model: claude-sonnet-4
     # id: agent-abc123           # Optional: use existing agent
     channels:
@@ -184,6 +186,7 @@ Each entry in `agents:` accepts:
 |--------|------|----------|-------------|
 | `name` | string | Yes | Agent name (used for display, creation, and state isolation) |
 | `id` | string | No | Use existing agent ID (skips creation) |
+| `displayName` | string | No | Prefix outbound messages (e.g. `"💜 Signo"`) |
 | `model` | string | No | Model for agent creation |
 | `channels` | object | No | Channel configs (same schema as top-level `channels:`). At least one agent must have channels. |
 | `features` | object | No | Per-agent features (cron, heartbeat, maxToolCalls) |

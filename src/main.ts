@@ -472,6 +472,7 @@ async function main() {
       workingDir: globalConfig.workingDir,
       agentName: agentConfig.name,
       allowedTools: globalConfig.allowedTools,
+      displayName: agentConfig.displayName,
       maxToolCalls: agentConfig.features?.maxToolCalls,
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
