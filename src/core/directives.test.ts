@@ -14,6 +14,18 @@ describe('parseDirectives', () => {
     expect(result.directives).toEqual([{ type: 'react', emoji: 'eyes' }]);
   });
 
+  it('parses react directive with escaped quotes', () => {
+    const result = parseDirectives('<actions><react emoji=\\"thumbsup\\" /></actions>');
+    expect(result.cleanText).toBe('');
+    expect(result.directives).toEqual([{ type: 'react', emoji: 'thumbsup' }]);
+  });
+
+  it('parses react directive with single-quoted attributes', () => {
+    const result = parseDirectives("<actions><react emoji='thumbsup' /></actions>");
+    expect(result.cleanText).toBe('');
+    expect(result.directives).toEqual([{ type: 'react', emoji: 'thumbsup' }]);
+  });
+
   it('parses react directive with unicode emoji', () => {
     const result = parseDirectives('<actions><react emoji="👀" /></actions>');
     expect(result.cleanText).toBe('');

@@ -40,17 +40,18 @@ const ACTIONS_BLOCK_REGEX = /^\s*<actions>([\s\S]*?)<\/actions>/;
  * Match self-closing child directive tags inside the actions block.
  * Captures the tag name and the full attributes string.
  */
-const CHILD_DIRECTIVE_REGEX = /<(react)\s+((?:[a-zA-Z-]+="[^"]*"\s*)+)\s*\/>/g;
+const CHILD_DIRECTIVE_REGEX = /<(react)\b([^>]*)\/>/g;
 
 /**
  * Parse a single attribute string like: emoji="eyes" message="123"
  */
 function parseAttributes(attrString: string): Record<string, string> {
   const attrs: Record<string, string> = {};
-  const attrRegex = /([a-zA-Z-]+)="([^"]*)"/g;
+  const attrRegex = /([a-zA-Z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
   let match;
   while ((match = attrRegex.exec(attrString)) !== null) {
-    attrs[match[1]] = match[2];
+    const [, name, doubleQuoted, singleQuoted] = match;
+    attrs[name] = doubleQuoted ?? singleQuoted ?? '';
   }
   return attrs;
 }
@@ -61,11 +62,12 @@ function parseAttributes(attrString: string): Record<string, string> {
 function parseChildDirectives(block: string): Directive[] {
   const directives: Directive[] = [];
   let match;
+  const normalizedBlock = block.replace(/\\(['"])/g, '$1');
 
   // Reset regex state (global flag)
   CHILD_DIRECTIVE_REGEX.lastIndex = 0;
 
-  while ((match = CHILD_DIRECTIVE_REGEX.exec(block)) !== null) {
+  while ((match = CHILD_DIRECTIVE_REGEX.exec(normalizedBlock)) !== null) {
     const [, tagName, attrString] = match;
 
     if (tagName === 'react') {

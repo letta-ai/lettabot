@@ -313,6 +313,19 @@ Ask the bot owner to approve with:
     await message.edit(text);
   }
 
+  async addReaction(chatId: string, messageId: string, emoji: string): Promise<void> {
+    if (!this.client) throw new Error('Discord not started');
+    const channel = await this.client.channels.fetch(chatId);
+    if (!channel || !channel.isTextBased()) {
+      throw new Error(`Discord channel not found or not text-based: ${chatId}`);
+    }
+
+    const textChannel = channel as { messages: { fetch: (id: string) => Promise<{ react: (input: string) => Promise<unknown> }> } };
+    const message = await textChannel.messages.fetch(messageId);
+    const resolved = resolveDiscordEmoji(emoji);
+    await message.react(resolved);
+  }
+
   async sendTypingIndicator(chatId: string): Promise<void> {
     if (!this.client) return;
     try {
@@ -434,6 +447,32 @@ Ask the bot owner to approve with:
     }
     return results;
   }
+}
+
+const DISCORD_EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
+  eyes: '\u{1F440}',
+  thumbsup: '\u{1F44D}',
+  thumbs_up: '\u{1F44D}',
+  '+1': '\u{1F44D}',
+  heart: '\u2764\uFE0F',
+  fire: '\u{1F525}',
+  smile: '\u{1F604}',
+  laughing: '\u{1F606}',
+  tada: '\u{1F389}',
+  clap: '\u{1F44F}',
+  ok_hand: '\u{1F44C}',
+};
+
+function resolveDiscordEmoji(input: string): string {
+  const aliasMatch = input.match(/^:([^:]+):$/);
+  const alias = aliasMatch ? aliasMatch[1] : null;
+  if (alias && DISCORD_EMOJI_ALIAS_TO_UNICODE[alias]) {
+    return DISCORD_EMOJI_ALIAS_TO_UNICODE[alias];
+  }
+  if (DISCORD_EMOJI_ALIAS_TO_UNICODE[input]) {
+    return DISCORD_EMOJI_ALIAS_TO_UNICODE[input];
+  }
+  return input;
 }
 
 type DiscordAttachment = {

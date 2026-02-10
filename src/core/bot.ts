@@ -633,8 +633,8 @@ export class LettaBot implements AgentSession {
           const preview = JSON.stringify(streamMsg).slice(0, 300);
           console.log(`[Stream] type=${streamMsg.type} ${preview}`);
           
-          // Finalize on type change
-          if (lastMsgType && lastMsgType !== streamMsg.type && response.trim()) {
+          // Finalize on type change (avoid double-handling when result provides full response)
+          if (lastMsgType && lastMsgType !== streamMsg.type && response.trim() && streamMsg.type !== 'result') {
             await finalizeMessage();
           }
           
@@ -694,6 +694,9 @@ export class LettaBot implements AgentSession {
           }
           
           if (streamMsg.type === 'result') {
+            if (typeof streamMsg.result === 'string' && streamMsg.result.trim().length > 0) {
+              response = streamMsg.result;
+            }
             console.log(`[Bot] Stream result: success=${streamMsg.success}, hasResponse=${response.trim().length > 0}`);
             console.log(`[Bot] Stream message counts:`, msgTypeCounts);
             if (streamMsg.error) {
