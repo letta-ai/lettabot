@@ -15,6 +15,7 @@ server:
 
 agent:
   name: LettaBot
+  # displayName: "💜 Signo"  # Prefix outbound messages (useful in multi-agent group chats)
   # Note: model is configured on the Letta agent server-side.
   # Select a model during `lettabot onboard` or change it with `lettabot model set <handle>`.
 

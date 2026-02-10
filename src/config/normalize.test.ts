@@ -332,4 +332,46 @@ describe('normalizeAgents', () => {
     expect(agents[0].polling).toEqual(config.polling);
     expect(agents[0].integrations).toEqual(config.integrations);
   });
+
+  it('should pass through displayName', () => {
+    const config: LettaBotConfig = {
+      server: { mode: 'cloud' },
+      agent: {
+        name: 'Signo',
+        displayName: '💜 Signo',
+      },
+      channels: {
+        telegram: { enabled: true, token: 'test-token' },
+      },
+    };
+
+    const agents = normalizeAgents(config);
+
+    expect(agents[0].displayName).toBe('💜 Signo');
+  });
+
+  it('should pass through displayName in multi-agent config', () => {
+    const agentsArray: AgentConfig[] = [
+      {
+        name: 'Signo',
+        displayName: '💜 Signo',
+        channels: { telegram: { enabled: true, token: 't1' } },
+      },
+      {
+        name: 'DevOps',
+        displayName: '👾 DevOps',
+        channels: { discord: { enabled: true, token: 'd1' } },
+      },
+    ];
+
+    const config = {
+      server: { mode: 'cloud' as const },
+      agents: agentsArray,
+    } as LettaBotConfig;
+
+    const agents = normalizeAgents(config);
+
+    expect(agents[0].displayName).toBe('💜 Signo');
+    expect(agents[1].displayName).toBe('👾 DevOps');
+  });
 });
