@@ -176,6 +176,35 @@ Each channel supports three DM policies:
 - **`allowlist`**: Only specified user IDs can message
 - **`open`**: Anyone can message (not recommended)
 
+## Group Settings (Optional)
+
+Group settings apply to Telegram, Slack, Discord, WhatsApp, and Signal.
+
+**YAML fields (per channel under `channels.<name>`):**
+- `groupDebounceSec`: Debounce seconds for group batching (default: 5)
+- `groupPollIntervalMin`: Deprecated (minutes)
+- `instantGroups`: Group IDs that bypass batching
+- `listeningGroups`: Group IDs where the bot observes and only replies when mentioned
+
+**Environment variables (non-interactive onboarding):**
+- `<CHANNEL>_GROUP_DEBOUNCE_SEC` (seconds, e.g. `5`)
+- `<CHANNEL>_GROUP_POLL_INTERVAL_MIN` (deprecated, use `_GROUP_DEBOUNCE_SEC` instead)
+- `<CHANNEL>_INSTANT_GROUPS` (comma-separated)
+- `<CHANNEL>_LISTENING_GROUPS` (comma-separated)
+
+Example:
+
+```yaml
+channels:
+  slack:
+    enabled: true
+    botToken: xoxb-...
+    appToken: xapp-...
+    groupDebounceSec: 5
+    instantGroups: ["C0123456789"]
+    listeningGroups: ["C0987654321"]
+```
+
 ## Configuration File
 
 After onboarding, config is saved to `~/.lettabot/config.yaml`:
@@ -186,16 +215,17 @@ server:
   apiKey: letta_...
   agentId: agent-...
 
-telegram:
-  enabled: true
-  botToken: 123456:ABC-DEF...
-  dmPolicy: pairing
+channels:
+  telegram:
+    enabled: true
+    botToken: 123456:ABC-DEF...
+    dmPolicy: pairing
   
-slack:
-  enabled: true
-  botToken: xoxb-...
-  appToken: xapp-...
-  dmPolicy: pairing
+  slack:
+    enabled: true
+    botToken: xoxb-...
+    appToken: xapp-...
+    dmPolicy: pairing
 ```
 
 Edit this file directly or re-run `lettabot onboard` to reconfigure.
