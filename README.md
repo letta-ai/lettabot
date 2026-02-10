@@ -198,6 +198,20 @@ Signal ────┘
 
 - Start a conversation on Telegram
 - Continue it on Slack
+
+### Group Settings (Optional)
+
+Configure group batching and listening mode in `lettabot.yaml`:
+
+```yaml
+channels:
+  slack:
+    groupDebounceSec: 5
+    instantGroups: ["C0123456789"]
+    listeningGroups: ["C0987654321"] # observe only, reply on mention
+```
+
+See `SKILL.md` for the full environment variable list and examples.
 - Pick it up on WhatsApp
 - The agent remembers everything!
 
