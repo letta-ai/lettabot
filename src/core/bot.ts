@@ -50,6 +50,19 @@ function isConversationMissingError(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Detect session init failures that can happen when the CLI fails before
+ * sending an init message (e.g., missing default conversation).
+ */
+function isSessionInitFailure(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes('initialize session')) return true;
+    if (msg.includes('no init message received')) return true;
+  }
+  return false;
+}
+
 const SUPPORTED_IMAGE_MIMES = new Set([
   'image/png', 'image/jpeg', 'image/gif', 'image/webp',
 ]);
@@ -199,7 +212,7 @@ export class LettaBot implements AgentSession {
     }
     if (this.store.agentId) {
       process.env.LETTA_AGENT_ID = this.store.agentId;
-      return resumeSession(this.store.agentId, opts);
+      return createSession(this.store.agentId, opts);
     }
 
     // Create new agent -- persist immediately so we don't orphan it on later failures
@@ -262,8 +275,18 @@ export class LettaBot implements AgentSession {
     try {
       await session.send(message);
     } catch (error) {
-      // 409 CONFLICT from orphaned approval
-      if (!retried && isApprovalConflictError(error) && this.store.agentId && this.store.conversationId) {
+      // If default conversation init failed, create a new conversation on the agent.
+      if (this.store.agentId && !this.store.conversationId) {
+        if (isSessionInitFailure(error)) {
+          console.warn('[Bot] Default conversation init failed, creating a new conversation...');
+        } else {
+          console.warn('[Bot] Default conversation failed, creating a new conversation...');
+        }
+        session.close();
+        session = createSession(this.store.agentId, this.baseSessionOptions);
+        await session.send(message);
+      } else if (!retried && isApprovalConflictError(error) && this.store.agentId && this.store.conversationId) {
+        // 409 CONFLICT from orphaned approval
         console.log('[Bot] CONFLICT detected - attempting orphaned approval recovery...');
         session.close();
         const result = await recoverOrphanedConversationApproval(
@@ -276,12 +299,10 @@ export class LettaBot implements AgentSession {
         }
         console.error(`[Bot] Orphaned approval recovery failed: ${result.details}`);
         throw error;
-      }
-
-      // Conversation/agent not found - try creating a new conversation.
-      // Only retry on errors that indicate missing conversation/agent, not
-      // on auth, network, or protocol errors (which would just fail again).
-      if (this.store.agentId && isConversationMissingError(error)) {
+      } else if (this.store.agentId && isConversationMissingError(error)) {
+        // Conversation/agent not found - try creating a new conversation.
+        // Only retry on errors that indicate missing conversation/agent, not
+        // on auth, network, or protocol errors (which would just fail again).
         console.warn('[Bot] Conversation not found, creating a new conversation...');
         session.close();
         session = createSession(this.store.agentId, this.baseSessionOptions);
