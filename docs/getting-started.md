@@ -16,8 +16,10 @@ Get LettaBot running in 5 minutes.
 ```bash
 git clone https://github.com/letta-ai/lettabot.git
 cd lettabot
-npm install
+npm ci
 ```
+
+> **Note:** Always use `npm ci` (not `npm install`) to avoid modifying the lockfile, which would block future `git pull` updates.
 
 ### 2. Create a Telegram Bot
 
@@ -94,6 +96,16 @@ To limit who can use your bot, set `ALLOWED_USERS`:
 # Find your Telegram user ID by messaging @userinfobot
 ALLOWED_USERS=123456789,987654321
 ```
+
+## Updating
+
+Pull the latest changes and rebuild:
+
+```bash
+npm run update
+```
+
+This resets the lockfile, pulls from git, installs dependencies, and rebuilds. If you've modified source files locally, stash them first with `git stash`.
 
 ## Next Steps
 

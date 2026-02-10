@@ -26,6 +26,7 @@
     "skills:status": "tsx src/cli.ts skills status",
     "cron": "tsx src/cron/cli.ts",
     "pairing": "tsx src/cli.ts pairing",
+    "update": "git checkout -- package-lock.json && git pull && npm ci && npm run build",
     "skill:install": "npx clawdhub install --dir ~/.letta/skills",
     "skill:search": "npx clawdhub search",
     "skill:list": "npx clawdhub list --dir ~/.letta/skills",
