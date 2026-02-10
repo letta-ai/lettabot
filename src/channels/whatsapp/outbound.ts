@@ -169,6 +169,24 @@ export async function sendTypingIndicator(
 }
 
 /**
+ * Stop typing indicator for a chat.
+ * Sends "paused" presence to immediately clear the "typing..." indicator
+ * instead of waiting for WhatsApp's built-in timeout (~15-25s).
+ */
+export async function stopTypingIndicator(
+  sock: import("@whiskeysockets/baileys").WASocket,
+  chatId: string
+): Promise<void> {
+  if (!sock) return;
+
+  try {
+    await sock.sendPresenceUpdate("paused", chatId);
+  } catch {
+    // Ignore presence errors
+  }
+}
+
+/**
  * Send read receipt for a message.
  *
  * @param sock - Baileys socket instance

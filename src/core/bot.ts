@@ -725,6 +725,7 @@ export class LettaBot implements AgentSession {
         }
       } finally {
         clearInterval(typingInterval);
+        adapter.stopTypingIndicator?.(msg.chatId)?.catch(() => {});
       }
       
       // Handle no-reply marker

@@ -22,6 +22,7 @@ export interface ChannelAdapter {
   sendMessage(msg: OutboundMessage): Promise<{ messageId: string }>;
   editMessage(chatId: string, messageId: string, text: string): Promise<void>;
   sendTypingIndicator(chatId: string): Promise<void>;
+  stopTypingIndicator?(chatId: string): Promise<void>;
 
   // Capabilities (optional)
   supportsEditing?(): boolean;

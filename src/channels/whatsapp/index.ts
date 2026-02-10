@@ -47,6 +47,7 @@ import {
   sendWhatsAppMessage,
   sendWhatsAppFile,
   sendTypingIndicator,
+  stopTypingIndicator,
   sendReadReceipt,
   type LidMapper,
 } from "./outbound.js";
@@ -1016,6 +1017,11 @@ export class WhatsAppAdapter implements ChannelAdapter {
   async sendTypingIndicator(chatId: string): Promise<void> {
     if (!this.sock) return;
     await sendTypingIndicator(this.sock, chatId);
+  }
+
+  async stopTypingIndicator(chatId: string): Promise<void> {
+    if (!this.sock) return;
+    await stopTypingIndicator(this.sock, chatId);
   }
 }
 
