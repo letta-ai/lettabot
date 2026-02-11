@@ -21,8 +21,12 @@ For global installs (`npm install -g`), either:
 ```yaml
 # Server connection
 server:
-  mode: cloud                    # 'cloud' or 'selfhosted'
-  apiKey: letta_...              # Required for cloud mode
+  mode: api                      # 'api' or 'docker' (legacy: 'cloud'/'selfhosted')
+  apiKey: letta_...              # Required for api mode
+  api:
+    port: 8080                   # Default: 8080 (or PORT env var)
+    # host: 0.0.0.0             # Uncomment for Docker/Railway
+    # corsOrigin: https://my.app # Uncomment for cross-origin access
 
 # Agent settings (single agent mode)
 # For multiple agents, use `agents:` array instead -- see Multi-Agent section
@@ -87,26 +91,21 @@ attachments:
   maxMB: 20
   maxAgeDays: 14
 
-# API server (health checks, CLI messaging)
-api:
-  port: 8080                     # Default: 8080 (or PORT env var)
-  # host: 0.0.0.0               # Uncomment for Docker/Railway
-  # corsOrigin: https://my.app   # Uncomment for cross-origin access
 ```
 
 ## Server Configuration
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `server.mode` | `'cloud'` \| `'selfhosted'` | Connection mode |
-| `server.apiKey` | string | API key for Letta Cloud |
-| `server.baseUrl` | string | URL for self-hosted server (e.g., `http://localhost:8283`) |
+| `server.mode` | `'api'` \| `'docker'` | Connection mode (legacy aliases: `'cloud'`, `'selfhosted'`) |
+| `server.apiKey` | string | API key for Letta API |
+| `server.baseUrl` | string | URL for Docker/custom server (e.g., `http://localhost:8283`) |
 
-### Self-Hosted Mode
+### Docker Server Mode
 
 ```yaml
 server:
-  mode: selfhosted
+  mode: docker
   baseUrl: http://localhost:8283
 ```
 
@@ -142,7 +141,7 @@ Use the `agents:` array instead of the top-level `agent:` and `channels:` keys:
 
 ```yaml
 server:
-  mode: cloud
+  mode: api
   apiKey: letta_...
 
 agents:
@@ -226,7 +225,7 @@ agents:
       cron: true
 ```
 
-The `server:`, `transcription:`, `attachments:`, and `api:` sections remain at the top level (shared across all agents).
+The `server:` (including `server.api:`), `transcription:`, and `attachments:` sections remain at the top level (shared across all agents).
 
 ### Known limitations
 
@@ -449,9 +448,9 @@ The top-level `polling` section takes priority if both are present.
 |--------------|--------------------------|
 | `GMAIL_ACCOUNT` | `polling.gmail.account` (comma-separated list allowed) |
 | `POLLING_INTERVAL_MS` | `polling.intervalMs` |
-| `PORT` | `api.port` |
-| `API_HOST` | `api.host` |
-| `API_CORS_ORIGIN` | `api.corsOrigin` |
+| `PORT` | `server.api.port` |
+| `API_HOST` | `server.api.host` |
+| `API_CORS_ORIGIN` | `server.api.corsOrigin` |
 
 ## Transcription Configuration
 
@@ -478,18 +477,25 @@ Attachments are stored in `/tmp/lettabot/attachments/`.
 
 The built-in API server provides health checks, CLI messaging, and a chat endpoint for programmatic agent access.
 
+Configure it under `server.api:` in your `lettabot.yaml`:
+
 ```yaml
-api:
-  port: 9090          # Default: 8080
-  host: 0.0.0.0       # Default: 127.0.0.1 (localhost only)
-  corsOrigin: "*"      # Default: same-origin only
+server:
+  mode: docker
+  baseUrl: http://localhost:8283
+  api:
+    port: 9090          # Default: 8080
+    host: 0.0.0.0       # Default: 127.0.0.1 (localhost only)
+    corsOrigin: "*"      # Default: same-origin only
 ```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `api.port` | number | `8080` | Port for the API/health server |
-| `api.host` | string | `127.0.0.1` | Bind address. Use `0.0.0.0` for Docker/Railway |
-| `api.corsOrigin` | string | _(none)_ | CORS origin header for cross-origin access |
+| `server.api.port` | number | `8080` | Port for the API/health server |
+| `server.api.host` | string | `127.0.0.1` | Bind address. Use `0.0.0.0` for Docker/Railway |
+| `server.api.corsOrigin` | string | _(none)_ | CORS origin header for cross-origin access |
+
+> **Note:** Top-level `api:` is still accepted for backward compatibility but deprecated. Move it under `server:` to avoid warnings.
 
 ### Chat Endpoint
 
@@ -570,6 +576,7 @@ Environment variables override config file values:
 | `LETTA_BASE_URL` | `server.baseUrl` |
 | `LETTA_AGENT_ID` | `agent.id` |
 | `LETTA_AGENT_NAME` | `agent.name` |
+| `AGENT_NAME` | `agent.name` (legacy alias) |
 | `TELEGRAM_BOT_TOKEN` | `channels.telegram.token` |
 | `TELEGRAM_DM_POLICY` | `channels.telegram.dmPolicy` |
 | `SLACK_BOT_TOKEN` | `channels.slack.botToken` |

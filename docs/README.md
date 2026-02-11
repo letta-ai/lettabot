@@ -5,7 +5,7 @@ LettaBot is a multi-channel AI assistant powered by [Letta](https://letta.com) t
 ## Guides
 
 - [Getting Started](./getting-started.md) - Installation and basic setup
-- [Self-Hosted Setup](./selfhosted-setup.md) - Run with your own Letta server
+- [Docker Server Setup](./selfhosted-setup.md) - Run with your own Letta server
 - [Configuration Reference](./configuration.md) - All config options
 - [Commands Reference](./commands.md) - Bot commands reference
 - [CLI Tools](./cli-tools.md) - Agent/operator CLI tools
@@ -62,7 +62,7 @@ LettaBot uses a **single agent with unified memory** across all channels:
                        ┌──────────────────────────┐
                        │      Letta Server        │
                        │  (api.letta.com or       │
-                       │   self-hosted Docker)    │
+                       │   Docker/custom)         │
                        │                          │
                        │  • Agent Memory          │
                        │  • LLM Inference         │

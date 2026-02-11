@@ -17,7 +17,7 @@ Deploy LettaBot to [Railway](https://railway.app) for always-on hosting.
 
 | Variable | Description |
 |----------|-------------|
-| `LETTA_API_KEY` | Your Letta Cloud API key ([get one here](https://app.letta.com)) |
+| `LETTA_API_KEY` | Your Letta API key ([get one here](https://app.letta.com)) |
 
 ### Channel Configuration (at least one required)
 
@@ -43,13 +43,15 @@ SLACK_APP_TOKEN=xapp-...
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AGENT_NAME` | `LettaBot` | Agent name (used to find/create agent) |
-| `MODEL` | `zai/glm-4.7` | Model for new agents (ignored for existing agents) |
+| `LETTA_AGENT_NAME` | `LettaBot` | Agent name (used to find/create agent) |
+| `AGENT_NAME` | - | Legacy alias for `LETTA_AGENT_NAME` |
 | `LETTA_AGENT_ID` | - | Override auto-discovery with specific agent ID |
 | `CRON_ENABLED` | `false` | Enable cron jobs |
-| `HEARTBEAT_INTERVAL_MIN` | - | Enable heartbeats (minutes) |
+| `HEARTBEAT_ENABLED` | `false` | Enable heartbeat service |
+| `HEARTBEAT_INTERVAL_MIN` | `30` | Heartbeat interval (minutes). Also enables heartbeat when set |
 | `HEARTBEAT_TARGET` | - | Target chat (e.g., `telegram:123456`) |
 | `OPENAI_API_KEY` | - | For voice message transcription |
+| `API_HOST` | `0.0.0.0` on Railway | Optional override for API bind address |
 
 ## How It Works
 
@@ -57,7 +59,7 @@ SLACK_APP_TOKEN=xapp-...
 
 On startup, LettaBot:
 1. Checks for `LETTA_AGENT_ID` env var - uses if set
-2. Otherwise, searches Letta Cloud for an agent named `AGENT_NAME` (default: "LettaBot")
+2. Otherwise, searches Letta API for an agent named `LETTA_AGENT_NAME` (or legacy `AGENT_NAME`, default: "LettaBot")
 3. If found, uses the existing agent (preserves memory!)
 4. If not found, creates a new agent on first message
 
@@ -70,6 +72,7 @@ Railway automatically:
 - Runs `npm run build` to compile TypeScript
 - Runs `npm start` to start the server
 - Sets the `PORT` environment variable
+- Binds API server to `0.0.0.0` by default on Railway (unless `API_HOST` is set)
 - Monitors `/health` endpoint
 
 ## Persistent Storage
@@ -117,7 +120,7 @@ Set at least one channel token (TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN, or SLACK 
 
 ### Agent not found / wrong agent
 
-- Check `AGENT_NAME` matches your intended agent
+- Check `LETTA_AGENT_NAME` (or legacy `AGENT_NAME`) matches your intended agent
 - Or set `LETTA_AGENT_ID` explicitly to use a specific agent
 - Multiple agents with the same name? The most recently created one is used
 
@@ -126,6 +129,12 @@ Set at least one channel token (TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN, or SLACK 
 Check Railway logs for startup errors. Common issues:
 - Missing `LETTA_API_KEY`
 - Invalid channel tokens
+- `API_HOST` incorrectly set to localhost (`127.0.0.1`)
+
+At startup, LettaBot prints a `[Railway] Preflight check` block with:
+- `OK` lines for detected config
+- `WARN` lines for risky settings (for example missing volume)
+- `FAIL` lines for blocking issues (for example missing `LETTA_API_KEY`)
 
 ### Data not persisting
 

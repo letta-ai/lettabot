@@ -45,8 +45,14 @@ letta-code-sdk/
 # WhatsApp session (contains credentials)
 data/whatsapp-session/
 
+# Telegram MTProto session (contains authenticated session data)
+data/telegram-mtproto/
+
 # Config with secrets
 lettabot.yaml
 lettabot.yml
 bun.lock
 .tool-versions
+
+# Telegram MTProto session data (contains auth secrets)
+data/telegram-mtproto/

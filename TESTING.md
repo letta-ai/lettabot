@@ -58,7 +58,7 @@ describe('myFunction', () => {
 
 ## E2E Tests
 
-E2E tests verify the full message flow against a real Letta Cloud agent.
+E2E tests verify the full message flow against a real Letta API agent.
 
 ### Setup
 
@@ -73,7 +73,7 @@ Without these, E2E tests are automatically skipped.
 
 ### Test Agent
 
-We use a dedicated test agent named "greg" on Letta Cloud. This agent:
+We use a dedicated test agent named "greg" on Letta API. This agent:
 - Has minimal configuration
 - Is only used for automated testing
 - Should not have any sensitive data
@@ -137,7 +137,7 @@ Tests run automatically via GitHub Actions (`.github/workflows/test.yml`):
 | Job | Trigger | What it tests |
 |-----|---------|---------------|
 | `unit` | All PRs and pushes | Unit tests only |
-| `e2e` | Pushes to main | Full E2E with Letta Cloud |
+| `e2e` | Pushes to main | Full E2E with Letta API |
 
 E2E tests only run on `main` because they require secrets that aren't available to fork PRs.
 

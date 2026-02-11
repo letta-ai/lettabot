@@ -2,9 +2,28 @@
  * LettaBot Configuration Types
  * 
  * Two modes:
- * 1. Self-hosted: Uses baseUrl (e.g., http://localhost:8283), no API key
- * 2. Letta Cloud: Uses apiKey, optional BYOK providers
+ * 1. Docker server: Uses baseUrl (e.g., http://localhost:8283), no API key
+ * 2. Letta API: Uses apiKey, optional BYOK providers
  */
+
+export type ServerMode = 'api' | 'docker' | 'cloud' | 'selfhosted';
+export type CanonicalServerMode = 'api' | 'docker';
+
+export function canonicalizeServerMode(mode?: ServerMode): CanonicalServerMode {
+  return mode === 'docker' || mode === 'selfhosted' ? 'docker' : 'api';
+}
+
+export function isDockerServerMode(mode?: ServerMode): boolean {
+  return canonicalizeServerMode(mode) === 'docker';
+}
+
+export function isApiServerMode(mode?: ServerMode): boolean {
+  return canonicalizeServerMode(mode) === 'api';
+}
+
+export function serverModeLabel(mode?: ServerMode): string {
+  return canonicalizeServerMode(mode);
+}
 
 /**
  * Configuration for a single agent in multi-agent mode.
@@ -22,6 +41,7 @@ export interface AgentConfig {
   /** Channels this agent connects to */
   channels: {
     telegram?: TelegramConfig;
+    'telegram-mtproto'?: TelegramMTProtoConfig;
     slack?: SlackConfig;
     whatsapp?: WhatsAppConfig;
     signal?: SignalConfig;
@@ -49,12 +69,19 @@ export interface AgentConfig {
 export interface LettaBotConfig {
   // Server connection
   server: {
-    // 'cloud' (api.letta.com) or 'selfhosted'
-    mode: 'cloud' | 'selfhosted';
-    // Only for selfhosted mode
+    // Canonical values: 'api' or 'docker'
+    // Legacy aliases accepted for compatibility: 'cloud', 'selfhosted'
+    mode: ServerMode;
+    // Only for docker mode
     baseUrl?: string;
-    // Only for cloud mode
+    // Only for api mode
     apiKey?: string;
+    // API server config (port, host, CORS) — canonical location
+    api?: {
+      port?: number;       // Default: 8080 (or PORT env var)
+      host?: string;       // Default: 127.0.0.1 (secure). Use '0.0.0.0' for Docker/Railway
+      corsOrigin?: string; // CORS origin. Default: same-origin only
+    };
   };
 
   // Multi-agent configuration
@@ -70,12 +97,13 @@ export interface LettaBotConfig {
     model?: string;
   };
 
-  // BYOK providers (cloud mode only)
+  // BYOK providers (api mode only)
   providers?: ProviderConfig[];
 
   // Channel configurations
   channels: {
     telegram?: TelegramConfig;
+    'telegram-mtproto'?: TelegramMTProtoConfig;
     slack?: SlackConfig;
     whatsapp?: WhatsAppConfig;
     signal?: SignalConfig;
@@ -115,6 +143,7 @@ export interface LettaBotConfig {
   };
 
   // API server (health checks, CLI messaging)
+  /** @deprecated Use server.api instead */
   api?: {
     port?: number;       // Default: 8080 (or PORT env var)
     host?: string;       // Default: 127.0.0.1 (secure). Use '0.0.0.0' for Docker/Railway
@@ -166,6 +195,18 @@ export interface TelegramConfig {
   listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
   mentionPatterns?: string[];     // Regex patterns for mention detection (e.g., ["@mybot"])
   groups?: Record<string, GroupConfig>;  // Per-group settings, "*" for defaults
+}
+
+export interface TelegramMTProtoConfig {
+  enabled: boolean;
+  phoneNumber?: string;          // E.164 format: +1234567890
+  apiId?: number;                // From my.telegram.org
+  apiHash?: string;              // From my.telegram.org
+  databaseDirectory?: string;    // Default: ./data/telegram-mtproto
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
+  allowedUsers?: number[];       // Telegram user IDs
+  groupPolicy?: 'mention' | 'reply' | 'both' | 'off';
+  adminChatId?: number;          // Chat ID for pairing request notifications
 }
 
 export interface SlackConfig {
@@ -223,6 +264,25 @@ export interface DiscordConfig {
   groups?: Record<string, GroupConfig>;  // Per-guild/channel settings, "*" for defaults
 }
 
+/**
+ * Telegram MTProto (user account) configuration.
+ * Uses TDLib for user account mode instead of Bot API.
+ * Cannot be used simultaneously with TelegramConfig (bot mode).
+ */
+export interface TelegramMTProtoConfig {
+  enabled: boolean;
+  phoneNumber?: string;          // E.164 format: +1234567890
+  apiId?: number;                // From my.telegram.org
+  apiHash?: string;              // From my.telegram.org
+  databaseDirectory?: string;    // Default: ./data/telegram-mtproto
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
+  allowedUsers?: number[];              // Telegram user IDs
+  groupPolicy?: 'mention' | 'reply' | 'both' | 'off';
+  adminChatId?: number;          // Chat ID for pairing request notifications
+  groupDebounceSec?: number;     // Debounce interval in seconds (default: 5, 0 = immediate)
+  instantGroups?: string[];      // Chat IDs that bypass batching
+}
+
 export interface GoogleAccountConfig {
   account: string;
   services?: string[];  // e.g., ['gmail', 'calendar', 'drive', 'contacts', 'docs', 'sheets']
@@ -239,7 +299,7 @@ export interface GoogleConfig {
 // Default config
 export const DEFAULT_CONFIG: LettaBotConfig = {
   server: {
-    mode: 'cloud',
+    mode: 'api',
   },
   agent: {
     name: 'LettaBot',
@@ -352,6 +412,10 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       normalizeLegacyGroupFields(telegram, `${sourcePath}.telegram`);
       normalized.telegram = telegram;
     }
+    // telegram-mtproto: check apiId as the key credential
+    if (channels['telegram-mtproto']?.enabled !== false && channels['telegram-mtproto']?.apiId) {
+      normalized['telegram-mtproto'] = channels['telegram-mtproto'];
+    }
     if (channels.slack?.enabled !== false && channels.slack?.botToken && channels.slack?.appToken) {
       const slack = { ...channels.slack };
       normalizeLegacyGroupFields(slack, `${sourcePath}.slack`);
@@ -386,7 +450,8 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
   }
 
   // Legacy single-agent mode: normalize to agents[]
-  const agentName = config.agent?.name || 'LettaBot';
+  const envAgentName = process.env.LETTA_AGENT_NAME || process.env.AGENT_NAME;
+  const agentName = envAgentName || config.agent?.name || 'LettaBot';
   const model = config.agent?.model;
   const id = config.agent?.id;
 
@@ -404,6 +469,20 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       token: process.env.TELEGRAM_BOT_TOKEN,
       dmPolicy: (process.env.TELEGRAM_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
       allowedUsers: parseList(process.env.TELEGRAM_ALLOWED_USERS),
+    };
+  }
+  // telegram-mtproto env var fallback (only if telegram bot not configured)
+  if (!channels.telegram && !channels['telegram-mtproto'] && process.env.TELEGRAM_API_ID && process.env.TELEGRAM_API_HASH && process.env.TELEGRAM_PHONE_NUMBER) {
+    channels['telegram-mtproto'] = {
+      enabled: true,
+      apiId: parseInt(process.env.TELEGRAM_API_ID, 10),
+      apiHash: process.env.TELEGRAM_API_HASH,
+      phoneNumber: process.env.TELEGRAM_PHONE_NUMBER,
+      databaseDirectory: process.env.TELEGRAM_MTPROTO_DB_DIR || './data/telegram-mtproto',
+      dmPolicy: (process.env.TELEGRAM_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.TELEGRAM_ALLOWED_USERS)?.map(s => parseInt(s, 10)).filter(n => !isNaN(n)),
+      groupPolicy: (process.env.TELEGRAM_GROUP_POLICY as 'mention' | 'reply' | 'both' | 'off') || 'both',
+      adminChatId: process.env.TELEGRAM_ADMIN_CHAT_ID ? parseInt(process.env.TELEGRAM_ADMIN_CHAT_ID, 10) : undefined,
     };
   }
   if (!channels.slack && process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN) {

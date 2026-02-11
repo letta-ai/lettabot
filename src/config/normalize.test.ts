@@ -1,7 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { normalizeAgents, type LettaBotConfig, type AgentConfig } from './types.js';
+import {
+  normalizeAgents,
+  canonicalizeServerMode,
+  isApiServerMode,
+  isDockerServerMode,
+  type LettaBotConfig,
+  type AgentConfig,
+} from './types.js';
 
 describe('normalizeAgents', () => {
+  it('canonicalizes legacy server mode aliases', () => {
+    expect(canonicalizeServerMode('cloud')).toBe('api');
+    expect(canonicalizeServerMode('api')).toBe('api');
+    expect(canonicalizeServerMode('selfhosted')).toBe('docker');
+    expect(canonicalizeServerMode('docker')).toBe('docker');
+    expect(isApiServerMode('cloud')).toBe(true);
+    expect(isDockerServerMode('selfhosted')).toBe(true);
+  });
+
   it('should normalize legacy single-agent config to one-entry array', () => {
     const config: LettaBotConfig = {
       server: { mode: 'cloud' },

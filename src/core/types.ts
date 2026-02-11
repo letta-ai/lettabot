@@ -43,7 +43,7 @@ export interface TriggerContext {
 // Original Types
 // =============================================================================
 
-export type ChannelId = 'telegram' | 'slack' | 'whatsapp' | 'signal' | 'discord' | 'mock';
+export type ChannelId = 'telegram' | 'telegram-mtproto' | 'slack' | 'whatsapp' | 'signal' | 'discord' | 'mock';
 
 export interface InboundAttachment {
   id?: string;

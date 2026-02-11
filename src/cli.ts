@@ -9,7 +9,7 @@
  */
 
 // Config loaded from lettabot.yaml
-import { loadConfig, applyConfigToEnv } from './config/index.js';
+import { loadConfig, applyConfigToEnv, serverModeLabel } from './config/index.js';
 const config = loadConfig();
 applyConfigToEnv(config);
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -48,7 +48,7 @@ async function configure() {
 
   // Show current config from YAML
   const configRows = [
-    ['Server Mode', config.server.mode],
+    ['Server Mode', serverModeLabel(config.server.mode)],
     ['API Key', config.server.apiKey ? '✓ Set' : '✗ Not set'],
     ['Agent Name', config.agent.name],
     ['Telegram', config.channels.telegram?.enabled ? '✓ Enabled' : '✗ Disabled'],

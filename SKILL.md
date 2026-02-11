@@ -61,7 +61,7 @@ The wizard will guide you through:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LETTA_API_KEY` | API key from app.letta.com | Required (unless self-hosted) |
+| `LETTA_API_KEY` | API key from app.letta.com | Required (unless using a Docker server) |
 | `LETTA_BASE_URL` | API endpoint | `https://api.letta.com` |
 
 ### Agent Selection
@@ -329,9 +329,9 @@ The agent can verify success by checking:
 - Config file exists at `~/.lettabot/config.yaml`
 - User can message bot on configured channel(s)
 
-## Self-Hosted Letta
+## Docker Server Letta
 
-To use a self-hosted Letta server:
+To use a Letta Docker server:
 
 ```bash
 # Run Letta Docker

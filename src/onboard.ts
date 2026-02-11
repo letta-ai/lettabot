@@ -6,9 +6,9 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as p from '@clack/prompts';
-import { saveConfig, syncProviders } from './config/index.js';
+import { saveConfig, syncProviders, isApiServerMode } from './config/index.js';
 import type { AgentConfig, LettaBotConfig, ProviderConfig } from './config/types.js';
-import { isLettaCloudUrl } from './utils/server.js';
+import { isLettaApiUrl } from './utils/server.js';
 import { CHANNELS, getChannelHint, isSignalCliInstalled, setupTelegram, setupSlack, setupDiscord, setupWhatsApp, setupSignal } from './channels/setup.js';
 
 // ============================================================================
@@ -113,14 +113,18 @@ function readConfigFromEnv(existingConfig: any): any {
   };
 }
 
-async function saveConfigFromEnv(config: any, configPath: string): Promise<void> {
+async function saveConfigFromEnv(config: any, configPath: string, existingConfig?: LettaBotConfig): Promise<void> {
   const { saveConfig } = await import('./config/index.js');
+  
+  // Resolve API server config from existing config (server.api is canonical, top-level api is fallback)
+  const existingApiConfig = existingConfig?.server?.api ?? existingConfig?.api;
   
   const lettabotConfig: Partial<LettaBotConfig> & Pick<LettaBotConfig, 'server'> = {
     server: {
-      mode: isLettaCloudUrl(config.baseUrl) ? 'cloud' : 'selfhosted',
+      mode: isLettaApiUrl(config.baseUrl) ? 'api' : 'docker',
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
+      ...(existingApiConfig ? { api: existingApiConfig } : {}),
     },
     agents: [{
       name: config.agentName,
@@ -196,6 +200,8 @@ async function saveConfigFromEnv(config: any, configPath: string): Promise<void>
         },
       },
     }],
+    // Preserve unmanaged top-level fields from existing config
+    ...(existingConfig?.attachments ? { attachments: existingConfig.attachments } : {}),
   };
   
   saveConfig(lettabotConfig);
@@ -207,7 +213,7 @@ async function saveConfigFromEnv(config: any, configPath: string): Promise<void>
 
 interface OnboardConfig {
   // Auth
-  authMethod: 'keep' | 'oauth' | 'apikey' | 'selfhosted' | 'skip';
+  authMethod: 'keep' | 'oauth' | 'apikey' | 'docker' | 'selfhosted' | 'skip';
   apiKey?: string;
   baseUrl?: string;
   billingTier?: string;
@@ -288,6 +294,7 @@ interface OnboardConfig {
 }
 
 const isPlaceholder = (val?: string) => !val || /^(your_|sk-\.\.\.|placeholder|example)/i.test(val);
+const isDockerAuthMethod = (method: OnboardConfig['authMethod']) => method === 'docker' || method === 'selfhosted';
 
 // ============================================================================
 // Step Functions
@@ -298,12 +305,12 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
   const { saveTokens, loadTokens, getOrCreateDeviceId, getDeviceName } = await import('./auth/tokens.js');
   
   const baseUrl = config.baseUrl || env.LETTA_BASE_URL || process.env.LETTA_BASE_URL;
-  const isLettaCloud = isLettaCloudUrl(baseUrl);
+  const isLettaApi = isLettaApiUrl(baseUrl);
   
   const existingTokens = loadTokens();
   // Check both env and config for existing API key
   const realApiKey = config.apiKey || (isPlaceholder(env.LETTA_API_KEY) ? undefined : env.LETTA_API_KEY);
-  const validOAuthToken = isLettaCloud ? existingTokens?.accessToken : undefined;
+  const validOAuthToken = isLettaApi ? existingTokens?.accessToken : undefined;
   const hasExistingAuth = !!realApiKey || !!validOAuthToken;
   const displayKey = realApiKey || validOAuthToken;
   
@@ -316,9 +323,9 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
   
   const authOptions = [
     ...(hasExistingAuth ? [{ value: 'keep', label: getAuthLabel(), hint: displayKey?.slice(0, 20) + '...' }] : []),
-    ...(isLettaCloud ? [{ value: 'oauth', label: 'Login to Letta Platform', hint: 'Opens browser' }] : []),
+    ...(isLettaApi ? [{ value: 'oauth', label: 'Login to Letta Platform', hint: 'Opens browser' }] : []),
     { value: 'apikey', label: 'Enter API Key manually', hint: 'Paste your key' },
-    { value: 'selfhosted', label: 'Enter self-hosted URL', hint: 'Local Letta server' },
+    { value: 'docker', label: 'Enter Docker server URL', hint: 'Local/custom Letta server' },
     { value: 'skip', label: 'Skip', hint: 'Continue without auth' },
   ];
   
@@ -390,7 +397,7 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
       config.apiKey = apiKey;
       env.LETTA_API_KEY = apiKey;
     }
-  } else if (authMethod === 'selfhosted') {
+  } else if (authMethod === 'docker' || authMethod === 'selfhosted') {
     const serverUrl = await p.text({ 
       message: 'Letta server URL',
       placeholder: 'http://localhost:8283',
@@ -403,7 +410,7 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
     env.LETTA_BASE_URL = url;
     process.env.LETTA_BASE_URL = url; // Set immediately so model listing works
     
-    // Clear any cloud API key since we're using self-hosted
+    // Clear API key since we're using a Docker/custom server.
     delete env.LETTA_API_KEY;
     delete process.env.LETTA_API_KEY;
   } else if (authMethod === 'keep') {
@@ -458,14 +465,14 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
     }
     
     const spinner = p.spinner();
-    const serverLabel = config.baseUrl || 'Letta Cloud';
+    const serverLabel = config.baseUrl || 'Letta API';
     spinner.start(`Checking connection to ${serverLabel}...`);
     try {
       const { testConnection } = await import('./tools/letta-api.js');
       const ok = await testConnection();
       spinner.stop(ok ? `Connected to ${serverLabel}` : 'Connection issue');
       
-      if (!ok && config.authMethod === 'selfhosted') {
+      if (!ok && isDockerAuthMethod(config.authMethod)) {
         p.log.warn(`Could not connect to ${config.baseUrl}. Make sure the server is running.`);
       }
     } catch {
@@ -561,8 +568,8 @@ const BYOK_PROVIDERS = [
 ];
 
 async function stepProviders(config: OnboardConfig, env: Record<string, string>): Promise<void> {
-  // Only for free tier users on Letta Cloud (not self-hosted, not paid)
-  if (config.authMethod === 'selfhosted') return;
+  // Only for free tier users on Letta API (not Docker/custom servers, not paid)
+  if (isDockerAuthMethod(config.authMethod)) return;
   if (config.billingTier !== 'free') return;
   
   const selectedProviders = await p.multiselect({
@@ -680,10 +687,10 @@ async function stepModel(config: OnboardConfig, env: Record<string, string>): Pr
   
   const spinner = p.spinner();
   
-  // Determine if self-hosted (not Letta Cloud)
-  const isSelfHosted = config.authMethod === 'selfhosted';
+  // Determine if Docker/custom server (not Letta API)
+  const isSelfHosted = isDockerAuthMethod(config.authMethod);
   
-  // Fetch billing tier for Letta Cloud users (if not already fetched)
+  // Fetch billing tier for Letta API users (if not already fetched)
   let billingTier: string | null = config.billingTier || null;
   if (!isSelfHosted && !billingTier) {
     spinner.start('Checking account...');
@@ -1155,7 +1162,8 @@ function showSummary(config: OnboardConfig): void {
     keep: 'Keep existing',
     oauth: 'OAuth login',
     apikey: config.apiKey ? `API Key (${config.apiKey.slice(0, 10)}...)` : 'API Key',
-    selfhosted: config.baseUrl ? `Self-hosted (${config.baseUrl})` : 'Self-hosted',
+    docker: config.baseUrl ? `Docker server (${config.baseUrl})` : 'Docker server',
+    selfhosted: config.baseUrl ? `Docker server (${config.baseUrl})` : 'Docker server',
     skip: 'None',
   }[config.authMethod];
   lines.push(`Auth:      ${authLabel}`);
@@ -1320,12 +1328,12 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     console.log('');
     
     // Validate required fields
-    if (!config.apiKey && isLettaCloudUrl(config.baseUrl)) {
+    if (!config.apiKey && isLettaApiUrl(config.baseUrl)) {
       console.error('❌ Error: LETTA_API_KEY is required');
       console.error('   Get your API key from: https://app.letta.com/settings');
       console.error('   Then run: export LETTA_API_KEY="letta_..."');
       console.error('');
-      console.error('   Or use self-hosted Letta:');
+      console.error('   Or use a Docker server:');
       console.error('   export LETTA_BASE_URL="http://localhost:8283"');
       process.exit(1);
     }
@@ -1370,8 +1378,8 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
       process.exit(1);
     }
     
-    // Save config and exit
-    await saveConfigFromEnv(config, configPath);
+    // Save config and exit (pass existingConfig to preserve unmanaged fields like api/attachments)
+    await saveConfigFromEnv(config, configPath, existingConfig);
     console.log(`✅ Configuration saved to ${configPath}\n`);
     console.log('Run "lettabot server" to start the bot.');
     return;
@@ -1385,8 +1393,8 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   
   // Pre-populate from existing config
   const baseUrl = existingConfig.server.baseUrl || process.env.LETTA_BASE_URL || 'https://api.letta.com';
-  const isLocal = !isLettaCloudUrl(baseUrl);
-  p.note(`${baseUrl}\n${isLocal ? 'Self-hosted' : 'Letta Cloud'}`, 'Server');
+  const isLocal = !isLettaApiUrl(baseUrl);
+  p.note(`${baseUrl}\n${isLocal ? 'Docker server' : 'Letta API'}`, 'Server');
   
   // Test server connection
   const spinner = p.spinner();
@@ -1479,8 +1487,8 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   await stepAuth(config, env);
   await stepAgent(config, env);
   
-  // Fetch billing tier for free plan detection (only for Letta Cloud)
-  if (config.authMethod !== 'selfhosted' && config.agentChoice === 'new') {
+  // Fetch billing tier for free plan detection (only for Letta API)
+  if (!isDockerAuthMethod(config.authMethod) && config.agentChoice === 'new') {
     const { getBillingTier } = await import('./utils/model-selection.js');
     const spinner = p.spinner();
     spinner.start('Checking account...');
@@ -1760,11 +1768,16 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   };
 
   // Convert to YAML config (multi-agent format)
+  // Resolve API server config from existing config (server.api is canonical, top-level api is fallback)
+  const existingApiConfig = existingConfig.server?.api ?? existingConfig.api;
+  
   const yamlConfig: Partial<LettaBotConfig> & Pick<LettaBotConfig, 'server'> = {
     server: {
-      mode: config.authMethod === 'selfhosted' ? 'selfhosted' : 'cloud',
-      ...(config.authMethod === 'selfhosted' && config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+      mode: isDockerAuthMethod(config.authMethod) ? 'docker' : 'api',
+      ...(isDockerAuthMethod(config.authMethod) && config.baseUrl ? { baseUrl: config.baseUrl } : {}),
       ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+      // Preserve API server config (port, host, CORS)
+      ...(existingApiConfig ? { api: existingApiConfig } : {}),
     },
     agents: [agentConfig],
     ...(config.transcription.enabled && config.transcription.apiKey ? {
@@ -1782,6 +1795,8 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
         apiKey: p.apiKey,
       })),
     } : {}),
+    // Preserve unmanaged top-level fields from existing config
+    ...(existingConfig.attachments ? { attachments: existingConfig.attachments } : {}),
   };
   
   // Save YAML config (use project-local path)
@@ -1789,10 +1804,10 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   saveConfig(yamlConfig, savePath);
   p.log.success('Configuration saved to lettabot.yaml');
   
-  // Sync BYOK providers to Letta Cloud
-  if (yamlConfig.providers && yamlConfig.providers.length > 0 && yamlConfig.server.mode === 'cloud') {
+  // Sync BYOK providers to Letta API.
+  if (yamlConfig.providers && yamlConfig.providers.length > 0 && isApiServerMode(yamlConfig.server.mode)) {
     const spinner = p.spinner();
-    spinner.start('Syncing BYOK providers to Letta Cloud...');
+    spinner.start('Syncing BYOK providers to Letta API...');
     try {
       await syncProviders(yamlConfig);
       spinner.stop('BYOK providers synced');

@@ -2,15 +2,16 @@
 # Copy this to lettabot.yaml and fill in your values.
 # 
 # Server modes:
-# - 'cloud': Use Letta Cloud (api.letta.com) with API key
-# - 'selfhosted': Use self-hosted Letta server
+# - 'api': Use Letta API (api.letta.com) with API key
+# - 'docker': Use a Docker/custom Letta server
+# Legacy aliases still accepted: 'cloud', 'selfhosted'
 
 server:
-  mode: cloud
-  # For cloud mode, set your API key (get one at https://app.letta.com):
+  mode: api
+  # For api mode, set your API key (get one at https://app.letta.com):
   apiKey: sk-let-YOUR-API-KEY
-  # For selfhosted mode, uncomment and set the base URL:
-  # mode: selfhosted
+  # For docker mode, uncomment and set the base URL:
+  # mode: docker
   # baseUrl: http://localhost:8283
 
 agent:
@@ -19,8 +20,8 @@ agent:
   # Note: model is configured on the Letta agent server-side.
   # Select a model during `lettabot onboard` or change it with `lettabot model set <handle>`.
 
-# BYOK Providers (optional, cloud mode only)
-# These will be synced to Letta Cloud on startup
+# BYOK Providers (optional, api mode only)
+# These will be synced to Letta API on startup
 # providers:
 #   - id: anthropic
 #     name: lc-anthropic

@@ -1,5 +1,5 @@
 /**
- * OAuth 2.0 utilities for Letta Cloud authentication
+ * OAuth 2.0 utilities for Letta API authentication
  * Uses Device Code Flow for CLI authentication
  * 
  * Ported from @letta-ai/letta-code
@@ -7,13 +7,15 @@
 
 import Letta from "@letta-ai/letta-client";
 
-export const LETTA_CLOUD_API_URL = "https://api.letta.com";
+export const LETTA_API_URL = "https://api.letta.com";
+// Backward-compatible alias for older imports.
+export const LETTA_CLOUD_API_URL = LETTA_API_URL;
 
 export const OAUTH_CONFIG = {
   clientId: "ci-let-724dea7e98f4af6f8f370f4b1466200c",
   clientSecret: "", // Not needed for device code flow
   authBaseUrl: "https://app.letta.com",
-  apiBaseUrl: LETTA_CLOUD_API_URL,
+  apiBaseUrl: LETTA_API_URL,
 } as const;
 
 export interface DeviceCodeResponse {

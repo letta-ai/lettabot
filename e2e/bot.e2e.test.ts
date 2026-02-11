@@ -1,7 +1,7 @@
 /**
  * E2E Tests for LettaBot
  * 
- * These tests use a real Letta Cloud agent to verify the full message flow.
+ * These tests use a real Letta API agent to verify the full message flow.
  * Requires LETTA_API_KEY and LETTA_E2E_AGENT_ID environment variables.
  * 
  * Run with: npm run test:e2e
@@ -17,7 +17,7 @@ import { join } from 'node:path';
 // Skip if no API key (local dev without secrets)
 const SKIP_E2E = !process.env.LETTA_API_KEY || !process.env.LETTA_E2E_AGENT_ID;
 
-describe.skipIf(SKIP_E2E)('e2e: LettaBot with Letta Cloud', () => {
+describe.skipIf(SKIP_E2E)('e2e: LettaBot with Letta API', () => {
   let bot: LettaBot;
   let mockAdapter: MockChannelAdapter;
   let tempDir: string;

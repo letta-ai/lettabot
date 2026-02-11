@@ -1,6 +1,6 @@
-# Self-Hosted Letta Server Setup
+# Docker Server Setup
 
-Run LettaBot with your own Letta server instead of Letta Cloud.
+Run LettaBot with your own Letta Docker/custom server instead of Letta API.
 
 ## Prerequisites
 
@@ -42,7 +42,7 @@ curl http://localhost:8283/v1/health
 lettabot onboard
 ```
 
-Select "Enter self-hosted URL" and enter `http://localhost:8283`.
+Select "Enter Docker server URL" and enter `http://localhost:8283`.
 
 ### Option B: Manual Configuration
 
@@ -50,7 +50,7 @@ Create `lettabot.yaml`:
 
 ```yaml
 server:
-  mode: selfhosted
+  mode: docker
   baseUrl: http://localhost:8283
   # apiKey: optional-if-server-requires-auth
 
@@ -79,7 +79,7 @@ lettabot server
 You should see:
 ```
 [Config] Loaded from /path/to/lettabot.yaml
-[Config] Mode: selfhosted, Agent: LettaBot, Model: gpt-4o
+[Config] Mode: docker, Agent: LettaBot, Model: gpt-4o
 Starting LettaBot...
 LettaBot initialized. Agent ID: (new)
 [Telegram] Bot started as @YourBotName

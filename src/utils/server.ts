@@ -1,24 +1,27 @@
 /**
  * Letta server URL utilities
  *
- * The heuristic is simple: Letta Cloud lives at a known URL.
- * Everything else is self-hosted.
+ * The heuristic is simple: Letta API lives at a known URL.
+ * Everything else is a Docker/custom server.
  */
 
-import { LETTA_CLOUD_API_URL } from '../auth/oauth.js';
+import { LETTA_API_URL } from '../auth/oauth.js';
 
 /**
- * Check if a URL points at Letta Cloud (api.letta.com)
+ * Check if a URL points at Letta API (api.letta.com)
  *
- * @param url - The base URL to check. When absent, assumes cloud (the default).
+ * @param url - The base URL to check. When absent, assumes Letta API (the default).
  */
-export function isLettaCloudUrl(url?: string): boolean {
-  if (!url) return true; // no URL means the default (cloud)
+export function isLettaApiUrl(url?: string): boolean {
+  if (!url) return true; // no URL means the default (Letta API)
   try {
     const given = new URL(url);
-    const cloud = new URL(LETTA_CLOUD_API_URL);
-    return given.hostname === cloud.hostname;
+    const api = new URL(LETTA_API_URL);
+    return given.hostname === api.hostname;
   } catch {
     return false;
   }
 }
+
+// Backward-compatible alias.
+export const isLettaCloudUrl = isLettaApiUrl;

@@ -26,11 +26,11 @@ export interface ModelInfo {
  * Uses /v1/metadata/balance endpoint (same as letta-code)
  * 
  * @param apiKey - The API key to use
- * @param isSelfHosted - If true, skip billing check (self-hosted has no tiers)
+ * @param isSelfHosted - If true, skip billing check (Docker/custom servers have no tiers)
  */
 export async function getBillingTier(apiKey?: string, isSelfHosted?: boolean): Promise<string | null> {
   try {
-    // Self-hosted servers don't have billing tiers
+    // Docker/custom servers don't have billing tiers.
     if (isSelfHosted) {
       return null;
     }
@@ -39,7 +39,7 @@ export async function getBillingTier(apiKey?: string, isSelfHosted?: boolean): P
       return 'free';
     }
     
-    // Always use Letta Cloud for billing check (not process.env.LETTA_BASE_URL)
+    // Always use Letta API for billing check (not process.env.LETTA_BASE_URL)
     const response = await fetch('https://api.letta.com/v1/metadata/balance', {
       headers: { 
         'Content-Type': 'application/json',
@@ -111,7 +111,7 @@ async function fetchByokModels(apiKey?: string): Promise<ByokModel[]> {
  * 
  * For free users: Show free models first, then BYOK models from API
  * For paid users: Show featured models first, then all models
- * For self-hosted: Fetch models from server
+ * For Docker/custom servers: fetch models from server
  */
 export async function buildModelOptions(options?: {
   billingTier?: string | null;
@@ -122,7 +122,7 @@ export async function buildModelOptions(options?: {
   const isSelfHosted = options?.isSelfHosted;
   const isFreeTier = billingTier?.toLowerCase() === 'free';
   
-  // For self-hosted servers, fetch models from server
+  // For Docker/custom servers, fetch models from server
   if (isSelfHosted) {
     return buildServerModelOptions();
   }
@@ -182,7 +182,7 @@ export async function buildModelOptions(options?: {
 }
 
 /**
- * Build model options from self-hosted server
+ * Build model options from Docker/custom server
  */
 async function buildServerModelOptions(): Promise<Array<{ value: string; label: string; hint: string }>> {
   const { listModels } = await import('../tools/letta-api.js');

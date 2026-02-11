@@ -9,7 +9,8 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import YAML from 'yaml';
 import type { LettaBotConfig, ProviderConfig } from './types.js';
-import { DEFAULT_CONFIG } from './types.js';
+import { DEFAULT_CONFIG, canonicalizeServerMode, isApiServerMode, isDockerServerMode } from './types.js';
+import { LETTA_API_URL } from '../auth/oauth.js';
 
 // Config file locations (checked in order)
 const CONFIG_PATHS = [
@@ -46,9 +47,17 @@ export function resolveConfigPath(): string {
 }
 
 /**
+ * Whether the last loadConfig() call failed to parse the config file.
+ * Used to avoid misleading "Loaded from" messages when the file exists but has syntax errors.
+ */
+let _lastLoadFailed = false;
+export function didLoadFail(): boolean { return _lastLoadFailed; }
+
+/**
  * Load config from YAML file
  */
 export function loadConfig(): LettaBotConfig {
+  _lastLoadFailed = false;
   const configPath = resolveConfigPath();
   
   if (!existsSync(configPath)) {
@@ -64,16 +73,33 @@ export function loadConfig(): LettaBotConfig {
     // Re-extract from document AST to preserve the original string representation.
     fixLargeGroupIds(content, parsed);
 
-    // Merge with defaults
-    return {
+    // Merge with defaults and canonicalize server mode.
+    const merged = {
       ...DEFAULT_CONFIG,
       ...parsed,
       server: { ...DEFAULT_CONFIG.server, ...parsed.server },
       agent: { ...DEFAULT_CONFIG.agent, ...parsed.agent },
       channels: { ...DEFAULT_CONFIG.channels, ...parsed.channels },
     };
+
+    const config = {
+      ...merged,
+      server: {
+        ...merged.server,
+        mode: canonicalizeServerMode(merged.server.mode),
+      },
+    };
+
+    // Deprecation warning: top-level api should be moved under server
+    if (config.api && !config.server.api) {
+      console.warn('[Config] WARNING: Top-level `api:` is deprecated. Move it under `server:`.');
+    }
+
+    return config;
   } catch (err) {
-    console.error(`[Config] Failed to load ${configPath}:`, err);
+    _lastLoadFailed = true;
+    console.error(`[Config] Failed to parse ${configPath}:`, err);
+    console.warn('[Config] Using default configuration. Check your YAML syntax.');
     return { ...DEFAULT_CONFIG };
   }
 }
@@ -107,7 +133,7 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   const env: Record<string, string> = {};
   
   // Server
-  if (config.server.mode === 'selfhosted' && config.server.baseUrl) {
+  if (isDockerServerMode(config.server.mode) && config.server.baseUrl) {
     env.LETTA_BASE_URL = config.server.baseUrl;
   }
   if (config.server.apiKey) {
@@ -129,6 +155,32 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
     env.TELEGRAM_BOT_TOKEN = config.channels.telegram.token;
     if (config.channels.telegram.dmPolicy) {
       env.TELEGRAM_DM_POLICY = config.channels.telegram.dmPolicy;
+    }
+  }
+  // Telegram MTProto (user account mode)
+  const mtproto = config.channels['telegram-mtproto'];
+  if (mtproto?.enabled && mtproto.phoneNumber) {
+    env.TELEGRAM_MTPROTO_PHONE = mtproto.phoneNumber;
+    if (mtproto.apiId) {
+      env.TELEGRAM_MTPROTO_API_ID = String(mtproto.apiId);
+    }
+    if (mtproto.apiHash) {
+      env.TELEGRAM_MTPROTO_API_HASH = mtproto.apiHash;
+    }
+    if (mtproto.databaseDirectory) {
+      env.TELEGRAM_MTPROTO_DB_DIR = mtproto.databaseDirectory;
+    }
+    if (mtproto.dmPolicy) {
+      env.TELEGRAM_MTPROTO_DM_POLICY = mtproto.dmPolicy;
+    }
+    if (mtproto.allowedUsers?.length) {
+      env.TELEGRAM_MTPROTO_ALLOWED_USERS = mtproto.allowedUsers.join(',');
+    }
+    if (mtproto.groupPolicy) {
+      env.TELEGRAM_MTPROTO_GROUP_POLICY = mtproto.groupPolicy;
+    }
+    if (mtproto.adminChatId) {
+      env.TELEGRAM_MTPROTO_ADMIN_CHAT_ID = String(mtproto.adminChatId);
     }
   }
   if (config.channels.slack?.appToken) {
@@ -257,15 +309,16 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
     env.ATTACHMENTS_MAX_AGE_DAYS = String(config.attachments.maxAgeDays);
   }
 
-  // API server
-  if (config.api?.port !== undefined) {
-    env.PORT = String(config.api.port);
+  // API server (server.api is canonical, top-level api is deprecated fallback)
+  const apiConfig = config.server.api ?? config.api;
+  if (apiConfig?.port !== undefined) {
+    env.PORT = String(apiConfig.port);
   }
-  if (config.api?.host) {
-    env.API_HOST = config.api.host;
+  if (apiConfig?.host) {
+    env.API_HOST = apiConfig.host;
   }
-  if (config.api?.corsOrigin) {
-    env.API_CORS_ORIGIN = config.api.corsOrigin;
+  if (apiConfig?.corsOrigin) {
+    env.API_CORS_ORIGIN = apiConfig.corsOrigin;
   }
   
   return env;
@@ -283,10 +336,10 @@ export function applyConfigToEnv(config: LettaBotConfig): void {
 }
 
 /**
- * Create BYOK providers on Letta Cloud
+ * Create BYOK providers on Letta API
  */
 export async function syncProviders(config: Partial<LettaBotConfig> & Pick<LettaBotConfig, 'server'>): Promise<void> {
-  if (config.server.mode !== 'cloud' || !config.server.apiKey) {
+  if (!isApiServerMode(config.server.mode) || !config.server.apiKey) {
     return;
   }
   
@@ -295,7 +348,7 @@ export async function syncProviders(config: Partial<LettaBotConfig> & Pick<Letta
   }
   
   const apiKey = config.server.apiKey;
-  const baseUrl = 'https://api.letta.com';
+  const baseUrl = LETTA_API_URL;
   
   // List existing providers
   const listResponse = await fetch(`${baseUrl}/v1/providers`, {

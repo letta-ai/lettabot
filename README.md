@@ -6,6 +6,13 @@ Your personal AI assistant that remembers everything across **Telegram, Slack, D
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/lettabot?utm_medium=integration&utm_source=template&utm_campaign=generic)
 
+[![Discord](https://img.shields.io/badge/discord-join-blue?style=flat-square&logo=discord)](https://discord.gg/letta)
+
+> [!IMPORTANT]
+> *"Help! I need help with my LettaBot!"* 👋
+>
+> Need help? The fastest way to get help with LettaBot is to ask an AI coding agent, like [Letta Code](https://docs.letta.com/letta-code)! The LettaBot codebase is meant to be hackable, meaning a (good) agent should be able to dive right in and help you out.
+
 ## Features
 
 - **Multi-Channel** - Chat seamlessly across Telegram, Slack, Discord, WhatsApp, and Signal
@@ -380,7 +387,7 @@ Check the [ADE](https://app.letta.com) to see if your agent is attempting to use
 ## Documentation
 
 - [Getting Started](docs/getting-started.md)
-- [Self-Hosted Setup](docs/selfhosted-setup.md) - Run with your own Letta server
+- [Docker Server Setup](docs/selfhosted-setup.md) - Run with your own Letta server
 - [Configuration Reference](docs/configuration.md)
 - [Slack Setup](docs/slack-setup.md)
 - [Discord Setup](docs/discord-setup.md)
