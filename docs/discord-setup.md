@@ -167,6 +167,8 @@ channels:
 
 Mode resolution priority: channel ID > guild ID > `*` wildcard > `open` (built-in default).
 
+To find channel and server IDs: enable **Developer Mode** in Discord settings (User Settings > Advanced > Developer Mode), then right-click any channel or server and select "Copy Channel ID" or "Copy Server ID".
+
 ### Channel allowlisting
 
 If you define `groups` with specific IDs and **do not** include a `*` wildcard, the bot will only be active in those listed channels. Messages in unlisted channels are silently dropped -- they never reach the agent and consume no tokens.

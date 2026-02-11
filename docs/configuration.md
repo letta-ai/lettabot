@@ -304,6 +304,18 @@ Resolution follows the same priority as `mode`: specific channel/group ID > guil
 
 This works across all channels (Discord, Telegram, Slack, Signal, WhatsApp).
 
+### Finding Group IDs
+
+Each channel uses different identifiers for groups:
+
+- **Telegram**: Group IDs are negative numbers (e.g., `-1001234567890`). To find one: add `@userinfobot` to the group, or forward a group message to `@userinfobot`. You can also check the bot logs -- group IDs are printed when the bot receives a message.
+- **Discord**: Channel and server IDs are numeric strings (e.g., `123456789012345678`). Enable **Developer Mode** in Discord settings (User Settings > Advanced > Developer Mode), then right-click any channel or server and select "Copy Channel ID" or "Copy Server ID".
+- **Slack**: Channel IDs start with `C` (e.g., `C01ABC23DEF`). Right-click a channel > "View channel details" > scroll to the bottom to find the Channel ID.
+- **WhatsApp**: Group JIDs look like `120363123456@g.us`. These appear in the bot logs when the bot receives a group message.
+- **Signal**: Group IDs appear in the bot logs on first group message. Use the `group:` prefix in config (e.g., `group:abc123`).
+
+**Tip**: If you don't know the ID yet, start the bot with `"*": { mode: mention-only }`, send a message in the group, and check the logs for the ID.
+
 Deprecated formats are still supported and auto-normalized with warnings:
 
 - `listeningGroups: ["id"]` -> `groups: { "id": { mode: listen } }`
