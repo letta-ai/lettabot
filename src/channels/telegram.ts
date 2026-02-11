@@ -338,12 +338,8 @@ export class TelegramAdapter implements ChannelAdapter {
       const { isGroup, groupName, wasMentioned, isListeningMode } = gating;
 
       // Check if transcription is configured (config or env)
-      const { loadConfig } = await import('../config/index.js');
-      const config = loadConfig();
-      const provider = config.transcription?.provider || 'openai';
-      const hasKey = config.transcription?.apiKey
-        || (provider === 'mistral' ? process.env.MISTRAL_API_KEY : process.env.OPENAI_API_KEY);
-      if (!hasKey) {
+      const { isTranscriptionConfigured } = await import('../transcription/index.js');
+      if (!isTranscriptionConfigured()) {
         await ctx.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages');
         return;
       }

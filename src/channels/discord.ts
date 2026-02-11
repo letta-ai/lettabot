@@ -180,10 +180,9 @@ Ask the bot owner to approve with:
       const audioAttachment = message.attachments.find(a => a.contentType?.startsWith('audio/'));
       if (audioAttachment?.url) {
         try {
-          const { loadConfig } = await import('../config/index.js');
-          const config = loadConfig();
-          if (!config.transcription?.apiKey && !process.env.OPENAI_API_KEY) {
-            await message.reply('Voice messages require OpenAI API key for transcription. See: https://github.com/letta-ai/lettabot#voice-messages');
+          const { isTranscriptionConfigured } = await import('../transcription/index.js');
+          if (!isTranscriptionConfigured()) {
+            await message.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages');
           } else {
             // Download audio
             const response = await fetch(audioAttachment.url);

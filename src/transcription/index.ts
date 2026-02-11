@@ -12,6 +12,17 @@ import { transcribeAudio as mistralTranscribe } from './mistral.js';
 
 export type { TranscriptionResult } from './openai.js';
 
+/**
+ * Check whether a transcription API key is available for the configured provider.
+ * Used by channel handlers to gate voice message processing.
+ */
+export function isTranscriptionConfigured(): boolean {
+  const config = loadConfig();
+  const provider = config.transcription?.provider || 'openai';
+  return !!(config.transcription?.apiKey
+    || (provider === 'mistral' ? process.env.MISTRAL_API_KEY : process.env.OPENAI_API_KEY));
+}
+
 export async function transcribeAudio(
   audioBuffer: Buffer,
   filename?: string,
