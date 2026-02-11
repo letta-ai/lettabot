@@ -656,6 +656,19 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
         if (response.ok) {
           spinner.stop(`Connected ${provider.displayName}`);
           config.providers.push({ id: provider.id, name: provider.name, apiKey: providerKey });
+
+          // If OpenAI was just connected, offer to enable voice transcription
+          if (provider.id === 'openai') {
+            const enableTranscription = await p.confirm({
+              message: 'Enable voice message transcription with this OpenAI key? (uses Whisper)',
+              initialValue: true,
+            });
+            if (!p.isCancel(enableTranscription) && enableTranscription) {
+              config.transcription.enabled = true;
+              config.transcription.provider = 'openai';
+              config.transcription.apiKey = providerKey;
+            }
+          }
         } else {
           const error = await response.text();
           spinner.stop(`Failed to connect ${provider.displayName}: ${error}`);
@@ -826,7 +839,10 @@ async function stepFeatures(config: OnboardConfig): Promise<void> {
 // Voice Transcription Setup
 // ============================================================================
 
-async function stepTranscription(config: OnboardConfig): Promise<void> {
+async function stepTranscription(config: OnboardConfig, forcePrompt?: boolean): Promise<void> {
+  // Skip if already configured (e.g. from OpenAI shortcut in stepProviders)
+  if (!forcePrompt && config.transcription.enabled && config.transcription.apiKey) return;
+
   const setupTranscription = await p.confirm({
     message: 'Enable voice message transcription?',
     initialValue: config.transcription.enabled,
@@ -1247,7 +1263,7 @@ async function reviewLoop(config: OnboardConfig, env: Record<string, string>): P
     }
     else if (choice === 'channels') await stepChannels(config, env);
     else if (choice === 'features') await stepFeatures(config);
-    else if (choice === 'transcription') await stepTranscription(config);
+    else if (choice === 'transcription') await stepTranscription(config, true);
     else if (choice === 'google') await stepGoogle(config);
   }
 }
