@@ -8,6 +8,7 @@ import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, type GroupMode } 
 
 export interface SignalGroupConfig {
   mode?: GroupMode;
+  allowedUsers?: string[];
   requireMention?: boolean;  // @deprecated legacy alias
 }
 

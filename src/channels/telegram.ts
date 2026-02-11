@@ -58,7 +58,7 @@ export class TelegramAdapter implements ChannelAdapter {
    * Apply group gating for a message context.
    * Returns null if the message should be dropped, or message metadata if it should proceed.
    */
-  private applyGroupGating(ctx: { chat: { type: string; id: number; title?: string }; message?: { text?: string; entities?: { type: string; offset: number; length: number }[] } }): { isGroup: boolean; groupName?: string; wasMentioned: boolean; isListeningMode?: boolean } | null {
+  private applyGroupGating(ctx: { chat: { type: string; id: number; title?: string }; from?: { id: number }; message?: { text?: string; entities?: { type: string; offset: number; length: number }[] } }): { isGroup: boolean; groupName?: string; wasMentioned: boolean; isListeningMode?: boolean } | null {
     const chatType = ctx.chat.type;
     const isGroup = chatType === 'group' || chatType === 'supergroup';
     const groupName = isGroup && 'title' in ctx.chat ? ctx.chat.title : undefined;
