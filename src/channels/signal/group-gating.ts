@@ -108,6 +108,14 @@ export function applySignalGroupGating(params: SignalGroupGatingParams): SignalG
   // Step 2: Resolve mode (default: open)
   const mode = resolveGroupMode(groupsConfig, groupKeys, 'open');
 
+  if (mode === 'disabled') {
+    return {
+      shouldProcess: false,
+      mode,
+      reason: 'groups-disabled',
+    };
+  }
+
   // METHOD 1: Native Signal mentions array
   if (mentions && mentions.length > 0) {
     const selfDigits = selfPhoneNumber.replace(/\D/g, '');

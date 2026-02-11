@@ -7,8 +7,8 @@ describe('group-mode helpers', () => {
       expect(isGroupAllowed(undefined, ['group-1'])).toBe(true);
     });
 
-    it('allows when groups config is empty', () => {
-      expect(isGroupAllowed({}, ['group-1'])).toBe(true);
+    it('rejects when groups config is empty (explicit empty allowlist)', () => {
+      expect(isGroupAllowed({}, ['group-1'])).toBe(false);
     });
 
     it('allows via wildcard', () => {
@@ -43,6 +43,11 @@ describe('group-mode helpers', () => {
     it('uses wildcard when no specific key matches', () => {
       const groups: GroupsConfig = { '*': { mode: 'listen' } };
       expect(resolveGroupMode(groups, ['group-1'], 'open')).toBe('listen');
+    });
+
+    it('resolves disabled mode', () => {
+      const groups: GroupsConfig = { '*': { mode: 'disabled' } };
+      expect(resolveGroupMode(groups, ['group-1'], 'open')).toBe('disabled');
     });
 
     it('maps legacy requireMention=true to mention-only', () => {

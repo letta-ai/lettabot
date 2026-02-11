@@ -96,6 +96,14 @@ export function applyTelegramGroupGating(params: TelegramGroupGatingParams): Tel
   // Step 2: Resolve mode (default: open)
   const mode = resolveGroupMode(groupsConfig, [chatId], 'open');
 
+  if (mode === 'disabled') {
+    return {
+      shouldProcess: false,
+      mode,
+      reason: 'groups-disabled',
+    };
+  }
+
   // Step 3: Detect mentions
   const mention = detectTelegramMention({ text, botUsername, entities, mentionPatterns });
 

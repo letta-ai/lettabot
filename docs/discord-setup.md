@@ -149,6 +149,7 @@ Three modes are available:
 - **`open`** -- Bot responds to all messages in the channel (default)
 - **`listen`** -- Bot processes all messages for context/memory, but only responds when @mentioned
 - **`mention-only`** -- Bot completely ignores messages unless @mentioned (cheapest option -- messages are dropped at the adapter level before reaching the agent)
+- **`disabled`** -- Bot drops all messages in the channel unconditionally, even if @mentioned
 
 ### Configuring group modes
 

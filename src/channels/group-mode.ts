@@ -2,7 +2,7 @@
  * Shared group mode helpers across channel adapters.
  */
 
-export type GroupMode = 'open' | 'listen' | 'mention-only';
+export type GroupMode = 'open' | 'listen' | 'mention-only' | 'disabled';
 
 export interface GroupModeConfig {
   mode?: GroupMode;
@@ -18,7 +18,7 @@ export type GroupsConfig = Record<string, GroupModeConfig>;
 
 function coerceMode(config?: GroupModeConfig): GroupMode | undefined {
   if (!config) return undefined;
-  if (config.mode === 'open' || config.mode === 'listen' || config.mode === 'mention-only') {
+  if (config.mode === 'open' || config.mode === 'listen' || config.mode === 'mention-only' || config.mode === 'disabled') {
     return config.mode;
   }
   if (typeof config.requireMention === 'boolean') {
@@ -35,7 +35,7 @@ function coerceMode(config?: GroupModeConfig): GroupMode | undefined {
  */
 export function isGroupAllowed(groups: GroupsConfig | undefined, keys: string[]): boolean {
   if (!groups) return true;
-  if (Object.keys(groups).length === 0) return true;
+  if (Object.keys(groups).length === 0) return false;
   if (Object.hasOwn(groups, '*')) return true;
   return keys.some((key) => Object.hasOwn(groups, key));
 }

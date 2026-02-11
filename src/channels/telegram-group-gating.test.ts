@@ -81,6 +81,17 @@ describe('applyTelegramGroupGating', () => {
       expect(result.reason).toBe('mention-required');
     });
 
+    it('blocks all messages in disabled mode', () => {
+      const result = applyTelegramGroupGating(createParams({
+        text: '@mybot hello',
+        entities: [{ type: 'mention', offset: 0, length: 6 }],
+        groupsConfig: { '*': { mode: 'disabled' } },
+      }));
+      expect(result.shouldProcess).toBe(false);
+      expect(result.mode).toBe('disabled');
+      expect(result.reason).toBe('groups-disabled');
+    });
+
     it('supports listen mode (processes non-mention messages)', () => {
       const result = applyTelegramGroupGating(createParams({
         text: 'hello',

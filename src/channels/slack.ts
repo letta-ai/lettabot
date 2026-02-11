@@ -142,6 +142,9 @@ export class SlackAdapter implements ChannelAdapter {
             return; // User not in group allowedUsers -- silent drop
           }
           mode = this.resolveChannelMode(channelId);
+          if (mode === 'disabled') {
+            return; // Groups disabled for this channel -- silent drop
+          }
           if (mode === 'mention-only') {
             // Non-mention message in channel that requires mentions.
             // The app_mention handler will process actual @mentions.
@@ -181,9 +184,12 @@ export class SlackAdapter implements ChannelAdapter {
         }
       }
 
-      // Group gating: allowlist check (mention already satisfied by app_mention)
+      // Group gating: allowlist + mode + user check (mention already satisfied by app_mention)
       if (this.config.groups && !this.isChannelAllowed(channelId)) {
         return; // Channel not in allowlist -- silent drop
+      }
+      if (this.resolveChannelMode(channelId) === 'disabled') {
+        return; // Groups disabled for this channel -- silent drop
       }
       if (!isGroupUserAllowed(this.config.groups, [channelId], userId)) {
         return; // User not in group allowedUsers -- silent drop

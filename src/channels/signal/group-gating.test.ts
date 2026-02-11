@@ -136,6 +136,21 @@ describe('applySignalGroupGating', () => {
       expect(result.reason).toBe('mention-required');
     });
 
+    it('blocks all messages in disabled mode', () => {
+      const result = applySignalGroupGating({
+        text: 'Hello everyone!',
+        groupId: 'test-group',
+        selfPhoneNumber,
+        mentions: [{ number: selfPhoneNumber, start: 0, length: 5 }],
+        groupsConfig: {
+          '*': { mode: 'disabled' },
+        },
+      });
+      expect(result.shouldProcess).toBe(false);
+      expect(result.mode).toBe('disabled');
+      expect(result.reason).toBe('groups-disabled');
+    });
+
     it('supports listen mode', () => {
       const result = applySignalGroupGating({
         text: 'Hello everyone!',

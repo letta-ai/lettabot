@@ -100,6 +100,14 @@ export function applyGroupGating(params: GroupGatingParams): GroupGatingResult {
   // Step 2: Resolve mode (default: open)
   const mode = resolveGroupMode(groupsConfig, [groupJid], 'open');
 
+  if (mode === 'disabled') {
+    return {
+      shouldProcess: false,
+      mode,
+      reason: 'groups-disabled',
+    };
+  }
+
   // Step 3: Detect mentions
   const mentionResult = detectMention({
     body: msg.body,

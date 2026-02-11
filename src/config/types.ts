@@ -174,7 +174,7 @@ export interface ProviderConfig {
   apiKey: string;
 }
 
-export type GroupMode = 'open' | 'listen' | 'mention-only';
+export type GroupMode = 'open' | 'listen' | 'mention-only' | 'disabled';
 
 export interface GroupConfig {
   mode?: GroupMode;

@@ -271,6 +271,7 @@ Use `groups.<id>.mode` to control how each group/channel behaves:
 - `open`: process and respond to all messages (default behavior)
 - `listen`: process all messages for context/memory, only respond when mentioned
 - `mention-only`: drop group messages unless the bot is mentioned
+- `disabled`: drop all group messages unconditionally, even if the bot is mentioned
 
 You can also use `*` as a wildcard default:
 

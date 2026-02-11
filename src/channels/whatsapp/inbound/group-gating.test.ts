@@ -184,6 +184,19 @@ describe('applyGroupGating', () => {
       expect(result.reason).toBe('mention-required');
     });
 
+    it('blocks all messages in disabled mode', () => {
+      const result = applyGroupGating(createParams({
+        groupsConfig: { '*': { mode: 'disabled' } },
+        msg: createMessage({
+          body: '@bot hello',
+          mentionedJids: ['15551234567@s.whatsapp.net'],
+        }),
+      }));
+      expect(result.shouldProcess).toBe(false);
+      expect(result.mode).toBe('disabled');
+      expect(result.reason).toBe('groups-disabled');
+    });
+
     it('supports listen mode', () => {
       const result = applyGroupGating(createParams({
         groupsConfig: { '*': { mode: 'listen' } },

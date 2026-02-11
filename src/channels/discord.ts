@@ -261,6 +261,9 @@ Ask the bot owner to approve with:
           }
 
           const mode = resolveGroupMode(this.config.groups, keys, 'open');
+          if (mode === 'disabled') {
+            return; // Groups disabled for this channel -- silent drop
+          }
           if (mode === 'mention-only' && !wasMentioned) {
             return; // Mention required but not mentioned -- silent drop
           }
