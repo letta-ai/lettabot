@@ -21,10 +21,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { copyFile, stat, access } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import type { GroupModeConfig } from './group-mode.js';
 
-export interface SignalGroupConfig {
-  requireMention?: boolean;  // Default: true (only respond when mentioned)
-}
+export interface SignalGroupConfig extends GroupModeConfig {}
 
 export interface SignalConfig {
   phoneNumber: string;        // Bot's phone number (E.164 format, e.g., +15551234567)
@@ -762,7 +761,9 @@ This code expires in 1 hour.`;
       
       const isGroup = chatId.startsWith('group:');
       
-      // Apply group gating - only respond when mentioned (unless configured otherwise)
+      // Apply group gating mode
+      let wasMentioned: boolean | undefined;
+      let isListeningMode = false;
       if (isGroup && groupInfo?.groupId) {
         const mentions = dataMessage?.mentions || syncMessage?.mentions;
         const quote = dataMessage?.quote || syncMessage?.quote;
@@ -782,7 +783,9 @@ This code expires in 1 hour.`;
           return;
         }
         
-        if (gatingResult.wasMentioned) {
+        wasMentioned = gatingResult.wasMentioned;
+        isListeningMode = gatingResult.mode === 'listen' && !wasMentioned;
+        if (wasMentioned) {
           console.log(`[Signal] Bot mentioned via ${gatingResult.method}`);
         }
       }
@@ -795,6 +798,8 @@ This code expires in 1 hour.`;
         timestamp: new Date(envelope.timestamp || Date.now()),
         isGroup,
         groupName: groupInfo?.groupName,
+        wasMentioned,
+        isListeningMode,
         attachments: collectedAttachments.length > 0 ? collectedAttachments : undefined,
       };
       

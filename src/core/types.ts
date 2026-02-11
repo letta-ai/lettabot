@@ -124,6 +124,7 @@ export interface BotConfig {
   workingDir: string;
   agentName?: string; // Name for the agent (set via API after creation)
   allowedTools: string[];
+  disallowedTools?: string[];
 
   // Display
   displayName?: string; // Prefix outbound messages (e.g. "💜 Signo")

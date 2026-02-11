@@ -754,6 +754,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
       // Apply group gating (mention detection + allowlist)
       let wasMentioned = false;
+      let isListeningMode = false;
       if (isGroup) {
         const gatingResult = applyGroupGating({
           msg: extracted,
@@ -771,6 +772,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
         }
 
         wasMentioned = gatingResult.wasMentioned ?? false;
+        isListeningMode = gatingResult.mode === 'listen' && !wasMentioned;
       }
 
       // Set mention status for agent context
@@ -814,6 +816,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
           isGroup,
           groupName: extracted.groupSubject,
           wasMentioned: extracted.wasMentioned,
+          isListeningMode,
           replyToUser: extracted.replyContext?.senderE164,
           attachments: extracted.attachments,
         });

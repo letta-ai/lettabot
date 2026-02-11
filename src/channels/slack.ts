@@ -11,6 +11,7 @@ import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { parseCommand, HELP_TEXT } from '../core/commands.js';
 import { markdownToSlackMrkdwn } from './slack-format.js';
+import { isGroupAllowed, resolveGroupMode, type GroupMode, type GroupModeConfig } from './group-mode.js';
 
 // Dynamic import to avoid requiring Slack deps if not used
 let App: typeof import('@slack/bolt').App;
@@ -22,6 +23,7 @@ export interface SlackConfig {
   allowedUsers?: string[]; // Slack user IDs (e.g., U01234567)
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
+  groups?: Record<string, GroupModeConfig>;  // Per-channel settings
 }
 
 export class SlackAdapter implements ChannelAdapter {
@@ -129,6 +131,20 @@ export class SlackAdapter implements ChannelAdapter {
         // Determine if this is a group/channel (not a DM)
         // DMs have channel IDs starting with 'D', channels start with 'C'
         const isGroup = !channelId.startsWith('D');
+        let mode: GroupMode = 'open';
+
+        // Group gating: config-based allowlist + mode
+        if (isGroup) {
+          if (!this.isChannelAllowed(channelId)) {
+            return; // Channel not in allowlist -- silent drop
+          }
+          mode = this.resolveChannelMode(channelId);
+          if (mode === 'mention-only') {
+            // Non-mention message in channel that requires mentions.
+            // The app_mention handler will process actual @mentions.
+            return;
+          }
+        }
         
         await this.onMessage({
           channel: 'slack',
@@ -142,6 +158,7 @@ export class SlackAdapter implements ChannelAdapter {
           isGroup,
           groupName: isGroup ? channelId : undefined,  // Would need conversations.info for name
           wasMentioned: false, // Regular messages; app_mention handles mentions
+          isListeningMode: mode === 'listen',
           attachments,
         });
       }
@@ -159,6 +176,11 @@ export class SlackAdapter implements ChannelAdapter {
           // Can't use say() in app_mention event the same way
           return;
         }
+      }
+
+      // Group gating: allowlist check (mention already satisfied by app_mention)
+      if (this.config.groups && !this.isChannelAllowed(channelId)) {
+        return; // Channel not in allowlist -- silent drop
       }
       
       // Handle slash commands
@@ -283,6 +305,16 @@ export class SlackAdapter implements ChannelAdapter {
   
   getDmPolicy(): string {
     return this.config.dmPolicy || 'pairing';
+  }
+
+  /** Check if a channel is allowed by the groups config allowlist */
+  private isChannelAllowed(channelId: string): boolean {
+    return isGroupAllowed(this.config.groups, [channelId]);
+  }
+
+  /** Resolve group mode for a channel (specific > wildcard > open). */
+  private resolveChannelMode(channelId: string): GroupMode {
+    return resolveGroupMode(this.config.groups, [channelId], 'open');
   }
 
   async sendTypingIndicator(_chatId: string): Promise<void> {

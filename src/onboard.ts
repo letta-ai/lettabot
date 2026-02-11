@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as p from '@clack/prompts';
 import { saveConfig, syncProviders } from './config/index.js';
-import type { LettaBotConfig, ProviderConfig } from './config/types.js';
+import type { AgentConfig, LettaBotConfig, ProviderConfig } from './config/types.js';
 import { isLettaCloudUrl } from './utils/server.js';
 import { CHANNELS, getChannelHint, isSignalCliInstalled, setupTelegram, setupSlack, setupDiscord, setupWhatsApp, setupSignal } from './channels/setup.js';
 
@@ -116,81 +116,86 @@ function readConfigFromEnv(existingConfig: any): any {
 async function saveConfigFromEnv(config: any, configPath: string): Promise<void> {
   const { saveConfig } = await import('./config/index.js');
   
-  const lettabotConfig: LettaBotConfig = {
+  const lettabotConfig: Partial<LettaBotConfig> & Pick<LettaBotConfig, 'server'> = {
     server: {
       mode: isLettaCloudUrl(config.baseUrl) ? 'cloud' : 'selfhosted',
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
     },
-    agent: {
-      id: config.agentId,
+    agents: [{
       name: config.agentName,
-      // model is configured on the Letta agent server-side, not saved to config
-    },
-    channels: {
-      telegram: config.telegram.enabled ? {
-        enabled: true,
-        token: config.telegram.botToken,
-        dmPolicy: config.telegram.dmPolicy,
-        allowedUsers: config.telegram.allowedUsers,
-        groupDebounceSec: config.telegram.groupDebounceSec,
-        groupPollIntervalMin: config.telegram.groupPollIntervalMin,
-        instantGroups: config.telegram.instantGroups,
-        listeningGroups: config.telegram.listeningGroups,
-      } : { enabled: false },
-      
-      slack: config.slack.enabled ? {
-        enabled: true,
-        botToken: config.slack.botToken,
-        appToken: config.slack.appToken,
-        allowedUsers: config.slack.allowedUsers,
-        groupDebounceSec: config.slack.groupDebounceSec,
-        groupPollIntervalMin: config.slack.groupPollIntervalMin,
-        instantGroups: config.slack.instantGroups,
-        listeningGroups: config.slack.listeningGroups,
-      } : { enabled: false },
-      
-      discord: config.discord.enabled ? {
-        enabled: true,
-        token: config.discord.botToken,
-        dmPolicy: config.discord.dmPolicy,
-        allowedUsers: config.discord.allowedUsers,
-        groupDebounceSec: config.discord.groupDebounceSec,
-        groupPollIntervalMin: config.discord.groupPollIntervalMin,
-        instantGroups: config.discord.instantGroups,
-        listeningGroups: config.discord.listeningGroups,
-      } : { enabled: false },
-      
-      whatsapp: config.whatsapp.enabled ? {
-        enabled: true,
-        selfChat: config.whatsapp.selfChat,
-        dmPolicy: config.whatsapp.dmPolicy,
-        allowedUsers: config.whatsapp.allowedUsers,
-        groupDebounceSec: config.whatsapp.groupDebounceSec,
-        groupPollIntervalMin: config.whatsapp.groupPollIntervalMin,
-        instantGroups: config.whatsapp.instantGroups,
-        listeningGroups: config.whatsapp.listeningGroups,
-      } : { enabled: false },
-      
-      signal: config.signal.enabled ? {
-        enabled: true,
-        phone: config.signal.phoneNumber,
-        selfChat: config.signal.selfChat,
-        dmPolicy: config.signal.dmPolicy,
-        allowedUsers: config.signal.allowedUsers,
-        groupDebounceSec: config.signal.groupDebounceSec,
-        groupPollIntervalMin: config.signal.groupPollIntervalMin,
-        instantGroups: config.signal.instantGroups,
-        listeningGroups: config.signal.listeningGroups,
-      } : { enabled: false },
-    },
-    features: {
-      cron: false,
-      heartbeat: {
-        enabled: false,
-        intervalMin: 60,
+      ...(config.agentId ? { id: config.agentId } : {}),
+      channels: {
+        ...(config.telegram.enabled ? {
+          telegram: {
+            enabled: true,
+            token: config.telegram.botToken,
+            dmPolicy: config.telegram.dmPolicy,
+            allowedUsers: config.telegram.allowedUsers,
+            groupDebounceSec: config.telegram.groupDebounceSec,
+            groupPollIntervalMin: config.telegram.groupPollIntervalMin,
+            instantGroups: config.telegram.instantGroups,
+            listeningGroups: config.telegram.listeningGroups,
+          }
+        } : {}),
+        ...(config.slack.enabled ? {
+          slack: {
+            enabled: true,
+            botToken: config.slack.botToken,
+            appToken: config.slack.appToken,
+            allowedUsers: config.slack.allowedUsers,
+            groupDebounceSec: config.slack.groupDebounceSec,
+            groupPollIntervalMin: config.slack.groupPollIntervalMin,
+            instantGroups: config.slack.instantGroups,
+            listeningGroups: config.slack.listeningGroups,
+          }
+        } : {}),
+        ...(config.discord.enabled ? {
+          discord: {
+            enabled: true,
+            token: config.discord.botToken,
+            dmPolicy: config.discord.dmPolicy,
+            allowedUsers: config.discord.allowedUsers,
+            groupDebounceSec: config.discord.groupDebounceSec,
+            groupPollIntervalMin: config.discord.groupPollIntervalMin,
+            instantGroups: config.discord.instantGroups,
+            listeningGroups: config.discord.listeningGroups,
+          }
+        } : {}),
+        ...(config.whatsapp.enabled ? {
+          whatsapp: {
+            enabled: true,
+            selfChat: config.whatsapp.selfChat,
+            dmPolicy: config.whatsapp.dmPolicy,
+            allowedUsers: config.whatsapp.allowedUsers,
+            groupDebounceSec: config.whatsapp.groupDebounceSec,
+            groupPollIntervalMin: config.whatsapp.groupPollIntervalMin,
+            instantGroups: config.whatsapp.instantGroups,
+            listeningGroups: config.whatsapp.listeningGroups,
+          }
+        } : {}),
+        ...(config.signal.enabled ? {
+          signal: {
+            enabled: true,
+            phone: config.signal.phoneNumber,
+            selfChat: config.signal.selfChat,
+            dmPolicy: config.signal.dmPolicy,
+            allowedUsers: config.signal.allowedUsers,
+            groupDebounceSec: config.signal.groupDebounceSec,
+            groupPollIntervalMin: config.signal.groupPollIntervalMin,
+            instantGroups: config.signal.instantGroups,
+            listeningGroups: config.signal.listeningGroups,
+          }
+        } : {}),
       },
-    },
+      features: {
+        cron: false,
+        heartbeat: {
+          enabled: false,
+          intervalMin: 60,
+        },
+      },
+    }],
   };
   
   saveConfig(lettabotConfig);
@@ -1495,6 +1500,44 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   // Review loop
   await reviewLoop(config, env);
   
+  // Create agent eagerly if user chose "new" and we don't have an ID yet
+  if (config.agentChoice === 'new' && !config.agentId) {
+    const { createAgent } = await import('@letta-ai/letta-code-sdk');
+    const { updateAgentName, ensureNoToolApprovals } = await import('./tools/letta-api.js');
+    const { installSkillsToAgent } = await import('./skills/loader.js');
+    const { loadMemoryBlocks } = await import('./core/memory.js');
+    const { SYSTEM_PROMPT } = await import('./core/system-prompt.js');
+    
+    const spinner = p.spinner();
+    spinner.start('Creating agent...');
+    try {
+      const agentId = await createAgent({
+        systemPrompt: SYSTEM_PROMPT,
+        memory: loadMemoryBlocks(config.agentName || 'LettaBot'),
+        ...(config.model ? { model: config.model } : {}),
+      });
+      
+      // Set name and install skills
+      if (config.agentName) {
+        await updateAgentName(agentId, config.agentName).catch(() => {});
+      }
+      installSkillsToAgent(agentId, {
+        cronEnabled: config.cron,
+        googleEnabled: config.google.enabled,
+      });
+      
+      // Disable tool approvals
+      ensureNoToolApprovals(agentId).catch(() => {});
+      
+      config.agentId = agentId;
+      spinner.stop(`Agent created: ${agentId}`);
+    } catch (err) {
+      spinner.stop('Failed to create agent');
+      p.log.error(`${err}`);
+      p.log.info('The agent will be created on first message instead.');
+    }
+  }
+  
   // Apply config to env
   if (config.agentName) env.AGENT_NAME = config.agentName;
   
@@ -1624,18 +1667,10 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   
   p.note(summary, 'Configuration Summary');
   
-  // Convert to YAML config
-  const yamlConfig: LettaBotConfig = {
-    server: {
-      mode: config.authMethod === 'selfhosted' ? 'selfhosted' : 'cloud',
-      ...(config.authMethod === 'selfhosted' && config.baseUrl ? { baseUrl: config.baseUrl } : {}),
-      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
-    },
-    agent: {
-      name: config.agentName || 'LettaBot',
-      // model is configured on the Letta agent server-side, not saved to config
-      ...(config.agentId ? { id: config.agentId } : {}),
-    },
+  // Build per-agent config (multi-agent format)
+  const agentConfig: AgentConfig = {
+    name: config.agentName || 'LettaBot',
+    ...(config.agentId ? { id: config.agentId } : {}),
     channels: {
       ...(config.telegram.enabled ? {
         telegram: {
@@ -1706,13 +1741,6 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
         intervalMin: config.heartbeat.interval ? parseInt(config.heartbeat.interval) : undefined,
       },
     },
-    ...(config.transcription.enabled && config.transcription.apiKey ? {
-      transcription: {
-        provider: 'openai' as const,
-        apiKey: config.transcription.apiKey,
-        ...(config.transcription.model ? { model: config.transcription.model } : {}),
-      },
-    } : {}),
     ...(config.google.enabled ? {
       integrations: {
         google: {
@@ -1730,16 +1758,31 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
       })()),
     } : {}),
   };
-  
-  // Add BYOK providers if configured
-  if (config.providers && config.providers.length > 0) {
-    yamlConfig.providers = config.providers.map(p => ({
-      id: p.id,
-      name: p.name,
-      type: p.id, // id is the type (anthropic, openai, etc.)
-      apiKey: p.apiKey,
-    }));
-  }
+
+  // Convert to YAML config (multi-agent format)
+  const yamlConfig: Partial<LettaBotConfig> & Pick<LettaBotConfig, 'server'> = {
+    server: {
+      mode: config.authMethod === 'selfhosted' ? 'selfhosted' : 'cloud',
+      ...(config.authMethod === 'selfhosted' && config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+    },
+    agents: [agentConfig],
+    ...(config.transcription.enabled && config.transcription.apiKey ? {
+      transcription: {
+        provider: 'openai' as const,
+        apiKey: config.transcription.apiKey,
+        ...(config.transcription.model ? { model: config.transcription.model } : {}),
+      },
+    } : {}),
+    ...(config.providers && config.providers.length > 0 ? {
+      providers: config.providers.map(p => ({
+        id: p.id,
+        name: p.name,
+        type: p.id,
+        apiKey: p.apiKey,
+      })),
+    } : {}),
+  };
   
   // Save YAML config (use project-local path)
   const savePath = resolve(process.cwd(), 'lettabot.yaml');

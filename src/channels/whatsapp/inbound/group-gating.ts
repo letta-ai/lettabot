@@ -5,8 +5,9 @@
  * Based on OpenClaw's group gating patterns.
  */
 
-import { detectMention, type MentionConfig } from './mentions.js';
+import { detectMention } from './mentions.js';
 import type { WebInboundMessage } from './types.js';
+import { isGroupAllowed, resolveGroupMode, type GroupMode, type GroupModeConfig } from '../../group-mode.js';
 
 export interface GroupGatingParams {
   /** Extracted message */
@@ -25,7 +26,7 @@ export interface GroupGatingParams {
   selfE164: string | null;
 
   /** Per-group configuration */
-  groupsConfig?: Record<string, { requireMention?: boolean }>;
+  groupsConfig?: Record<string, GroupModeConfig>;
 
   /** Mention patterns from config */
   mentionPatterns?: string[];
@@ -34,6 +35,9 @@ export interface GroupGatingParams {
 export interface GroupGatingResult {
   /** Whether message should be processed */
   shouldProcess: boolean;
+
+  /** Effective mode for this group */
+  mode: GroupMode;
 
   /** Whether bot was mentioned */
   wasMentioned?: boolean;
@@ -47,9 +51,9 @@ export interface GroupGatingResult {
  *
  * Steps:
  * 1. Check group allowlist (if groups config exists)
- * 2. Resolve requireMention setting
+ * 2. Resolve group mode
  * 3. Detect mentions (JID, regex, E.164, reply)
- * 4. Apply mention gating
+ * 4. Apply mode gating
  *
  * @param params - Gating parameters
  * @returns Gating decision
@@ -60,7 +64,7 @@ export interface GroupGatingResult {
  *   groupJid: "12345@g.us",
  *   selfJid: "555@s.whatsapp.net",
  *   selfE164: "+15551234567",
- *   groupsConfig: { "*": { requireMention: true } },
+ *   groupsConfig: { "*": { mode: "mention-only" } },
  *   mentionPatterns: ["@?bot"]
  * });
  *
@@ -73,38 +77,16 @@ export function applyGroupGating(params: GroupGatingParams): GroupGatingResult {
   const { msg, groupJid, selfJid, selfLid, selfE164, groupsConfig, mentionPatterns } = params;
 
   // Step 1: Check group allowlist (if groups config exists)
-  const groups = groupsConfig ?? {};
-  const allowlistEnabled = Object.keys(groups).length > 0;
-
-  if (allowlistEnabled) {
-    // Check if this specific group is allowed
-    const hasWildcard = Object.hasOwn(groups, '*');
-    const hasSpecific = Object.hasOwn(groups, groupJid);
-
-    if (!hasWildcard && !hasSpecific) {
-      return {
-        shouldProcess: false,
-        reason: 'group-not-in-allowlist',
-      };
-    }
-  }
-
-  // Step 2: Resolve requireMention setting (default: true)
-  // Priority: specific group → wildcard → true
-  const groupConfig = groups[groupJid];
-  const wildcardConfig = groups['*'];
-  const requireMention =
-    groupConfig?.requireMention ??
-    wildcardConfig?.requireMention ??
-    true; // Default: require mention for safety
-
-  // If requireMention is false, allow all messages from this group
-  if (!requireMention) {
+  if (!isGroupAllowed(groupsConfig, [groupJid])) {
     return {
-      shouldProcess: true,
-      wasMentioned: false, // Didn't check, not required
+      shouldProcess: false,
+      mode: 'open',
+      reason: 'group-not-in-allowlist',
     };
   }
+
+  // Step 2: Resolve mode (default: open)
+  const mode = resolveGroupMode(groupsConfig, [groupJid], 'open');
 
   // Step 3: Detect mentions
   const mentionResult = detectMention({
@@ -120,21 +102,19 @@ export function applyGroupGating(params: GroupGatingParams): GroupGatingResult {
     },
   });
 
-  // Step 4: Apply mention gating
-  if (!mentionResult.wasMentioned) {
-    // Not mentioned and mention required - skip this message
-    // Note: In a full implementation, this message could be stored in
-    // "pending history" for context injection when bot IS mentioned
+  // Step 4: Apply mode
+  if (mode === 'mention-only' && !mentionResult.wasMentioned) {
     return {
       shouldProcess: false,
+      mode,
       wasMentioned: false,
       reason: 'mention-required',
     };
   }
 
-  // Mentioned! Process this message
   return {
     shouldProcess: true,
-    wasMentioned: true,
+    mode,
+    wasMentioned: mentionResult.wasMentioned,
   };
 }

@@ -5,16 +5,16 @@ describe('applySignalGroupGating', () => {
   const selfPhoneNumber = '+15551234567';
   const selfUuid = 'abc-123-uuid';
 
-  describe('requireMention: true (default)', () => {
-    it('filters messages without mention', () => {
+  describe('open mode (default)', () => {
+    it('allows messages without mention', () => {
       const result = applySignalGroupGating({
         text: 'Hello everyone!',
         groupId: 'test-group',
         selfPhoneNumber,
       });
 
-      expect(result.shouldProcess).toBe(false);
-      expect(result.reason).toBe('mention-required');
+      expect(result.shouldProcess).toBe(true);
+      expect(result.mode).toBe('open');
     });
 
     it('allows messages with native mention matching phone', () => {
@@ -43,7 +43,7 @@ describe('applySignalGroupGating', () => {
       expect(result.method).toBe('native');
     });
 
-    it('filters when mentions exist for others', () => {
+    it('still allows when mentions exist for others', () => {
       const result = applySignalGroupGating({
         text: 'Hey @alice',
         groupId: 'test-group',
@@ -51,8 +51,8 @@ describe('applySignalGroupGating', () => {
         selfPhoneNumber,
       });
 
-      expect(result.shouldProcess).toBe(false);
-      expect(result.reason).toBe('mention-required');
+      expect(result.shouldProcess).toBe(true);
+      expect(result.wasMentioned).toBe(false);
     });
 
     it('allows messages matching regex pattern', () => {
@@ -91,8 +91,8 @@ describe('applySignalGroupGating', () => {
     });
   });
 
-  describe('requireMention: false', () => {
-    it('allows all messages when requireMention is false for group', () => {
+  describe('legacy requireMention mapping', () => {
+    it('maps requireMention=false to open mode', () => {
       const result = applySignalGroupGating({
         text: 'Hello everyone!',
         groupId: 'test-group',
@@ -103,10 +103,11 @@ describe('applySignalGroupGating', () => {
       });
 
       expect(result.shouldProcess).toBe(true);
+      expect(result.mode).toBe('open');
       expect(result.wasMentioned).toBe(false);
     });
 
-    it('allows all messages when wildcard has requireMention: false', () => {
+    it('maps wildcard requireMention=false to open mode', () => {
       const result = applySignalGroupGating({
         text: 'Hello everyone!',
         groupId: 'random-group',
@@ -117,6 +118,7 @@ describe('applySignalGroupGating', () => {
       });
 
       expect(result.shouldProcess).toBe(true);
+      expect(result.mode).toBe('open');
     });
 
     it('specific group config overrides wildcard', () => {
@@ -132,6 +134,21 @@ describe('applySignalGroupGating', () => {
 
       expect(result.shouldProcess).toBe(false);
       expect(result.reason).toBe('mention-required');
+    });
+
+    it('supports listen mode', () => {
+      const result = applySignalGroupGating({
+        text: 'Hello everyone!',
+        groupId: 'special-group',
+        selfPhoneNumber,
+        groupsConfig: {
+          'special-group': { mode: 'listen' },
+        },
+      });
+
+      expect(result.shouldProcess).toBe(true);
+      expect(result.mode).toBe('listen');
+      expect(result.wasMentioned).toBe(false);
     });
   });
 

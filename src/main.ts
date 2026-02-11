@@ -30,6 +30,11 @@ if (yamlConfig.agent?.model) {
 }
 applyConfigToEnv(yamlConfig);
 
+// Bridge DEBUG=1 to DEBUG_SDK so SDK-level dropped wire messages are visible
+if (process.env.DEBUG === '1' && !process.env.DEBUG_SDK) {
+  process.env.DEBUG_SDK = '1';
+}
+
 // Sync BYOK providers on startup (async, don't block)
 syncProviders(yamlConfig).catch(err => console.error('[Config] Failed to sync providers:', err));
 
@@ -276,6 +281,8 @@ function createChannelsForAgent(
         : undefined,
       attachmentsDir,
       attachmentsMaxBytes,
+      groups: agentConfig.channels.telegram.groups,
+      mentionPatterns: agentConfig.channels.telegram.mentionPatterns,
     }));
   }
 
@@ -289,6 +296,7 @@ function createChannelsForAgent(
         : undefined,
       attachmentsDir,
       attachmentsMaxBytes,
+      groups: agentConfig.channels.slack.groups,
     }));
   }
 
@@ -307,6 +315,8 @@ function createChannelsForAgent(
       selfChatMode,
       attachmentsDir,
       attachmentsMaxBytes,
+      groups: agentConfig.channels.whatsapp.groups,
+      mentionPatterns: agentConfig.channels.whatsapp.mentionPatterns,
     }));
   }
 
@@ -328,6 +338,8 @@ function createChannelsForAgent(
       selfChatMode,
       attachmentsDir,
       attachmentsMaxBytes,
+      groups: agentConfig.channels.signal.groups,
+      mentionPatterns: agentConfig.channels.signal.mentionPatterns,
     }));
   }
 
@@ -340,6 +352,7 @@ function createChannelsForAgent(
         : undefined,
       attachmentsDir,
       attachmentsMaxBytes,
+      groups: agentConfig.channels.discord.groups,
     }));
   }
 
@@ -397,10 +410,22 @@ function createGroupBatcher(
 
 // Skills are installed to agent-scoped directory when agent is created (see core/bot.ts)
 
+function parseCsvList(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
 // Global config (shared across all agents)
 const globalConfig = {
   workingDir: getWorkingDir(),
-  allowedTools: (process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search').split(','),
+  allowedTools: parseCsvList(
+    process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search',
+  ),
+  disallowedTools: parseCsvList(
+    process.env.DISALLOWED_TOOLS || 'EnterPlanMode,ExitPlanMode',
+  ),
   attachmentsMaxBytes: resolveAttachmentsMaxBytes(),
   attachmentsMaxAgeDays: resolveAttachmentsMaxAgeDays(),
   cronEnabled: process.env.CRON_ENABLED === 'true',  // Legacy env var fallback
@@ -472,6 +497,7 @@ async function main() {
       workingDir: globalConfig.workingDir,
       agentName: agentConfig.name,
       allowedTools: globalConfig.allowedTools,
+      disallowedTools: globalConfig.disallowedTools,
       displayName: agentConfig.displayName,
       maxToolCalls: agentConfig.features?.maxToolCalls,
       skills: {

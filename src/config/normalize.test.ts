@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { normalizeAgents, type LettaBotConfig, type AgentConfig } from './types.js';
 
 describe('normalizeAgents', () => {
@@ -154,6 +154,62 @@ describe('normalizeAgents', () => {
     const agents = normalizeAgents(config);
 
     expect(agents[0].id).toBe('agent-123');
+  });
+
+  it('should normalize legacy listeningGroups + requireMention to groups.mode and warn', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const config: LettaBotConfig = {
+      server: { mode: 'cloud' },
+      agent: { name: 'TestBot' },
+      channels: {
+        telegram: {
+          enabled: true,
+          token: 'test-token',
+          listeningGroups: ['-100123', '-100456'],
+          groups: {
+            '*': { requireMention: true },
+            '-100456': { requireMention: false },
+          },
+        },
+      },
+    };
+
+    const agents = normalizeAgents(config);
+    const groups = agents[0].channels.telegram?.groups;
+
+    expect(groups?.['*']?.mode).toBe('mention-only');
+    expect(groups?.['-100123']?.mode).toBe('listen');
+    expect(groups?.['-100456']?.mode).toBe('listen');
+    expect((agents[0].channels.telegram as any).listeningGroups).toBeUndefined();
+    expect(
+      warnSpy.mock.calls.some((args) => String(args[0]).includes('listeningGroups'))
+    ).toBe(true);
+    expect(
+      warnSpy.mock.calls.some((args) => String(args[0]).includes('requireMention'))
+    ).toBe(true);
+
+    warnSpy.mockRestore();
+  });
+
+  it('should preserve legacy listeningGroups semantics by adding wildcard open', () => {
+    const config: LettaBotConfig = {
+      server: { mode: 'cloud' },
+      agent: { name: 'TestBot' },
+      channels: {
+        discord: {
+          enabled: true,
+          token: 'discord-token',
+          listeningGroups: ['1234567890'],
+        },
+      },
+    };
+
+    const agents = normalizeAgents(config);
+    const groups = agents[0].channels.discord?.groups;
+
+    expect(groups?.['*']?.mode).toBe('open');
+    expect(groups?.['1234567890']?.mode).toBe('listen');
   });
 
   describe('env var fallback (container deploys)', () => {
@@ -373,5 +429,38 @@ describe('normalizeAgents', () => {
 
     expect(agents[0].displayName).toBe('💜 Signo');
     expect(agents[1].displayName).toBe('👾 DevOps');
+  });
+
+  it('should normalize onboarding-generated agents[] config (no legacy agent/channels)', () => {
+    // This matches the shape that onboarding now writes: agents[] at top level,
+    // with no legacy agent/channels/features fields.
+    const config = {
+      server: { mode: 'cloud' as const },
+      agents: [{
+        name: 'LettaBot',
+        id: 'agent-abc123',
+        channels: {
+          telegram: { enabled: true, token: 'tg-token', dmPolicy: 'pairing' as const },
+          whatsapp: { enabled: true, selfChat: true },
+        },
+        features: {
+          cron: true,
+          heartbeat: { enabled: true, intervalMin: 30 },
+        },
+      }],
+      // loadConfig() merges defaults for agent/channels, so they'll exist at runtime
+      agent: { name: 'LettaBot' },
+      channels: {},
+    } as LettaBotConfig;
+
+    const agents = normalizeAgents(config);
+
+    expect(agents).toHaveLength(1);
+    expect(agents[0].name).toBe('LettaBot');
+    expect(agents[0].id).toBe('agent-abc123');
+    expect(agents[0].channels.telegram?.token).toBe('tg-token');
+    expect(agents[0].channels.whatsapp?.enabled).toBe(true);
+    expect(agents[0].features?.cron).toBe(true);
+    expect(agents[0].features?.heartbeat?.intervalMin).toBe(30);
   });
 });
