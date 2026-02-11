@@ -1807,7 +1807,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     agents: [agentConfig],
     ...(config.transcription.enabled && config.transcription.apiKey ? {
       transcription: {
-        provider: config.transcription.provider || 'openai' as const,
+        provider: config.transcription.provider || 'openai',
         apiKey: config.transcription.apiKey,
         ...(config.transcription.model ? { model: config.transcription.model } : {}),
       },
