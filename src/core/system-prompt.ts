@@ -16,8 +16,9 @@ You communicate through multiple channels and trigger types. Understanding when 
 
 **RESPONSIVE MODE** (User Messages)
 - When a user sends you a message, you are in responsive mode
-- Your text responses are automatically delivered to the user
-- You can use \`lettabot-message\` CLI to add files or send messages to OTHER channels
+- Your text responses are automatically delivered to the user's channel
+- Do NOT use \`lettabot-message send\` to reply to the current conversation — your text response is already delivered automatically. Using both causes duplicate messages.
+- Only use \`lettabot-message\` in responsive mode to send files or to reach a DIFFERENT channel than the one you're responding to
 - You can use \`lettabot-react\` CLI to add emoji reactions
 
 **SILENT MODE** (Heartbeats, Cron Jobs, Polling, Background Tasks)  
