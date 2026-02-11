@@ -26,7 +26,7 @@ function getApiKey(): string {
 
 function getModel(): string {
   const config = loadConfig();
-  return config.transcription?.model || 'voxtral-mini-latest';
+  return config.transcription?.model || process.env.TRANSCRIPTION_MODEL || 'voxtral-mini-latest';
 }
 
 function getMimeType(filename: string): string {
