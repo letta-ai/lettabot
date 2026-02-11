@@ -152,6 +152,60 @@ describe('applySignalGroupGating', () => {
     });
   });
 
+  describe('per-group allowedUsers', () => {
+    it('allows user in the allowedUsers list', () => {
+      const result = applySignalGroupGating({
+        text: 'Hello',
+        groupId: 'test-group',
+        senderId: '+19876543210',
+        selfPhoneNumber,
+        groupsConfig: {
+          '*': { mode: 'open', allowedUsers: ['+19876543210'] },
+        },
+      });
+      expect(result.shouldProcess).toBe(true);
+    });
+
+    it('blocks user not in the allowedUsers list', () => {
+      const result = applySignalGroupGating({
+        text: 'Hello',
+        groupId: 'test-group',
+        senderId: '+10000000000',
+        selfPhoneNumber,
+        groupsConfig: {
+          '*': { mode: 'open', allowedUsers: ['+19876543210'] },
+        },
+      });
+      expect(result.shouldProcess).toBe(false);
+      expect(result.reason).toBe('user-not-allowed');
+    });
+
+    it('allows all users when no allowedUsers configured', () => {
+      const result = applySignalGroupGating({
+        text: 'Hello',
+        groupId: 'test-group',
+        senderId: '+10000000000',
+        selfPhoneNumber,
+        groupsConfig: {
+          '*': { mode: 'open' },
+        },
+      });
+      expect(result.shouldProcess).toBe(true);
+    });
+
+    it('skips user check when senderId is undefined', () => {
+      const result = applySignalGroupGating({
+        text: 'Hello',
+        groupId: 'test-group',
+        selfPhoneNumber,
+        groupsConfig: {
+          '*': { mode: 'open', allowedUsers: ['+19876543210'] },
+        },
+      });
+      expect(result.shouldProcess).toBe(true);
+    });
+  });
+
   describe('group allowlist', () => {
     it('filters messages from groups not in allowlist', () => {
       const result = applySignalGroupGating({
