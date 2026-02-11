@@ -4,7 +4,7 @@
  * Single agent, single conversation - chat continues across all channels.
  */
 
-import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage } from '@letta-ai/letta-code-sdk';
+import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
 import { mkdirSync } from 'node:fs';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
@@ -125,6 +125,9 @@ export class LettaBot implements AgentSession {
   private instantGroupIds: Set<string> = new Set();
   private listeningGroupIds: Set<string> = new Set();
   private processing = false;
+
+  // AskUserQuestion support: resolves when the next user message arrives
+  private pendingQuestionResolver: ((text: string) => void) | null = null;
   
   constructor(config: BotConfig) {
     this.config = config;
@@ -150,25 +153,49 @@ export class LettaBot implements AgentSession {
   // Session options (shared by processMessage and sendToAgent)
   // =========================================================================
 
-  private get baseSessionOptions() {
-    const disallowedTools = this.config.disallowedTools || [];
-
+  private baseSessionOptions(canUseTool?: CanUseToolCallback) {
     return {
       permissionMode: 'bypassPermissions' as const,
       allowedTools: this.config.allowedTools,
-      disallowedTools,
+      disallowedTools: this.config.disallowedTools || [],
       cwd: this.config.workingDir,
-      canUseTool: (toolName: string, _toolInput: Record<string, unknown>) => {
-        if (disallowedTools.includes(toolName)) {
-          return {
-            behavior: 'deny' as const,
-            message: `Tool '${toolName}' is blocked by bot configuration`,
-          };
-        }
-        console.log(`[Bot] Tool approval requested: ${toolName} (should be auto-approved by bypassPermissions)`);
-        return { behavior: 'allow' as const };
-      },
+      // In bypassPermissions mode, canUseTool is only called for interactive
+      // tools (AskUserQuestion, ExitPlanMode). When no callback is provided
+      // (background triggers), the SDK auto-denies interactive tools.
+      ...(canUseTool ? { canUseTool } : {}),
     };
+  }
+
+  // =========================================================================
+  // AskUserQuestion formatting
+  // =========================================================================
+
+  /**
+   * Format AskUserQuestion questions as a single channel message.
+   * Displays each question with numbered options for the user to choose from.
+   */
+  private formatQuestionsForChannel(questions: Array<{
+    question: string;
+    header: string;
+    options: Array<{ label: string; description: string }>;
+    multiSelect: boolean;
+  }>): string {
+    const parts: string[] = [];
+    for (const q of questions) {
+      parts.push(`**${q.question}**`);
+      parts.push('');
+      for (let i = 0; i < q.options.length; i++) {
+        parts.push(`${i + 1}. **${q.options[i].label}**`);
+        parts.push(`   ${q.options[i].description}`);
+      }
+      if (q.multiSelect) {
+        parts.push('');
+        parts.push('_(You can select multiple options)_');
+      }
+    }
+    parts.push('');
+    parts.push('_Reply with your choice (number, name, or your own answer)._');
+    return parts.join('\n');
   }
 
   // =========================================================================
@@ -213,8 +240,8 @@ export class LettaBot implements AgentSession {
    * Priority: conversationId → agentId (default conv) → createAgent
    * If resume fails (conversation missing), falls back to createSession.
    */
-  private async getSession(): Promise<Session> {
-    const opts = this.baseSessionOptions;
+  private async getSession(canUseTool?: CanUseToolCallback): Promise<Session> {
+    const opts = this.baseSessionOptions(canUseTool);
 
     if (this.store.conversationId) {
       process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
@@ -278,11 +305,11 @@ export class LettaBot implements AgentSession {
    */
   private async runSession(
     message: SendMessage,
-    options: { retried?: boolean } = {},
+    options: { retried?: boolean; canUseTool?: CanUseToolCallback } = {},
   ): Promise<{ session: Session; stream: () => AsyncGenerator<StreamMsg> }> {
-    const { retried = false } = options;
+    const { retried = false, canUseTool } = options;
 
-    let session = await this.getSession();
+    let session = await this.getSession(canUseTool);
 
     // Send message with fallback chain
     try {
@@ -298,7 +325,7 @@ export class LettaBot implements AgentSession {
         );
         if (result.recovered) {
           console.log(`[Bot] Recovery succeeded (${result.details}), retrying...`);
-          return this.runSession(message, { retried: true });
+          return this.runSession(message, { retried: true, canUseTool });
         }
         console.error(`[Bot] Orphaned approval recovery failed: ${result.details}`);
         throw error;
@@ -310,7 +337,7 @@ export class LettaBot implements AgentSession {
       if (this.store.agentId && isConversationMissingError(error)) {
         console.warn('[Bot] Conversation not found, creating a new conversation...');
         session.close();
-        session = createSession(this.store.agentId, this.baseSessionOptions);
+        session = createSession(this.store.agentId, this.baseSessionOptions(canUseTool));
         await session.send(message);
       } else {
         throw error;
@@ -535,6 +562,18 @@ export class LettaBot implements AgentSession {
   // =========================================================================
   
   private async handleMessage(msg: InboundMessage, adapter: ChannelAdapter): Promise<void> {
+    // AskUserQuestion support: if the agent is waiting for a user answer,
+    // intercept this message and resolve the pending promise instead of
+    // queuing it for normal processing. This prevents a deadlock where
+    // the stream is paused waiting for user input while the processing
+    // flag blocks new messages from being handled.
+    if (this.pendingQuestionResolver) {
+      console.log(`[Bot] Intercepted message as AskUserQuestion answer from ${msg.userId}`);
+      this.pendingQuestionResolver(msg.text || '');
+      this.pendingQuestionResolver = null;
+      return;
+    }
+
     console.log(`[${msg.channel}] Message from ${msg.userId}: ${msg.text}`);
 
     if (msg.isGroup && this.groupBatcher) {
@@ -619,10 +658,45 @@ export class LettaBot implements AgentSession {
       : formatMessageEnvelope(msg, {}, sessionContext);
     const messageToSend = await buildMultimodalMessage(formattedText, msg);
 
+    // Build AskUserQuestion-aware canUseTool callback with channel context.
+    // In bypassPermissions mode, this callback is only invoked for interactive
+    // tools (AskUserQuestion, ExitPlanMode) -- normal tools are auto-approved.
+    const canUseTool: CanUseToolCallback = async (toolName, toolInput) => {
+      if (toolName === 'AskUserQuestion') {
+        const questions = (toolInput.questions || []) as Array<{
+          question: string;
+          header: string;
+          options: Array<{ label: string; description: string }>;
+          multiSelect: boolean;
+        }>;
+        const questionText = this.formatQuestionsForChannel(questions);
+        console.log(`[Bot] AskUserQuestion: sending ${questions.length} question(s) to ${msg.channel}:${msg.chatId}`);
+        await adapter.sendMessage({ chatId: msg.chatId, text: questionText, threadId: msg.threadId });
+
+        // Wait for the user's next message (intercepted by handleMessage)
+        const answer = await new Promise<string>((resolve) => {
+          this.pendingQuestionResolver = resolve;
+        });
+        console.log(`[Bot] AskUserQuestion: received answer (${answer.length} chars)`);
+
+        // Map the user's response to each question
+        const answers: Record<string, string> = {};
+        for (const q of questions) {
+          answers[q.question] = answer;
+        }
+        return {
+          behavior: 'allow' as const,
+          updatedInput: { ...toolInput, answers },
+        };
+      }
+      // All other interactive tools: allow by default
+      return { behavior: 'allow' as const };
+    };
+
     // Run session
     let session: Session | null = null;
     try {
-      const run = await this.runSession(messageToSend, { retried });
+      const run = await this.runSession(messageToSend, { retried, canUseTool });
       session = run.session;
 
       // Stream response with delivery
