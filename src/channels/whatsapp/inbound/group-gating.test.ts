@@ -73,12 +73,12 @@ describe('applyGroupGating', () => {
         }),
       }));
 
-      // No allowlist = allowed (but mention still required by default)
+      // No allowlist = allowed (open mode)
       expect(result.shouldProcess).toBe(true);
     });
   });
 
-  describe('requireMention setting', () => {
+  describe('mode resolution', () => {
     it('allows when mentioned and requireMention=true', () => {
       const result = applyGroupGating(createParams({
         groupsConfig: { '*': { requireMention: true } },
@@ -117,7 +117,7 @@ describe('applyGroupGating', () => {
       expect(result.wasMentioned).toBe(false);
     });
 
-    it('defaults to requireMention=true when not specified', () => {
+    it('defaults to mention-only when group entry has no mode', () => {
       const result = applyGroupGating(createParams({
         groupsConfig: { '*': {} }, // No requireMention specified
         msg: createMessage({
@@ -126,7 +126,21 @@ describe('applyGroupGating', () => {
       }));
 
       expect(result.shouldProcess).toBe(false);
+      expect(result.mode).toBe('mention-only');
       expect(result.reason).toBe('mention-required');
+    });
+
+    it('supports listen mode', () => {
+      const result = applyGroupGating(createParams({
+        groupsConfig: { '*': { mode: 'listen' } },
+        msg: createMessage({
+          body: 'hello everyone',
+        }),
+      }));
+
+      expect(result.shouldProcess).toBe(true);
+      expect(result.mode).toBe('listen');
+      expect(result.wasMentioned).toBe(false);
     });
   });
 

@@ -1,12 +1,14 @@
 /**
  * Signal Group Gating
  *
- * Filters group messages based on mention detection.
- * Only processes messages where the bot is mentioned (unless requireMention: false).
+ * Filters group messages based on per-group mode and mention detection.
  */
 
+import { isGroupAllowed, resolveGroupMode, type GroupMode } from '../group-mode.js';
+
 export interface SignalGroupConfig {
-  requireMention?: boolean;  // Default: true
+  mode?: GroupMode;
+  requireMention?: boolean;  // @deprecated legacy alias
 }
 
 export interface SignalMention {
@@ -52,6 +54,9 @@ export interface SignalGroupGatingParams {
 export interface SignalGroupGatingResult {
   /** Whether the message should be processed */
   shouldProcess: boolean;
+
+  /** Effective mode for this group */
+  mode: GroupMode;
   
   /** Whether bot was mentioned */
   wasMentioned?: boolean;
@@ -77,41 +82,19 @@ export interface SignalGroupGatingResult {
  */
 export function applySignalGroupGating(params: SignalGroupGatingParams): SignalGroupGatingResult {
   const { text, groupId, mentions, quote, selfPhoneNumber, selfUuid, groupsConfig, mentionPatterns } = params;
+  const groupKeys = [groupId, `group:${groupId}`];
 
   // Step 1: Check group allowlist (if groups config exists)
-  const groups = groupsConfig ?? {};
-  const allowlistEnabled = Object.keys(groups).length > 0;
-
-  if (allowlistEnabled) {
-    const hasWildcard = Object.hasOwn(groups, '*');
-    const hasSpecific = Object.hasOwn(groups, groupId) || Object.hasOwn(groups, `group:${groupId}`);
-
-    if (!hasWildcard && !hasSpecific) {
-      return {
-        shouldProcess: false,
-        reason: 'group-not-in-allowlist',
-      };
-    }
-  }
-
-  // Step 2: Resolve requireMention setting (default: true)
-  // Priority: specific group → wildcard → true
-  const groupConfig = groups[groupId] ?? groups[`group:${groupId}`];
-  const wildcardConfig = groups['*'];
-  const requireMention =
-    groupConfig?.requireMention ??
-    wildcardConfig?.requireMention ??
-    true; // Default: require mention for safety
-
-  // If requireMention is false, allow all messages from this group
-  if (!requireMention) {
+  if (!isGroupAllowed(groupsConfig, groupKeys)) {
     return {
-      shouldProcess: true,
-      wasMentioned: false,
+      shouldProcess: false,
+      mode: 'open',
+      reason: 'group-not-in-allowlist',
     };
   }
 
-  // Step 3: Detect mentions
+  // Step 2: Resolve mode (default: open)
+  const mode = resolveGroupMode(groupsConfig, groupKeys, 'open');
 
   // METHOD 1: Native Signal mentions array
   if (mentions && mentions.length > 0) {
@@ -133,12 +116,15 @@ export function applySignalGroupGating(params: SignalGroupGatingParams): SignalG
     });
 
     if (mentioned) {
-      return { shouldProcess: true, wasMentioned: true, method: 'native' };
+      return { shouldProcess: true, mode, wasMentioned: true, method: 'native' };
     }
 
     // If explicit mentions exist for other users, skip fallback methods
-    // (User specifically mentioned someone else, not the bot)
-    return { shouldProcess: false, wasMentioned: false, reason: 'mention-required' };
+    // (User specifically mentioned someone else, not the bot).
+    if (mode === 'mention-only') {
+      return { shouldProcess: false, mode, wasMentioned: false, reason: 'mention-required' };
+    }
+    return { shouldProcess: true, mode, wasMentioned: false };
   }
 
   // METHOD 2: Regex pattern matching
@@ -149,7 +135,7 @@ export function applySignalGroupGating(params: SignalGroupGatingParams): SignalG
       try {
         const regex = new RegExp(pattern, 'i');
         if (regex.test(cleanText)) {
-          return { shouldProcess: true, wasMentioned: true, method: 'regex' };
+          return { shouldProcess: true, mode, wasMentioned: true, method: 'regex' };
         }
       } catch (err) {
         console.warn(`[Signal] Invalid mention pattern: ${pattern}`, err);
@@ -167,7 +153,7 @@ export function applySignalGroupGating(params: SignalGroupGatingParams): SignalG
       (quote.author && quote.author.replace(/\D/g, '') === selfDigits);
 
     if (isReplyToBot) {
-      return { shouldProcess: true, wasMentioned: true, method: 'reply' };
+      return { shouldProcess: true, mode, wasMentioned: true, method: 'reply' };
     }
   }
 
@@ -177,14 +163,22 @@ export function applySignalGroupGating(params: SignalGroupGatingParams): SignalG
     const textDigits = text.replace(/\D/g, '');
 
     if (textDigits.includes(selfDigits)) {
-      return { shouldProcess: true, wasMentioned: true, method: 'e164' };
+      return { shouldProcess: true, mode, wasMentioned: true, method: 'e164' };
     }
   }
 
-  // No mention detected and mention required - skip this message
+  // No mention detected.
+  if (mode === 'mention-only') {
+    return {
+      shouldProcess: false,
+      mode,
+      wasMentioned: false,
+      reason: 'mention-required',
+    };
+  }
   return {
-    shouldProcess: false,
+    shouldProcess: true,
+    mode,
     wasMentioned: false,
-    reason: 'mention-required',
   };
 }

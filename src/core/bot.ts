@@ -374,11 +374,13 @@ export class LettaBot implements AgentSession {
       ? msg.batchedMessages[0]
       : msg;
 
-    // Check if this group is in listening mode
-    const isListening = this.listeningGroupIds.has(`${msg.channel}:${msg.chatId}`)
-      || (msg.serverId && this.listeningGroupIds.has(`${msg.channel}:${msg.serverId}`));
-    if (isListening && !msg.wasMentioned) {
-      effective.isListeningMode = true;
+    // Legacy listeningGroups fallback (new mode-based configs set isListeningMode in adapters)
+    if (effective.isListeningMode === undefined) {
+      const isListening = this.listeningGroupIds.has(`${msg.channel}:${msg.chatId}`)
+        || (msg.serverId && this.listeningGroupIds.has(`${msg.channel}:${msg.serverId}`));
+      if (isListening && !msg.wasMentioned) {
+        effective.isListeningMode = true;
+      }
     }
 
     this.messageQueue.push({ msg: effective, adapter });

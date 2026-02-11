@@ -145,6 +145,16 @@ export interface ProviderConfig {
   apiKey: string;
 }
 
+export type GroupMode = 'open' | 'listen' | 'mention-only';
+
+export interface GroupConfig {
+  mode?: GroupMode;
+  /**
+   * @deprecated Use mode: "mention-only" (true) or "open" (false).
+   */
+  requireMention?: boolean;
+}
+
 export interface TelegramConfig {
   enabled: boolean;
   token?: string;
@@ -153,9 +163,9 @@ export interface TelegramConfig {
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Group chat IDs that bypass batching
-  listeningGroups?: string[];     // Group IDs where bot only observes (replies only when mentioned)
+  listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
   mentionPatterns?: string[];     // Regex patterns for mention detection (e.g., ["@mybot"])
-  groups?: Record<string, { requireMention?: boolean }>;  // Per-group settings, "*" for defaults
+  groups?: Record<string, GroupConfig>;  // Per-group settings, "*" for defaults
 }
 
 export interface SlackConfig {
@@ -167,8 +177,8 @@ export interface SlackConfig {
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Channel IDs that bypass batching
-  listeningGroups?: string[];     // Group IDs where bot only observes (replies only when mentioned)
-  groups?: Record<string, { requireMention?: boolean }>;  // Per-channel settings, "*" for defaults
+  listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
+  groups?: Record<string, GroupConfig>;  // Per-channel settings, "*" for defaults
 }
 
 export interface WhatsAppConfig {
@@ -179,11 +189,11 @@ export interface WhatsAppConfig {
   groupPolicy?: 'open' | 'disabled' | 'allowlist';
   groupAllowFrom?: string[];
   mentionPatterns?: string[];
-  groups?: Record<string, { requireMention?: boolean }>;
+  groups?: Record<string, GroupConfig>;
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Group JIDs that bypass batching
-  listeningGroups?: string[];     // Group IDs where bot only observes (replies only when mentioned)
+  listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
 }
 
 export interface SignalConfig {
@@ -194,11 +204,11 @@ export interface SignalConfig {
   allowedUsers?: string[];
   // Group gating
   mentionPatterns?: string[];  // Regex patterns for mention detection (e.g., ["@bot"])
-  groups?: Record<string, { requireMention?: boolean }>;  // Per-group settings, "*" for defaults
+  groups?: Record<string, GroupConfig>;  // Per-group settings, "*" for defaults
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Group IDs that bypass batching
-  listeningGroups?: string[];     // Group IDs where bot only observes (replies only when mentioned)
+  listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
 }
 
 export interface DiscordConfig {
@@ -209,8 +219,8 @@ export interface DiscordConfig {
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Guild/server IDs or channel IDs that bypass batching
-  listeningGroups?: string[];     // Group IDs where bot only observes (replies only when mentioned)
-  groups?: Record<string, { requireMention?: boolean }>;  // Per-guild/channel settings, "*" for defaults
+  listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
+  groups?: Record<string, GroupConfig>;  // Per-guild/channel settings, "*" for defaults
 }
 
 export interface GoogleAccountConfig {
@@ -238,6 +248,93 @@ export const DEFAULT_CONFIG: LettaBotConfig = {
   channels: {},
 };
 
+type ChannelWithLegacyGroupFields = {
+  groups?: Record<string, GroupConfig>;
+  listeningGroups?: string[];
+};
+
+const warnedGroupConfigDeprecations = new Set<string>();
+
+function warnGroupConfigDeprecation(path: string, detail: string): void {
+  const key = `${path}:${detail}`;
+  if (warnedGroupConfigDeprecations.has(key)) return;
+  warnedGroupConfigDeprecations.add(key);
+  console.warn(`[Config] WARNING: ${path} ${detail}`);
+}
+
+function normalizeLegacyGroupFields(
+  channel: ChannelWithLegacyGroupFields | undefined,
+  path: string,
+): void {
+  if (!channel) return;
+
+  const hadOriginalGroups = !!(
+    channel.groups &&
+    typeof channel.groups === 'object' &&
+    Object.keys(channel.groups).length > 0
+  );
+
+  const groups: Record<string, GroupConfig> = channel.groups && typeof channel.groups === 'object'
+    ? { ...channel.groups }
+    : {};
+  const modeDerivedFromRequireMention = new Set<string>();
+
+  let sawLegacyRequireMention = false;
+  for (const [groupId, value] of Object.entries(groups)) {
+    const group = value && typeof value === 'object' ? { ...value } : {};
+    const hasLegacyRequireMention = typeof group.requireMention === 'boolean';
+    if (hasLegacyRequireMention) {
+      sawLegacyRequireMention = true;
+    }
+    if (!group.mode && hasLegacyRequireMention) {
+      group.mode = group.requireMention ? 'mention-only' : 'open';
+      modeDerivedFromRequireMention.add(groupId);
+    }
+    if ('requireMention' in group) {
+      delete group.requireMention;
+    }
+    groups[groupId] = group;
+  }
+  if (sawLegacyRequireMention) {
+    warnGroupConfigDeprecation(
+      `${path}.groups.<id>.requireMention`,
+      'is deprecated. Use groups.<id>.mode: "mention-only" | "open" | "listen".'
+    );
+  }
+
+  const legacyListeningGroups = Array.isArray(channel.listeningGroups)
+    ? channel.listeningGroups.map((id) => String(id).trim()).filter(Boolean)
+    : [];
+
+  if (legacyListeningGroups.length > 0) {
+    warnGroupConfigDeprecation(
+      `${path}.listeningGroups`,
+      'is deprecated. Use groups.<id>.mode: "listen".'
+    );
+    for (const id of legacyListeningGroups) {
+      const existing = groups[id] ? { ...groups[id] } : {};
+      if (!existing.mode || modeDerivedFromRequireMention.has(id)) {
+        existing.mode = 'listen';
+      } else if (existing.mode !== 'listen') {
+        warnGroupConfigDeprecation(
+          `${path}.groups.${id}.mode`,
+          `is "${existing.mode}" while ${path}.listeningGroups also includes "${id}". Keeping mode "${existing.mode}".`
+        );
+      }
+      groups[id] = existing;
+    }
+
+    // Legacy listeningGroups never restricted other groups.
+    // Add wildcard open when there was no explicit groups config.
+    if (!hadOriginalGroups && !groups['*']) {
+      groups['*'] = { mode: 'open' };
+    }
+  }
+
+  channel.groups = Object.keys(groups).length > 0 ? groups : undefined;
+  delete channel.listeningGroups;
+}
+
 /**
  * Normalize config to multi-agent format.
  *
@@ -246,25 +343,35 @@ export const DEFAULT_CONFIG: LettaBotConfig = {
  * Channels with `enabled: false` are dropped during normalization.
  */
 export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
-  const normalizeChannels = (channels?: AgentConfig['channels']): AgentConfig['channels'] => {
+  const normalizeChannels = (channels?: AgentConfig['channels'], sourcePath = 'channels'): AgentConfig['channels'] => {
     const normalized: AgentConfig['channels'] = {};
     if (!channels) return normalized;
 
     if (channels.telegram?.enabled !== false && channels.telegram?.token) {
-      normalized.telegram = channels.telegram;
+      const telegram = { ...channels.telegram };
+      normalizeLegacyGroupFields(telegram, `${sourcePath}.telegram`);
+      normalized.telegram = telegram;
     }
     if (channels.slack?.enabled !== false && channels.slack?.botToken && channels.slack?.appToken) {
-      normalized.slack = channels.slack;
+      const slack = { ...channels.slack };
+      normalizeLegacyGroupFields(slack, `${sourcePath}.slack`);
+      normalized.slack = slack;
     }
     // WhatsApp has no credential to check (uses QR pairing), so just check enabled
     if (channels.whatsapp?.enabled) {
-      normalized.whatsapp = channels.whatsapp;
+      const whatsapp = { ...channels.whatsapp };
+      normalizeLegacyGroupFields(whatsapp, `${sourcePath}.whatsapp`);
+      normalized.whatsapp = whatsapp;
     }
     if (channels.signal?.enabled !== false && channels.signal?.phone) {
-      normalized.signal = channels.signal;
+      const signal = { ...channels.signal };
+      normalizeLegacyGroupFields(signal, `${sourcePath}.signal`);
+      normalized.signal = signal;
     }
     if (channels.discord?.enabled !== false && channels.discord?.token) {
-      normalized.discord = channels.discord;
+      const discord = { ...channels.discord };
+      normalizeLegacyGroupFields(discord, `${sourcePath}.discord`);
+      normalized.discord = discord;
     }
 
     return normalized;
@@ -272,9 +379,9 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
 
   // Multi-agent mode: normalize channels for each configured agent
   if (config.agents && config.agents.length > 0) {
-    return config.agents.map(agent => ({
+    return config.agents.map((agent, index) => ({
       ...agent,
-      channels: normalizeChannels(agent.channels),
+      channels: normalizeChannels(agent.channels, `agents[${index}].channels`),
     }));
   }
 
@@ -284,7 +391,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
   const id = config.agent?.id;
 
   // Filter out disabled/misconfigured channels
-  const channels = normalizeChannels(config.channels);
+  const channels = normalizeChannels(config.channels, 'channels');
 
   // Env var fallback for container deploys without lettabot.yaml (e.g. Railway)
   // Helper: parse comma-separated env var into string array (or undefined)

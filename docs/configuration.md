@@ -265,6 +265,30 @@ channels:
 
 The deprecated `groupPollIntervalMin` (minutes) still works for backward compatibility but `groupDebounceSec` takes priority.
 
+### Group Modes
+
+Use `groups.<id>.mode` to control how each group/channel behaves:
+
+- `open`: process and respond to all messages (default behavior)
+- `listen`: process all messages for context/memory, only respond when mentioned
+- `mention-only`: drop group messages unless the bot is mentioned
+
+You can also use `*` as a wildcard default:
+
+```yaml
+channels:
+  telegram:
+    groups:
+      "*": { mode: listen }
+      "-1001234567890": { mode: open }
+      "-1009876543210": { mode: mention-only }
+```
+
+Deprecated formats are still supported and auto-normalized with warnings:
+
+- `listeningGroups: ["id"]` -> `groups: { "id": { mode: listen } }`
+- `groups: { "id": { requireMention: true/false } }` -> `mode: mention-only/open`
+
 ### DM Policies
 
 **Note:** For WhatsApp/Signal with `selfChat: true` (personal number), dmPolicy is ignored - only you can message via "Message Yourself" / "Note to Self".

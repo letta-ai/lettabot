@@ -213,14 +213,16 @@ At least one channel is required. Telegram is the easiest to start with.
 
 ### Group Settings (Optional)
 
-Configure group batching and listening mode in `lettabot.yaml`:
+Configure group batching and per-group response modes in `lettabot.yaml`:
 
 ```yaml
 channels:
   slack:
     groupDebounceSec: 5
     instantGroups: ["C0123456789"]
-    listeningGroups: ["C0987654321"] # observe only, reply on mention
+    groups:
+      "*": { mode: open }
+      "C0987654321": { mode: listen } # observe only, reply on mention
 ```
 
 See `SKILL.md` for the full environment variable list and examples.

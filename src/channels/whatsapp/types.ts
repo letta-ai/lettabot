@@ -6,6 +6,7 @@
  */
 
 import type { DmPolicy } from "../../pairing/types.js";
+import type { GroupModeConfig } from "../group-mode.js";
 import type {
   WASocket,
   WAMessage,
@@ -51,9 +52,7 @@ export interface WhatsAppConfig {
   mentionPatterns?: string[];
 
   /** Per-group settings (JID or "*" for defaults) */
-  groups?: Record<string, {
-    requireMention?: boolean;  // Default: true
-  }>;
+  groups?: Record<string, GroupModeConfig>;
 }
 
 /**

@@ -11,6 +11,8 @@
  * actively participate in?"
  */
 
+import { isGroupAllowed, resolveGroupMode, type GroupMode, type GroupModeConfig } from './group-mode.js';
+
 export interface TelegramGroupGatingParams {
   /** Message text */
   text: string;
@@ -25,7 +27,7 @@ export interface TelegramGroupGatingParams {
   entities?: { type: string; offset: number; length: number }[];
 
   /** Per-group configuration */
-  groupsConfig?: Record<string, { requireMention?: boolean }>;
+  groupsConfig?: Record<string, GroupModeConfig>;
 
   /** Regex patterns for additional mention detection */
   mentionPatterns?: string[];
@@ -34,6 +36,9 @@ export interface TelegramGroupGatingParams {
 export interface TelegramGroupGatingResult {
   /** Whether the message should be processed */
   shouldProcess: boolean;
+
+  /** Effective mode for this group */
+  mode: GroupMode;
 
   /** Whether bot was mentioned */
   wasMentioned?: boolean;
@@ -59,7 +64,7 @@ export interface TelegramGroupGatingResult {
  *   text: '@mybot hello!',
  *   chatId: '-1001234567890',
  *   botUsername: 'mybot',
- *   groupsConfig: { '*': { requireMention: true } },
+ *   groupsConfig: { '*': { mode: 'mention-only' } },
  * });
  *
  * if (!result.shouldProcess) return;
@@ -68,39 +73,44 @@ export function applyTelegramGroupGating(params: TelegramGroupGatingParams): Tel
   const { text, chatId, botUsername, entities, groupsConfig, mentionPatterns } = params;
 
   // Step 1: Group allowlist
-  const groups = groupsConfig ?? {};
-  const allowlistEnabled = Object.keys(groups).length > 0;
-
-  if (allowlistEnabled) {
-    const hasWildcard = Object.hasOwn(groups, '*');
-    const hasSpecific = Object.hasOwn(groups, chatId);
-
-    if (!hasWildcard && !hasSpecific) {
-      return {
-        shouldProcess: false,
-        reason: 'group-not-in-allowlist',
-      };
-    }
-  }
-
-  // Step 2: Resolve requireMention setting (default: true)
-  // Priority: specific group > wildcard > default true
-  const groupConfig = groups[chatId];
-  const wildcardConfig = groups['*'];
-  const requireMention =
-    groupConfig?.requireMention ??
-    wildcardConfig?.requireMention ??
-    true; // Default: require mention for safety
-
-  // If requireMention is false, allow all messages from this group
-  if (!requireMention) {
+  if (!isGroupAllowed(groupsConfig, [chatId])) {
     return {
-      shouldProcess: true,
-      wasMentioned: false,
+      shouldProcess: false,
+      mode: 'open',
+      reason: 'group-not-in-allowlist',
     };
   }
 
+  // Step 2: Resolve mode (default: open)
+  const mode = resolveGroupMode(groupsConfig, [chatId], 'open');
+
   // Step 3: Detect mentions
+  const mention = detectTelegramMention({ text, botUsername, entities, mentionPatterns });
+
+  // open/listen modes always pass (listen mode response suppression is handled downstream)
+  if (mode === 'open' || mode === 'listen') {
+    return {
+      shouldProcess: true,
+      mode,
+      wasMentioned: mention.wasMentioned,
+      method: mention.method,
+    };
+  }
+
+  // mention-only mode: mention required
+  if (mention.wasMentioned) {
+    return { shouldProcess: true, mode, wasMentioned: true, method: mention.method };
+  }
+  return { shouldProcess: false, mode, wasMentioned: false, reason: 'mention-required' };
+}
+
+function detectTelegramMention(params: {
+  text: string;
+  botUsername: string;
+  entities?: { type: string; offset: number; length: number }[];
+  mentionPatterns?: string[];
+}): { wasMentioned: boolean; method?: 'entity' | 'text' | 'command' | 'regex' } {
+  const { text, botUsername, entities, mentionPatterns } = params;
 
   // METHOD 1: Telegram entity-based mention detection (most reliable)
   if (entities && entities.length > 0 && botUsername) {
@@ -111,9 +121,8 @@ export function applyTelegramGroupGating(params: TelegramGroupGatingParams): Tel
       }
       return false;
     });
-
     if (mentioned) {
-      return { shouldProcess: true, wasMentioned: true, method: 'entity' };
+      return { wasMentioned: true, method: 'entity' };
     }
   }
 
@@ -121,7 +130,7 @@ export function applyTelegramGroupGating(params: TelegramGroupGatingParams): Tel
   if (botUsername) {
     const usernameRegex = new RegExp(`@${botUsername}\\b`, 'i');
     if (usernameRegex.test(text)) {
-      return { shouldProcess: true, wasMentioned: true, method: 'text' };
+      return { wasMentioned: true, method: 'text' };
     }
   }
 
@@ -129,7 +138,7 @@ export function applyTelegramGroupGating(params: TelegramGroupGatingParams): Tel
   if (botUsername) {
     const commandRegex = new RegExp(`^/\\w+@${botUsername}\\b`, 'i');
     if (commandRegex.test(text.trim())) {
-      return { shouldProcess: true, wasMentioned: true, method: 'command' };
+      return { wasMentioned: true, method: 'command' };
     }
   }
 
@@ -139,7 +148,7 @@ export function applyTelegramGroupGating(params: TelegramGroupGatingParams): Tel
       try {
         const regex = new RegExp(pattern, 'i');
         if (regex.test(text)) {
-          return { shouldProcess: true, wasMentioned: true, method: 'regex' };
+          return { wasMentioned: true, method: 'regex' };
         }
       } catch {
         // Invalid pattern -- skip silently
@@ -147,10 +156,5 @@ export function applyTelegramGroupGating(params: TelegramGroupGatingParams): Tel
     }
   }
 
-  // No mention detected and mention required -- skip this message
-  return {
-    shouldProcess: false,
-    wasMentioned: false,
-    reason: 'mention-required',
-  };
+  return { wasMentioned: false };
 }

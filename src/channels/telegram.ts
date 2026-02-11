@@ -18,6 +18,7 @@ import { isGroupApproved, approveGroup } from '../pairing/group-store.js';
 import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { applyTelegramGroupGating } from './telegram-group-gating.js';
+import type { GroupModeConfig } from './group-mode.js';
 
 export interface TelegramConfig {
   token: string;
@@ -26,7 +27,7 @@ export interface TelegramConfig {
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
   mentionPatterns?: string[];    // Regex patterns for mention detection
-  groups?: Record<string, { requireMention?: boolean }>;  // Per-group settings
+  groups?: Record<string, GroupModeConfig>;  // Per-group settings
 }
 
 export class TelegramAdapter implements ChannelAdapter {
@@ -55,9 +56,9 @@ export class TelegramAdapter implements ChannelAdapter {
   
   /**
    * Apply group gating for a message context.
-   * Returns null if the message should be dropped, or { isGroup, groupName, wasMentioned } if it should proceed.
+   * Returns null if the message should be dropped, or message metadata if it should proceed.
    */
-  private applyGroupGating(ctx: { chat: { type: string; id: number; title?: string }; message?: { text?: string; entities?: { type: string; offset: number; length: number }[] } }): { isGroup: boolean; groupName?: string; wasMentioned: boolean } | null {
+  private applyGroupGating(ctx: { chat: { type: string; id: number; title?: string }; message?: { text?: string; entities?: { type: string; offset: number; length: number }[] } }): { isGroup: boolean; groupName?: string; wasMentioned: boolean; isListeningMode?: boolean } | null {
     const chatType = ctx.chat.type;
     const isGroup = chatType === 'group' || chatType === 'supergroup';
     const groupName = isGroup && 'title' in ctx.chat ? ctx.chat.title : undefined;
@@ -69,43 +70,26 @@ export class TelegramAdapter implements ChannelAdapter {
     const text = ctx.message?.text || '';
     const botUsername = this.bot.botInfo?.username || '';
 
-    if (this.config.groups) {
-      const gatingResult = applyTelegramGroupGating({
-        text,
-        chatId: String(ctx.chat.id),
-        botUsername,
-        entities: ctx.message?.entities?.map(e => ({
-          type: e.type,
-          offset: e.offset,
-          length: e.length,
-        })),
-        groupsConfig: this.config.groups,
-        mentionPatterns: this.config.mentionPatterns,
-      });
+    const gatingResult = applyTelegramGroupGating({
+      text,
+      chatId: String(ctx.chat.id),
+      botUsername,
+      entities: ctx.message?.entities?.map(e => ({
+        type: e.type,
+        offset: e.offset,
+        length: e.length,
+      })),
+      groupsConfig: this.config.groups,
+      mentionPatterns: this.config.mentionPatterns,
+    });
 
-      if (!gatingResult.shouldProcess) {
-        console.log(`[Telegram] Group message filtered: ${gatingResult.reason}`);
-        return null;
-      }
-      return { isGroup, groupName, wasMentioned: gatingResult.wasMentioned ?? false };
+    if (!gatingResult.shouldProcess) {
+      console.log(`[Telegram] Group message filtered: ${gatingResult.reason}`);
+      return null;
     }
-
-    // No groups config: detect mentions for batcher (no gating)
-    let wasMentioned = false;
-    if (botUsername) {
-      const entities = ctx.message?.entities || [];
-      wasMentioned = entities.some((e) => {
-        if (e.type === 'mention') {
-          const mentioned = text.substring(e.offset, e.offset + e.length);
-          return mentioned.toLowerCase() === `@${botUsername.toLowerCase()}`;
-        }
-        return false;
-      });
-      if (!wasMentioned) {
-        wasMentioned = text.toLowerCase().includes(`@${botUsername.toLowerCase()}`);
-      }
-    }
-    return { isGroup, groupName, wasMentioned };
+    const wasMentioned = gatingResult.wasMentioned ?? false;
+    const isListeningMode = gatingResult.mode === 'listen' && !wasMentioned;
+    return { isGroup, groupName, wasMentioned, isListeningMode };
   }
 
   /**
@@ -275,7 +259,7 @@ export class TelegramAdapter implements ChannelAdapter {
       // Group gating (runs AFTER pairing middleware)
       const gating = this.applyGroupGating(ctx);
       if (!gating) return; // Filtered by group gating
-      const { isGroup, groupName, wasMentioned } = gating;
+      const { isGroup, groupName, wasMentioned, isListeningMode } = gating;
 
       if (this.onMessage) {
         await this.onMessage({
@@ -290,6 +274,7 @@ export class TelegramAdapter implements ChannelAdapter {
           isGroup,
           groupName,
           wasMentioned,
+          isListeningMode,
         });
       }
     });
@@ -349,7 +334,7 @@ export class TelegramAdapter implements ChannelAdapter {
       // Group gating
       const gating = this.applyGroupGating(ctx);
       if (!gating) return;
-      const { isGroup, groupName, wasMentioned } = gating;
+      const { isGroup, groupName, wasMentioned, isListeningMode } = gating;
 
       // Check if transcription is configured (config or env)
       const { loadConfig } = await import('../config/index.js');
@@ -395,6 +380,7 @@ export class TelegramAdapter implements ChannelAdapter {
             isGroup,
             groupName,
             wasMentioned,
+            isListeningMode,
           });
         }
       } catch (error) {
@@ -412,6 +398,7 @@ export class TelegramAdapter implements ChannelAdapter {
             isGroup,
             groupName,
             wasMentioned,
+            isListeningMode,
           });
         }
       }
@@ -427,7 +414,7 @@ export class TelegramAdapter implements ChannelAdapter {
       // Group gating
       const gating = this.applyGroupGating(ctx);
       if (!gating) return;
-      const { isGroup, groupName, wasMentioned } = gating;
+      const { isGroup, groupName, wasMentioned, isListeningMode } = gating;
 
       const { attachments, caption } = await this.collectAttachments(ctx.message, String(chatId));
       if (attachments.length === 0 && !caption) return;
@@ -444,6 +431,7 @@ export class TelegramAdapter implements ChannelAdapter {
           isGroup,
           groupName,
           wasMentioned,
+          isListeningMode,
           attachments,
         });
       }

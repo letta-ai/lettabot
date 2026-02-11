@@ -315,6 +315,8 @@ function createChannelsForAgent(
       selfChatMode,
       attachmentsDir,
       attachmentsMaxBytes,
+      groups: agentConfig.channels.whatsapp.groups,
+      mentionPatterns: agentConfig.channels.whatsapp.mentionPatterns,
     }));
   }
 
@@ -336,6 +338,8 @@ function createChannelsForAgent(
       selfChatMode,
       attachmentsDir,
       attachmentsMaxBytes,
+      groups: agentConfig.channels.signal.groups,
+      mentionPatterns: agentConfig.channels.signal.mentionPatterns,
     }));
   }
 

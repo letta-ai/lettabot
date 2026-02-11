@@ -41,7 +41,7 @@ describe('applyTelegramGroupGating', () => {
     });
 
     it('allows all groups when no groupsConfig provided', () => {
-      // No config = no allowlist filtering (mention gating still applies by default)
+      // No config = no allowlist filtering (open mode)
       const result = applyTelegramGroupGating(createParams({
         text: '@mybot hello',
         groupsConfig: undefined,
@@ -50,22 +50,44 @@ describe('applyTelegramGroupGating', () => {
     });
   });
 
-  describe('requireMention', () => {
-    it('defaults to requiring mention when not specified', () => {
+  describe('mode resolution', () => {
+    it('defaults to mention-only when group entry has no mode', () => {
       const result = applyTelegramGroupGating(createParams({
         text: 'hello everyone',
         groupsConfig: { '*': {} }, // No requireMention specified
       }));
       expect(result.shouldProcess).toBe(false);
+      expect(result.mode).toBe('mention-only');
       expect(result.reason).toBe('mention-required');
     });
 
-    it('allows all messages when requireMention is false', () => {
+    it('maps legacy requireMention=false to open mode', () => {
       const result = applyTelegramGroupGating(createParams({
         text: 'hello everyone',
         groupsConfig: { '*': { requireMention: false } },
       }));
       expect(result.shouldProcess).toBe(true);
+      expect(result.mode).toBe('open');
+      expect(result.wasMentioned).toBe(false);
+    });
+
+    it('maps legacy requireMention=true to mention-only mode', () => {
+      const result = applyTelegramGroupGating(createParams({
+        text: 'hello',
+        groupsConfig: { '*': { requireMention: true } },
+      }));
+      expect(result.shouldProcess).toBe(false);
+      expect(result.mode).toBe('mention-only');
+      expect(result.reason).toBe('mention-required');
+    });
+
+    it('supports listen mode (processes non-mention messages)', () => {
+      const result = applyTelegramGroupGating(createParams({
+        text: 'hello',
+        groupsConfig: { '*': { mode: 'listen' } },
+      }));
+      expect(result.shouldProcess).toBe(true);
+      expect(result.mode).toBe('listen');
       expect(result.wasMentioned).toBe(false);
     });
 
@@ -73,8 +95,8 @@ describe('applyTelegramGroupGating', () => {
       const result = applyTelegramGroupGating(createParams({
         text: 'hello',
         groupsConfig: {
-          '*': { requireMention: true },
-          '-1001234567890': { requireMention: false },
+          '*': { mode: 'mention-only' },
+          '-1001234567890': { mode: 'open' },
         },
       }));
       expect(result.shouldProcess).toBe(true);
@@ -85,8 +107,8 @@ describe('applyTelegramGroupGating', () => {
         text: 'hello',
         chatId: '-100999999',
         groupsConfig: {
-          '*': { requireMention: true },
-          '-1001234567890': { requireMention: false },
+          '*': { mode: 'mention-only' },
+          '-1001234567890': { mode: 'open' },
         },
       }));
       expect(result.shouldProcess).toBe(false);
@@ -174,7 +196,7 @@ describe('applyTelegramGroupGating', () => {
   });
 
   describe('no groupsConfig (open mode)', () => {
-    it('processes messages with mention when no config (default requireMention=true)', () => {
+    it('processes messages with mention when no config', () => {
       const result = applyTelegramGroupGating(createParams({
         text: '@mybot hello',
       }));
@@ -182,12 +204,12 @@ describe('applyTelegramGroupGating', () => {
       expect(result.wasMentioned).toBe(true);
     });
 
-    it('rejects messages without mention when no config (default requireMention=true)', () => {
+    it('processes messages without mention when no config', () => {
       const result = applyTelegramGroupGating(createParams({
         text: 'hello everyone',
       }));
-      expect(result.shouldProcess).toBe(false);
-      expect(result.reason).toBe('mention-required');
+      expect(result.shouldProcess).toBe(true);
+      expect(result.mode).toBe('open');
     });
   });
 });

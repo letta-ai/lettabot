@@ -348,10 +348,12 @@ export async function syncProviders(config: Partial<LettaBotConfig> & Pick<Letta
 }
 
 /**
- * Fix group ID arrays that may contain large numeric IDs parsed by YAML.
+ * Fix group identifiers that may contain large numeric IDs parsed by YAML.
  * Discord snowflake IDs exceed Number.MAX_SAFE_INTEGER, so YAML parses them
- * as lossy JavaScript numbers. We re-read from the document AST to get the
- * original string representation.
+ * as lossy JavaScript numbers. We re-read from the document AST to preserve
+ * the original source text for:
+ * - instantGroups/listeningGroups arrays
+ * - groups map keys (new group mode config)
  */
 function fixLargeGroupIds(yamlContent: string, parsed: Partial<LettaBotConfig>): void {
   if (!parsed.channels) return;
@@ -383,6 +385,53 @@ function fixLargeGroupIds(yamlContent: string, parsed: Partial<LettaBotConfig>):
           }
         }
       }
+
+      // Also fix groups map keys (e.g. discord snowflake IDs)
+      const groupsNode = doc.getIn(['channels', ch, 'groups'], true);
+      if (YAML.isMap(groupsNode)) {
+        const fixedGroups: Record<string, unknown> = {};
+        for (const pair of groupsNode.items) {
+          const keyNode = (pair as { key?: unknown }).key;
+          const valueNode = (pair as { value?: unknown }).value;
+
+          let groupKey: string;
+          if (YAML.isScalar(keyNode)) {
+            if (typeof keyNode.value === 'number' && keyNode.source) {
+              groupKey = keyNode.source;
+            } else {
+              groupKey = String(keyNode.value);
+            }
+          } else {
+            groupKey = String(keyNode);
+          }
+
+          if (YAML.isMap(valueNode)) {
+            const groupConfig: Record<string, unknown> = {};
+            for (const settingPair of valueNode.items) {
+              const settingKeyNode = (settingPair as { key?: unknown }).key;
+              const settingValueNode = (settingPair as { value?: unknown }).value;
+              const settingKey = YAML.isScalar(settingKeyNode)
+                ? String(settingKeyNode.value)
+                : String(settingKeyNode);
+              if (YAML.isScalar(settingValueNode)) {
+                groupConfig[settingKey] = settingValueNode.value;
+              } else {
+                groupConfig[settingKey] = settingValueNode as unknown;
+              }
+            }
+            fixedGroups[groupKey] = groupConfig;
+          } else if (YAML.isScalar(valueNode)) {
+            fixedGroups[groupKey] = valueNode.value;
+          } else {
+            fixedGroups[groupKey] = valueNode as unknown;
+          }
+        }
+        const cfg = parsed.channels[ch];
+        if (cfg) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (cfg as any).groups = fixedGroups;
+        }
+      }
     }
   } catch {
     // Fallback: just ensure entries are strings (won't fix precision, but safe)
@@ -393,6 +442,13 @@ function fixLargeGroupIds(yamlContent: string, parsed: Partial<LettaBotConfig>):
         if (cfg && Array.isArray(cfg[field])) {
           cfg[field] = cfg[field].map((v: unknown) => String(v));
         }
+      }
+      if (cfg && cfg.groups && typeof cfg.groups === 'object') {
+        const fixedGroups: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(cfg.groups as Record<string, unknown>)) {
+          fixedGroups[String(key)] = value;
+        }
+        cfg.groups = fixedGroups;
       }
     }
   }

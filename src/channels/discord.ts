@@ -11,6 +11,7 @@ import type { DmPolicy } from '../pairing/types.js';
 import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { HELP_TEXT } from '../core/commands.js';
+import { isGroupAllowed, resolveGroupMode, type GroupModeConfig } from './group-mode.js';
 
 // Dynamic import to avoid requiring Discord deps if not used
 let Client: typeof import('discord.js').Client;
@@ -23,7 +24,7 @@ export interface DiscordConfig {
   allowedUsers?: string[];  // Discord user IDs
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
-  groups?: Record<string, { requireMention?: boolean }>;  // Per-guild/channel settings
+  groups?: Record<string, GroupModeConfig>;  // Per-guild/channel settings
 }
 
 export class DiscordAdapter implements ChannelAdapter {
@@ -242,32 +243,24 @@ Ask the bot owner to approve with:
         const groupName = isGroup && 'name' in message.channel ? message.channel.name : undefined;
         const displayName = message.member?.displayName || message.author.globalName || message.author.username;
         const wasMentioned = isGroup && !!this.client?.user && message.mentions.has(this.client.user);
+        let isListeningMode = false;
 
-        // Group gating: config-based allowlist + mention requirement
+        // Group gating: config-based allowlist + mode
         if (isGroup && this.config.groups) {
-          const groups = this.config.groups;
           const chatId = message.channel.id;
           const serverId = message.guildId;
-          const allowlistEnabled = Object.keys(groups).length > 0;
-
-          if (allowlistEnabled) {
-            const hasWildcard = Object.hasOwn(groups, '*');
-            const hasSpecific = Object.hasOwn(groups, chatId)
-              || (serverId && Object.hasOwn(groups, serverId));
-            if (!hasWildcard && !hasSpecific) {
-              console.log(`[Discord] Group ${chatId} not in allowlist, ignoring`);
-              return;
-            }
+          const keys = [chatId];
+          if (serverId) keys.push(serverId);
+          if (!isGroupAllowed(this.config.groups, keys)) {
+            console.log(`[Discord] Group ${chatId} not in allowlist, ignoring`);
+            return;
           }
 
-          const groupConfig = groups[chatId]
-            ?? (serverId ? groups[serverId] : undefined)
-            ?? groups['*'];
-          const requireMention = groupConfig?.requireMention ?? true;
-
-          if (requireMention && !wasMentioned) {
+          const mode = resolveGroupMode(this.config.groups, keys, 'open');
+          if (mode === 'mention-only' && !wasMentioned) {
             return; // Mention required but not mentioned -- silent drop
           }
+          isListeningMode = mode === 'listen' && !wasMentioned;
         }
 
         await this.onMessage({
@@ -283,6 +276,7 @@ Ask the bot owner to approve with:
           groupName,
           serverId: message.guildId || undefined,
           wasMentioned,
+          isListeningMode,
           attachments,
         });
       }
