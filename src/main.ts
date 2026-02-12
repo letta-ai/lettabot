@@ -569,6 +569,9 @@ async function main() {
       services.groupBatchers.push(batcher);
     }
 
+    // Pre-warm the SDK session subprocess so the first message doesn't pay startup cost
+    bot.warmSession().catch(() => {});
+
     // Per-agent cron
     if (agentConfig.features?.cron ?? globalConfig.cronEnabled) {
       const cronService = new CronService(bot);
