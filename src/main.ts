@@ -15,23 +15,18 @@ import { loadOrGenerateApiKey } from './api/auth.js';
 
 // Load YAML config and apply to process.env (overrides .env values)
 import {
-  loadConfig,
+  loadAppConfigOrExit,
   applyConfigToEnv,
   syncProviders,
   resolveConfigPath,
-  didLoadFail,
   isDockerServerMode,
   serverModeLabel,
 } from './config/index.js';
 import { isLettaApiUrl } from './utils/server.js';
 import { getDataDir, getWorkingDir, hasRailwayVolume } from './utils/paths.js';
-const yamlConfig = loadConfig();
-if (didLoadFail()) {
-  console.warn(`[Config] Fix the errors above in ${resolveConfigPath()} and restart.`);
-} else {
-  const configSource = existsSync(resolveConfigPath()) ? resolveConfigPath() : 'defaults + environment variables';
-  console.log(`[Config] Loaded from ${configSource}`);
-}
+const yamlConfig = loadAppConfigOrExit();
+const configSource = existsSync(resolveConfigPath()) ? resolveConfigPath() : 'defaults + environment variables';
+console.log(`[Config] Loaded from ${configSource}`);
 if (yamlConfig.agents?.length) {
   console.log(`[Config] Mode: ${serverModeLabel(yamlConfig.server.mode)}, Agents: ${yamlConfig.agents.map(a => a.name).join(', ')}`);
 } else {

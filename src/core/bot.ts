@@ -844,11 +844,12 @@ export class LettaBot implements AgentSession {
             console.log(`[Bot] Stream message counts:`, msgTypeCounts);
             if (streamMsg.error) {
               const detail = resultText.trim();
-              if (detail) {
-                console.error(`[Bot] Result error: ${streamMsg.error} (${detail.slice(0, 200)})`);
-              } else {
-                console.error(`[Bot] Result error: ${streamMsg.error}`);
-              }
+              const parts = [`error=${streamMsg.error}`];
+              if (streamMsg.stopReason) parts.push(`stopReason=${streamMsg.stopReason}`);
+              if (streamMsg.durationMs !== undefined) parts.push(`duration=${streamMsg.durationMs}ms`);
+              if (streamMsg.conversationId) parts.push(`conv=${streamMsg.conversationId}`);
+              if (detail) parts.push(`detail=${detail.slice(0, 300)}`);
+              console.error(`[Bot] Result error: ${parts.join(', ')}`);
             }
 
             // Retry once when stream ends without any assistant text.
@@ -862,10 +863,10 @@ export class LettaBot implements AgentSession {
             const shouldRetryForErrorResult = isTerminalError && nothingDelivered;
             if (shouldRetryForEmptyResult || shouldRetryForErrorResult) {
               if (shouldRetryForEmptyResult) {
-                console.error('[Bot] Warning: Agent returned empty result with no response.');
+                console.error(`[Bot] Warning: Agent returned empty result with no response. stopReason=${streamMsg.stopReason || 'N/A'}, conv=${streamMsg.conversationId || 'N/A'}`);
               }
               if (shouldRetryForErrorResult) {
-                console.error('[Bot] Warning: Agent returned terminal error result with no response.');
+                console.error(`[Bot] Warning: Agent returned terminal error (error=${streamMsg.error}, stopReason=${streamMsg.stopReason || 'N/A'}) with no response.`);
               }
 
               if (!retried && this.store.agentId && this.store.conversationId) {
@@ -895,7 +896,8 @@ export class LettaBot implements AgentSession {
 
             if (isTerminalError && !hasResponse && !sentAnyMessage) {
               const err = streamMsg.error || 'unknown error';
-              response = `(Agent run failed: ${err}. Try sending your message again.)`;
+              const reason = streamMsg.stopReason ? ` [${streamMsg.stopReason}]` : '';
+              response = `(Agent run failed: ${err}${reason}. Try sending your message again.)`;
             }
             
             break;

@@ -9,12 +9,12 @@
  */
 
 // Config loaded from lettabot.yaml
-import { loadConfig, applyConfigToEnv, serverModeLabel } from './config/index.js';
-const config = loadConfig();
+import { loadAppConfigOrExit, applyConfigToEnv, serverModeLabel } from './config/index.js';
+const config = loadAppConfigOrExit();
 applyConfigToEnv(config);
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { getDataDir, getWorkingDir } from './utils/paths.js';
+import { getCronStorePath, getDataDir, getLegacyCronStorePath, getWorkingDir } from './utils/paths.js';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import updateNotifier from 'update-notifier';
@@ -327,7 +327,8 @@ async function main() {
       const workingDir = getWorkingDir();
       const agentJsonPath = join(dataDir, 'lettabot-agent.json');
       const skillsDir = join(workingDir, '.skills');
-      const cronJobsPath = join(dataDir, 'cron-jobs.json');
+      const cronJobsPath = getCronStorePath();
+      const legacyCronJobsPath = getLegacyCronStorePath();
       
       p.intro('🗑️  Destroy LettaBot Data');
       
@@ -335,6 +336,9 @@ async function main() {
       p.log.message(`  • Agent store: ${agentJsonPath}`);
       p.log.message(`  • Skills: ${skillsDir}`);
       p.log.message(`  • Cron jobs: ${cronJobsPath}`);
+      if (legacyCronJobsPath !== cronJobsPath) {
+        p.log.message(`  • Legacy cron jobs: ${legacyCronJobsPath}`);
+      }
       p.log.message('');
       p.log.message('Note: The agent on Letta servers will NOT be deleted.');
       
@@ -366,6 +370,12 @@ async function main() {
       if (existsSync(cronJobsPath)) {
         rmSync(cronJobsPath);
         p.log.success('Deleted cron-jobs.json');
+        deleted++;
+      }
+
+      if (legacyCronJobsPath !== cronJobsPath && existsSync(legacyCronJobsPath)) {
+        rmSync(legacyCronJobsPath);
+        p.log.success('Deleted legacy cron-jobs.json');
         deleted++;
       }
       

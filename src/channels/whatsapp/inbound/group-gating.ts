@@ -7,7 +7,7 @@
 
 import { detectMention } from './mentions.js';
 import type { WebInboundMessage } from './types.js';
-import { isGroupAllowed, resolveGroupMode, type GroupMode, type GroupModeConfig } from '../../group-mode.js';
+import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, type GroupMode, type GroupModeConfig } from '../../group-mode.js';
 
 export interface GroupGatingParams {
   /** Extracted message */
@@ -24,6 +24,9 @@ export interface GroupGatingParams {
 
   /** Bot's E.164 number */
   selfE164: string | null;
+
+  /** Sender identifier (JID or E.164) for per-group allowedUsers check */
+  senderId?: string;
 
   /** Per-group configuration */
   groupsConfig?: Record<string, GroupModeConfig>;
@@ -74,7 +77,7 @@ export interface GroupGatingResult {
  * }
  */
 export function applyGroupGating(params: GroupGatingParams): GroupGatingResult {
-  const { msg, groupJid, selfJid, selfLid, selfE164, groupsConfig, mentionPatterns } = params;
+  const { msg, groupJid, senderId, selfJid, selfLid, selfE164, groupsConfig, mentionPatterns } = params;
 
   // Step 1: Check group allowlist (if groups config exists)
   if (!isGroupAllowed(groupsConfig, [groupJid])) {
@@ -85,8 +88,25 @@ export function applyGroupGating(params: GroupGatingParams): GroupGatingResult {
     };
   }
 
+  // Step 1b: Per-group user allowlist
+  if (senderId && !isGroupUserAllowed(groupsConfig, [groupJid], senderId)) {
+    return {
+      shouldProcess: false,
+      mode: 'open',
+      reason: 'user-not-allowed',
+    };
+  }
+
   // Step 2: Resolve mode (default: open)
   const mode = resolveGroupMode(groupsConfig, [groupJid], 'open');
+
+  if (mode === 'disabled') {
+    return {
+      shouldProcess: false,
+      mode,
+      reason: 'groups-disabled',
+    };
+  }
 
   // Step 3: Detect mentions
   const mentionResult = detectMention({

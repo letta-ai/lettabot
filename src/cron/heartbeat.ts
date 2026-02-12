@@ -12,11 +12,11 @@ import { resolve, dirname } from 'node:path';
 import type { AgentSession } from '../core/interfaces.js';
 import type { TriggerContext } from '../core/types.js';
 import { buildHeartbeatPrompt, buildCustomHeartbeatPrompt } from '../core/prompts.js';
-import { getDataDir } from '../utils/paths.js';
+import { getCronLogPath } from '../utils/paths.js';
 
 
 // Log file
-const LOG_PATH = resolve(getDataDir(), 'cron-log.jsonl');
+const LOG_PATH = getCronLogPath();
 
 function logEvent(event: string, data: Record<string, unknown>): void {
   const entry = {

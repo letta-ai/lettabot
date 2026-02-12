@@ -53,6 +53,51 @@ export function resolveConfigPath(): string {
 let _lastLoadFailed = false;
 export function didLoadFail(): boolean { return _lastLoadFailed; }
 
+function hasObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseAndNormalizeConfig(content: string): LettaBotConfig {
+  const parsed = YAML.parse(content) as Partial<LettaBotConfig>;
+
+  // Fix instantGroups: YAML parses large numeric IDs (e.g. Discord snowflakes)
+  // as JavaScript numbers, losing precision for values > Number.MAX_SAFE_INTEGER.
+  // Re-extract from document AST to preserve the original string representation.
+  fixLargeGroupIds(content, parsed);
+
+  // Reject ambiguous API server configuration. During migration from top-level
+  // `api` to `server.api`, having both can silently drop fields.
+  if (hasObject(parsed.api) && hasObject(parsed.server) && hasObject(parsed.server.api)) {
+    throw new Error(
+      'Conflicting API config: both top-level `api` and `server.api` are set. Remove top-level `api` and keep only `server.api`.'
+    );
+  }
+
+  // Merge with defaults and canonicalize server mode.
+  const merged = {
+    ...DEFAULT_CONFIG,
+    ...parsed,
+    server: { ...DEFAULT_CONFIG.server, ...parsed.server },
+    agent: { ...DEFAULT_CONFIG.agent, ...parsed.agent },
+    channels: { ...DEFAULT_CONFIG.channels, ...parsed.channels },
+  };
+
+  const config = {
+    ...merged,
+    server: {
+      ...merged.server,
+      mode: canonicalizeServerMode(merged.server.mode),
+    },
+  };
+
+  // Deprecation warning: top-level api should be moved under server
+  if (config.api && !config.server.api) {
+    console.warn('[Config] WARNING: Top-level `api:` is deprecated. Move it under `server:`.');
+  }
+
+  return config;
+}
+
 /**
  * Load config from YAML file
  */
@@ -66,41 +111,33 @@ export function loadConfig(): LettaBotConfig {
   
   try {
     const content = readFileSync(configPath, 'utf-8');
-    const parsed = YAML.parse(content) as Partial<LettaBotConfig>;
-
-    // Fix instantGroups: YAML parses large numeric IDs (e.g. Discord snowflakes)
-    // as JavaScript numbers, losing precision for values > Number.MAX_SAFE_INTEGER.
-    // Re-extract from document AST to preserve the original string representation.
-    fixLargeGroupIds(content, parsed);
-
-    // Merge with defaults and canonicalize server mode.
-    const merged = {
-      ...DEFAULT_CONFIG,
-      ...parsed,
-      server: { ...DEFAULT_CONFIG.server, ...parsed.server },
-      agent: { ...DEFAULT_CONFIG.agent, ...parsed.agent },
-      channels: { ...DEFAULT_CONFIG.channels, ...parsed.channels },
-    };
-
-    const config = {
-      ...merged,
-      server: {
-        ...merged.server,
-        mode: canonicalizeServerMode(merged.server.mode),
-      },
-    };
-
-    // Deprecation warning: top-level api should be moved under server
-    if (config.api && !config.server.api) {
-      console.warn('[Config] WARNING: Top-level `api:` is deprecated. Move it under `server:`.');
-    }
-
-    return config;
+    return parseAndNormalizeConfig(content);
   } catch (err) {
     _lastLoadFailed = true;
-    console.error(`[Config] Failed to parse ${configPath}:`, err);
-    console.warn('[Config] Using default configuration. Check your YAML syntax.');
+    console.error(`[Config] Failed to load ${configPath}:`, err);
+    console.warn('[Config] Using default configuration. Check your YAML syntax and field locations.');
     return { ...DEFAULT_CONFIG };
+  }
+}
+
+/**
+ * Strict config loader. Throws on invalid YAML/schema instead of silently
+ * falling back to defaults.
+ */
+export function loadConfigStrict(): LettaBotConfig {
+  _lastLoadFailed = false;
+  const configPath = resolveConfigPath();
+
+  if (!existsSync(configPath)) {
+    return { ...DEFAULT_CONFIG };
+  }
+
+  try {
+    const content = readFileSync(configPath, 'utf-8');
+    return parseAndNormalizeConfig(content);
+  } catch (err) {
+    _lastLoadFailed = true;
+    throw err;
   }
 }
 

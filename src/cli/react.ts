@@ -10,8 +10,8 @@
  */
 
 // Config loaded from lettabot.yaml
-import { loadConfig, applyConfigToEnv } from '../config/index.js';
-const config = loadConfig();
+import { loadAppConfigOrExit, applyConfigToEnv } from '../config/index.js';
+const config = loadAppConfigOrExit();
 applyConfigToEnv(config);
 import { loadLastTarget } from './shared.js';
 

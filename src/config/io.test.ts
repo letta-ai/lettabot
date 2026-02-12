@@ -3,7 +3,7 @@ import { mkdtempSync, existsSync, readFileSync, writeFileSync, rmSync } from 'no
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import YAML from 'yaml';
-import { saveConfig, loadConfig, configToEnv, didLoadFail } from './io.js';
+import { saveConfig, loadConfig, loadConfigStrict, configToEnv, didLoadFail } from './io.js';
 import { normalizeAgents, DEFAULT_CONFIG } from './types.js';
 import type { LettaBotConfig } from './types.js';
 
@@ -369,6 +369,48 @@ describe('loadConfig deprecation warning for top-level api', () => {
       expect(config.api).toBeUndefined();
 
       warnSpy.mockRestore();
+    } finally {
+      process.env.LETTABOT_CONFIG = originalEnv;
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('loadConfigStrict', () => {
+  it('should throw on parse error and set didLoadFail', () => {
+    const originalEnv = process.env.LETTABOT_CONFIG;
+    const tmpDir = mkdtempSync(join(tmpdir(), 'lettabot-strict-test-'));
+    const configPath = join(tmpDir, 'lettabot.yaml');
+
+    try {
+      writeFileSync(configPath, 'server:\n  api: port: 6702\n', 'utf-8');
+      process.env.LETTABOT_CONFIG = configPath;
+
+      expect(() => loadConfigStrict()).toThrow();
+      expect(didLoadFail()).toBe(true);
+    } finally {
+      process.env.LETTABOT_CONFIG = originalEnv;
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('should throw when both top-level api and server.api are present', () => {
+    const originalEnv = process.env.LETTABOT_CONFIG;
+    const tmpDir = mkdtempSync(join(tmpdir(), 'lettabot-strict-test-'));
+    const configPath = join(tmpDir, 'lettabot.yaml');
+
+    try {
+      writeFileSync(
+        configPath,
+        'server:\n  mode: api\n  api:\n    host: 0.0.0.0\napi:\n  port: 9090\n',
+        'utf-8'
+      );
+      process.env.LETTABOT_CONFIG = configPath;
+
+      expect(() => loadConfigStrict()).toThrow(
+        /both top-level `api` and `server\.api` are set/
+      );
+      expect(didLoadFail()).toBe(true);
     } finally {
       process.env.LETTABOT_CONFIG = originalEnv;
       rmSync(tmpDir, { recursive: true, force: true });

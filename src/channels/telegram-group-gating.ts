@@ -11,7 +11,7 @@
  * actively participate in?"
  */
 
-import { isGroupAllowed, resolveGroupMode, type GroupMode, type GroupModeConfig } from './group-mode.js';
+import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, type GroupMode, type GroupModeConfig } from './group-mode.js';
 
 export interface TelegramGroupGatingParams {
   /** Message text */
@@ -25,6 +25,9 @@ export interface TelegramGroupGatingParams {
 
   /** Telegram message entities (for structured mention detection) */
   entities?: { type: string; offset: number; length: number }[];
+
+  /** Sender's user ID (for per-group allowedUsers check) */
+  senderId?: string;
 
   /** Per-group configuration */
   groupsConfig?: Record<string, GroupModeConfig>;
@@ -70,7 +73,7 @@ export interface TelegramGroupGatingResult {
  * if (!result.shouldProcess) return;
  */
 export function applyTelegramGroupGating(params: TelegramGroupGatingParams): TelegramGroupGatingResult {
-  const { text, chatId, botUsername, entities, groupsConfig, mentionPatterns } = params;
+  const { text, chatId, senderId, botUsername, entities, groupsConfig, mentionPatterns } = params;
 
   // Step 1: Group allowlist
   if (!isGroupAllowed(groupsConfig, [chatId])) {
@@ -81,8 +84,25 @@ export function applyTelegramGroupGating(params: TelegramGroupGatingParams): Tel
     };
   }
 
+  // Step 1b: Per-group user allowlist
+  if (senderId && !isGroupUserAllowed(groupsConfig, [chatId], senderId)) {
+    return {
+      shouldProcess: false,
+      mode: 'open',
+      reason: 'user-not-allowed',
+    };
+  }
+
   // Step 2: Resolve mode (default: open)
   const mode = resolveGroupMode(groupsConfig, [chatId], 'open');
+
+  if (mode === 'disabled') {
+    return {
+      shouldProcess: false,
+      mode,
+      reason: 'groups-disabled',
+    };
+  }
 
   // Step 3: Detect mentions
   const mention = detectTelegramMention({ text, botUsername, entities, mentionPatterns });

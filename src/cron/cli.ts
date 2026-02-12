@@ -13,9 +13,9 @@
 
  */
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { getDataDir } from '../utils/paths.js';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { getCronLogPath, getCronStorePath, getLegacyCronStorePath } from '../utils/paths.js';
 
 // Parse ISO datetime string
 function parseISODateTime(input: string): Date {
@@ -56,8 +56,23 @@ interface CronStore {
 }
 
 // Store path
-const STORE_PATH = resolve(getDataDir(), 'cron-jobs.json');
-const LOG_PATH = resolve(getDataDir(), 'cron-log.jsonl');
+const STORE_PATH = getCronStorePath();
+const LOG_PATH = getCronLogPath();
+
+function migrateLegacyStoreIfNeeded(): void {
+  if (existsSync(STORE_PATH)) return;
+
+  const legacyPath = getLegacyCronStorePath();
+  if (legacyPath === STORE_PATH || !existsSync(legacyPath)) return;
+
+  try {
+    mkdirSync(dirname(STORE_PATH), { recursive: true });
+    copyFileSync(legacyPath, STORE_PATH);
+    console.error(`[Cron] store_migrated: ${JSON.stringify({ from: legacyPath, to: STORE_PATH })}`);
+  } catch (e) {
+    console.error('[Cron] Failed to migrate legacy cron store:', e);
+  }
+}
 
 function log(event: string, data: Record<string, unknown>): void {
   const entry = {
@@ -78,6 +93,7 @@ function log(event: string, data: Record<string, unknown>): void {
 }
 
 function loadStore(): CronStore {
+  migrateLegacyStoreIfNeeded();
   try {
     if (existsSync(STORE_PATH)) {
       return JSON.parse(readFileSync(STORE_PATH, 'utf-8'));

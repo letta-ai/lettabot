@@ -81,6 +81,17 @@ describe('applyTelegramGroupGating', () => {
       expect(result.reason).toBe('mention-required');
     });
 
+    it('blocks all messages in disabled mode', () => {
+      const result = applyTelegramGroupGating(createParams({
+        text: '@mybot hello',
+        entities: [{ type: 'mention', offset: 0, length: 6 }],
+        groupsConfig: { '*': { mode: 'disabled' } },
+      }));
+      expect(result.shouldProcess).toBe(false);
+      expect(result.mode).toBe('disabled');
+      expect(result.reason).toBe('groups-disabled');
+    });
+
     it('supports listen mode (processes non-mention messages)', () => {
       const result = applyTelegramGroupGating(createParams({
         text: 'hello',
@@ -192,6 +203,62 @@ describe('applyTelegramGroupGating', () => {
       }));
       expect(result.shouldProcess).toBe(false);
       expect(result.reason).toBe('mention-required');
+    });
+  });
+
+  describe('per-group allowedUsers', () => {
+    it('allows user in the allowedUsers list', () => {
+      const result = applyTelegramGroupGating(createParams({
+        senderId: 'user-123',
+        text: '@mybot hello',
+        groupsConfig: {
+          '*': { mode: 'mention-only', allowedUsers: ['user-123', 'user-456'] },
+        },
+      }));
+      expect(result.shouldProcess).toBe(true);
+    });
+
+    it('blocks user not in the allowedUsers list', () => {
+      const result = applyTelegramGroupGating(createParams({
+        senderId: 'user-999',
+        text: '@mybot hello',
+        groupsConfig: {
+          '*': { mode: 'open', allowedUsers: ['user-123'] },
+        },
+      }));
+      expect(result.shouldProcess).toBe(false);
+      expect(result.reason).toBe('user-not-allowed');
+    });
+
+    it('allows all users when no allowedUsers configured', () => {
+      const result = applyTelegramGroupGating(createParams({
+        senderId: 'anyone',
+        text: 'hello',
+        groupsConfig: { '*': { mode: 'open' } },
+      }));
+      expect(result.shouldProcess).toBe(true);
+    });
+
+    it('uses specific group allowedUsers over wildcard', () => {
+      const result = applyTelegramGroupGating(createParams({
+        senderId: 'vip',
+        text: 'hello',
+        groupsConfig: {
+          '*': { mode: 'open', allowedUsers: ['owner'] },
+          '-1001234567890': { mode: 'open', allowedUsers: ['vip'] },
+        },
+      }));
+      expect(result.shouldProcess).toBe(true);
+    });
+
+    it('skips user check when senderId is undefined', () => {
+      const result = applyTelegramGroupGating(createParams({
+        senderId: undefined,
+        text: 'hello',
+        groupsConfig: { '*': { mode: 'open', allowedUsers: ['user-123'] } },
+      }));
+      // No senderId = skip user check (can't verify)
+      expect(result.shouldProcess).toBe(true);
     });
   });
 

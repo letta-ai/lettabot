@@ -5,15 +5,15 @@
  * Supports heartbeat check-ins and agent-managed cron jobs.
  */
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, watch, type FSWatcher } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import type { AgentSession } from '../core/interfaces.js';
 import type { CronJob, CronJobCreate, CronSchedule, CronConfig, HeartbeatConfig } from './types.js';
 import { DEFAULT_HEARTBEAT_MESSAGES } from './types.js';
-import { getDataDir } from '../utils/paths.js';
+import { getCronDataDir, getCronLogPath, getCronStorePath, getLegacyCronStorePath } from '../utils/paths.js';
 
 // Log file for cron events
-const LOG_PATH = resolve(getDataDir(), 'cron-log.jsonl');
+const LOG_PATH = getCronLogPath();
 
 function logEvent(event: string, data: Record<string, unknown>): void {
   const entry = {
@@ -61,9 +61,27 @@ export class CronService {
     this.bot = bot;
     this.config = config || {};
     this.storePath = config?.storePath 
-      ? resolve(getDataDir(), config.storePath)
-      : resolve(getDataDir(), 'cron-jobs.json');
+      ? resolve(getCronDataDir(), config.storePath)
+      : getCronStorePath();
+    this.migrateLegacyStoreIfNeeded();
     this.loadJobs();
+  }
+
+  private migrateLegacyStoreIfNeeded(): void {
+    // Explicit storePath overrides are already deterministic and should not auto-migrate.
+    if (this.config.storePath) return;
+    if (existsSync(this.storePath)) return;
+
+    const legacyPath = getLegacyCronStorePath();
+    if (legacyPath === this.storePath || !existsSync(legacyPath)) return;
+
+    try {
+      mkdirSync(dirname(this.storePath), { recursive: true });
+      copyFileSync(legacyPath, this.storePath);
+      logEvent('store_migrated', { from: legacyPath, to: this.storePath });
+    } catch (e) {
+      console.error('[Cron] Failed to migrate legacy store:', e);
+    }
   }
   
   private loadJobs(): void {

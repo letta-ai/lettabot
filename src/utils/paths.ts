@@ -55,6 +55,56 @@ export function getWorkingDir(): string {
 }
 
 /**
+ * Get the canonical directory for cron state (cron-jobs.json / cron-log.jsonl).
+ *
+ * This is intentionally deterministic across server and CLI contexts, and does
+ * not depend on process.cwd().
+ *
+ * Priority:
+ * 1. RAILWAY_VOLUME_MOUNT_PATH (Railway persistent volume)
+ * 2. DATA_DIR (explicit persistent data override)
+ * 3. WORKING_DIR (runtime workspace)
+ * 4. /tmp/lettabot (deterministic local fallback)
+ */
+export function getCronDataDir(): string {
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+    return process.env.RAILWAY_VOLUME_MOUNT_PATH;
+  }
+
+  if (process.env.DATA_DIR) {
+    return process.env.DATA_DIR;
+  }
+
+  if (process.env.WORKING_DIR) {
+    return process.env.WORKING_DIR;
+  }
+
+  return '/tmp/lettabot';
+}
+
+/**
+ * Canonical cron store path.
+ */
+export function getCronStorePath(): string {
+  return resolve(getCronDataDir(), 'cron-jobs.json');
+}
+
+/**
+ * Canonical cron log path.
+ */
+export function getCronLogPath(): string {
+  return resolve(getCronDataDir(), 'cron-log.jsonl');
+}
+
+/**
+ * Legacy cron store path (used before deterministic cron path resolution).
+ * Kept for migration of existing local files.
+ */
+export function getLegacyCronStorePath(): string {
+  return resolve(getDataDir(), 'cron-jobs.json');
+}
+
+/**
  * Check if running on Railway
  */
 export function isRailway(): boolean {

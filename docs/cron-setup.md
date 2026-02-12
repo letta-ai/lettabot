@@ -162,6 +162,19 @@ Shows:
 - `cron-jobs.json` - Job configurations
 - `cron-log.jsonl` - Execution logs
 
+### Cron Storage Path
+
+Cron state is resolved with deterministic precedence:
+
+1. `RAILWAY_VOLUME_MOUNT_PATH`
+2. `DATA_DIR`
+3. `WORKING_DIR`
+4. `/tmp/lettabot`
+
+Migration note:
+- Older versions used `process.cwd()/cron-jobs.json` when `DATA_DIR` was not set.
+- On first run after upgrade, LettaBot auto-copies that legacy file into the new canonical cron path.
+
 ## Troubleshooting
 
 ### Cron jobs not running

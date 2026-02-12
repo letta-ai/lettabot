@@ -759,6 +759,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
         const gatingResult = applyGroupGating({
           msg: extracted,
           groupJid: remoteJid,
+          senderId: userId,
           selfJid: this.myJid,
           selfLid: this.myLid,
           selfE164: this.myNumber,

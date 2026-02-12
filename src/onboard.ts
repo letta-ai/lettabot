@@ -1258,8 +1258,8 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   const env: Record<string, string> = {};
   
   // Load existing config if available
-  const { loadConfig, resolveConfigPath } = await import('./config/index.js');
-  const existingConfig = loadConfig();
+  const { loadAppConfigOrExit, resolveConfigPath } = await import('./config/index.js');
+  const existingConfig = loadAppConfigOrExit();
   const configPath = resolveConfigPath();
   const hasExistingConfig = existsSync(configPath);
   

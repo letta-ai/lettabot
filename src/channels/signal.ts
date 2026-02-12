@@ -771,6 +771,7 @@ This code expires in 1 hour.`;
         const gatingResult = applySignalGroupGating({
           text: messageText || '',
           groupId: groupInfo.groupId,
+          senderId: source,
           mentions,
           quote,
           selfPhoneNumber: this.config.phoneNumber,

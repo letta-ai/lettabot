@@ -11,7 +11,7 @@ import type { DmPolicy } from '../pairing/types.js';
 import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { HELP_TEXT } from '../core/commands.js';
-import { isGroupAllowed, resolveGroupMode, type GroupModeConfig } from './group-mode.js';
+import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, type GroupModeConfig } from './group-mode.js';
 
 // Dynamic import to avoid requiring Discord deps if not used
 let Client: typeof import('discord.js').Client;
@@ -256,7 +256,14 @@ Ask the bot owner to approve with:
             return;
           }
 
+          if (!isGroupUserAllowed(this.config.groups, keys, userId)) {
+            return; // User not in group allowedUsers -- silent drop
+          }
+
           const mode = resolveGroupMode(this.config.groups, keys, 'open');
+          if (mode === 'disabled') {
+            return; // Groups disabled for this channel -- silent drop
+          }
           if (mode === 'mention-only' && !wasMentioned) {
             return; // Mention required but not mentioned -- silent drop
           }

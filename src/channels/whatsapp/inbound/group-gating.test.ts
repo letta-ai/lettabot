@@ -78,6 +78,60 @@ describe('applyGroupGating', () => {
     });
   });
 
+  describe('per-group allowedUsers', () => {
+    it('allows sender in the allowedUsers list', () => {
+      const result = applyGroupGating(createParams({
+        senderId: '+19876543210',
+        groupsConfig: {
+          '*': { mode: 'open', allowedUsers: ['+19876543210'] },
+        },
+      }));
+      expect(result.shouldProcess).toBe(true);
+    });
+
+    it('blocks sender not in the allowedUsers list', () => {
+      const result = applyGroupGating(createParams({
+        senderId: '+10000000000',
+        groupsConfig: {
+          '*': { mode: 'open', allowedUsers: ['+19876543210'] },
+        },
+      }));
+      expect(result.shouldProcess).toBe(false);
+      expect(result.reason).toBe('user-not-allowed');
+    });
+
+    it('allows all senders when no allowedUsers configured', () => {
+      const result = applyGroupGating(createParams({
+        senderId: '+10000000000',
+        groupsConfig: {
+          '*': { mode: 'open' },
+        },
+      }));
+      expect(result.shouldProcess).toBe(true);
+    });
+
+    it('uses specific group allowedUsers over wildcard', () => {
+      const result = applyGroupGating(createParams({
+        senderId: 'vip-user',
+        groupsConfig: {
+          '*': { mode: 'open', allowedUsers: ['owner'] },
+          '120363123456@g.us': { mode: 'open', allowedUsers: ['vip-user'] },
+        },
+      }));
+      expect(result.shouldProcess).toBe(true);
+    });
+
+    it('skips user check when senderId is undefined', () => {
+      const result = applyGroupGating(createParams({
+        senderId: undefined,
+        groupsConfig: {
+          '*': { mode: 'open', allowedUsers: ['someone'] },
+        },
+      }));
+      expect(result.shouldProcess).toBe(true);
+    });
+  });
+
   describe('mode resolution', () => {
     it('allows when mentioned and requireMention=true', () => {
       const result = applyGroupGating(createParams({
@@ -128,6 +182,19 @@ describe('applyGroupGating', () => {
       expect(result.shouldProcess).toBe(false);
       expect(result.mode).toBe('mention-only');
       expect(result.reason).toBe('mention-required');
+    });
+
+    it('blocks all messages in disabled mode', () => {
+      const result = applyGroupGating(createParams({
+        groupsConfig: { '*': { mode: 'disabled' } },
+        msg: createMessage({
+          body: '@bot hello',
+          mentionedJids: ['15551234567@s.whatsapp.net'],
+        }),
+      }));
+      expect(result.shouldProcess).toBe(false);
+      expect(result.mode).toBe('disabled');
+      expect(result.reason).toBe('groups-disabled');
     });
 
     it('supports listen mode', () => {
