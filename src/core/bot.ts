@@ -564,7 +564,7 @@ export class LettaBot implements AgentSession {
 
   registerChannel(adapter: ChannelAdapter): void {
     adapter.onMessage = (msg) => this.handleMessage(msg, adapter);
-    adapter.onCommand = (cmd) => this.handleCommand(cmd);
+    adapter.onCommand = (cmd) => this.handleCommand(cmd, adapter.id);
     this.channels.set(adapter.id, adapter);
     console.log(`Registered channel: ${adapter.name}`);
   }
@@ -607,7 +607,7 @@ export class LettaBot implements AgentSession {
   // Commands
   // =========================================================================
 
-  private async handleCommand(command: string): Promise<string | null> {
+  private async handleCommand(command: string, channelId?: string): Promise<string | null> {
     console.log(`[Command] Received: /${command}`);
     switch (command) {
       case 'status': {
@@ -631,10 +631,18 @@ export class LettaBot implements AgentSession {
         return '⏰ Heartbeat triggered (silent mode - check server logs)';
       }
       case 'reset': {
-        // Clear all conversations and sessions
-        this.store.clearConversation(); // Clears legacy conversationId + all per-key conversations
+        const convKey = channelId ? this.resolveConversationKey(channelId) : undefined;
+        if (convKey && convKey !== 'shared') {
+          // Per-channel mode: only clear the conversation for this channel
+          this.store.clearConversation(convKey);
+          this.invalidateSession(convKey);
+          console.log(`[Command] /reset - conversation cleared for ${convKey}`);
+          return `Conversation reset for this channel. Other channels are unaffected. (Agent memory is preserved.)`;
+        }
+        // Shared mode or no channel context: clear everything
+        this.store.clearConversation();
         this.store.resetRecoveryAttempts();
-        this.invalidateSession(); // Destroys all subprocess sessions
+        this.invalidateSession();
         console.log('[Command] /reset - all conversations cleared');
         return 'Conversation reset. Send a message to start a new conversation. (Agent memory is preserved.)';
       }
