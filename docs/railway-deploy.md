@@ -103,6 +103,27 @@ If you deploy manually from a fork instead of using the template, you'll need to
 
 LettaBot automatically detects `RAILWAY_VOLUME_MOUNT_PATH` and uses it for persistent data.
 
+## Remote Pairing Approval
+
+When using `pairing` DM policy on Railway, you can approve new users via the HTTP API instead of the CLI:
+
+```bash
+# List pending pairing requests for a channel
+curl -H "X-Api-Key: $LETTABOT_API_KEY" \
+  https://your-app.railway.app/api/v1/pairing/telegram
+
+# Approve a pairing code
+curl -X POST \
+  -H "X-Api-Key: $LETTABOT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"code": "ABCD1234"}' \
+  https://your-app.railway.app/api/v1/pairing/telegram/approve
+```
+
+`LETTABOT_API_KEY` is auto-generated on first boot and printed in logs. Set it as a Railway variable for stable access across deploys.
+
+Alternatively, use `allowlist` DM policy and pre-configure allowed users in environment variables to skip pairing entirely.
+
 ## Channel Limitations
 
 | Channel | Railway Support | Notes |

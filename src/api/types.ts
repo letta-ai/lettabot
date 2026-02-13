@@ -46,3 +46,29 @@ export interface ChatResponse {
   agentName?: string;
   error?: string;
 }
+
+/**
+ * GET /api/v1/pairing/:channel - List pending pairing requests
+ */
+export interface PairingListResponse {
+  requests: Array<{
+    id: string;
+    code: string;
+    createdAt: string;
+    lastSeenAt: string;
+    meta?: { username?: string; firstName?: string; lastName?: string };
+  }>;
+}
+
+/**
+ * POST /api/v1/pairing/:channel/approve - Approve a pairing code
+ */
+export interface PairingApproveRequest {
+  code: string;
+}
+
+export interface PairingApproveResponse {
+  success: boolean;
+  userId?: string;
+  error?: string;
+}
