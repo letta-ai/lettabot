@@ -666,7 +666,7 @@ async function main() {
 
   // Start API server - uses gateway for delivery
   const apiPort = parseInt(process.env.PORT || '8080', 10);
-  const apiHost = process.env.API_HOST; // undefined = 127.0.0.1 (secure default)
+  const apiHost = process.env.API_HOST || (isContainerDeploy ? '0.0.0.0' : undefined); // Container platforms need 0.0.0.0 for health checks
   const apiCorsOrigin = process.env.API_CORS_ORIGIN; // undefined = same-origin only
   const apiServer = createApiServer(gateway, {
     port: apiPort,
