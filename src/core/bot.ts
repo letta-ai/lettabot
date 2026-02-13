@@ -113,6 +113,10 @@ export interface StreamMsg {
   [key: string]: unknown;
 }
 
+export function isResponseDeliverySuppressed(msg: Pick<InboundMessage, 'isListeningMode'>): boolean {
+  return msg.isListeningMode === true;
+}
+
 export class LettaBot implements AgentSession {
   private store: Store;
   private config: BotConfig;
@@ -721,10 +725,11 @@ export class LettaBot implements AgentSession {
     const lap = (label: string) => {
       if (debugTiming) console.log(`[Timing] ${label}: ${(performance.now() - t0).toFixed(0)}ms`);
     };
+    const suppressDelivery = isResponseDeliverySuppressed(msg);
     this.lastUserMessageTime = new Date();
 
     // Skip heartbeat target update for listening mode (don't redirect heartbeats)
-    if (!msg.isListeningMode) {
+    if (!suppressDelivery) {
       this.store.lastMessageTarget = {
         channel: msg.channel,
         chatId: msg.chatId,
@@ -734,7 +739,7 @@ export class LettaBot implements AgentSession {
     }
 
     // Fire-and-forget typing indicator so session creation starts immediately
-    if (!msg.isListeningMode) {
+    if (!suppressDelivery) {
       adapter.sendTypingIndicator(msg.chatId).catch(() => {});
     }
     lap('typing indicator');
@@ -748,7 +753,7 @@ export class LettaBot implements AgentSession {
       : { recovered: false, shouldReset: false };
     lap('recovery check');
     if (recovery.shouldReset) {
-      if (!msg.isListeningMode) {
+      if (!suppressDelivery) {
         await adapter.sendMessage({
           chatId: msg.chatId,
           text: '(Session recovery failed after multiple attempts. Try: lettabot reset-conversation)',
@@ -842,7 +847,7 @@ export class LettaBot implements AgentSession {
             sentAnyMessage = true;
           }
         }
-        if (response.trim()) {
+        if (!suppressDelivery && response.trim()) {
           try {
             const prefixed = this.prefixResponse(response);
             if (messageId) {
@@ -934,7 +939,7 @@ export class LettaBot implements AgentSession {
               || (trimmed.startsWith('<actions') && !trimmed.includes('</actions>'));
             // Strip any completed <actions> block from the streaming text
             const streamText = stripActionsBlock(response).trim();
-            if (canEdit && !mayBeHidden && !msg.isListeningMode && streamText.length > 0 && Date.now() - lastUpdate > 500) {
+            if (canEdit && !mayBeHidden && !suppressDelivery && streamText.length > 0 && Date.now() - lastUpdate > 500) {
               try {
                 const prefixedStream = this.prefixResponse(streamText);
                 if (messageId) {
@@ -1048,7 +1053,7 @@ export class LettaBot implements AgentSession {
       }
 
       // Listening mode: agent processed for memory, suppress response delivery
-      if (msg.isListeningMode) {
+      if (suppressDelivery) {
         console.log(`[Bot] Listening mode: processed ${msg.channel}:${msg.chatId} for memory (response suppressed)`);
         return;
       }

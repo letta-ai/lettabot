@@ -27,6 +27,20 @@ export interface DiscordConfig {
   groups?: Record<string, GroupModeConfig>;  // Per-guild/channel settings
 }
 
+export function shouldProcessDiscordBotMessage(params: {
+  isFromBot: boolean;
+  isGroup: boolean;
+  authorId?: string;
+  selfUserId?: string;
+  groups?: Record<string, GroupModeConfig>;
+  keys: string[];
+}): boolean {
+  if (!params.isFromBot) return true;
+  if (!params.isGroup) return false;
+  if (params.selfUserId && params.authorId === params.selfUserId) return false;
+  return resolveReceiveBotMessages(params.groups, params.keys);
+}
+
 export class DiscordAdapter implements ChannelAdapter {
   readonly id = 'discord' as const;
   readonly name = 'Discord';
@@ -143,19 +157,20 @@ Ask the bot owner to approve with:
 
     this.client.on('messageCreate', async (message) => {
       const isFromBot = !!message.author?.bot;
+      const isGroup = !!message.guildId;
+      const chatId = message.channel.id;
+      const keys = [chatId];
+      if (message.guildId) keys.push(message.guildId);
+      const selfUserId = this.client?.user?.id;
 
-      // DMs from bots: always ignore
-      if (isFromBot && !message.guildId) return;
-
-      // Group messages from bots: only process if receiveBotMessages is enabled
-      if (isFromBot && message.guildId) {
-        if (!this.config.groups) return;
-        const chatId = message.channel.id;
-        const keys = [chatId];
-        if (message.guildId) keys.push(message.guildId);
-        if (!resolveReceiveBotMessages(this.config.groups, keys)) return;
-        // Fall through to normal processing
-      }
+      if (!shouldProcessDiscordBotMessage({
+        isFromBot,
+        isGroup,
+        authorId: message.author?.id,
+        selfUserId,
+        groups: this.config.groups,
+        keys,
+      })) return;
 
       let content = (message.content || '').trim();
       const userId = message.author?.id;
