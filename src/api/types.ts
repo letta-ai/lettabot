@@ -2,6 +2,8 @@
  * Request/response types for LettaBot HTTP API
  */
 
+import type { PairingRequest } from '../pairing/types.js';
+
 export interface SendMessageRequest {
   channel: string;
   chatId: string;
@@ -51,13 +53,7 @@ export interface ChatResponse {
  * GET /api/v1/pairing/:channel - List pending pairing requests
  */
 export interface PairingListResponse {
-  requests: Array<{
-    id: string;
-    code: string;
-    createdAt: string;
-    lastSeenAt: string;
-    meta?: { username?: string; firstName?: string; lastName?: string };
-  }>;
+  requests: PairingRequest[];
 }
 
 /**

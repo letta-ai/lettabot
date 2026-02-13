@@ -218,7 +218,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     }
 
     // Route: GET /api/v1/pairing/:channel - List pending pairing requests
-    const pairingListMatch = req.url?.match(/^\/api\/v1\/pairing\/([a-z]+)$/);
+    const pairingListMatch = req.url?.match(/^\/api\/v1\/pairing\/([a-z0-9-]+)$/);
     if (pairingListMatch && req.method === 'GET') {
       try {
         if (!validateApiKey(req.headers, options.apiKey)) {
@@ -244,7 +244,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     }
 
     // Route: POST /api/v1/pairing/:channel/approve - Approve a pairing code
-    const pairingApproveMatch = req.url?.match(/^\/api\/v1\/pairing\/([a-z]+)\/approve$/);
+    const pairingApproveMatch = req.url?.match(/^\/api\/v1\/pairing\/([a-z0-9-]+)\/approve$/);
     if (pairingApproveMatch && req.method === 'POST') {
       try {
         if (!validateApiKey(req.headers, options.apiKey)) {
@@ -328,6 +328,7 @@ function readBody(req: http.IncomingMessage, maxSize: number): Promise<string> {
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > maxSize) {
+        req.destroy();
         reject(new Error(`Request body too large (max ${maxSize} bytes)`));
         return;
       }
