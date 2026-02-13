@@ -143,6 +143,7 @@ export async function extractInboundMessage(
 
   // Collect attachments if media present and config provided
   let attachments: InboundAttachment[] = [];
+  let voiceTranscription: string | undefined;
   if (preview.hasMedia && attachmentConfig) {
     const result = await collectAttachments({
       messageContent,
@@ -151,10 +152,12 @@ export async function extractInboundMessage(
       ...attachmentConfig,
     });
     attachments = result.attachments;
+    voiceTranscription = result.voiceTranscription;
   }
 
   // Use caption as fallback text (for media-only messages)
-  const finalBody = body || preview.caption || '';
+  // For voice messages, use transcription if available
+  const finalBody = voiceTranscription || body || preview.caption || '';
   if (!finalBody && attachments.length === 0) {
     return null; // Skip messages with no text and no media
   }
