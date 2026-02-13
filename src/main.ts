@@ -129,6 +129,10 @@ import { SwarmManager } from './swarm/swarm-manager.js';
 import { matchNiche } from './swarm/niche-matcher.js';
 import { HubClient } from './swarm/hub-client.js';
 import { EvolutionEngine } from './swarm/evolution-engine.js';
+import { GatewayClient } from './swarm/gateway-client.js';
+import { ReasoningBridge } from './swarm/reasoning-bridge.js';
+import { DefaultSwarmProvisioner } from './swarm/provisioner.js';
+import { logSwarmEvent } from './swarm/telemetry.js';
 import { DEFAULT_EVOLUTION_CONFIG } from './swarm/types.js';
 import type { NicheDescriptor, Domain } from './swarm/types.js';
 import type { ChannelId } from './core/types.js';
@@ -162,6 +166,8 @@ function parseHeartbeatTarget(raw?: string): { channel: string; chatId: string }
 const DEFAULT_ATTACHMENTS_MAX_MB = 20;
 const DEFAULT_ATTACHMENTS_MAX_AGE_DAYS = 14;
 const ATTACHMENTS_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const SWARM_METRICS_SNAPSHOT_INTERVAL_MS = 30 * 1000;
+const VALID_SWARM_CHANNELS: ChannelId[] = ['telegram', 'slack', 'whatsapp', 'signal', 'discord'];
 
 function resolveAttachmentsMaxBytes(): number {
   const rawBytes = Number(process.env.ATTACHMENTS_MAX_BYTES);
@@ -181,6 +187,44 @@ function resolveAttachmentsMaxAgeDays(): number {
     return raw;
   }
   return DEFAULT_ATTACHMENTS_MAX_AGE_DAYS;
+}
+
+function parseSwarmChannels(raw?: string): ChannelId[] | undefined {
+  if (!raw) return undefined;
+  const parsed = raw
+    .split(',')
+    .map(s => s.trim())
+    .filter((s): s is ChannelId => VALID_SWARM_CHANNELS.includes(s as ChannelId));
+  const unique = [...new Set(parsed)];
+  return unique.length > 0 ? unique : undefined;
+}
+
+function resolveOptionalPositiveInt(raw?: string): number | undefined {
+  if (!raw) return undefined;
+  const value = parseInt(raw, 10);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+async function writeSwarmMetricsSnapshot(swarmStore: SwarmStore, path: string): Promise<void> {
+  const routeStats = swarmStore.getRouteStats();
+  const unservedCounts = swarmStore.getUnservedNicheCounts();
+  const topUnserved = Object.entries(unservedCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([nicheKey, count]) => ({ nicheKey, count }));
+
+  const payload = {
+    timestamp: new Date().toISOString(),
+    schemaVersion: swarmStore.schemaVersion,
+    archiveReady: swarmStore.archiveReady,
+    generation: swarmStore.generation,
+    eliteCount: swarmStore.blueprints.length,
+    routeStats,
+    unservedCounts,
+    topUnserved,
+  };
+
+  await fs.writeFile(path, JSON.stringify(payload, null, 2), 'utf-8');
 }
 
 async function pruneAttachmentsDir(baseDir: string, maxAgeDays: number): Promise<void> {
@@ -327,6 +371,10 @@ const config = {
     maxAgents: process.env.SWARM_MAX_AGENTS
       ? parseInt(process.env.SWARM_MAX_AGENTS, 10)
       : DEFAULT_EVOLUTION_CONFIG.maxAgents,
+    swarmChannels: parseSwarmChannels(process.env.SWARM_CHANNELS),
+    maxGenerations: process.env.SWARM_MAX_GENERATIONS
+      ? resolveOptionalPositiveInt(process.env.SWARM_MAX_GENERATIONS)
+      : undefined,
   },
 
   // Polling - system-level background checks
@@ -590,45 +638,98 @@ async function main() {
   // Start swarm mode if enabled
   if (config.swarm.enabled) {
     console.log('[Swarm] Initializing TEAM-Elites swarm mode...');
+    logSwarmEvent('startup_init', {
+      hubUrl: config.swarm.hubUrl,
+      schedule: config.swarm.schedule,
+      populationSize: config.swarm.populationSize,
+      maxAgents: config.swarm.maxAgents,
+      swarmChannels: config.swarm.swarmChannels,
+      maxGenerations: config.swarm.maxGenerations,
+    });
 
     // Create SwarmStore (uses same data dir as Store)
     const swarmStore = new SwarmStore(getDataDir());
     swarmStore.mode = 'swarm';
+    swarmStore.archiveReady = false;
 
     // Create SwarmManager and wire into bot
     const swarmManager = new SwarmManager(swarmStore, matchNiche);
     bot.setSwarmManager(swarmManager);
+    swarmManager.setProcessor(async (agentId, msg, adapter) => {
+      const existingConversationId = swarmStore.getConversationForAgent(agentId);
+      const nextConversationId = await bot.processMessageForAgent(
+        agentId,
+        msg,
+        adapter,
+        existingConversationId,
+      );
+      if (nextConversationId && nextConversationId !== existingConversationId) {
+        swarmStore.setConversationForAgent(agentId, nextConversationId);
+      }
+    });
 
     // Derive niches from enabled channels x all domains
-    const enabledChannels: ChannelId[] = [];
-    if (config.telegram.enabled) enabledChannels.push('telegram');
-    if (config.slack.enabled) enabledChannels.push('slack');
-    if (config.whatsapp.enabled) enabledChannels.push('whatsapp');
-    if (config.signal.enabled) enabledChannels.push('signal');
-    if (config.discord.enabled) enabledChannels.push('discord');
+    const allEnabledChannels: ChannelId[] = [];
+    if (config.telegram.enabled) allEnabledChannels.push('telegram');
+    if (config.slack.enabled) allEnabledChannels.push('slack');
+    if (config.whatsapp.enabled) allEnabledChannels.push('whatsapp');
+    if (config.signal.enabled) allEnabledChannels.push('signal');
+    if (config.discord.enabled) allEnabledChannels.push('discord');
+    let enabledChannels = allEnabledChannels;
+    if (config.swarm.swarmChannels?.length) {
+      const filtered = allEnabledChannels.filter(ch => config.swarm.swarmChannels!.includes(ch));
+      if (filtered.length > 0) {
+        enabledChannels = filtered;
+      } else {
+        console.warn('[Swarm] SWARM_CHANNELS did not match any enabled channels; using all enabled channels');
+      }
+    }
 
     const domains: Domain[] = ['coding', 'research', 'scheduling', 'communication', 'general'];
     const niches: NicheDescriptor[] = enabledChannels.flatMap(channel =>
       domains.map(domain => ({ channel, domain, key: `${channel}-${domain}` }))
     );
+    const swarmMetricsPath = resolve(getDataDir(), 'swarm-metrics.json');
+    const persistSwarmMetrics = () => {
+      writeSwarmMetricsSnapshot(swarmStore, swarmMetricsPath).catch((err) => {
+        console.warn('[Swarm] Failed to write metrics snapshot:', err);
+      });
+    };
 
     // Create HubClient + EvolutionEngine
     const hubClient = new HubClient(config.swarm.hubUrl);
+    const provisioner = new DefaultSwarmProvisioner({
+      modelFallback: config.model,
+      skills: {
+        cronEnabled: config.cronEnabled,
+        googleEnabled: config.polling.gmail.enabled,
+      },
+    });
     const evolutionEngine = new EvolutionEngine(hubClient, swarmStore, {
       schedule: config.swarm.schedule,
       populationSize: config.swarm.populationSize,
       maxAgents: config.swarm.maxAgents,
       fitnessWeights: DEFAULT_EVOLUTION_CONFIG.fitnessWeights,
-    });
+    }, provisioner);
 
     // Initialize archive (register with Hub, create workspace + problems)
     try {
       await evolutionEngine.initializeArchive(niches);
+      swarmStore.archiveReady = true;
       console.log(`[Swarm] Archive initialized: ${niches.length} niches across ${enabledChannels.length} channels`);
       console.log(`[Swarm] Hub agent: ${swarmStore.hubAgentId}`);
+      logSwarmEvent('archive_initialized', {
+        niches: niches.length,
+        channels: enabledChannels.length,
+        hubAgentId: swarmStore.hubAgentId,
+      });
     } catch (err) {
+      swarmStore.archiveReady = false;
       console.error('[Swarm] Failed to initialize archive (Hub may be unavailable):', err);
       console.error('[Swarm] Swarm routing is active but evolution will not run until Hub is reachable.');
+      logSwarmEvent('archive_init_failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // Schedule evolution cron job
@@ -637,16 +738,77 @@ async function main() {
       await cronService.start();
     }
     cronService.addEvolutionJob(config.swarm.schedule, async () => {
+      if (!swarmStore.archiveReady) {
+        logSwarmEvent('evolution_skipped_archive_unready', {
+          schedule: config.swarm.schedule,
+        });
+        try {
+          await evolutionEngine.initializeArchive(niches);
+          swarmStore.archiveReady = true;
+          logSwarmEvent('archive_recovered', {
+            niches: niches.length,
+            channels: enabledChannels.length,
+          });
+        } catch (err) {
+          logSwarmEvent('archive_recovery_failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return;
+        }
+      }
+
       console.log('[Swarm] Running evolution generation...');
+      logSwarmEvent('evolution_generation_start', {
+        schedule: config.swarm.schedule,
+        nicheCount: niches.length,
+      });
+        if (config.swarm.maxGenerations !== undefined && swarmStore.generation >= config.swarm.maxGenerations) {
+          logSwarmEvent('evolution_skipped_max_generations', {
+            generation: swarmStore.generation,
+            maxGenerations: config.swarm.maxGenerations,
+          });
+          persistSwarmMetrics();
+          return;
+        }
       try {
         await evolutionEngine.runGeneration(niches);
         console.log('[Swarm] Evolution generation complete');
+        logSwarmEvent('evolution_generation_complete', {
+          generation: swarmStore.generation,
+          eliteCount: swarmStore.blueprints.length,
+        });
       } catch (err) {
         console.error('[Swarm] Evolution generation failed:', err);
+        logSwarmEvent('evolution_generation_failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
+      persistSwarmMetrics();
     });
 
     console.log(`[Swarm] Evolution scheduled: ${config.swarm.schedule}`);
+    logSwarmEvent('evolution_scheduled', { schedule: config.swarm.schedule });
+    persistSwarmMetrics();
+    const swarmMetricsTimer = setInterval(() => {
+      persistSwarmMetrics();
+    }, SWARM_METRICS_SNAPSHOT_INTERVAL_MS);
+    swarmMetricsTimer.unref?.();
+
+    // Initialize reasoning bridge (opt-out via SWARM_REASONING=false)
+    const reasoningEnabled = process.env.SWARM_REASONING !== 'false';
+    if (reasoningEnabled) {
+      const gatewayClient = new GatewayClient(config.swarm.hubUrl);
+      const reasoningBridge = new ReasoningBridge(gatewayClient, hubClient, swarmStore, {
+        maxContextThoughts: parseInt(process.env.SWARM_CONTEXT_THOUGHTS || '5', 10),
+      });
+      swarmManager.setReasoningBridge(reasoningBridge);
+      try {
+        await reasoningBridge.initialize(swarmStore.agents);
+        console.log('[Swarm] Reasoning bridge initialized');
+      } catch (err) {
+        console.error('[Swarm] Reasoning bridge init failed:', err);
+      }
+    }
   }
 
   // Start all channels

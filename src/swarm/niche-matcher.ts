@@ -33,17 +33,26 @@ const DOMAIN_KEYWORDS: Record<Exclude<Domain, 'general'>, string[]> = {
   ],
 };
 
+const DOMAIN_PRIORITY: Array<Exclude<Domain, 'general'>> = [
+  'coding',
+  'research',
+  'scheduling',
+  'communication',
+];
+
 /**
  * Classify message text into a domain using keyword heuristics.
  */
 export function classifyDomain(text: string): Domain {
   const lower = text.toLowerCase();
 
-  // Score each domain by keyword matches
+  // Score each domain by keyword matches with explicit deterministic priority.
+  // On tie, earlier entries in DOMAIN_PRIORITY win.
   let bestDomain: Domain = 'general';
   let bestScore = 0;
 
-  for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS) as Array<[Exclude<Domain, 'general'>, string[]]>) {
+  for (const domain of DOMAIN_PRIORITY) {
+    const keywords = DOMAIN_KEYWORDS[domain];
     let score = 0;
     for (const keyword of keywords) {
       if (lower.includes(keyword)) {

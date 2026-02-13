@@ -12,6 +12,7 @@ import { SwarmStore } from './swarm-store.js';
 import { matchNiche } from './niche-matcher.js';
 import type { InboundMessage } from '../core/types.js';
 import type { NicheDescriptor } from './types.js';
+import type { ChannelAdapter } from '../channels/types.js';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -30,6 +31,19 @@ function createMessage(overrides: Partial<InboundMessage> = {}): InboundMessage 
     text: 'Hello world',
     timestamp: new Date(),
     ...overrides,
+  };
+}
+
+function createMockAdapter(): ChannelAdapter {
+  return {
+    id: 'telegram',
+    name: 'Mock',
+    start: async () => {},
+    stop: async () => {},
+    isRunning: () => true,
+    sendMessage: async () => ({ messageId: 'm1' }),
+    editMessage: async () => {},
+    sendTypingIndicator: async () => {},
   };
 }
 
@@ -61,6 +75,7 @@ describe('SwarmManager', () => {
     const result = manager.routeMessage(msg);
     expect(result).not.toBeNull();
     expect(result!.agentId).toBe('agent-tel-code');
+    expect(store.getRouteStats().successCount).toBe(1);
   });
 
   // T-SM-3
@@ -80,14 +95,17 @@ describe('SwarmManager', () => {
     const msg = createMessage({ text: 'Hello world' });
     const result = manager.routeMessage(msg);
     expect(result).toBeNull();
+    expect(manager.getUnservedNicheCount('telegram-general')).toBe(1);
+    expect(store.getRouteStats().fallbackCount).toBe(1);
   });
 
   // T-SM-5
   it('enqueueMessage() adds to per-agent queue (not global queue)', () => {
     const msg = createMessage();
-    manager.enqueueMessage('agent-1', msg);
-    manager.enqueueMessage('agent-2', msg);
-    manager.enqueueMessage('agent-1', msg);
+    const adapter = createMockAdapter();
+    manager.enqueueMessage('agent-1', msg, adapter);
+    manager.enqueueMessage('agent-2', msg, adapter);
+    manager.enqueueMessage('agent-1', msg, adapter);
 
     const queues = manager.getQueueSizes();
     expect(queues.get('agent-1')).toBe(2);
@@ -102,14 +120,16 @@ describe('SwarmManager', () => {
     });
     manager.setProcessor(processor);
 
-    manager.enqueueMessage('agent-1', createMessage({ text: 'msg1' }));
-    manager.enqueueMessage('agent-2', createMessage({ text: 'msg2' }));
+    const adapter = createMockAdapter();
+    manager.enqueueMessage('agent-1', createMessage({ text: 'msg1' }), adapter);
+    manager.enqueueMessage('agent-2', createMessage({ text: 'msg2' }), adapter);
 
     await manager.processQueues();
 
     expect(processed).toContain('agent-1');
     expect(processed).toContain('agent-2');
     expect(processor).toHaveBeenCalledTimes(2);
+    expect(processor.mock.calls[0][2]).toBeDefined();
   });
 
   // T-SM-7
@@ -123,8 +143,9 @@ describe('SwarmManager', () => {
     });
     manager.setProcessor(processor);
 
-    manager.enqueueMessage('slow', createMessage());
-    manager.enqueueMessage('fast', createMessage());
+    const adapter = createMockAdapter();
+    manager.enqueueMessage('slow', createMessage(), adapter);
+    manager.enqueueMessage('fast', createMessage(), adapter);
 
     await manager.processQueues();
 

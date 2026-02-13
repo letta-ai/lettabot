@@ -16,6 +16,8 @@ import type {
 } from './types.js';
 import { applyVariation } from './variation-operators.js';
 import { computeFitness, isEliteReplacement } from './fitness-evaluator.js';
+import { logSwarmEvent } from './telemetry.js';
+import type { SwarmProvisioner } from './provisioner.js';
 
 function randomId(): string {
   return `bp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -57,11 +59,13 @@ export class EvolutionEngine {
   private store: SwarmStore;
   private config: EvolutionConfig;
   private nicheProblems: Map<string, string> = new Map(); // nicheKey → problemId
+  private provisioner?: SwarmProvisioner;
 
-  constructor(hubClient: HubClient, store: SwarmStore, config: EvolutionConfig) {
+  constructor(hubClient: HubClient, store: SwarmStore, config: EvolutionConfig, provisioner?: SwarmProvisioner) {
     this.hubClient = hubClient;
     this.store = store;
     this.config = config;
+    this.provisioner = provisioner;
   }
 
   /**
@@ -175,6 +179,12 @@ export class EvolutionEngine {
       // 3. Evaluate
       const fitness = await this.evaluate(child);
       child.fitness = fitness;
+      logSwarmEvent('evolution_candidate_evaluated', {
+        nicheKey: niche.key,
+        blueprintId: child.id,
+        generation: child.generation,
+        composite: fitness.composite,
+      });
 
       // 4. Submit
       const proposalId = await this.submit(child, problemId);
@@ -198,6 +208,39 @@ export class EvolutionEngine {
         };
         this.store.setBlueprint(child);
         this.store.generation = child.generation;
+
+        if (this.provisioner) {
+          try {
+            const agentId = await this.provisioner.provisionNicheAgent(child);
+            this.store.setAgentForNiche(agentId, child.id, niche.key);
+            logSwarmEvent('provision_merge_success', {
+              nicheKey: niche.key,
+              blueprintId: child.id,
+              agentId,
+            });
+          } catch (err) {
+            logSwarmEvent('provision_merge_failed', {
+              nicheKey: niche.key,
+              blueprintId: child.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
+        logSwarmEvent('evolution_candidate_merged', {
+          nicheKey: niche.key,
+          blueprintId: child.id,
+          generation: child.generation,
+          composite: child.fitness.composite,
+        });
+      } else {
+        logSwarmEvent('evolution_candidate_rejected', {
+          nicheKey: niche.key,
+          blueprintId: child.id,
+          generation: child.generation,
+          composite: child.fitness.composite,
+          eliteComposite: currentElite?.fitness.composite,
+        });
       }
     }
   }

@@ -12,6 +12,7 @@ import { HubClient } from './hub-client.js';
 import { SwarmStore } from './swarm-store.js';
 import type { EvolutionConfig, TeamBlueprint, NicheDescriptor } from './types.js';
 import { DEFAULT_FITNESS_WEIGHTS } from './types.js';
+import type { SwarmProvisioner } from './provisioner.js';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -189,5 +190,23 @@ describe('EvolutionEngine', () => {
     // Store should have a blueprint for the niche
     const elite = store.getElite(niches[0]);
     expect(elite).not.toBeNull();
+  });
+
+  // T-EV-11
+  it('runGeneration() provisions niche agent on merge when provisioner is configured', async () => {
+    const provisioner: SwarmProvisioner = {
+      provisionNicheAgent: vi.fn().mockResolvedValue('agent-provisioned-1'),
+    };
+    engine = new EvolutionEngine(hubClient, store, defaultConfig, provisioner);
+
+    const niches: NicheDescriptor[] = [
+      { channel: 'telegram', domain: 'coding', key: 'telegram-coding' },
+    ];
+    await engine.initializeArchive(niches);
+    await engine.runGeneration(niches);
+
+    expect(provisioner.provisionNicheAgent).toHaveBeenCalled();
+    const mapped = store.getAgentForNiche(niches[0]);
+    expect(mapped?.agentId).toBe('agent-provisioned-1');
   });
 });

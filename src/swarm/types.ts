@@ -117,12 +117,26 @@ export interface SwarmAgentEntry {
 }
 
 export interface SwarmRegistry {
+  schemaVersion: number;
   mode: SwarmMode;
+  archiveReady?: boolean;
+  routeSuccessCount?: number;
+  routeFallbackCount?: number;
+  routeSuccessByNiche?: Record<string, number>;
+  routeFallbackByNiche?: Record<string, number>;
+  unservedNicheCounts?: Record<string, number>;
+  lastUnservedAt?: Record<string, string>;
   agents: SwarmAgentEntry[];
   blueprints: TeamBlueprint[];
   generation: number;
   hubAgentId?: string;
   hubWorkspaceId?: string;
+
+  // Reasoning bridge state
+  reasoningWorkspaceId?: string;
+  reasoningSessionId?: string;
+  reasoningProblemId?: string;
+  agentHubIds?: Record<string, string>;
 
   // Single-mode backward compatibility (mirrors AgentStore)
   agentId?: string | null;

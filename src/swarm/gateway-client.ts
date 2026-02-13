@@ -1,11 +1,47 @@
 /**
- * HubClient — Thin HTTP client for Thoughtbox Hub
+ * GatewayClient — Thin HTTP client for Thoughtbox Gateway
  *
- * Calls Thoughtbox Hub via JSON-RPC to localhost:1731/mcp,
+ * Calls Thoughtbox Gateway via JSON-RPC to localhost:1731/mcp,
  * persisting the mcp-session-id header across calls.
+ * Mirrors hub-client.ts pattern exactly.
  */
 
-export class HubClient {
+export interface ThoughtInput {
+  thought: string;
+  thoughtType?: string;
+  branchId?: string;
+  branchFromThought?: number;
+  agentId?: string;
+}
+
+export interface ThoughtResult {
+  thoughtNumber: number;
+  branchId: string;
+  sessionId: string;
+}
+
+export interface ReadThoughtsInput {
+  sessionId?: string;
+  branchId?: string;
+  last?: number;
+}
+
+export interface ThoughtEntry {
+  thoughtNumber: number;
+  thought: string;
+  thoughtType: string;
+  branchId: string;
+  agentId?: string;
+  timestamp: string;
+}
+
+export interface SessionStructure {
+  sessionId: string;
+  branches: Array<{ branchId: string; thoughtCount: number }>;
+  totalThoughts: number;
+}
+
+export class GatewayClient {
   private url: string;
   private fetchFn: typeof fetch;
   private sessionId: string | null = null;
@@ -31,7 +67,7 @@ export class HubClient {
       params: {
         protocolVersion: '2025-03-26',
         capabilities: {},
-        clientInfo: { name: 'lettabot-hub-client', version: '1.0.0' },
+        clientInfo: { name: 'lettabot-gateway-client', version: '1.0.0' },
       },
       id: this.requestId,
     });
@@ -66,7 +102,7 @@ export class HubClient {
       jsonrpc: '2.0',
       method: 'tools/call',
       params: {
-        name: 'thoughtbox_hub',
+        name: 'thoughtbox_gateway',
         arguments: { operation, args },
       },
       id: this.requestId,
@@ -97,7 +133,7 @@ export class HubClient {
 
     const json = await response.json();
     if (json.error) {
-      throw new Error(`Hub RPC error: ${JSON.stringify(json.error)}`);
+      throw new Error(`Gateway RPC error: ${JSON.stringify(json.error)}`);
     }
 
     // Parse the result content text
@@ -115,73 +151,30 @@ export class HubClient {
     return json.result;
   }
 
-  // ─── Hub Operations ─────────────────────────────────────────────────────────
+  // ─── Gateway Operations ───────────────────────────────────────────────────────
 
-  async register(name: string, role: string): Promise<{ agentId: string; role: string }> {
-    return this.call('register', { name, role });
+  async startNew(title: string, tags?: string[], project?: string): Promise<{ sessionId: string }> {
+    return this.call('start_new', { title, tags, project });
   }
 
-  async createWorkspace(name: string, description: string): Promise<{ workspaceId: string }> {
-    return this.call('create_workspace', { name, description });
+  async loadContext(sessionId: string): Promise<{ sessionId: string }> {
+    return this.call('load_context', { sessionId });
   }
 
-  async createProblem(
-    workspaceId: string,
-    title: string,
-    description: string,
-  ): Promise<{ problemId: string }> {
-    return this.call('create_problem', { workspaceId, title, description });
+  async cipher(): Promise<{ stage: number }> {
+    return this.call('cipher');
   }
 
-  async claimProblem(
-    problemId: string,
-    branchId: string,
-  ): Promise<{ branchFromThought: number }> {
-    return this.call('claim_problem', { problemId, branchId });
+  async thought(input: ThoughtInput): Promise<ThoughtResult> {
+    return this.call('thought', input as unknown as Record<string, unknown>);
   }
 
-  async createProposal(
-    problemId: string,
-    title: string,
-    sourceBranch: string,
-    description: string,
-  ): Promise<{ proposalId: string }> {
-    return this.call('create_proposal', { problemId, title, sourceBranch, description });
+  async readThoughts(input: ReadThoughtsInput): Promise<ThoughtEntry[]> {
+    const result = await this.call('session', { operation: 'read', ...input });
+    return Array.isArray(result) ? result : result?.thoughts ?? [];
   }
 
-  async reviewProposal(
-    proposalId: string,
-    verdict: 'approve' | 'comment' | 'request-changes',
-    comment: string,
-  ): Promise<{ reviewId: string }> {
-    return this.call('review_proposal', { proposalId, verdict, comment });
-  }
-
-  async mergeProposal(proposalId: string): Promise<{ merged: boolean }> {
-    return this.call('merge_proposal', { proposalId });
-  }
-
-  async markConsensus(
-    name: string,
-    thoughtRef: number,
-  ): Promise<{ consensusId: string }> {
-    return this.call('mark_consensus', { name, thoughtRef });
-  }
-
-  async postMessage(
-    workspaceId: string,
-    problemId: string,
-    content: string,
-    ref?: { thoughtNumber: number },
-  ): Promise<{ messageId: string }> {
-    return this.call('post_message', { workspaceId, problemId, content, ref });
-  }
-
-  async readChannel(
-    workspaceId: string,
-    problemId: string,
-    since?: string,
-  ): Promise<any[]> {
-    return this.call('read_channel', { workspaceId, problemId, since });
+  async getStructure(sessionId?: string): Promise<SessionStructure> {
+    return this.call('session', { operation: 'structure', sessionId });
   }
 }

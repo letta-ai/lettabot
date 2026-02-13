@@ -32,6 +32,9 @@ Thumbs.db
 
 # Runtime files
 cron-log.jsonl
+swarm-events.jsonl
+swarm-metrics.json
+swarm-registry.json
 cron-jobs.json
 lettabot-agent.json
 lettabot-api.json

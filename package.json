@@ -53,6 +53,8 @@
     "googleapis": "^170.1.0",
     "grammy": "^1.39.3",
     "gray-matter": "^4.0.3",
+    "keyv": "^5.6.0",
+    "langsmith": "^0.5.3",
     "node-schedule": "^2.1.1",
     "open": "^11.0.0",
     "openai": "^6.17.0",
@@ -61,8 +63,7 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "update-notifier": "^7.3.1",
-    "yaml": "^2.8.2",
-    "keyv": "^5.6.0"
+    "yaml": "^2.8.2"
   },
   "optionalDependencies": {
     "@slack/bolt": "^4.6.0",

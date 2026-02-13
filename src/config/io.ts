@@ -220,6 +220,12 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
     if (config.features.swarm.maxAgents !== undefined) {
       env.SWARM_MAX_AGENTS = String(config.features.swarm.maxAgents);
     }
+    if (config.features.swarm.swarmChannels?.length) {
+      env.SWARM_CHANNELS = config.features.swarm.swarmChannels.join(',');
+    }
+    if (config.features.swarm.maxGenerations !== undefined) {
+      env.SWARM_MAX_GENERATIONS = String(config.features.swarm.maxGenerations);
+    }
   }
   
   // Polling - top-level polling config (preferred)

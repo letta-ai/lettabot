@@ -56,6 +56,8 @@ features:
   #   schedule: '0 */6 * * *'             # Evolution every 6 hours
   #   populationSize: 5                    # Candidates per generation
   #   maxAgents: 25                        # Max concurrent agents
+  #   swarmChannels: [telegram, slack]     # Canary subset (optional)
+  #   maxGenerations: 20                   # Stop evolution after N generations (optional)
 
 # Attachment handling (defaults to 20MB if omitted)
 # attachments:

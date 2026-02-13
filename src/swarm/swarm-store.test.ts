@@ -65,7 +65,9 @@ describe('SwarmStore', () => {
   // T-SS-1
   it('creates default registry with mode=single when no file exists', () => {
     const store = new SwarmStore(tmpDir);
+    expect(store.schemaVersion).toBe(1);
     expect(store.mode).toBe('single');
+    expect(store.archiveReady).toBe(false);
     expect(store.agents).toEqual([]);
     expect(store.blueprints).toEqual([]);
     expect(store.generation).toBe(0);
@@ -93,6 +95,10 @@ describe('SwarmStore', () => {
 
   // T-SS-3
   it('in single mode, agentId/conversationId/baseUrl behave identically to Store', () => {
+    // Clear env var to test clean state
+    const originalAgentId = process.env.LETTA_AGENT_ID;
+    delete process.env.LETTA_AGENT_ID;
+    
     const store = new SwarmStore(tmpDir);
     expect(store.agentId).toBeNull();
 
@@ -110,6 +116,9 @@ describe('SwarmStore', () => {
     expect(store2.agentId).toBe('agent-1');
     expect(store2.conversationId).toBe('conv-1');
     expect(store2.baseUrl).toBe('https://custom.server.com');
+    
+    // Restore env var
+    if (originalAgentId) process.env.LETTA_AGENT_ID = originalAgentId;
   });
 
   // T-SS-4
@@ -212,5 +221,68 @@ describe('SwarmStore', () => {
     const store2 = new SwarmStore(tmpDir);
     expect(store2.hubAgentId).toBe('hub-agent-123');
     expect(store2.hubWorkspaceId).toBe('hub-ws-456');
+  });
+
+  // T-SS-9
+  it('archiveReady persists across save/load cycles', () => {
+    const store = new SwarmStore(tmpDir);
+    store.archiveReady = true;
+
+    const store2 = new SwarmStore(tmpDir);
+    expect(store2.archiveReady).toBe(true);
+  });
+
+  // T-SS-10
+  it('incrementUnservedNiche() tracks and persists per-niche counters', () => {
+    const store = new SwarmStore(tmpDir);
+    expect(store.getUnservedNicheCount('telegram-general')).toBe(0);
+
+    store.incrementUnservedNiche('telegram-general');
+    store.incrementUnservedNiche('telegram-general');
+    store.incrementUnservedNiche('slack-research');
+
+    expect(store.getUnservedNicheCount('telegram-general')).toBe(2);
+    expect(store.getUnservedNicheCount('slack-research')).toBe(1);
+
+    const store2 = new SwarmStore(tmpDir);
+    expect(store2.getUnservedNicheCount('telegram-general')).toBe(2);
+    expect(store2.getUnservedNicheCount('slack-research')).toBe(1);
+  });
+
+  // T-SS-11
+  it('route stats counters persist and expose fallback rate', () => {
+    const store = new SwarmStore(tmpDir);
+    store.incrementRouteSuccess('telegram-coding');
+    store.incrementRouteSuccess('telegram-coding');
+    store.incrementRouteFallback('telegram-general');
+
+    const stats = store.getRouteStats();
+    expect(stats.successCount).toBe(2);
+    expect(stats.fallbackCount).toBe(1);
+    expect(stats.fallbackRate).toBeCloseTo(1 / 3, 5);
+    expect(stats.successByNiche['telegram-coding']).toBe(2);
+    expect(stats.fallbackByNiche['telegram-general']).toBe(1);
+
+    const store2 = new SwarmStore(tmpDir);
+    expect(store2.getRouteStats().successCount).toBe(2);
+    expect(store2.getRouteStats().fallbackCount).toBe(1);
+  });
+
+  // T-SS-12
+  it('setAgentForNiche() upserts niche agent and preserves conversation binding', () => {
+    const store = new SwarmStore(tmpDir);
+    store.setAgentForNiche('agent-a', 'bp-1', 'telegram-coding');
+    expect(store.agents).toHaveLength(1);
+    expect(store.agents[0].agentId).toBe('agent-a');
+
+    store.setConversationForAgent('agent-a', 'conv-1');
+    expect(store.getConversationForAgent('agent-a')).toBe('conv-1');
+
+    // Update same niche with a replacement agent.
+    store.setAgentForNiche('agent-b', 'bp-2', 'telegram-coding');
+    expect(store.agents).toHaveLength(1);
+    expect(store.agents[0].agentId).toBe('agent-b');
+    expect(store.agents[0].blueprintId).toBe('bp-2');
+    expect(store.agents[0].conversationId).toBe('conv-1');
   });
 });

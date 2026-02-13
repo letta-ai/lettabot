@@ -40,7 +40,7 @@ describe('HubClient', () => {
     const result = await client.register('TEAM-Elites-Coordinator', 'coordinator');
     expect(result.agentId).toBe('agent-123');
 
-    const call = fetchMock.mock.calls[0];
+    const call = fetchMock.mock.calls[1];
     const body = JSON.parse(call[1].body);
     expect(body.method).toBe('tools/call');
     expect(body.params.name).toBe('thoughtbox_hub');
@@ -56,7 +56,7 @@ describe('HubClient', () => {
     const result = await client.createWorkspace('team-elites-archive', 'MAP-Elites archive');
     expect(result.workspaceId).toBe('ws-abc');
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(body.params.arguments.operation).toBe('create_workspace');
     expect(body.params.arguments.args.name).toBe('team-elites-archive');
   });
@@ -69,7 +69,7 @@ describe('HubClient', () => {
     const result = await client.createProblem('ws-abc', 'niche:telegram-coding', 'Telegram coding niche');
     expect(result.problemId).toBe('prob-123');
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(body.params.arguments.operation).toBe('create_problem');
     expect(body.params.arguments.args.workspaceId).toBe('ws-abc');
   });
@@ -82,7 +82,7 @@ describe('HubClient', () => {
     const result = await client.claimProblem('prob-123', 'gen0-branch');
     expect(result.branchFromThought).toBe(0);
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(body.params.arguments.operation).toBe('claim_problem');
     expect(body.params.arguments.args.problemId).toBe('prob-123');
   });
@@ -95,7 +95,7 @@ describe('HubClient', () => {
     const result = await client.createProposal('prob-123', 'Gen-0 candidate', 'gen0-branch', '{}');
     expect(result.proposalId).toBe('prop-abc');
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(body.params.arguments.operation).toBe('create_proposal');
   });
 
@@ -107,7 +107,7 @@ describe('HubClient', () => {
     const result = await client.reviewProposal('prop-abc', 'approve', 'LGTM');
     expect(result.reviewId).toBe('rev-123');
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(body.params.arguments.operation).toBe('review_proposal');
     expect(body.params.arguments.args.verdict).toBe('approve');
   });
@@ -120,7 +120,7 @@ describe('HubClient', () => {
     const result = await client.mergeProposal('prop-abc');
     expect(result.merged).toBe(true);
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(body.params.arguments.operation).toBe('merge_proposal');
   });
 
@@ -132,7 +132,7 @@ describe('HubClient', () => {
     const result = await client.markConsensus('elite-telegram-coding', 5);
     expect(result.consensusId).toBe('cons-123');
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(body.params.arguments.operation).toBe('mark_consensus');
     expect(body.params.arguments.args.name).toBe('elite-telegram-coding');
   });
@@ -155,6 +155,7 @@ describe('HubClient', () => {
 
     await client.createWorkspace('test', 'test workspace');
 
+    // Second fetchMock only has the createWorkspace call (no initialize, as client is already initialized)
     const headers = fetchMock.mock.calls[0][1].headers;
     expect(headers['mcp-session-id']).toBe(sessionId);
   });

@@ -50,6 +50,8 @@ export interface LettaBotConfig {
       schedule?: string;         // Evolution cron expression (default: '0 */6 * * *')
       populationSize?: number;   // Candidates per generation (default: 5)
       maxAgents?: number;        // Max concurrent agents (default: 25)
+      swarmChannels?: Array<'telegram' | 'slack' | 'whatsapp' | 'signal' | 'discord'>; // Canary channels
+      maxGenerations?: number;   // Optional cap for total merged generations
     };
   };
 

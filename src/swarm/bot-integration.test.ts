@@ -15,6 +15,7 @@ import { HubClient } from './hub-client.js';
 import type { InboundMessage } from '../core/types.js';
 import type { EvolutionConfig, NicheDescriptor } from './types.js';
 import { DEFAULT_FITNESS_WEIGHTS } from './types.js';
+import type { ChannelAdapter } from '../channels/types.js';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -33,6 +34,19 @@ function createMessage(overrides: Partial<InboundMessage> = {}): InboundMessage 
     text: 'Hello world',
     timestamp: new Date(),
     ...overrides,
+  };
+}
+
+function createMockAdapter(): ChannelAdapter {
+  return {
+    id: 'telegram',
+    name: 'Mock',
+    start: async () => {},
+    stop: async () => {},
+    isRunning: () => true,
+    sendMessage: async () => ({ messageId: 'm1' }),
+    editMessage: async () => {},
+    sendTypingIndicator: async () => {},
   };
 }
 
@@ -109,9 +123,10 @@ describe('Bot Integration', () => {
     store.mode = 'swarm';
     const manager = new SwarmManager(store, matchNiche);
 
+    const adapter = createMockAdapter();
     // Enqueue to different agents
-    manager.enqueueMessage('agent-1', createMessage({ text: 'msg1' }));
-    manager.enqueueMessage('agent-2', createMessage({ text: 'msg2' }));
+    manager.enqueueMessage('agent-1', createMessage({ text: 'msg1' }), adapter);
+    manager.enqueueMessage('agent-2', createMessage({ text: 'msg2' }), adapter);
 
     const sizes = manager.getQueueSizes();
     expect(sizes.get('agent-1')).toBe(1);

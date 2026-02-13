@@ -109,4 +109,11 @@ describe('NicheMatcher', () => {
     expect(niche.domain).toBe('coding');
     expect(niche.key).toBe('discord-coding');
   });
+
+  // T-NM-8
+  it('tie-break uses deterministic domain priority (coding > research > scheduling > communication)', () => {
+    // "debug" and "study" match coding + research with score 1 each.
+    // coding should win due to explicit priority.
+    expect(classifyDomain('Please debug this study plan')).toBe('coding');
+  });
 });

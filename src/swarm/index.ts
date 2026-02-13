@@ -18,3 +18,7 @@ export {
 export { computeFitness, isEliteReplacement, normalizeReviewScore } from './fitness-evaluator.js';
 export { EvolutionEngine } from './evolution-engine.js';
 export { SwarmManager } from './swarm-manager.js';
+export { GatewayClient } from './gateway-client.js';
+export { ReasoningBridge } from './reasoning-bridge.js';
+export { DefaultSwarmProvisioner } from './provisioner.js';
+export type { SwarmProvisioner } from './provisioner.js';

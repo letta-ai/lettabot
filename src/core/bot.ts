@@ -16,6 +16,7 @@ import type { GroupBatcher } from './group-batcher.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import type { SwarmManager } from '../swarm/swarm-manager.js';
+import { logSwarmEvent } from '../swarm/telemetry.js';
 
 
 /**
@@ -270,13 +271,34 @@ export class LettaBot {
       const route = this.swarmManager.routeMessage(msg);
       if (route) {
         console.log(`[Bot] Swarm routing: ${msg.channel}:${msg.userId} → agent ${route.agentId}`);
-        this.swarmManager.enqueueMessage(route.agentId, msg);
+        logSwarmEvent('route_success', {
+          channel: msg.channel,
+          userId: msg.userId,
+          chatId: msg.chatId,
+          agentId: route.agentId,
+          nicheKey: route.niche?.key,
+          nicheDomain: route.niche?.domain,
+          fallbackUsed: false,
+        });
+        this.swarmManager.enqueueMessage(route.agentId, msg, adapter);
         this.swarmManager.processQueues().catch(err =>
           console.error('[Bot] Swarm queue error:', err));
         return;
       }
       // Fall through to single-agent path if no route found
       console.log('[Bot] Swarm: no route found, falling back to single-agent path');
+      const niche = this.swarmManager.classifyMessage(msg);
+      const unservedCount = this.swarmManager.getUnservedNicheCount(niche.key);
+      logSwarmEvent('route_fallback', {
+        channel: msg.channel,
+        userId: msg.userId,
+        chatId: msg.chatId,
+        nicheKey: niche.key,
+        nicheDomain: niche.domain,
+        unservedCount,
+        fallbackUsed: true,
+        reason: 'no_agent_for_niche',
+      });
     }
 
     // Route group messages to batcher if configured
@@ -758,6 +780,86 @@ export class LettaBot {
       }
     } finally {
       session!?.close();
+    }
+  }
+
+  /**
+   * Process a message for a specific swarm agent using explicit agent/session context.
+   * Returns the conversation ID used for this run so callers can persist per-agent state.
+   */
+  async processMessageForAgent(
+    agentId: string,
+    msg: InboundMessage,
+    adapter: ChannelAdapter,
+    conversationId?: string,
+  ): Promise<string | undefined> {
+    this.lastUserMessageTime = new Date();
+    this.store.lastMessageTarget = {
+      channel: msg.channel,
+      chatId: msg.chatId,
+      messageId: msg.messageId,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await adapter.sendTypingIndicator(msg.chatId);
+
+    const baseOptions = {
+      permissionMode: 'bypassPermissions' as const,
+      allowedTools: this.config.allowedTools,
+      cwd: this.config.workingDir,
+      canUseTool: () => ({ behavior: 'allow' as const }),
+    };
+
+    let session: Session | undefined;
+    try {
+      if (conversationId) {
+        session = resumeSession(conversationId, baseOptions);
+      } else {
+        session = createSession(agentId, baseOptions);
+      }
+
+      const initInfo = await session.initialize();
+      const activeConversationId = initInfo.conversationId || session.conversationId || conversationId;
+
+      const formattedMessage = msg.isBatch && msg.batchedMessages
+        ? formatGroupBatchEnvelope(msg.batchedMessages)
+        : formatMessageEnvelope(msg);
+
+      await session.send(formattedMessage);
+
+      let response = '';
+      const typingInterval = setInterval(() => {
+        adapter.sendTypingIndicator(msg.chatId).catch(() => {});
+      }, 4000);
+
+      try {
+        for await (const streamMsg of session.stream()) {
+          if (streamMsg.type === 'assistant') {
+            response += streamMsg.content;
+          }
+          if (streamMsg.type === 'result') {
+            break;
+          }
+        }
+      } finally {
+        clearInterval(typingInterval);
+      }
+
+      if (response.trim() && response.trim() !== '<no-reply/>') {
+        await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
+      }
+
+      return activeConversationId || undefined;
+    } catch (error) {
+      console.error('[Bot] Error processing swarm message:', error);
+      await adapter.sendMessage({
+        chatId: msg.chatId,
+        text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        threadId: msg.threadId,
+      }).catch(() => {});
+      return conversationId;
+    } finally {
+      session?.close();
     }
   }
   
