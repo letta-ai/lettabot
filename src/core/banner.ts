@@ -2,6 +2,30 @@
  * Startup banner with LETTABOT block text and loom ASCII art.
  */
 
+import { execSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+
+/** Read version from package.json and git commit hash. */
+function getVersionString(): string {
+  let version = 'unknown';
+  try {
+    const pkg = require('../../package.json');
+    version = pkg.version || version;
+  } catch {}
+
+  let commit = '';
+  try {
+    commit = execSync('git rev-parse --short HEAD', {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {}
+
+  return commit ? `v${version} (${commit})` : `v${version}`;
+}
+
 interface BannerAgent {
   name: string;
   agentId?: string | null;
@@ -81,7 +105,9 @@ export function printStartupBanner(agents: BannerAgent[]): void {
   }
 
   // Status lines
+  const versionStr = getVersionString();
   console.log('');
+  console.log(`  Version:  ${versionStr}`);
   for (const agent of agents) {
     const ch = agent.channels.length > 0 ? agent.channels.join(', ') : 'none';
     if (agent.agentId) {
