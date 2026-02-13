@@ -230,6 +230,7 @@ export interface SlackConfig {
 
 export interface WhatsAppConfig {
   enabled: boolean;
+  sessionPath?: string;   // Auth/session directory (default: ./data/whatsapp-session)
   selfChat?: boolean;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
@@ -246,6 +247,9 @@ export interface WhatsAppConfig {
 export interface SignalConfig {
   enabled: boolean;
   phone?: string;
+  cliPath?: string;     // Path to signal-cli binary (default: "signal-cli")
+  httpHost?: string;    // Daemon HTTP host (default: "127.0.0.1")
+  httpPort?: number;    // Daemon HTTP port (default: 8090)
   selfChat?: boolean;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
