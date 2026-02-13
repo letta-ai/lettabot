@@ -247,6 +247,14 @@ export class TelegramAdapter implements ChannelAdapter {
         await this.onCommand('heartbeat');
       }
     });
+
+    // Handle /reset
+    this.bot.command('reset', async (ctx) => {
+      if (this.onCommand) {
+        const result = await this.onCommand('reset');
+        await ctx.reply(result || 'Reset complete');
+      }
+    });
     
     // Handle text messages
     this.bot.on('message:text', async (ctx) => {

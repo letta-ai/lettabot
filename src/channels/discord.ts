@@ -249,15 +249,8 @@ Ask the bot owner to approve with:
           return;
         }
         if (this.onCommand) {
-          if (command === 'status') {
-            const result = await this.onCommand('status');
-            if (result) {
-              await message.channel.send(result);
-            }
-            return;
-          }
-          if (command === 'heartbeat') {
-            const result = await this.onCommand('heartbeat');
+          if (command === 'status' || command === 'reset' || command === 'heartbeat') {
+            const result = await this.onCommand(command);
             if (result) {
               await message.channel.send(result);
             }
