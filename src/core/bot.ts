@@ -637,14 +637,29 @@ export class LettaBot implements AgentSession {
           this.store.clearConversation(convKey);
           this.invalidateSession(convKey);
           console.log(`[Command] /reset - conversation cleared for ${convKey}`);
-          return `Conversation reset for this channel. Other channels are unaffected. (Agent memory is preserved.)`;
+          // Eagerly create the new session so we can report the conversation ID
+          try {
+            const session = await this.ensureSessionForKey(convKey);
+            const newConvId = session.conversationId || '(pending)';
+            this.persistSessionState(session, convKey);
+            return `Conversation reset for this channel. New conversation: ${newConvId}\nOther channels are unaffected. (Agent memory is preserved.)`;
+          } catch {
+            return `Conversation reset for this channel. Other channels are unaffected. (Agent memory is preserved.)`;
+          }
         }
         // Shared mode or no channel context: clear everything
         this.store.clearConversation();
         this.store.resetRecoveryAttempts();
         this.invalidateSession();
         console.log('[Command] /reset - all conversations cleared');
-        return 'Conversation reset. Send a message to start a new conversation. (Agent memory is preserved.)';
+        try {
+          const session = await this.ensureSessionForKey('shared');
+          const newConvId = session.conversationId || '(pending)';
+          this.persistSessionState(session, 'shared');
+          return `Conversation reset. New conversation: ${newConvId}\n(Agent memory is preserved.)`;
+        } catch {
+          return 'Conversation reset. Send a message to start a new conversation. (Agent memory is preserved.)';
+        }
       }
       default:
         return null;
