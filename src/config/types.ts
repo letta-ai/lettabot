@@ -182,6 +182,8 @@ export interface GroupConfig {
   mode?: GroupMode;
   /** Only process group messages from these user IDs. Omit to allow all users. */
   allowedUsers?: string[];
+  /** Process messages from other bots instead of dropping them. Default: false. */
+  receiveBotMessages?: boolean;
   /**
    * @deprecated Use mode: "mention-only" (true) or "open" (false).
    */

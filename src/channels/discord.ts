@@ -11,7 +11,7 @@ import type { DmPolicy } from '../pairing/types.js';
 import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { HELP_TEXT } from '../core/commands.js';
-import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, type GroupModeConfig } from './group-mode.js';
+import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveReceiveBotMessages, type GroupModeConfig } from './group-mode.js';
 
 // Dynamic import to avoid requiring Discord deps if not used
 let Client: typeof import('discord.js').Client;
@@ -142,7 +142,20 @@ Ask the bot owner to approve with:
     });
 
     this.client.on('messageCreate', async (message) => {
-      if (message.author?.bot) return;
+      const isFromBot = !!message.author?.bot;
+
+      // DMs from bots: always ignore
+      if (isFromBot && !message.guildId) return;
+
+      // Group messages from bots: only process if receiveBotMessages is enabled
+      if (isFromBot && message.guildId) {
+        if (!this.config.groups) return;
+        const chatId = message.channel.id;
+        const keys = [chatId];
+        if (message.guildId) keys.push(message.guildId);
+        if (!resolveReceiveBotMessages(this.config.groups, keys)) return;
+        // Fall through to normal processing
+      }
 
       let content = (message.content || '').trim();
       const userId = message.author?.id;

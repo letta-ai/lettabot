@@ -8,6 +8,8 @@ export interface GroupModeConfig {
   mode?: GroupMode;
   /** Only process group messages from these user IDs. Omit to allow all users. */
   allowedUsers?: string[];
+  /** Process messages from other bots instead of dropping them. Default: false. */
+  receiveBotMessages?: boolean;
   /**
    * @deprecated Use mode: "mention-only" (true) or "open" (false).
    */
@@ -74,6 +76,27 @@ export function isGroupUserAllowed(
   const allowed = resolveGroupAllowedUsers(groups, keys);
   if (!allowed) return true;
   return allowed.includes(userId);
+}
+
+/**
+ * Resolve whether bot messages should be processed for a group/channel.
+ *
+ * Priority:
+ * 1. First matching key in provided order
+ * 2. Wildcard "*"
+ * 3. false (default: bot messages dropped)
+ */
+export function resolveReceiveBotMessages(
+  groups: GroupsConfig | undefined,
+  keys: string[],
+): boolean {
+  if (groups) {
+    for (const key of keys) {
+      if (groups[key]?.receiveBotMessages !== undefined) return !!groups[key].receiveBotMessages;
+    }
+    if (groups['*']?.receiveBotMessages !== undefined) return !!groups['*'].receiveBotMessages;
+  }
+  return false;
 }
 
 /**

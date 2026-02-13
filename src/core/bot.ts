@@ -934,7 +934,7 @@ export class LettaBot implements AgentSession {
               || (trimmed.startsWith('<actions') && !trimmed.includes('</actions>'));
             // Strip any completed <actions> block from the streaming text
             const streamText = stripActionsBlock(response).trim();
-            if (canEdit && !mayBeHidden && streamText.length > 0 && Date.now() - lastUpdate > 500) {
+            if (canEdit && !mayBeHidden && !msg.isListeningMode && streamText.length > 0 && Date.now() - lastUpdate > 500) {
               try {
                 const prefixedStream = this.prefixResponse(streamText);
                 if (messageId) {
