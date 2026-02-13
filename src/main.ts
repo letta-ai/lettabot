@@ -527,6 +527,8 @@ async function main() {
       disallowedTools: globalConfig.disallowedTools,
       displayName: agentConfig.displayName,
       maxToolCalls: agentConfig.features?.maxToolCalls,
+      conversationMode: agentConfig.conversations?.mode || 'shared',
+      heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
         googleEnabled: !!agentConfig.integrations?.google?.enabled || !!agentConfig.polling?.gmail?.enabled,

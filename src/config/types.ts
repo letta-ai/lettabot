@@ -47,6 +47,11 @@ export interface AgentConfig {
     signal?: SignalConfig;
     discord?: DiscordConfig;
   };
+  /** Conversation routing */
+  conversations?: {
+    mode?: 'shared' | 'per-channel';  // Default: shared (single conversation across all channels)
+    heartbeat?: string;               // "dedicated" | "last-active" | "<channel>" (default: last-active)
+  };
   /** Features for this agent */
   features?: {
     cron?: boolean;
@@ -110,6 +115,12 @@ export interface LettaBotConfig {
     whatsapp?: WhatsAppConfig;
     signal?: SignalConfig;
     discord?: DiscordConfig;
+  };
+
+  // Conversation routing
+  conversations?: {
+    mode?: 'shared' | 'per-channel';  // Default: shared (single conversation across all channels)
+    heartbeat?: string;               // "dedicated" | "last-active" | "<channel>" (default: last-active)
   };
 
   // Features
