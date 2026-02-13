@@ -532,6 +532,7 @@ export class LettaBot implements AgentSession {
     // Return session and a deduplicated stream generator
     const seenToolCallIds = new Set<string>();
     const self = this;
+    const capturedConvKey = convKey; // Capture for closure
 
     async function* dedupedStream(): AsyncGenerator<StreamMsg> {
       for await (const raw of session.stream()) {
@@ -548,7 +549,7 @@ export class LettaBot implements AgentSession {
 
         // Persist state on result
         if (msg.type === 'result') {
-          self.persistSessionState(session);
+          self.persistSessionState(session, capturedConvKey);
           break;
         }
       }
