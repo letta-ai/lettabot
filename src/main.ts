@@ -344,7 +344,7 @@ function createChannelsForAgent(
       console.warn('[WhatsApp] Only use this if this is a dedicated bot number, not your personal WhatsApp.');
     }
     adapters.push(new WhatsAppAdapter({
-      sessionPath: process.env.WHATSAPP_SESSION_PATH || './data/whatsapp-session',
+      sessionPath: agentConfig.channels.whatsapp.sessionPath || process.env.WHATSAPP_SESSION_PATH || './data/whatsapp-session',
       dmPolicy: agentConfig.channels.whatsapp.dmPolicy || 'pairing',
       allowedUsers: agentConfig.channels.whatsapp.allowedUsers && agentConfig.channels.whatsapp.allowedUsers.length > 0
         ? agentConfig.channels.whatsapp.allowedUsers
@@ -365,9 +365,9 @@ function createChannelsForAgent(
     }
     adapters.push(new SignalAdapter({
       phoneNumber: agentConfig.channels.signal.phone,
-      cliPath: process.env.SIGNAL_CLI_PATH || 'signal-cli',
-      httpHost: process.env.SIGNAL_HTTP_HOST || '127.0.0.1',
-      httpPort: parseInt(process.env.SIGNAL_HTTP_PORT || '8090', 10),
+      cliPath: agentConfig.channels.signal.cliPath || process.env.SIGNAL_CLI_PATH || 'signal-cli',
+      httpHost: agentConfig.channels.signal.httpHost || process.env.SIGNAL_HTTP_HOST || '127.0.0.1',
+      httpPort: agentConfig.channels.signal.httpPort || parseInt(process.env.SIGNAL_HTTP_PORT || '8090', 10),
       dmPolicy: agentConfig.channels.signal.dmPolicy || 'pairing',
       allowedUsers: agentConfig.channels.signal.allowedUsers && agentConfig.channels.signal.allowedUsers.length > 0
         ? agentConfig.channels.signal.allowedUsers
