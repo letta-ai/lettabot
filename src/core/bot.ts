@@ -130,7 +130,8 @@ export class LettaBot implements AgentSession {
   private groupIntervals: Map<string, number> = new Map();
   private instantGroupIds: Set<string> = new Set();
   private listeningGroupIds: Set<string> = new Set();
-  private processing = false;
+  private processing = false; // Global lock for shared mode
+  private processingKeys: Set<string> = new Set(); // Per-key locks for per-channel mode
 
   // AskUserQuestion support: resolves when the next user message arrives
   private pendingQuestionResolver: ((text: string) => void) | null = null;
@@ -597,9 +598,14 @@ export class LettaBot implements AgentSession {
       }
     }
 
-    this.messageQueue.push({ msg: effective, adapter });
-    if (!this.processing) {
-      this.processQueue().catch(err => console.error('[Queue] Fatal error in processQueue:', err));
+    if (this.config.conversationMode === 'per-channel') {
+      const convKey = this.resolveConversationKey(effective.channel);
+      this.enqueueForKey(convKey, effective, adapter);
+    } else {
+      this.messageQueue.push({ msg: effective, adapter });
+      if (!this.processing) {
+        this.processQueue().catch(err => console.error('[Queue] Fatal error in processQueue:', err));
+      }
     }
   }
 
@@ -787,12 +793,59 @@ export class LettaBot implements AgentSession {
       return;
     }
 
-    this.messageQueue.push({ msg, adapter });
-    if (!this.processing) {
-      this.processQueue().catch(err => console.error('[Queue] Fatal error in processQueue:', err));
+    if (this.config.conversationMode === 'per-channel') {
+      // Per-channel mode: messages on different channels can run in parallel.
+      // Only serialize within the same conversation key.
+      const convKey = this.resolveConversationKey(msg.channel);
+      this.enqueueForKey(convKey, msg, adapter);
+    } else {
+      // Shared mode: single global queue (existing behavior)
+      this.messageQueue.push({ msg, adapter });
+      if (!this.processing) {
+        this.processQueue().catch(err => console.error('[Queue] Fatal error in processQueue:', err));
+      }
     }
   }
-  
+
+  /**
+   * Enqueue a message for a specific conversation key.
+   * Messages with the same key are serialized; different keys run in parallel.
+   */
+  private keyedQueues: Map<string, Array<{ msg: InboundMessage; adapter: ChannelAdapter }>> = new Map();
+
+  private enqueueForKey(key: string, msg: InboundMessage, adapter: ChannelAdapter): void {
+    let queue = this.keyedQueues.get(key);
+    if (!queue) {
+      queue = [];
+      this.keyedQueues.set(key, queue);
+    }
+    queue.push({ msg, adapter });
+
+    if (!this.processingKeys.has(key)) {
+      this.processKeyedQueue(key).catch(err =>
+        console.error(`[Queue] Fatal error in processKeyedQueue(${key}):`, err)
+      );
+    }
+  }
+
+  private async processKeyedQueue(key: string): Promise<void> {
+    if (this.processingKeys.has(key)) return;
+    this.processingKeys.add(key);
+
+    const queue = this.keyedQueues.get(key);
+    while (queue && queue.length > 0) {
+      const { msg, adapter } = queue.shift()!;
+      try {
+        await this.processMessage(msg, adapter);
+      } catch (error) {
+        console.error(`[Queue] Error processing message (key=${key}):`, error);
+      }
+    }
+
+    this.processingKeys.delete(key);
+    this.keyedQueues.delete(key);
+  }
+
   private async processQueue(): Promise<void> {
     if (this.processing || this.messageQueue.length === 0) return;
     
@@ -1229,22 +1282,45 @@ export class LettaBot implements AgentSession {
   // sendToAgent - Background triggers (heartbeats, cron, webhooks)
   // =========================================================================
   
-  async sendToAgent(
-    text: string,
-    _context?: TriggerContext
-  ): Promise<string> {
-    const convKey = this.resolveHeartbeatConversationKey();
-    const isDedicated = convKey === 'heartbeat';
+  /**
+   * Acquire the appropriate lock for a conversation key.
+   * In per-channel mode with a dedicated key, no lock needed (parallel OK).
+   * In per-channel mode with a channel key, wait for that key's queue.
+   * In shared mode, use the global processing flag.
+   */
+  private async acquireLock(convKey: string): Promise<boolean> {
+    if (convKey === 'heartbeat') return false; // No lock needed
 
-    // Serialize with message queue to prevent 409 conflicts.
-    // Dedicated heartbeat sessions have their own subprocess so they can
-    // skip the busy-wait and run in parallel with user messages.
-    if (!isDedicated) {
+    if (this.config.conversationMode === 'per-channel') {
+      while (this.processingKeys.has(convKey)) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      this.processingKeys.add(convKey);
+    } else {
       while (this.processing) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
       this.processing = true;
     }
+    return true;
+  }
+
+  private releaseLock(convKey: string, acquired: boolean): void {
+    if (!acquired) return;
+    if (this.config.conversationMode === 'per-channel') {
+      this.processingKeys.delete(convKey);
+    } else {
+      this.processing = false;
+      this.processQueue();
+    }
+  }
+
+  async sendToAgent(
+    text: string,
+    _context?: TriggerContext
+  ): Promise<string> {
+    const convKey = this.resolveHeartbeatConversationKey();
+    const acquired = await this.acquireLock(convKey);
     
     try {
       const { stream } = await this.runSession(text, { convKey });
@@ -1274,10 +1350,7 @@ export class LettaBot implements AgentSession {
         throw error;
       }
     } finally {
-      if (!isDedicated) {
-        this.processing = false;
-        this.processQueue();
-      }
+      this.releaseLock(convKey, acquired);
     }
   }
 
@@ -1290,14 +1363,7 @@ export class LettaBot implements AgentSession {
     _context?: TriggerContext
   ): AsyncGenerator<StreamMsg> {
     const convKey = this.resolveHeartbeatConversationKey();
-    const isDedicated = convKey === 'heartbeat';
-
-    if (!isDedicated) {
-      while (this.processing) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-      this.processing = true;
-    }
+    const acquired = await this.acquireLock(convKey);
 
     try {
       const { stream } = await this.runSession(text, { convKey });
@@ -1309,10 +1375,7 @@ export class LettaBot implements AgentSession {
         throw error;
       }
     } finally {
-      if (!isDedicated) {
-        this.processing = false;
-        this.processQueue();
-      }
+      this.releaseLock(convKey, acquired);
     }
   }
 
