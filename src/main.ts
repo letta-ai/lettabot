@@ -605,7 +605,7 @@ async function main() {
       prompt: heartbeatConfig?.prompt || process.env.HEARTBEAT_PROMPT,
       promptFile: heartbeatConfig?.promptFile,
       workingDir: globalConfig.workingDir,
-      target: parseHeartbeatTarget(process.env.HEARTBEAT_TARGET),
+      target: parseHeartbeatTarget(heartbeatConfig?.target) || parseHeartbeatTarget(process.env.HEARTBEAT_TARGET),
     });
     if (heartbeatConfig?.enabled) {
       heartbeatService.start();

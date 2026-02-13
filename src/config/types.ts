@@ -56,6 +56,7 @@ export interface AgentConfig {
       skipRecentUserMin?: number; // Skip auto-heartbeats for N minutes after user message (0 disables)
       prompt?: string;       // Custom heartbeat prompt (replaces default body)
       promptFile?: string;   // Path to prompt file (re-read each tick for live editing)
+      target?: string;       // Delivery target ("telegram:123", "slack:C123", etc.)
     };
     maxToolCalls?: number;
   };
@@ -120,6 +121,7 @@ export interface LettaBotConfig {
       skipRecentUserMin?: number; // Skip auto-heartbeats for N minutes after user message (0 disables)
       prompt?: string;       // Custom heartbeat prompt (replaces default body)
       promptFile?: string;   // Path to prompt file (re-read each tick for live editing)
+      target?: string;       // Delivery target ("telegram:123", "slack:C123", etc.)
     };
     inlineImages?: boolean;   // Send images directly to the LLM (default: true). Set false to only send file paths.
     maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)
