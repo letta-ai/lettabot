@@ -12,6 +12,7 @@ import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { HELP_TEXT } from '../core/commands.js';
 import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveReceiveBotMessages, type GroupModeConfig } from './group-mode.js';
+import { basename } from 'node:path';
 
 // Dynamic import to avoid requiring Discord deps if not used
 let Client: typeof import('discord.js').Client;
@@ -344,6 +345,23 @@ Ask the bot owner to approve with:
     }
 
     const result = await (channel as { send: (content: string) => Promise<{ id: string }> }).send(msg.text);
+    return { messageId: result.id };
+  }
+
+  async sendFile(file: OutboundFile): Promise<{ messageId: string }> {
+    if (!this.client) throw new Error('Discord not started');
+    const channel = await this.client.channels.fetch(file.chatId);
+    if (!channel || !channel.isTextBased() || !('send' in channel)) {
+      throw new Error(`Discord channel not found or not text-based: ${file.chatId}`);
+    }
+
+    const payload = {
+      content: file.caption || undefined,
+      files: [
+        { attachment: file.filePath, name: basename(file.filePath) },
+      ],
+    };
+    const result = await (channel as { send: (options: typeof payload) => Promise<{ id: string }> }).send(payload);
     return { messageId: result.id };
   }
 
