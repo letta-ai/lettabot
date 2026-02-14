@@ -5,7 +5,8 @@
  */
 
 import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
+import { extname } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
@@ -55,6 +56,15 @@ function isConversationMissingError(error: unknown): boolean {
 const SUPPORTED_IMAGE_MIMES = new Set([
   'image/png', 'image/jpeg', 'image/gif', 'image/webp',
 ]);
+
+const IMAGE_FILE_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff',
+]);
+
+function inferFileKind(filePath: string): 'image' | 'file' {
+  const ext = extname(filePath).toLowerCase();
+  return IMAGE_FILE_EXTENSIONS.has(ext) ? 'image' : 'file';
+}
 
 async function buildMultimodalMessage(
   formattedText: string,
@@ -304,6 +314,30 @@ export class LettaBot implements AgentSession {
           } catch (err) {
             console.warn('[Bot] Directive react failed:', err instanceof Error ? err.message : err);
           }
+        }
+        continue;
+      }
+
+      if (directive.type === 'send-file') {
+        if (typeof adapter.sendFile !== 'function') {
+          console.warn(`[Bot] Directive send-file skipped: ${adapter.name} does not support sendFile`);
+          continue;
+        }
+        if (!existsSync(directive.path)) {
+          console.warn(`[Bot] Directive send-file skipped: file not found at ${directive.path}`);
+          continue;
+        }
+        try {
+          await adapter.sendFile({
+            chatId,
+            filePath: directive.path,
+            caption: directive.caption,
+            kind: directive.kind ?? inferFileKind(directive.path),
+          });
+          acted = true;
+          console.log(`[Bot] Directive: sent file ${directive.path}`);
+        } catch (err) {
+          console.warn('[Bot] Directive send-file failed:', err instanceof Error ? err.message : err);
         }
       }
     }

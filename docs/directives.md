@@ -41,6 +41,20 @@ Adds an emoji reaction to a message.
   - Unicode emoji: direct characters like `👍`
 - `message` (optional) -- Target message ID. Defaults to the message that triggered the response.
 
+### `<send-file>`
+
+Sends a file or image to the same channel/chat as the triggering message.
+
+```xml
+<send-file path="/tmp/report.pdf" caption="Report attached" />
+<send-file path="/tmp/photo.png" kind="image" caption="Look!" />
+```
+
+**Attributes:**
+- `path` / `file` (required) -- Local file path on the LettaBot server
+- `caption` / `text` (optional) -- Caption text for the file
+- `kind` (optional) -- `image` or `file` (defaults to auto-detect based on extension)
+
 ### `<no-reply/>`
 
 Suppresses response delivery entirely. The agent's text is discarded.
@@ -66,13 +80,13 @@ Backslash-escaped quotes (common when LLMs generate XML inside a JSON context) a
 
 ## Channel Support
 
-| Channel   | `addReaction` | Notes |
-|-----------|:---:|-------|
-| Telegram  | Yes | Limited to Telegram's [allowed reaction set](https://core.telegram.org/bots/api#reactiontype) (~75 emoji) |
-| Slack     | Yes | Uses Slack emoji names (`:thumbsup:` style). Custom workspace emoji supported. |
-| Discord   | Yes | Unicode emoji and common aliases. Custom server emoji not yet supported. |
-| WhatsApp  | No  | Directive is skipped with a warning |
-| Signal    | No  | Directive is skipped with a warning |
+| Channel   | `addReaction` | `send-file` | Notes |
+|-----------|:---:|:---:|-------|
+| Telegram  | Yes | Yes | Reactions limited to Telegram's [allowed reaction set](https://core.telegram.org/bots/api#reactiontype). |
+| Slack     | Yes | Yes | Reactions use Slack emoji names (`:thumbsup:` style). |
+| Discord   | Yes | Yes | Custom server emoji not yet supported. |
+| WhatsApp  | No  | Yes | Reactions skipped with a warning. |
+| Signal    | No  | No  | Directive skipped with a warning. |
 
 When a channel doesn't implement `addReaction`, the directive is silently skipped and a warning is logged. This never blocks message delivery.
 
@@ -112,7 +126,7 @@ The parser (`src/core/directives.ts`) is designed to be extensible. Adding a new
 3. Add a parsing case in `parseChildDirectives()`
 4. Add an execution case in `executeDirectives()` in `bot.ts`
 
-See issue [#240](https://github.com/letta-ai/lettabot/issues/240) for planned directives like `<send-file>`.
+See issue [#240](https://github.com/letta-ai/lettabot/issues/240) for planned directives.
 
 ## Source
 
