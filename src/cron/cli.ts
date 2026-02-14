@@ -191,7 +191,17 @@ function createJob(args: string[]): void {
       enabled = false;
     } else if ((arg === '--deliver' || arg === '-d') && next) {
       // Format: channel:chatId (e.g., telegram:123456789 or discord:123456789012345678)
-      const [ch, id] = next.split(':');
+      const [ch, ...rest] = next.split(':');
+      const id = rest.join(':'); // Rejoin in case chatId contains colons
+      const validChannels = ['telegram', 'telegram-mtproto', 'slack', 'discord', 'whatsapp', 'signal'];
+      if (!validChannels.includes(ch)) {
+        console.error(`Error: invalid channel "${ch}". Must be one of: ${validChannels.join(', ')}`);
+        process.exit(1);
+      }
+      if (!id) {
+        console.error('Error: --deliver requires format channel:chatId (e.g., telegram:123456789)');
+        process.exit(1);
+      }
       deliverChannel = ch;
       deliverChatId = id;
       i++;

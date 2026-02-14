@@ -58,11 +58,11 @@ This tells the agent:
 ## Cron Schedule Syntax
 
 ```
------------ minute (0-59)
-| --------- hour (0-23)  
-| | ------- day of month (1-31)
-| | | ----- month (1-12)
-| | | | --- day of week (0-6, Sun=0)
+┌───────── minute (0-59)
+│ ┌─────── hour (0-23)  
+│ │ ┌───── day of month (1-31)
+│ │ │ ┌─── month (1-12)
+│ │ │ │ ┌─ day of week (0-6, Sun=0)
 * * * * *
 ```
 
