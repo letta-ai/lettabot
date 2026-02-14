@@ -170,6 +170,45 @@ export class LettaBot implements AgentSession {
     return `${this.config.displayName}: ${text}`;
   }
 
+  /**
+   * Format a tool call for channel display.
+   * Shows tool name + abbreviated key parameters.
+   */
+  private formatToolCallDisplay(streamMsg: StreamMsg): string {
+    const name = streamMsg.toolName || 'unknown';
+    const params = this.abbreviateToolInput(streamMsg);
+    return params ? `> **Tool:** ${name} (${params})` : `> **Tool:** ${name}`;
+  }
+
+  /**
+   * Extract a brief parameter summary from a tool call's input.
+   */
+  private abbreviateToolInput(streamMsg: StreamMsg): string {
+    const input = streamMsg.toolInput as Record<string, unknown> | undefined;
+    if (!input || typeof input !== 'object') return '';
+    const entries = Object.entries(input).slice(0, 2);
+    return entries
+      .map(([k, v]) => {
+        const str = typeof v === 'string' ? v : JSON.stringify(v);
+        const truncated = str.length > 80 ? str.slice(0, 77) + '...' : str;
+        return `${k}: ${truncated}`;
+      })
+      .join(', ');
+  }
+
+  /**
+   * Format reasoning text for channel display, respecting truncation config.
+   */
+  private formatReasoningDisplay(text: string): string {
+    const maxChars = this.config.display?.reasoningMaxChars ?? 0;
+    const truncated = maxChars > 0 && text.length > maxChars
+      ? text.slice(0, maxChars) + '...'
+      : text;
+    // Prefix every line with "> " so the whole block renders as a blockquote
+    const lines = truncated.split('\n').map(line => `> ${line}`);
+    return `> **Thinking**\n${lines.join('\n')}`;
+  }
+
   // =========================================================================
   // Session options (shared by processMessage and sendToAgent)
   // =========================================================================
@@ -979,6 +1018,7 @@ export class LettaBot implements AgentSession {
       let sentAnyMessage = false;
       let receivedAnyData = false;
       let sawNonAssistantSinceLastUuid = false;
+      let reasoningBuffer = '';
       const msgTypeCounts: Record<string, number> = {};
       
       const finalizeMessage = async () => {
@@ -1034,6 +1074,19 @@ export class LettaBot implements AgentSession {
           if (lastMsgType && lastMsgType !== streamMsg.type && response.trim() && streamMsg.type !== 'result') {
             await finalizeMessage();
           }
+
+          // Flush reasoning buffer when type changes away from reasoning
+          if (lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
+            if (this.config.display?.showReasoning && !suppressDelivery) {
+              try {
+                const text = this.formatReasoningDisplay(reasoningBuffer);
+                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+              } catch (err) {
+                console.warn('[Bot] Failed to send reasoning display:', err instanceof Error ? err.message : err);
+              }
+            }
+            reasoningBuffer = '';
+          }
           
           // Tool loop detection
           const maxToolCalls = this.config.maxToolCalls ?? 100;
@@ -1049,14 +1102,29 @@ export class LettaBot implements AgentSession {
             this.syncTodoToolCall(streamMsg);
             console.log(`[Stream] >>> TOOL CALL: ${streamMsg.toolName || 'unknown'} (id: ${streamMsg.toolCallId?.slice(0, 12) || '?'})`);
             sawNonAssistantSinceLastUuid = true;
+            // Display tool call in channel if configured
+            if (this.config.display?.showToolCalls && !suppressDelivery) {
+              try {
+                const text = this.formatToolCallDisplay(streamMsg);
+                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+              } catch (err) {
+                console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
+              }
+            }
           } else if (streamMsg.type === 'tool_result') {
             console.log(`[Stream] <<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
             sawNonAssistantSinceLastUuid = true;
           } else if (streamMsg.type === 'assistant' && lastMsgType !== 'assistant') {
             console.log(`[Bot] Generating response...`);
-          } else if (streamMsg.type === 'reasoning' && lastMsgType !== 'reasoning') {
-            console.log(`[Bot] Reasoning...`);
+          } else if (streamMsg.type === 'reasoning') {
+            if (lastMsgType !== 'reasoning') {
+              console.log(`[Bot] Reasoning...`);
+            }
             sawNonAssistantSinceLastUuid = true;
+            // Accumulate reasoning content for display
+            if (this.config.display?.showReasoning) {
+              reasoningBuffer += streamMsg.content || '';
+            }
           } else if (streamMsg.type !== 'assistant') {
             sawNonAssistantSinceLastUuid = true;
           }
