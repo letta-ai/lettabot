@@ -26,6 +26,18 @@ export function serverModeLabel(mode?: ServerMode): string {
 }
 
 /**
+ * Display configuration for tool calls and reasoning in channel output.
+ */
+export interface DisplayConfig {
+  /** Show tool invocations in channel output (default: false) */
+  showToolCalls?: boolean;
+  /** Show agent reasoning/thinking in channel output (default: false) */
+  showReasoning?: boolean;
+  /** Truncate reasoning to N characters (default: 0 = no limit) */
+  reasoningMaxChars?: number;
+}
+
+/**
  * Configuration for a single agent in multi-agent mode.
  * Each agent has its own name, channels, and features.
  */
@@ -64,6 +76,7 @@ export interface AgentConfig {
       target?: string;       // Delivery target ("telegram:123", "slack:C123", etc.)
     };
     maxToolCalls?: number;
+    display?: DisplayConfig;
   };
   /** Polling config */
   polling?: PollingYamlConfig;
@@ -136,6 +149,7 @@ export interface LettaBotConfig {
     };
     inlineImages?: boolean;   // Send images directly to the LLM (default: true). Set false to only send file paths.
     maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)
+    display?: DisplayConfig;  // Show tool calls / reasoning in channel output
   };
 
   // Polling - system-level background checks (Gmail, etc.)
