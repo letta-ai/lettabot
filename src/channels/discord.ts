@@ -529,6 +529,7 @@ const DISCORD_EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
   tada: '\u{1F389}',
   clap: '\u{1F44F}',
   ok_hand: '\u{1F44C}',
+  white_check_mark: '\u2705',
 };
 
 function resolveDiscordEmoji(input: string): string {
