@@ -72,6 +72,16 @@ features:
     enabled: true
     intervalMin: 60
 
+# Message hooks (optional)
+hooks:
+  preMessage:
+    file: ./hooks/message-hooks.mjs
+    mode: await
+    timeoutMs: 2000
+  postMessage:
+    file: ./hooks/message-hooks.mjs
+    mode: parallel
+
 # Polling (background checks for Gmail, etc.)
 polling:
   enabled: true
@@ -189,6 +199,7 @@ Each entry in `agents:` accepts:
 | `model` | string | No | Model for agent creation |
 | `channels` | object | No | Channel configs (same schema as top-level `channels:`). At least one agent must have channels. |
 | `features` | object | No | Per-agent features (cron, heartbeat, maxToolCalls) |
+| `hooks` | object | No | Message hooks for this agent (preMessage/postMessage) |
 | `polling` | object | No | Per-agent polling config (Gmail, etc.) |
 | `integrations` | object | No | Per-agent integrations (Google, etc.) |
 
@@ -441,6 +452,47 @@ The agent is taught about this behavior in two places:
 - **Message envelope**: Group messages include a hint reminding the agent of the `<no-reply/>` option. DMs do not include this hint.
 
 The bot also handles this gracefully during streaming -- it holds back partial output while the response could still become `<no-reply/>`, so users never see a partial match leak through.
+
+## Message Hooks
+
+Message hooks let you run your own code before and/or after each message is sent to the agent.
+
+```yaml
+hooks:
+  preMessage:
+    file: ./hooks/message-hooks.mjs
+    mode: await       # 'await' (default) or 'parallel'
+    timeoutMs: 2000
+  postMessage:
+    file: ./hooks/message-hooks.mjs
+    mode: parallel
+```
+
+- `preMessage`: Runs before the agent call. If it returns a string or message array, that replaces the outgoing message.
+- `postMessage`: Runs after the agent run completes (success or error). If it returns a string (or `{ response: string }`) and `mode: await`, that becomes the final response delivered/returned.
+- `mode: parallel` runs fire-and-forget (cannot modify the outgoing message).
+- Paths are resolved relative to the config file directory (or you can use absolute paths).
+- In multi-agent configs, you can set `hooks` at the top level (default for all agents) or per agent in `agents:`.
+- `lettabot-message` also runs `postMessage` hooks on outgoing text/captions (uses top-level `hooks`, or the single agent's hooks if only one agent is configured).
+
+Example hook module (ESM):
+
+```js
+export async function preMessage(ctx) {
+  // ctx.message is the outgoing message (string or array)
+  if (typeof ctx.message === 'string') {
+    return `${ctx.message}\n\n[trace_id=${Date.now()}]`;
+  }
+}
+
+export async function postMessage(ctx) {
+  console.log('response chars:', ctx.response?.length || 0, 'error:', ctx.error);
+}
+```
+
+Hook context highlights:
+- `ctx.isHeartbeat` is `true` when the trigger is a heartbeat.
+- `ctx.suppressDelivery` is `true` when the response is intentionally suppressed (e.g., listening mode).
 
 ## Polling Configuration
 

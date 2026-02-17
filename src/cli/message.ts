@@ -11,11 +11,42 @@
  */
 
 // Config loaded from lettabot.yaml
-import { loadAppConfigOrExit, applyConfigToEnv } from '../config/index.js';
-const config = loadAppConfigOrExit();
-applyConfigToEnv(config);
+import { loadAppConfigOrExit, applyConfigToEnv, resolveConfigPath } from '../config/index.js';
+import { dirname } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { loadLastTarget } from './shared.js';
+import { MessageHookRunner } from '../core/hooks.js';
+import type { MessageHookContext, MessageHooksConfig } from '../core/types.js';
+
+const config = loadAppConfigOrExit();
+applyConfigToEnv(config);
+const configPath = resolveConfigPath();
+const hooksDir = dirname(configPath);
+
+function resolveHooksConfig(rawConfig: { hooks?: MessageHooksConfig; agents?: Array<{ hooks?: MessageHooksConfig }> }): MessageHooksConfig | undefined {
+  if (rawConfig.hooks) return rawConfig.hooks;
+  if (rawConfig.agents && rawConfig.agents.length === 1) {
+    return rawConfig.agents[0].hooks;
+  }
+  return undefined;
+}
+
+const hooksConfig = resolveHooksConfig(config as { hooks?: MessageHooksConfig; agents?: Array<{ hooks?: MessageHooksConfig }> });
+const hookRunner = hooksConfig ? new MessageHookRunner(hooksDir) : null;
+
+async function applyPostHook(text: string): Promise<string> {
+  if (!hookRunner || !hooksConfig?.postMessage) return text;
+  const ctx: MessageHookContext = {
+    stage: 'post',
+    isHeartbeat: false,
+    suppressDelivery: false,
+    message: text,
+    response: text,
+    delivered: false,
+  };
+  const override = await hookRunner.runPost(hooksConfig.postMessage, ctx);
+  return override ?? text;
+}
 
 // Channel senders
 async function sendTelegram(chatId: string, text: string): Promise<void> {
@@ -254,6 +285,7 @@ async function sendCommand(args: string[]): Promise<void> {
   let kind: 'image' | 'file' | undefined = undefined;
   let channel = '';
   let chatId = '';
+  const fileCapableChannels = new Set(['telegram', 'slack', 'discord', 'whatsapp']);
 
   // Parse args
   for (let i = 0; i < args.length; i++) {
@@ -306,16 +338,18 @@ async function sendCommand(args: string[]): Promise<void> {
   }
 
   try {
-    // Use API for WhatsApp (unified multipart endpoint)
-    if (channel === 'whatsapp') {
-      await sendViaApi(channel, chatId, { text, filePath, kind });
-    } else if (filePath) {
-      // Other channels with files - not yet implemented via API
-      throw new Error(`File sending for ${channel} requires API (currently only WhatsApp supported via API)`);
-    } else {
-      // Other channels with text only - direct API calls
-      await sendToChannel(channel, chatId, text);
+    if (filePath) {
+      if (!fileCapableChannels.has(channel)) {
+        throw new Error(`File sending not supported for ${channel}. Supported: telegram, slack, discord, whatsapp`);
+      }
+      const finalText = await applyPostHook(text);
+      await sendViaApi(channel, chatId, { text: finalText, filePath, kind });
+      return;
     }
+
+    // Text-only: direct platform APIs (WhatsApp uses API internally)
+    const finalText = await applyPostHook(text);
+    await sendToChannel(channel, chatId, finalText);
   } catch (error) {
     console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
@@ -357,11 +391,12 @@ Environment variables:
   SLACK_BOT_TOKEN         Required for Slack
   DISCORD_BOT_TOKEN       Required for Discord
   SIGNAL_PHONE_NUMBER     Required for Signal (text only, no files)
-  LETTABOT_API_KEY        Required for WhatsApp (text and files)
+  LETTABOT_API_KEY        Required for file sending (telegram, slack, discord, whatsapp) and WhatsApp text
   LETTABOT_API_URL        API server URL (default: http://localhost:8080)
   SIGNAL_CLI_REST_API_URL Signal daemon URL (default: http://127.0.0.1:8090)
 
-Note: WhatsApp uses the API server. Other channels use direct platform APIs.
+Note: File sending uses the API server for supported channels (telegram, slack, discord, whatsapp).
+      Text-only messages use direct platform APIs (WhatsApp uses API).
 `);
 }
 
