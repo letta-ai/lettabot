@@ -1462,7 +1462,8 @@ export class LettaBot implements AgentSession {
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
     let hookMessage: SendMessage = text;
-    const hookContextBase = this.buildHookContextBase(convKey, _context);
+    const suppressDelivery = _context?.outputMode === 'silent';
+    const hookContextBase = this.buildHookContextBase(convKey, _context, suppressDelivery);
     let hookResponse = '';
     let hookError: string | undefined;
     let postHookRan = false;
@@ -1543,7 +1544,8 @@ export class LettaBot implements AgentSession {
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
     let hookMessage: SendMessage = text;
-    const hookContextBase = this.buildHookContextBase(convKey, _context);
+    const suppressDelivery = _context?.outputMode === 'silent';
+    const hookContextBase = this.buildHookContextBase(convKey, _context, suppressDelivery);
     let hookResponse = '';
     let hookError: string | undefined;
     let postHookRan = false;

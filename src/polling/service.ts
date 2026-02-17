@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AgentSession } from '../core/interfaces.js';
+import type { TriggerContext } from '../core/types.js';
 
 /**
  * Parse Gmail accounts from a string (comma-separated) or string array.
@@ -241,7 +242,13 @@ export class PollingService {
         'Review and summarize important emails. Use `lettabot-message send --text "..."` to notify the user if needed.',
       ].join('\n');
       
-      const response = await this.bot.sendToAgent(message);
+      const context: TriggerContext = {
+        type: 'feed',
+        outputMode: 'silent',
+        sourceChannel: 'gmail',
+        sourceChatId: account,
+      };
+      const response = await this.bot.sendToAgent(message, context);
       
       // Log response but do NOT auto-deliver (silent mode)
       console.log(`[Polling] Agent finished (SILENT MODE)`);

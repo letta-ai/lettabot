@@ -493,6 +493,7 @@ export async function postMessage(ctx) {
 Hook context highlights:
 - `ctx.isHeartbeat` is `true` when the trigger is a heartbeat.
 - `ctx.suppressDelivery` is `true` when the response is intentionally suppressed (e.g., listening mode).
+- `ctx.trigger` includes `type` (`user_message`, `heartbeat`, `cron`, `webhook`, `feed`) and `outputMode` (`silent` or `responsive`). For background triggers, `sourceChannel/sourceChatId` may be set (e.g., Gmail polling uses `sourceChannel: "gmail"`).
 
 ## Polling Configuration
 
