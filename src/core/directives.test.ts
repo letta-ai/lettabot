@@ -77,6 +77,22 @@ describe('parseDirectives', () => {
     ]);
   });
 
+  it('parses send-file directive with cleanup attribute', () => {
+    const result = parseDirectives('<actions><send-file path="/tmp/report.pdf" cleanup="true" /></actions>');
+    expect(result.cleanText).toBe('');
+    expect(result.directives).toEqual([
+      { type: 'send-file', path: '/tmp/report.pdf', cleanup: true },
+    ]);
+  });
+
+  it('omits cleanup when not set to true', () => {
+    const result = parseDirectives('<actions><send-file path="/tmp/report.pdf" cleanup="false" /></actions>');
+    expect(result.cleanText).toBe('');
+    expect(result.directives).toEqual([
+      { type: 'send-file', path: '/tmp/report.pdf' },
+    ]);
+  });
+
   it('ignores send-file directive without path or file attribute', () => {
     const result = parseDirectives('<actions><send-file caption="Missing" /></actions>');
     expect(result.cleanText).toBe('');

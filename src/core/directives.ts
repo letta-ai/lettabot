@@ -27,6 +27,7 @@ export interface SendFileDirective {
   path: string;
   caption?: string;
   kind?: 'image' | 'file';
+  cleanup?: boolean;
 }
 
 // Union type — extend with more directive types later
@@ -97,11 +98,13 @@ function parseChildDirectives(block: string): Directive[] {
       const kind = attrs.kind === 'image' || attrs.kind === 'file'
         ? attrs.kind
         : undefined;
+      const cleanup = attrs.cleanup === 'true';
       directives.push({
         type: 'send-file',
         path,
         ...(caption ? { caption } : {}),
         ...(kind ? { kind } : {}),
+        ...(cleanup ? { cleanup } : {}),
       });
     }
   }

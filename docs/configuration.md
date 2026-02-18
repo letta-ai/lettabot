@@ -416,6 +416,21 @@ Precedence: `prompt` (inline YAML) > `HEARTBEAT_PROMPT` (env var) > `promptFile`
 | `features.heartbeat.prompt` | string | _(none)_ | Custom heartbeat prompt text |
 | `features.heartbeat.promptFile` | string | _(none)_ | Path to prompt file (relative to working dir) |
 
+### Send-File Directory
+
+The `<send-file>` [response directive](./directives.md) allows the agent to send files to channels. For security, file paths are restricted to a configurable directory:
+
+```yaml
+features:
+  sendFileDir: ./data/outbound   # Default: agent working directory
+```
+
+Only files inside this directory (and its subdirectories) can be sent. Paths that resolve outside it are blocked. This prevents prompt injection attacks from exfiltrating sensitive files.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.sendFileDir` | string | _(workingDir)_ | Directory that `<send-file>` paths must be inside |
+
 ### Cron Jobs
 
 ```yaml

@@ -137,6 +137,7 @@ export interface BotConfig {
 
   // Security
   allowedUsers?: string[];  // Empty = allow all
+  sendFileDir?: string;     // Restrict <send-file> directive to this directory (default: workingDir)
 
   // Conversation routing
   conversationMode?: 'shared' | 'per-channel'; // Default: shared

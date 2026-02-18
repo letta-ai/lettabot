@@ -48,12 +48,16 @@ Sends a file or image to the same channel/chat as the triggering message.
 ```xml
 <send-file path="/tmp/report.pdf" caption="Report attached" />
 <send-file path="/tmp/photo.png" kind="image" caption="Look!" />
+<send-file path="/tmp/temp-export.csv" cleanup="true" />
 ```
 
 **Attributes:**
 - `path` / `file` (required) -- Local file path on the LettaBot server
 - `caption` / `text` (optional) -- Caption text for the file
 - `kind` (optional) -- `image` or `file` (defaults to auto-detect based on extension)
+- `cleanup` (optional) -- `true` to delete the file after sending (default: false)
+
+**Security:** File paths are restricted to the configured `sendFileDir` directory (defaults to the agent's working directory). Paths outside this directory are blocked and logged.
 
 ### `<no-reply/>`
 

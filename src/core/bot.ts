@@ -5,8 +5,9 @@
  */
 
 import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
-import { mkdirSync, existsSync } from 'node:fs';
-import { extname } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { access, unlink, constants } from 'node:fs/promises';
+import { extname, resolve } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
@@ -61,9 +62,20 @@ const IMAGE_FILE_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff',
 ]);
 
-function inferFileKind(filePath: string): 'image' | 'file' {
+/** Infer whether a file is an image or generic file based on extension. */
+export function inferFileKind(filePath: string): 'image' | 'file' {
   const ext = extname(filePath).toLowerCase();
   return IMAGE_FILE_EXTENSIONS.has(ext) ? 'image' : 'file';
+}
+
+/**
+ * Check whether a resolved file path is inside the allowed directory.
+ * Prevents path traversal attacks in the send-file directive.
+ */
+export function isPathAllowed(filePath: string, allowedDir: string): boolean {
+  const resolvedFile = resolve(filePath);
+  const resolvedDir = resolve(allowedDir);
+  return resolvedFile === resolvedDir || resolvedFile.startsWith(resolvedDir + '/');
 }
 
 async function buildMultimodalMessage(
@@ -323,19 +335,42 @@ export class LettaBot implements AgentSession {
           console.warn(`[Bot] Directive send-file skipped: ${adapter.name} does not support sendFile`);
           continue;
         }
-        if (!existsSync(directive.path)) {
-          console.warn(`[Bot] Directive send-file skipped: file not found at ${directive.path}`);
+
+        // Path sandboxing: restrict to configured directory (default: workingDir)
+        const allowedDir = this.config.sendFileDir || this.config.workingDir;
+        const resolvedPath = resolve(directive.path);
+        if (!isPathAllowed(resolvedPath, allowedDir)) {
+          console.warn(`[Bot] Directive send-file blocked: ${directive.path} is outside allowed directory ${allowedDir}`);
           continue;
         }
+
+        // Async file existence check
+        try {
+          await access(resolvedPath, constants.R_OK);
+        } catch {
+          console.warn(`[Bot] Directive send-file skipped: file not found or not readable at ${directive.path}`);
+          continue;
+        }
+
         try {
           await adapter.sendFile({
             chatId,
-            filePath: directive.path,
+            filePath: resolvedPath,
             caption: directive.caption,
-            kind: directive.kind ?? inferFileKind(directive.path),
+            kind: directive.kind ?? inferFileKind(resolvedPath),
           });
           acted = true;
-          console.log(`[Bot] Directive: sent file ${directive.path}`);
+          console.log(`[Bot] Directive: sent file ${resolvedPath}`);
+
+          // Optional cleanup: delete file after successful send
+          if (directive.cleanup) {
+            try {
+              await unlink(resolvedPath);
+              console.log(`[Bot] Directive: cleaned up ${resolvedPath}`);
+            } catch (cleanupErr) {
+              console.warn('[Bot] Directive send-file cleanup failed:', cleanupErr instanceof Error ? cleanupErr.message : cleanupErr);
+            }
+          }
         } catch (err) {
           console.warn('[Bot] Directive send-file failed:', err instanceof Error ? err.message : err);
         }
