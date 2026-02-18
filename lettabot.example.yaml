@@ -69,6 +69,16 @@ features:
     intervalMin: 30
     # skipRecentUserMin: 5   # Skip auto-heartbeats for N minutes after user message (0 disables)
 
+# Message hooks (optional)
+# hooks:
+#   preMessage:
+#     file: ./hooks/message-hooks.mjs
+#     mode: await       # 'await' (default) or 'parallel'
+#     timeoutMs: 2000
+#   postMessage:
+#     file: ./hooks/message-hooks.mjs
+#     mode: parallel
+
 # Attachment handling (defaults to 20MB if omitted)
 # attachments:
 #   maxMB: 20

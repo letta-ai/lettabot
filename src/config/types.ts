@@ -9,6 +9,23 @@
 export type ServerMode = 'api' | 'docker' | 'cloud' | 'selfhosted';
 export type CanonicalServerMode = 'api' | 'docker';
 
+// =============================================================================
+// Message Hooks
+// =============================================================================
+
+export type HookMode = 'await' | 'parallel';
+
+export interface HookHandlerConfig {
+  file: string;          // Path to ESM module exporting preMessage/postMessage
+  mode?: HookMode;       // 'await' (default) or 'parallel'
+  timeoutMs?: number;    // Optional timeout (ms)
+}
+
+export interface MessageHooksConfig {
+  preMessage?: HookHandlerConfig;
+  postMessage?: HookHandlerConfig;
+}
+
 export function canonicalizeServerMode(mode?: ServerMode): CanonicalServerMode {
   return mode === 'docker' || mode === 'selfhosted' ? 'docker' : 'api';
 }
@@ -65,6 +82,8 @@ export interface AgentConfig {
     };
     maxToolCalls?: number;
   };
+  /** Message hooks for this agent */
+  hooks?: MessageHooksConfig;
   /** Polling config */
   polling?: PollingYamlConfig;
   /** Integrations */
@@ -137,6 +156,9 @@ export interface LettaBotConfig {
     inlineImages?: boolean;   // Send images directly to the LLM (default: true). Set false to only send file paths.
     maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)
   };
+
+  // Message hooks (applies to all agents unless overridden)
+  hooks?: MessageHooksConfig;
 
   // Polling - system-level background checks (Gmail, etc.)
   polling?: PollingYamlConfig;
@@ -469,6 +491,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     return config.agents.map((agent, index) => ({
       ...agent,
       channels: normalizeChannels(agent.channels, `agents[${index}].channels`),
+      hooks: agent.hooks ?? config.hooks,
     }));
   }
 
@@ -549,6 +572,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     displayName: config.agent?.displayName,
     model,
     channels,
+    hooks: config.hooks,
     features: config.features,
     polling: config.polling,
     integrations: config.integrations,
