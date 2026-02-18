@@ -221,6 +221,32 @@ export class LettaBot implements AgentSession {
     }
   }
 
+  private getSessionTimeoutMs(): number {
+    const envTimeoutMs = Number(process.env.LETTA_SESSION_TIMEOUT_MS);
+    if (Number.isFinite(envTimeoutMs) && envTimeoutMs > 0) {
+      return envTimeoutMs;
+    }
+    return 60000;
+  }
+
+  private async withSessionTimeout<T>(
+    promise: Promise<T>,
+    label: string,
+  ): Promise<T> {
+    const timeoutMs = this.getSessionTimeoutMs();
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<T>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
   private baseSessionOptions(canUseTool?: CanUseToolCallback) {
     return {
       permissionMode: 'bypassPermissions' as const,
@@ -387,10 +413,16 @@ export class LettaBot implements AgentSession {
 
     // Initialize eagerly so the subprocess is ready before the first send()
     console.log(`[Bot] Initializing session subprocess (key=${key})...`);
-    await session.initialize();
-    console.log(`[Bot] Session subprocess ready (key=${key})`);
-    this.sessions.set(key, session);
-    return session;
+    try {
+      await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
+      console.log(`[Bot] Session subprocess ready (key=${key})`);
+      this.sessions.set(key, session);
+      return session;
+    } catch (error) {
+      // Close immediately so failed initialization cannot leak a subprocess.
+      session.close();
+      throw error;
+    }
   }
 
   /** Legacy convenience: resolve key from shared/per-channel mode and delegate. */
@@ -489,7 +521,7 @@ export class LettaBot implements AgentSession {
 
     // Send message with fallback chain
     try {
-      await session.send(message);
+      await this.withSessionTimeout(session.send(message), `Session send (key=${convKey})`);
     } catch (error) {
       // 409 CONFLICT from orphaned approval
       if (!retried && isApprovalConflictError(error) && this.store.agentId && convId) {
@@ -519,7 +551,12 @@ export class LettaBot implements AgentSession {
           this.store.conversationId = null;
         }
         session = await this.ensureSessionForKey(convKey);
-        await session.send(message);
+        try {
+          await this.withSessionTimeout(session.send(message), `Session send retry (key=${convKey})`);
+        } catch (retryError) {
+          this.invalidateSession(convKey);
+          throw retryError;
+        }
       } else {
         // Unknown error -- invalidate so we get a fresh subprocess next time
         this.invalidateSession(convKey);
@@ -546,11 +583,13 @@ export class LettaBot implements AgentSession {
           if (id) seenToolCallIds.add(id);
         }
 
-        yield msg;
-
-        // Persist state on result
         if (msg.type === 'result') {
           self.persistSessionState(session, capturedConvKey);
+        }
+
+        yield msg;
+
+        if (msg.type === 'result') {
           break;
         }
       }
