@@ -512,7 +512,10 @@ hooks:
 - `mode: parallel` runs fire-and-forget (cannot modify the outgoing message).
 - Paths are resolved relative to the config file directory (or you can use absolute paths).
 - In multi-agent configs, you can set `hooks` at the top level (default for all agents) or per agent in `agents:`.
-- `lettabot-message` also runs `postMessage` hooks on outgoing text/captions (uses top-level `hooks`, or the single agent's hooks if only one agent is configured).
+- `lettabot-message` also runs `postMessage` hooks on outgoing text/captions.
+- In multi-agent configs, pass `--agent/--agent-id` (or set `LETTABOT_AGENT_NAME/LETTABOT_AGENT_ID`) so `ctx.agent` is populated correctly.
+- `ctx.trigger` is set for CLI sends when you pass `--trigger` (or set `LETTABOT_TRIGGER_TYPE`).
+- If you pass `--output-mode` or `--job-*` without `--trigger`, the CLI defaults `ctx.trigger.type` to `webhook`.
 
 Example hook module (ESM):
 
