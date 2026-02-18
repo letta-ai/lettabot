@@ -1,150 +1,114 @@
 /**
- * Gateway - Message routing layer between channels and agents
- * 
- * This replaces the direct bot->channel connection with a router
- * that can direct messages to different agents based on bindings.
+ * LettaGateway - Orchestrates multiple agent sessions.
+ *
+ * In multi-agent mode, the gateway manages multiple AgentSession instances,
+ * each with their own channels, message queue, and state.
  */
 
-import type { ChannelAdapter } from '../channels/types.js';
-import type { InboundMessage } from './types.js';
-import type { NormalizedConfig } from '../config/types.js';
-import { AgentManager, createAgentManager } from './agent-manager.js';
-import { MessageRouter, createRouter, type RoutingContext } from '../routing/router.js';
+import type { AgentSession } from './interfaces.js';
 
-/**
- * Gateway manages channel adapters and routes messages to agents
- */
-export class Gateway {
-  private config: NormalizedConfig;
-  private agentManager: AgentManager;
-  private router: MessageRouter;
-  private channels: Map<string, ChannelAdapter> = new Map();
-  
-  constructor(config: NormalizedConfig) {
-    this.config = config;
-    this.agentManager = createAgentManager(config);
-    this.router = createRouter(config.bindings, this.agentManager.getDefaultAgentId());
-  }
-  
+export class LettaGateway {
+  private agents: Map<string, AgentSession> = new Map();
+
   /**
-   * Register a channel adapter
+   * Add a named agent session to the gateway.
+   * @throws if name is empty or already exists
    */
-  registerChannel(adapter: ChannelAdapter): void {
-    const key = `${adapter.id}:${adapter.accountId}`;
-    this.channels.set(key, adapter);
-    
-    // Wire up message handler with routing
-    adapter.onMessage = async (msg: InboundMessage) => {
-      await this.handleMessage(msg, adapter);
-    };
-    
-    console.log(`[Gateway] Registered channel: ${adapter.name} (${key})`);
+  addAgent(name: string, session: AgentSession): void {
+    if (!name?.trim()) {
+      throw new Error('Agent name cannot be empty');
+    }
+    if (this.agents.has(name)) {
+      throw new Error(`Agent "${name}" already exists`);
+    }
+    this.agents.set(name, session);
+    console.log(`[Gateway] Added agent: ${name}`);
   }
-  
-  /**
-   * Get a channel adapter by ID and account
-   */
-  getChannel(channelId: string, accountId: string = 'default'): ChannelAdapter | undefined {
-    return this.channels.get(`${channelId}:${accountId}`);
+
+  /** Get an agent session by name */
+  getAgent(name: string): AgentSession | undefined {
+    return this.agents.get(name);
   }
-  
-  /**
-   * Get all registered channels
-   */
-  getChannels(): ChannelAdapter[] {
-    return Array.from(this.channels.values());
+
+  /** Get all agent names */
+  getAgentNames(): string[] {
+    return Array.from(this.agents.keys());
   }
-  
-  /**
-   * Get the agent manager
-   */
-  getAgentManager(): AgentManager {
-    return this.agentManager;
+
+  /** Get agent count */
+  get size(): number {
+    return this.agents.size;
   }
-  
-  /**
-   * Start all channels
-   */
+
+  /** Start all agents */
   async start(): Promise<void> {
-    // Verify agents exist on server
-    await this.agentManager.verifyAgents();
-    
-    // Start all channels
-    for (const adapter of this.channels.values()) {
-      try {
-        await adapter.start();
-        console.log(`[Gateway] Started channel: ${adapter.name}`);
-      } catch (error) {
-        console.error(`[Gateway] Failed to start ${adapter.name}:`, error);
-      }
+    console.log(`[Gateway] Starting ${this.agents.size} agent(s)...`);
+    const results = await Promise.allSettled(
+      Array.from(this.agents.entries()).map(async ([name, session]) => {
+        await session.start();
+        console.log(`[Gateway] Started: ${name}`);
+      })
+    );
+    const failed = results.filter(r => r.status === 'rejected');
+    if (failed.length > 0) {
+      console.error(`[Gateway] ${failed.length} agent(s) failed to start`);
     }
+    console.log(`[Gateway] ${results.length - failed.length}/${results.length} agents started`);
   }
-  
-  /**
-   * Stop all channels
-   */
-  async stop(): Promise<void> {
-    for (const adapter of this.channels.values()) {
-      try {
-        await adapter.stop();
-      } catch (error) {
-        console.error(`[Gateway] Error stopping ${adapter.name}:`, error);
-      }
-    }
-  }
-  
-  /**
-   * Handle an incoming message - route to appropriate agent
-   */
-  private async handleMessage(msg: InboundMessage, adapter: ChannelAdapter): Promise<void> {
-    // Build routing context
-    const ctx: RoutingContext = {
-      channel: msg.channel,
-      accountId: msg.accountId || adapter.accountId,
-      peerId: msg.chatId,
-      peerKind: msg.isGroup ? 'group' : 'dm',
-    };
-    
-    // Route to agent
-    const result = this.router.route(ctx);
-    const routeDesc = this.router.describeRoute(ctx);
-    console.log(`[Gateway] Routing ${msg.channel}:${msg.chatId} ${routeDesc}`);
-    
-    // Get agent and process
-    const agent = this.agentManager.getAgent(result.agentId);
-    if (!agent) {
-      console.error(`[Gateway] Agent not found: ${result.agentId}`);
-      await adapter.sendMessage({
-        chatId: msg.chatId,
-        text: `Error: Agent "${result.agentId}" not found`,
-        threadId: msg.threadId,
-      });
-      return;
-    }
-    
-    // Process with agent
-    await agent.processMessage(msg, adapter);
-  }
-  
-  /**
-   * Get status summary
-   */
-  getStatus(): {
-    channels: string[];
-    agents: ReturnType<AgentManager['getStatus']>;
-    bindings: number;
-  } {
-    return {
-      channels: Array.from(this.channels.keys()),
-      agents: this.agentManager.getStatus(),
-      bindings: this.config.bindings.length,
-    };
-  }
-}
 
-/**
- * Create a gateway from normalized config
- */
-export function createGateway(config: NormalizedConfig): Gateway {
-  return new Gateway(config);
+  /** Stop all agents */
+  async stop(): Promise<void> {
+    console.log('[Gateway] Stopping all agents...');
+    for (const [name, session] of this.agents) {
+      try {
+        await session.stop();
+        console.log(`[Gateway] Stopped: ${name}`);
+      } catch (e) {
+        console.error(`[Gateway] Failed to stop ${name}:`, e);
+      }
+    }
+  }
+
+  /**
+   * Deliver a message to a channel.
+   * Finds the agent that owns the channel and delegates.
+   */
+  async deliverToChannel(
+    channelId: string,
+    chatId: string,
+    options: { text?: string; filePath?: string; kind?: 'image' | 'file' }
+  ): Promise<string | undefined> {
+    // Try each agent until one owns the channel
+    for (const [, session] of this.agents) {
+      const status = session.getStatus();
+      if (status.channels.includes(channelId)) {
+        return session.deliverToChannel(channelId, chatId, options);
+      }
+    }
+    throw new Error(`No agent owns channel: ${channelId}`);
+  }
+
+  /**
+   * Send a message to an agent by name.
+   * If name is undefined, route to first configured agent.
+   */
+  async sendToAgent(agentName: string | undefined, text: string, context?: Parameters<AgentSession['sendToAgent']>[1]): Promise<string> {
+    const session = agentName ? this.getAgent(agentName) : this.agents.values().next().value as AgentSession | undefined;
+    if (!session) {
+      throw new Error(agentName ? `Agent not found: ${agentName}` : 'No agents configured');
+    }
+    return session.sendToAgent(text, context);
+  }
+
+  /**
+   * Stream a message to an agent by name.
+   * If name is undefined, route to first configured agent.
+   */
+  async *streamToAgent(agentName: string | undefined, text: string, context?: Parameters<AgentSession['streamToAgent']>[1]): AsyncGenerator<import('./bot.js').StreamMsg> {
+    const session = agentName ? this.getAgent(agentName) : this.agents.values().next().value as AgentSession | undefined;
+    if (!session) {
+      throw new Error(agentName ? `Agent not found: ${agentName}` : 'No agents configured');
+    }
+    yield* session.streamToAgent(text, context);
+  }
 }
