@@ -18,6 +18,7 @@ import { loadLastTarget } from './shared.js';
 import { MessageHookRunner } from '../core/hooks.js';
 import { Store } from '../core/store.js';
 import type { MessageHookContext, MessageHooksConfig } from '../core/types.js';
+import { resolveTriggerContext } from './trigger-context.js';
 
 const config = loadAppConfigOrExit();
 applyConfigToEnv(config);
@@ -126,7 +127,16 @@ const hookRunner = new MessageHookRunner(hooksDir);
 
 async function applyPostHook(
   text: string,
-  options: { channel?: string; agentName?: string; agentId?: string } = {},
+  options: {
+    channel?: string;
+    chatId?: string;
+    agentName?: string;
+    agentId?: string;
+    triggerType?: string;
+    outputMode?: string;
+    jobId?: string;
+    jobName?: string;
+  } = {},
 ): Promise<string> {
   const selection = resolveAgentSelection(options.agentName, options.agentId);
   const hooksConfig = resolveHooksConfig(selection);
@@ -135,6 +145,7 @@ async function applyPostHook(
   if (warning) {
     console.warn(warning);
   }
+  const trigger = resolveTriggerContext(options);
   const ctx: MessageHookContext = {
     stage: 'post',
     isHeartbeat: false,
@@ -142,6 +153,7 @@ async function applyPostHook(
     message: text,
     response: text,
     delivered: false,
+    ...(trigger ? { trigger } : {}),
     ...(agent ? { agent } : {}),
   };
   const override = await hookRunner.runPost(hooksConfig.postMessage, ctx);
@@ -387,6 +399,10 @@ async function sendCommand(args: string[]): Promise<void> {
   let chatId = '';
   let agentName = '';
   let agentId = '';
+  let triggerType = '';
+  let outputMode = '';
+  let jobId = '';
+  let jobName = '';
   const fileCapableChannels = new Set(['telegram', 'slack', 'discord', 'whatsapp']);
 
   // Parse args
@@ -413,6 +429,18 @@ async function sendCommand(args: string[]): Promise<void> {
       i++;
     } else if (arg === '--agent-id' && next) {
       agentId = next;
+      i++;
+    } else if ((arg === '--trigger' || arg === '--trigger-type') && next) {
+      triggerType = next;
+      i++;
+    } else if (arg === '--output-mode' && next) {
+      outputMode = next;
+      i++;
+    } else if (arg === '--job-id' && next) {
+      jobId = next;
+      i++;
+    } else if (arg === '--job-name' && next) {
+      jobName = next;
       i++;
     }
   }
@@ -452,8 +480,13 @@ async function sendCommand(args: string[]): Promise<void> {
       }
       const finalText = await applyPostHook(text, {
         channel,
+        chatId,
         agentName: agentName || undefined,
         agentId: agentId || undefined,
+        triggerType: triggerType || undefined,
+        outputMode: outputMode || undefined,
+        jobId: jobId || undefined,
+        jobName: jobName || undefined,
       });
       await sendViaApi(channel, chatId, { text: finalText, filePath, kind });
       return;
@@ -462,8 +495,13 @@ async function sendCommand(args: string[]): Promise<void> {
     // Text-only: direct platform APIs (WhatsApp uses API internally)
     const finalText = await applyPostHook(text, {
       channel,
+      chatId,
       agentName: agentName || undefined,
       agentId: agentId || undefined,
+      triggerType: triggerType || undefined,
+      outputMode: outputMode || undefined,
+      jobId: jobId || undefined,
+      jobName: jobName || undefined,
     });
     await sendToChannel(channel, chatId, finalText);
   } catch (error) {
@@ -487,6 +525,10 @@ Send options:
   --chat, --to <id>       Chat/conversation ID (default: last messaged)
   --agent, --agent-name <name>  Agent name for hook context (required in multi-agent)
   --agent-id <id>         Agent ID for hook context (overrides store/config)
+  --trigger <type>        Trigger type for hook context: user_message, heartbeat, cron, webhook, feed
+  --output-mode <mode>    Trigger output mode: responsive, silent
+  --job-id <id>           Cron/job ID for trigger context
+  --job-name <name>       Cron/job name for trigger context
 
 Examples:
   # Send text message
@@ -516,9 +558,15 @@ Environment variables:
   LETTABOT_AGENT_ID       Agent ID for CLI hook context
   LETTA_AGENT_NAME        Alternate agent name env
   LETTA_AGENT_ID          Alternate agent ID env
+  LETTABOT_TRIGGER_TYPE   Trigger type for hook context
+  LETTABOT_TRIGGER_OUTPUT_MODE  Trigger output mode for hook context
+  LETTABOT_TRIGGER_JOB_ID Trigger job ID for hook context
+  LETTABOT_TRIGGER_JOB_NAME  Trigger job name for hook context
 
 Note: File sending uses the API server for supported channels (telegram, slack, discord, whatsapp).
       Text-only messages use direct platform APIs (WhatsApp uses API).
+      Hook trigger context is included when --trigger or LETTABOT_TRIGGER_TYPE is set.
+      If --output-mode or --job-* are provided without --trigger, the trigger defaults to "webhook".
 `);
 }
 

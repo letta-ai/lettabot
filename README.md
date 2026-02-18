@@ -270,6 +270,8 @@ lettabot-react add --emoji :eyes: --channel discord --chat 123 --message 456
 lettabot-history fetch --limit 25 --channel discord --chat 123456789
 ```
 
+If you rely on message hooks, set `--trigger` (or `LETTABOT_TRIGGER_TYPE`) when using `lettabot-message` so `ctx.trigger` is populated.
+
 See [CLI Tools](docs/cli-tools.md) for details and limitations.
 
 ## Connect to Letta Code 
