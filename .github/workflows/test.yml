@@ -30,8 +30,6 @@ jobs:
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
-    # Only run e2e on main branch (has secrets)
-    if: github.ref == 'refs/heads/main' || github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
       
@@ -47,6 +45,8 @@ jobs:
         run: npm run build
       
       - name: Run e2e tests
+        # Tests requiring secrets (bot.e2e, models.e2e) skip gracefully via describe.skipIf.
+        # OpenAI SDK compat tests always run (no secrets needed, uses mock gateway).
         run: npm run test:e2e
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
