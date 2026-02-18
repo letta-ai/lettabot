@@ -3,11 +3,15 @@
  *
  * In multi-agent mode, the gateway manages multiple AgentSession instances,
  * each with their own channels, message queue, and state.
+ *
+ * See: docs/multi-agent-architecture.md
  */
 
-import type { AgentSession } from './interfaces.js';
+import type { AgentSession, AgentRouter } from './interfaces.js';
+import type { TriggerContext } from './types.js';
+import type { StreamMsg } from './bot.js';
 
-export class LettaGateway {
+export class LettaGateway implements AgentRouter {
   private agents: Map<string, AgentSession> = new Map();
 
   /**
@@ -58,7 +62,7 @@ export class LettaGateway {
 
   /** Stop all agents */
   async stop(): Promise<void> {
-    console.log('[Gateway] Stopping all agents...');
+    console.log(`[Gateway] Stopping all agents...`);
     for (const [name, session] of this.agents) {
       try {
         await session.stop();
@@ -67,6 +71,37 @@ export class LettaGateway {
         console.error(`[Gateway] Failed to stop ${name}:`, e);
       }
     }
+  }
+
+  /**
+   * Send a message to a named agent and return the response.
+   * If no name is given, routes to the first registered agent.
+   */
+  async sendToAgent(agentName: string | undefined, text: string, context?: TriggerContext): Promise<string> {
+    const agent = this.resolveAgent(agentName);
+    return agent.sendToAgent(text, context);
+  }
+
+  /**
+   * Stream a message to a named agent, yielding chunks as they arrive.
+   */
+  async *streamToAgent(agentName: string | undefined, text: string, context?: TriggerContext): AsyncGenerator<StreamMsg> {
+    const agent = this.resolveAgent(agentName);
+    yield* agent.streamToAgent(text, context);
+  }
+
+  /**
+   * Resolve an agent by name, defaulting to the first registered agent.
+   */
+  private resolveAgent(name?: string): AgentSession {
+    if (!name) {
+      const first = this.agents.values().next().value;
+      if (!first) throw new Error('No agents configured');
+      return first;
+    }
+    const agent = this.agents.get(name);
+    if (!agent) throw new Error(`Agent not found: ${name}`);
+    return agent;
   }
 
   /**
@@ -79,36 +114,12 @@ export class LettaGateway {
     options: { text?: string; filePath?: string; kind?: 'image' | 'file' }
   ): Promise<string | undefined> {
     // Try each agent until one owns the channel
-    for (const [, session] of this.agents) {
+    for (const [name, session] of this.agents) {
       const status = session.getStatus();
       if (status.channels.includes(channelId)) {
         return session.deliverToChannel(channelId, chatId, options);
       }
     }
     throw new Error(`No agent owns channel: ${channelId}`);
-  }
-
-  /**
-   * Send a message to an agent by name.
-   * If name is undefined, route to first configured agent.
-   */
-  async sendToAgent(agentName: string | undefined, text: string, context?: Parameters<AgentSession['sendToAgent']>[1]): Promise<string> {
-    const session = agentName ? this.getAgent(agentName) : this.agents.values().next().value as AgentSession | undefined;
-    if (!session) {
-      throw new Error(agentName ? `Agent not found: ${agentName}` : 'No agents configured');
-    }
-    return session.sendToAgent(text, context);
-  }
-
-  /**
-   * Stream a message to an agent by name.
-   * If name is undefined, route to first configured agent.
-   */
-  async *streamToAgent(agentName: string | undefined, text: string, context?: Parameters<AgentSession['streamToAgent']>[1]): AsyncGenerator<import('./bot.js').StreamMsg> {
-    const session = agentName ? this.getAgent(agentName) : this.agents.values().next().value as AgentSession | undefined;
-    if (!session) {
-      throw new Error(agentName ? `Agent not found: ${agentName}` : 'No agents configured');
-    }
-    yield* session.streamToAgent(text, context);
   }
 }
