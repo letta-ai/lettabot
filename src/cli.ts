@@ -195,6 +195,7 @@ Commands:
   model set <handle>   Set model by handle (e.g., anthropic/claude-sonnet-4-5-20250929)
   channels             Manage channels (interactive menu)
   channels list        Show channel status
+  channels list-groups List group/channel IDs for Slack/Discord
   channels add <ch>    Add a channel (telegram, slack, discord, whatsapp, signal)
   channels remove <ch> Remove a channel
   logout               Logout from Letta Platform (revoke OAuth tokens)
@@ -300,7 +301,7 @@ async function main() {
     case 'channels':
     case 'channel': {
       const { channelManagementCommand } = await import('./cli/channel-management.js');
-      await channelManagementCommand(subCommand, args[2]);
+      await channelManagementCommand(subCommand, args[2], args.slice(3));
       break;
     }
     
