@@ -4,6 +4,8 @@
  * Shared helper for listing group/channel IDs across platforms.
  */
 
+import { loadAppConfigOrExit, normalizeAgents, type AgentConfig } from '../config/index.js';
+
 interface DiscordGuild {
   id: string;
   name: string;
@@ -29,14 +31,14 @@ const DISCORD_TEXT_CHANNEL_TYPES = new Set([
   15, // GUILD_FORUM
 ]);
 
-async function listDiscord(): Promise<void> {
-  const token = process.env.DISCORD_BOT_TOKEN;
-  if (!token) {
+async function listDiscord(token?: string): Promise<void> {
+  const discordToken = token || process.env.DISCORD_BOT_TOKEN;
+  if (!discordToken) {
     console.error('Discord: DISCORD_BOT_TOKEN not set, skipping.');
     return;
   }
 
-  const headers = { Authorization: `Bot ${token}` };
+  const headers = { Authorization: `Bot ${discordToken}` };
   const guildsRes = await fetch('https://discord.com/api/v10/users/@me/guilds', { headers });
   if (!guildsRes.ok) {
     const error = await guildsRes.text();
@@ -77,9 +79,9 @@ async function listDiscord(): Promise<void> {
   }
 }
 
-async function listSlack(): Promise<void> {
-  const token = process.env.SLACK_BOT_TOKEN;
-  if (!token) {
+async function listSlack(token?: string): Promise<void> {
+  const slackToken = token || process.env.SLACK_BOT_TOKEN;
+  if (!slackToken) {
     console.error('Slack: SLACK_BOT_TOKEN not set, skipping.');
     return;
   }
@@ -96,7 +98,7 @@ async function listSlack(): Promise<void> {
     if (cursor) params.set('cursor', cursor);
 
     const res = await fetch(`https://slack.com/api/conversations.list?${params}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${slackToken}` },
     });
 
     const data = (await res.json()) as {
@@ -133,8 +135,22 @@ function printUnsupported(platform: string): void {
   console.log(`${platform}: Channel listing not supported (platform does not expose a bot-visible channel list).`);
 }
 
-function parseChannelArgs(args: string[]): { channel?: string; error?: string } {
+function resolveAgentConfig(agentName?: string): AgentConfig | null {
+  if (!agentName) return null;
+
+  const config = loadAppConfigOrExit();
+  const agents = normalizeAgents(config);
+
+  const exact = agents.find(a => a.name === agentName);
+  if (exact) return exact;
+
+  const lower = agentName.toLowerCase();
+  return agents.find(a => a.name.toLowerCase() === lower) || null;
+}
+
+function parseChannelArgs(args: string[]): { channel?: string; agent?: string; error?: string } {
   let channel: string | undefined;
+  let agent: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -147,22 +163,41 @@ function parseChannelArgs(args: string[]): { channel?: string; error?: string } 
     if (arg === '--channel' || arg === '-c') {
       return { error: 'Missing value for --channel' };
     }
+    if (arg === '--agent' && next) {
+      agent = next;
+      i++;
+      continue;
+    }
+    if (arg === '--agent') {
+      return { error: 'Missing value for --agent' };
+    }
     if (!arg.startsWith('-') && !channel) {
       channel = arg.toLowerCase();
     }
   }
 
-  return { channel };
+  return { channel, agent };
 }
 
-export async function listGroups(channel?: string): Promise<void> {
+export async function listGroups(channel?: string, agentName?: string): Promise<void> {
+  const agentConfig = resolveAgentConfig(agentName);
+
+  if (agentName && !agentConfig) {
+    console.error(`Agent "${agentName}" not found in config`);
+    process.exit(1);
+  }
+
+  // Resolve tokens from agent config or fall back to env vars
+  const discordToken = agentConfig?.channels?.discord?.token || process.env.DISCORD_BOT_TOKEN;
+  const slackToken = agentConfig?.channels?.slack?.botToken || process.env.SLACK_BOT_TOKEN;
+
   if (channel) {
     switch (channel) {
       case 'discord':
-        await listDiscord();
+        await listDiscord(discordToken);
         break;
       case 'slack':
-        await listSlack();
+        await listSlack(slackToken);
         break;
       case 'telegram':
         printUnsupported('Telegram');
@@ -180,28 +215,32 @@ export async function listGroups(channel?: string): Promise<void> {
     return;
   }
 
-  const hasDiscord = !!process.env.DISCORD_BOT_TOKEN;
-  const hasSlack = !!process.env.SLACK_BOT_TOKEN;
+  const hasDiscord = !!discordToken;
+  const hasSlack = !!slackToken;
 
   if (!hasDiscord && !hasSlack) {
-    console.log('No supported platforms configured. Set DISCORD_BOT_TOKEN or SLACK_BOT_TOKEN.');
+    if (agentName) {
+      console.log(`No Discord or Slack channels configured for agent "${agentName}".`);
+    } else {
+      console.log('No supported platforms configured. Set DISCORD_BOT_TOKEN or SLACK_BOT_TOKEN.');
+    }
     return;
   }
 
   if (hasDiscord) {
-    await listDiscord();
+    await listDiscord(discordToken);
   }
   if (hasSlack) {
     if (hasDiscord) console.log('');
-    await listSlack();
+    await listSlack(slackToken);
   }
 }
 
 export async function listGroupsFromArgs(args: string[]): Promise<void> {
-  const { channel, error } = parseChannelArgs(args);
+  const { channel, agent, error } = parseChannelArgs(args);
   if (error) {
     console.error(error);
     process.exit(1);
   }
-  await listGroups(channel);
+  await listGroups(channel, agent);
 }
