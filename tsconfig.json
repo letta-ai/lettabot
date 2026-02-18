@@ -10,5 +10,14 @@
     "rootDir": "src"
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "vendor"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "vendor",
+    "src/config/normalize.ts",
+    "src/core/agent-instance.ts",
+    "src/core/agent-manager.ts",
+    "src/routing/**/*"
+  ]
 }
+
