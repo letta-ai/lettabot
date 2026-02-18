@@ -906,7 +906,7 @@ export class LettaBot implements AgentSession {
       if (!suppressDelivery) {
         await adapter.sendMessage({
           chatId: msg.chatId,
-          text: '(Session recovery failed after multiple attempts. Try: lettabot reset-conversation)',
+          text: `(I had trouble processing that -- the session hit a stuck state and automatic recovery failed after ${this.store.recoveryAttempts} attempt(s). Please try sending your message again. If this keeps happening, /reset will clear the conversation for this channel.)`,
           threadId: msg.threadId,
         });
       }
@@ -1244,7 +1244,7 @@ export class LettaBot implements AgentSession {
           console.error('[Bot] Stream received NO DATA - possible stuck state');
           await adapter.sendMessage({ 
             chatId: msg.chatId, 
-            text: '(Session interrupted. Try: lettabot reset-conversation)', 
+            text: '(No response received -- the connection may have dropped or the server may be busy. Please try again. If this persists, /reset will start a fresh conversation.)', 
             threadId: msg.threadId 
           });
         } else {
@@ -1252,10 +1252,9 @@ export class LettaBot implements AgentSession {
           if (hadToolActivity) {
             console.log('[Bot] Agent had tool activity but no assistant message - likely sent via tool');
           } else {
-            const convIdShort = this.store.conversationId?.slice(0, 8) || 'none';
             await adapter.sendMessage({ 
               chatId: msg.chatId, 
-              text: `(No response. Conversation: ${convIdShort}... Try: lettabot reset-conversation)`, 
+              text: '(The agent processed your message but didn\'t produce a visible response. This can happen with certain prompts. Try rephrasing or sending again.)', 
               threadId: msg.threadId 
             });
           }
