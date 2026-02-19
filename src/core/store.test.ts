@@ -225,4 +225,77 @@ describe('Store', () => {
     expect(defaultStore.agentId).toBe('global-agent');
     expect(namedStore.agentId).toBeNull();
   });
+
+  // Per-key conversation management
+
+  it('should get/set per-key conversation IDs', () => {
+    const store = new Store(testStorePath, 'TestBot');
+
+    // Initially null for all keys
+    expect(store.getConversationId('telegram')).toBeNull();
+    expect(store.getConversationId('slack')).toBeNull();
+
+    // Set per-key
+    store.setConversationId('telegram', 'conv-tg-1');
+    store.setConversationId('slack', 'conv-slack-1');
+
+    expect(store.getConversationId('telegram')).toBe('conv-tg-1');
+    expect(store.getConversationId('slack')).toBe('conv-slack-1');
+
+    // Legacy field is separate
+    expect(store.conversationId).toBeNull();
+  });
+
+  it('should fall back to legacy conversationId when key is undefined', () => {
+    const store = new Store(testStorePath, 'TestBot');
+    store.conversationId = 'conv-shared';
+
+    expect(store.getConversationId()).toBe('conv-shared');
+    expect(store.getConversationId(undefined)).toBe('conv-shared');
+  });
+
+  it('should clear a specific conversation key', () => {
+    const store = new Store(testStorePath, 'TestBot');
+
+    store.setConversationId('telegram', 'conv-tg');
+    store.setConversationId('slack', 'conv-slack');
+    store.clearConversation('telegram');
+
+    expect(store.getConversationId('telegram')).toBeNull();
+    expect(store.getConversationId('slack')).toBe('conv-slack');
+  });
+
+  it('should clear all conversations when key is undefined', () => {
+    const store = new Store(testStorePath, 'TestBot');
+
+    store.conversationId = 'conv-shared';
+    store.setConversationId('telegram', 'conv-tg');
+    store.setConversationId('discord', 'conv-dc');
+    store.clearConversation();
+
+    expect(store.conversationId).toBeNull();
+    expect(store.getConversationId('telegram')).toBeNull();
+    expect(store.getConversationId('discord')).toBeNull();
+  });
+
+  it('should persist per-key conversations across reloads', () => {
+    const store1 = new Store(testStorePath, 'TestBot');
+    store1.setConversationId('telegram', 'conv-tg-persist');
+    store1.setConversationId('heartbeat', 'conv-hb-persist');
+
+    const store2 = new Store(testStorePath, 'TestBot');
+    expect(store2.getConversationId('telegram')).toBe('conv-tg-persist');
+    expect(store2.getConversationId('heartbeat')).toBe('conv-hb-persist');
+  });
+
+  it('should isolate per-key conversations across agents', () => {
+    const store1 = new Store(testStorePath, 'Bot1');
+    const store2 = new Store(testStorePath, 'Bot2');
+
+    store1.setConversationId('telegram', 'conv-bot1-tg');
+    store2.setConversationId('telegram', 'conv-bot2-tg');
+
+    expect(store1.getConversationId('telegram')).toBe('conv-bot1-tg');
+    expect(store2.getConversationId('telegram')).toBe('conv-bot2-tg');
+  });
 });

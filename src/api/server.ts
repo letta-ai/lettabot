@@ -6,7 +6,8 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import { validateApiKey } from './auth.js';
-import type { SendMessageRequest, SendMessageResponse, SendFileResponse, ChatRequest, ChatResponse } from './types.js';
+import type { SendMessageRequest, SendMessageResponse, SendFileResponse, ChatRequest, ChatResponse, PairingListResponse, PairingApproveRequest, PairingApproveResponse } from './types.js';
+import { listPairingRequests, approvePairingCode } from '../pairing/store.js';
 import { parseMultipart } from './multipart.js';
 import type { AgentRouter } from '../core/interfaces.js';
 import type { ChannelId } from '../core/types.js';
@@ -216,6 +217,92 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
       return;
     }
 
+    // Route: GET /api/v1/pairing/:channel - List pending pairing requests
+    const pairingListMatch = req.url?.match(/^\/api\/v1\/pairing\/([a-z0-9-]+)$/);
+    if (pairingListMatch && req.method === 'GET') {
+      try {
+        if (!validateApiKey(req.headers, options.apiKey)) {
+          sendError(res, 401, 'Unauthorized');
+          return;
+        }
+
+        const channel = pairingListMatch[1];
+        if (!VALID_CHANNELS.includes(channel as ChannelId)) {
+          sendError(res, 400, `Invalid channel: ${channel}`, 'channel');
+          return;
+        }
+
+        const requests = await listPairingRequests(channel);
+        const response: PairingListResponse = { requests };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(response));
+      } catch (error: any) {
+        console.error('[API] Pairing list error:', error);
+        sendError(res, 500, error.message || 'Internal server error');
+      }
+      return;
+    }
+
+    // Route: POST /api/v1/pairing/:channel/approve - Approve a pairing code
+    const pairingApproveMatch = req.url?.match(/^\/api\/v1\/pairing\/([a-z0-9-]+)\/approve$/);
+    if (pairingApproveMatch && req.method === 'POST') {
+      try {
+        if (!validateApiKey(req.headers, options.apiKey)) {
+          sendError(res, 401, 'Unauthorized');
+          return;
+        }
+
+        const channel = pairingApproveMatch[1];
+        if (!VALID_CHANNELS.includes(channel as ChannelId)) {
+          sendError(res, 400, `Invalid channel: ${channel}`, 'channel');
+          return;
+        }
+
+        const contentType = req.headers['content-type'] || '';
+        if (!contentType.includes('application/json')) {
+          sendError(res, 400, 'Content-Type must be application/json');
+          return;
+        }
+
+        const body = await readBody(req, MAX_BODY_SIZE);
+        let approveReq: PairingApproveRequest;
+        try {
+          approveReq = JSON.parse(body);
+        } catch {
+          sendError(res, 400, 'Invalid JSON body');
+          return;
+        }
+
+        if (!approveReq.code || typeof approveReq.code !== 'string') {
+          sendError(res, 400, 'Missing required field: code');
+          return;
+        }
+
+        const result = await approvePairingCode(channel, approveReq.code);
+        if (!result) {
+          const response: PairingApproveResponse = {
+            success: false,
+            error: 'Code not found or expired',
+          };
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(response));
+          return;
+        }
+
+        console.log(`[API] Pairing approved: ${channel} user ${result.userId}`);
+        const response: PairingApproveResponse = {
+          success: true,
+          userId: result.userId,
+        };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(response));
+      } catch (error: any) {
+        console.error('[API] Pairing approve error:', error);
+        sendError(res, 500, error.message || 'Internal server error');
+      }
+      return;
+    }
+
     // Route: 404 Not Found
     sendError(res, 404, 'Not found');
   });
@@ -241,6 +328,7 @@ function readBody(req: http.IncomingMessage, maxSize: number): Promise<string> {
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > maxSize) {
+        req.destroy();
         reject(new Error(`Request body too large (max ${maxSize} bytes)`));
         return;
       }

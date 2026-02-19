@@ -49,6 +49,7 @@ SLACK_APP_TOKEN=xapp-...
 | `CRON_ENABLED` | `false` | Enable cron jobs |
 | `HEARTBEAT_ENABLED` | `false` | Enable heartbeat service |
 | `HEARTBEAT_INTERVAL_MIN` | `30` | Heartbeat interval (minutes). Also enables heartbeat when set |
+| `HEARTBEAT_SKIP_RECENT_USER_MIN` | `5` | Skip automatic heartbeats for N minutes after user messages (`0` disables) |
 | `HEARTBEAT_TARGET` | - | Target chat (e.g., `telegram:123456`) |
 | `OPENAI_API_KEY` | - | For voice message transcription |
 | `API_HOST` | `0.0.0.0` on Railway | Optional override for API bind address |
@@ -101,6 +102,27 @@ If you deploy manually from a fork instead of using the template, you'll need to
 3. Set the mount path to `/data`
 
 LettaBot automatically detects `RAILWAY_VOLUME_MOUNT_PATH` and uses it for persistent data.
+
+## Remote Pairing Approval
+
+When using `pairing` DM policy on Railway, you can approve new users via the HTTP API instead of the CLI:
+
+```bash
+# List pending pairing requests for a channel
+curl -H "X-Api-Key: $LETTABOT_API_KEY" \
+  https://your-app.railway.app/api/v1/pairing/telegram
+
+# Approve a pairing code
+curl -X POST \
+  -H "X-Api-Key: $LETTABOT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"code": "ABCD1234"}' \
+  https://your-app.railway.app/api/v1/pairing/telegram/approve
+```
+
+`LETTABOT_API_KEY` is auto-generated on first boot and printed in logs. Set it as a Railway variable for stable access across deploys.
+
+Alternatively, use `allowlist` DM policy and pre-configure allowed users in environment variables to skip pairing entirely.
 
 ## Channel Limitations
 

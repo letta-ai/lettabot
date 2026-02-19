@@ -370,9 +370,12 @@ features:
   heartbeat:
     enabled: true
     intervalMin: 60    # Check every 60 minutes
+    skipRecentUserMin: 5  # Skip auto-heartbeats for N minutes after user message (0 disables)
 ```
 
 Heartbeats are background tasks where the agent can review pending work.
+If the user messaged recently, automatic heartbeats are skipped by default for 5 minutes (`skipRecentUserMin`).
+Set this to `0` to disable skipping. Manual `/heartbeat` bypasses the skip check.
 
 #### Custom Heartbeat Prompt
 
@@ -402,12 +405,14 @@ Via environment variable:
 
 ```bash
 HEARTBEAT_PROMPT="Review recent conversations" npm start
+# Optional: HEARTBEAT_SKIP_RECENT_USER_MIN=0 to disable recent-user skip
 ```
 
 Precedence: `prompt` (inline YAML) > `HEARTBEAT_PROMPT` (env var) > `promptFile` (file) > built-in default.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `features.heartbeat.skipRecentUserMin` | number | `5` | Skip auto-heartbeats for N minutes after a user message. Set `0` to disable. |
 | `features.heartbeat.prompt` | string | _(none)_ | Custom heartbeat prompt text |
 | `features.heartbeat.promptFile` | string | _(none)_ | Path to prompt file (relative to working dir) |
 

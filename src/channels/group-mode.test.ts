@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isGroupAllowed, isGroupUserAllowed, resolveGroupAllowedUsers, resolveGroupMode, type GroupsConfig } from './group-mode.js';
+import { isGroupAllowed, isGroupUserAllowed, resolveGroupAllowedUsers, resolveGroupMode, resolveReceiveBotMessages, type GroupsConfig } from './group-mode.js';
 
 describe('group-mode helpers', () => {
   describe('isGroupAllowed', () => {
@@ -119,6 +119,55 @@ describe('group-mode helpers', () => {
       };
       expect(resolveGroupAllowedUsers(groups, ['chat-1', 'server-1'])).toEqual(['chat-user']);
       expect(resolveGroupAllowedUsers(groups, ['chat-2', 'server-1'])).toEqual(['server-user']);
+    });
+  });
+
+  describe('resolveReceiveBotMessages', () => {
+    it('returns false when groups config is missing', () => {
+      expect(resolveReceiveBotMessages(undefined, ['group-1'])).toBe(false);
+    });
+
+    it('returns false when receiveBotMessages is not configured', () => {
+      const groups: GroupsConfig = { 'group-1': { mode: 'listen' } };
+      expect(resolveReceiveBotMessages(groups, ['group-1'])).toBe(false);
+    });
+
+    it('returns true when receiveBotMessages is enabled on specific key', () => {
+      const groups: GroupsConfig = {
+        'group-1': { mode: 'listen', receiveBotMessages: true },
+      };
+      expect(resolveReceiveBotMessages(groups, ['group-1'])).toBe(true);
+    });
+
+    it('returns false when receiveBotMessages is explicitly disabled', () => {
+      const groups: GroupsConfig = {
+        'group-1': { mode: 'listen', receiveBotMessages: false },
+      };
+      expect(resolveReceiveBotMessages(groups, ['group-1'])).toBe(false);
+    });
+
+    it('uses wildcard as fallback', () => {
+      const groups: GroupsConfig = {
+        '*': { mode: 'listen', receiveBotMessages: true },
+      };
+      expect(resolveReceiveBotMessages(groups, ['group-1'])).toBe(true);
+    });
+
+    it('prefers specific key over wildcard', () => {
+      const groups: GroupsConfig = {
+        '*': { mode: 'listen', receiveBotMessages: true },
+        'group-1': { mode: 'listen', receiveBotMessages: false },
+      };
+      expect(resolveReceiveBotMessages(groups, ['group-1'])).toBe(false);
+    });
+
+    it('uses first matching key in priority order', () => {
+      const groups: GroupsConfig = {
+        'chat-1': { mode: 'listen', receiveBotMessages: true },
+        'server-1': { mode: 'listen', receiveBotMessages: false },
+      };
+      expect(resolveReceiveBotMessages(groups, ['chat-1', 'server-1'])).toBe(true);
+      expect(resolveReceiveBotMessages(groups, ['chat-2', 'server-1'])).toBe(false);
     });
   });
 

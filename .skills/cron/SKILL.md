@@ -5,7 +5,7 @@ description: Create and manage scheduled tasks (cron jobs) that send you message
 
 # Cron Jobs
 
-Schedule tasks that send you messages at specified times. Jobs are scheduled immediately when created.
+Schedule tasks that send messages to the agent at specified times. Jobs are scheduled immediately when created.
 
 ## Quick Reference
 
@@ -30,20 +30,27 @@ lettabot-cron create \
 **Options:**
 - `-n, --name` - Job name (required)
 - `-s, --schedule` - Cron expression (required)  
-- `-m, --message` - Message sent to you when job runs (required)
-- `-d, --deliver` - Where to send response (format: `channel:chatId`). **Defaults to last messaged chat.**
-- `--disabled` - Create disabled
+- `-m, --message` - Prompt sent to the agent when the job fires (required)
+- `-d, --deliver` - Auto-deliver the agent's response to a channel (format: `channel:chatId`). Without this flag, the job runs in **silent mode** (see below).
+- `--disabled` - Create in disabled state
+
+## Silent Mode vs Delivery Mode
+
+Cron jobs run in one of two modes:
+
+- **Silent mode** (no `--deliver`): The agent receives the message and can act on it (e.g., update memory, run tools), but the response is NOT automatically sent to any chat. If the agent wants to send a message, it must explicitly use `lettabot-message send`.
+- **Delivery mode** (`--deliver channel:chatId`): The agent's response is automatically delivered to the specified channel/chat after execution.
 
 ## Message Format
 
-When a cron job runs, you receive a message like:
+When a cron job runs, the agent receives a message like:
 
 ```
 [cron:cron-123abc Morning Briefing] Good morning! Review tasks for today.
 Current time: 1/27/2026, 8:00:00 AM (America/Los_Angeles)
 ```
 
-This tells you:
+This tells the agent:
 - The message came from a cron job (not a user)
 - The job ID and name
 - The current time
@@ -87,9 +94,18 @@ lettabot-cron create \
   -d slack:C1234567890
 ```
 
+**Background task (silent mode - agent acts but no auto-delivery):**
+```bash
+lettabot-cron create \
+  -n "Email Check" \
+  -s "0 */2 * * *" \
+  -m "Check for new emails and summarize anything important."
+```
+
 ## Notes
 
 - Jobs schedule immediately when created (no restart needed)
 - Use `lettabot-cron list` to see next run times and last run status
 - Jobs persist in `cron-jobs.json`
 - Logs written to `cron-log.jsonl`
+- Without `--deliver`, the agent must use `lettabot-message send` to communicate results to users

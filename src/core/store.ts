@@ -126,6 +126,46 @@ export class Store {
     this.agentData().conversationId = id;
     this.save();
   }
+
+  // Per-key conversation management (for per-channel mode)
+
+  /**
+   * Get conversation ID for a specific key (channel name, "heartbeat", etc.).
+   * Falls back to the legacy single conversationId when key is undefined.
+   */
+  getConversationId(key?: string): string | null {
+    if (!key) return this.conversationId;
+    return this.agentData().conversations?.[key] || null;
+  }
+
+  /**
+   * Set conversation ID for a specific key.
+   */
+  setConversationId(key: string, id: string): void {
+    const agent = this.agentData();
+    if (!agent.conversations) {
+      agent.conversations = {};
+    }
+    agent.conversations[key] = id;
+    this.save();
+  }
+
+  /**
+   * Clear conversation(s). If key is provided, clears only that key.
+   * If key is undefined, clears the legacy conversationId AND all per-key conversations.
+   */
+  clearConversation(key?: string): void {
+    const agent = this.agentData();
+    if (key) {
+      if (agent.conversations) {
+        delete agent.conversations[key];
+      }
+    } else {
+      agent.conversationId = null;
+      agent.conversations = undefined;
+    }
+    this.save();
+  }
   
   get baseUrl(): string | undefined {
     return this.agentData().baseUrl;

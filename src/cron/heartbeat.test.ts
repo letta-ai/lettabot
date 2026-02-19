@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { HeartbeatService, type HeartbeatConfig } from './heartbeat.js';
 import { buildCustomHeartbeatPrompt, SILENT_MODE_PREFIX } from '../core/prompts.js';
 import type { AgentSession } from '../core/interfaces.js';
+import { addTodo } from '../todo/store.js';
 
 // ── buildCustomHeartbeatPrompt ──────────────────────────────────────────
 
@@ -49,7 +50,7 @@ function createMockBot(): AgentSession {
     sendToAgent: vi.fn().mockResolvedValue('ok'),
     streamToAgent: vi.fn().mockReturnValue((async function* () { yield { type: 'result', success: true }; })()),
     deliverToChannel: vi.fn(),
-    getStatus: vi.fn().mockReturnValue({ agentId: 'test', channels: [] }),
+    getStatus: vi.fn().mockReturnValue({ agentId: 'test', conversationId: null, channels: [] }),
     setAgentId: vi.fn(),
     reset: vi.fn(),
     getLastMessageTarget: vi.fn().mockReturnValue(null),
@@ -62,19 +63,28 @@ function createConfig(overrides: Partial<HeartbeatConfig> = {}): HeartbeatConfig
     enabled: true,
     intervalMinutes: 30,
     workingDir: tmpdir(),
+    agentKey: 'test-agent',
     ...overrides,
   };
 }
 
 describe('HeartbeatService prompt resolution', () => {
   let tmpDir: string;
+  let originalDataDir: string | undefined;
 
   beforeEach(() => {
     tmpDir = resolve(tmpdir(), `heartbeat-test-${Date.now()}`);
     mkdirSync(tmpDir, { recursive: true });
+    originalDataDir = process.env.DATA_DIR;
+    process.env.DATA_DIR = tmpDir;
   });
 
   afterEach(() => {
+    if (originalDataDir === undefined) {
+      delete process.env.DATA_DIR;
+    } else {
+      process.env.DATA_DIR = originalDataDir;
+    }
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
@@ -193,5 +203,71 @@ describe('HeartbeatService prompt resolution', () => {
     const sentMessage = (bot.sendToAgent as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     // Empty/whitespace file should fall back to default
     expect(sentMessage).toContain('This is your time');
+  });
+
+  it('injects actionable todos into default heartbeat prompt', async () => {
+    addTodo('test', {
+      text: 'Deliver morning report',
+      due: '2026-02-13T08:00:00.000Z',
+      recurring: 'daily 8am',
+    });
+
+    const bot = createMockBot();
+    const service = new HeartbeatService(bot, createConfig({ workingDir: tmpDir }));
+
+    await service.trigger();
+
+    const sentMessage = (bot.sendToAgent as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(sentMessage).toContain('PENDING TO-DOS:');
+    expect(sentMessage).toContain('Deliver morning report');
+    expect(sentMessage).toContain('recurring: daily 8am');
+    expect(sentMessage).toContain('manage_todo');
+  });
+
+  it('does not include snoozed todos that are not actionable yet', async () => {
+    addTodo('test', {
+      text: 'Follow up after trip',
+      snoozed_until: '2099-01-01T00:00:00.000Z',
+    });
+
+    const bot = createMockBot();
+    const service = new HeartbeatService(bot, createConfig({ workingDir: tmpDir }));
+
+    await service.trigger();
+
+    const sentMessage = (bot.sendToAgent as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(sentMessage).not.toContain('Follow up after trip');
+  });
+
+  it('skips automatic heartbeat when user messaged within skip window', async () => {
+    const bot = createMockBot();
+    (bot.getLastUserMessageTime as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Date(Date.now() - 2 * 60 * 1000),
+    );
+
+    const service = new HeartbeatService(bot, createConfig({
+      workingDir: tmpDir,
+      skipRecentUserMinutes: 5,
+    }));
+
+    await (service as any).runHeartbeat(false);
+
+    expect(bot.sendToAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not skip automatic heartbeat when skipRecentUserMinutes is 0', async () => {
+    const bot = createMockBot();
+    (bot.getLastUserMessageTime as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Date(Date.now() - 1 * 60 * 1000),
+    );
+
+    const service = new HeartbeatService(bot, createConfig({
+      workingDir: tmpDir,
+      skipRecentUserMinutes: 0,
+    }));
+
+    await (service as any).runHeartbeat(false);
+
+    expect(bot.sendToAgent).toHaveBeenCalledTimes(1);
   });
 });

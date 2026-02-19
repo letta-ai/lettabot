@@ -390,9 +390,26 @@ export class CronService {
         `Current time: ${formattedTime} (${timezone})`,
       ].join('\n');
       
-      // Send message to agent (SILENT MODE - response NOT auto-delivered)
-      // Agent must use `lettabot-message` CLI to send messages explicitly
+      // Send message to agent
       const response = await this.bot.sendToAgent(messageWithMetadata);
+      
+      // Deliver response to channel if configured
+      const deliverMode = job.deliver ? 'deliver' : 'silent';
+      if (job.deliver && response) {
+        try {
+          await this.bot.deliverToChannel(job.deliver.channel, job.deliver.chatId, { text: response });
+          console.log(`[Cron] 📬 Delivered response to ${job.deliver.channel}:${job.deliver.chatId}`);
+        } catch (deliverError) {
+          console.error(`[Cron] Failed to deliver response to ${job.deliver.channel}:${job.deliver.chatId}:`, deliverError);
+          logEvent('job_deliver_failed', {
+            id: job.id,
+            name: job.name,
+            channel: job.deliver.channel,
+            chatId: job.deliver.chatId,
+            error: deliverError instanceof Error ? deliverError.message : String(deliverError),
+          });
+        }
+      }
       
       // Update state
       job.state.lastRunAt = new Date();
@@ -410,16 +427,21 @@ export class CronService {
       }
       
       console.log(`\n${'='.repeat(50)}`);
-      console.log(`[Cron] ✅ JOB COMPLETED: ${job.name} [SILENT MODE]`);
+      console.log(`[Cron] ✅ JOB COMPLETED: ${job.name} [${deliverMode.toUpperCase()} MODE]`);
       console.log(`       Response: ${response?.slice(0, 200)}${(response?.length || 0) > 200 ? '...' : ''}`);
-      console.log(`       (Response NOT auto-delivered - agent uses lettabot-message CLI)`);
+      if (deliverMode === 'silent') {
+        console.log(`       (Response NOT auto-delivered - agent uses lettabot-message CLI)`);
+      } else {
+        console.log(`       (Response delivered to ${job.deliver!.channel}:${job.deliver!.chatId})`);
+      }
       console.log(`${'='.repeat(50)}\n`);
       
       logEvent('job_completed', {
         id: job.id,
         name: job.name,
         status: 'ok',
-        mode: 'silent',
+        mode: deliverMode,
+        deliverTarget: job.deliver ? `${job.deliver.channel}:${job.deliver.chatId}` : undefined,
         nextRun: job.state.nextRunAt?.toISOString(),
         responseLength: response?.length || 0,
       });

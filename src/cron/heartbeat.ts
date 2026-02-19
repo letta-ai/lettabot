@@ -13,6 +13,7 @@ import type { AgentSession } from '../core/interfaces.js';
 import type { TriggerContext } from '../core/types.js';
 import { buildHeartbeatPrompt, buildCustomHeartbeatPrompt } from '../core/prompts.js';
 import { getCronLogPath } from '../utils/paths.js';
+import { listActionableTodos } from '../todo/store.js';
 
 
 // Log file
@@ -41,7 +42,9 @@ function logEvent(event: string, data: Record<string, unknown>): void {
 export interface HeartbeatConfig {
   enabled: boolean;
   intervalMinutes: number;
+  skipRecentUserMinutes?: number; // Default 5. Set to 0 to disable skip logic.
   workingDir: string;
+  agentKey: string;
   
   // Custom heartbeat prompt (optional)
   prompt?: string;
@@ -67,6 +70,14 @@ export class HeartbeatService {
   constructor(bot: AgentSession, config: HeartbeatConfig) {
     this.bot = bot;
     this.config = config;
+  }
+
+  private getSkipWindowMs(): number {
+    const raw = this.config.skipRecentUserMinutes;
+    if (raw === undefined || !Number.isFinite(raw) || raw < 0) {
+      return 5 * 60 * 1000; // default: 5 minutes
+    }
+    return Math.floor(raw * 60 * 1000);
   }
   
   /**
@@ -135,12 +146,12 @@ export class HeartbeatService {
     console.log(`[Heartbeat] ⏰ RUNNING at ${formattedTime} [SILENT MODE]`);
     console.log(`${'='.repeat(60)}\n`);
     
-    // Skip if user sent a message in the last 5 minutes (unless manual trigger)
+    // Skip if user sent a message in the configured window (unless manual trigger)
     if (!skipRecentCheck) {
+      const skipWindowMs = this.getSkipWindowMs();
       const lastUserMessage = this.bot.getLastUserMessageTime();
-      if (lastUserMessage) {
+      if (skipWindowMs > 0 && lastUserMessage) {
         const msSinceLastMessage = now.getTime() - lastUserMessage.getTime();
-        const skipWindowMs = 5 * 60 * 1000; // 5 minutes
         
         if (msSinceLastMessage < skipWindowMs) {
           const minutesAgo = Math.round(msSinceLastMessage / 60000);
@@ -171,6 +182,12 @@ export class HeartbeatService {
     };
     
     try {
+      const todoAgentKey = this.bot.getStatus().agentId || this.config.agentKey;
+      const actionableTodos = listActionableTodos(todoAgentKey, now);
+      if (actionableTodos.length > 0) {
+        console.log(`[Heartbeat] Loaded ${actionableTodos.length} actionable to-do(s).`);
+      }
+
       // Resolve custom prompt: inline config > promptFile (re-read each tick) > default
       let customPrompt = this.config.prompt;
       if (!customPrompt && this.config.promptFile) {
@@ -183,8 +200,8 @@ export class HeartbeatService {
       }
 
       const message = customPrompt
-        ? buildCustomHeartbeatPrompt(customPrompt, formattedTime, timezone, this.config.intervalMinutes)
-        : buildHeartbeatPrompt(formattedTime, timezone, this.config.intervalMinutes);
+        ? buildCustomHeartbeatPrompt(customPrompt, formattedTime, timezone, this.config.intervalMinutes, actionableTodos, now)
+        : buildHeartbeatPrompt(formattedTime, timezone, this.config.intervalMinutes, actionableTodos, now);
       
       console.log(`[Heartbeat] Sending prompt (SILENT MODE):\n${'─'.repeat(50)}\n${message}\n${'─'.repeat(50)}\n`);
       

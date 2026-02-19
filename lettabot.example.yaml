@@ -67,6 +67,7 @@ features:
   heartbeat:
     enabled: false
     intervalMin: 30
+    # skipRecentUserMin: 5   # Skip auto-heartbeats for N minutes after user message (0 disables)
 
 # Attachment handling (defaults to 20MB if omitted)
 # attachments:

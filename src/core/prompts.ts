@@ -19,10 +19,73 @@ export const SILENT_MODE_PREFIX = `
 ╚════════════════════════════════════════════════════════════════╝
 `.trim();
 
+export interface HeartbeatTodo {
+  id: string;
+  text: string;
+  created: string;
+  due: string | null;
+  snoozed_until: string | null;
+  recurring: string | null;
+  completed: boolean;
+}
+
+function isSameCalendarDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
+}
+
+function formatCreatedLabel(created: string, now: Date): string {
+  const createdAt = new Date(created);
+  const diffMs = now.getTime() - createdAt.getTime();
+  if (Number.isNaN(diffMs) || diffMs < 0) return 'added recently';
+  const days = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+  if (days <= 0) return 'added today';
+  if (days === 1) return 'added 1 day ago';
+  return `added ${days} days ago`;
+}
+
+function formatDueLabel(due: string, now: Date): string {
+  const dueAt = new Date(due);
+  if (Number.isNaN(dueAt.getTime())) return 'due date invalid';
+  if (isSameCalendarDay(dueAt, now)) {
+    return `due today at ${dueAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  }
+  if (dueAt.getTime() < now.getTime()) {
+    return `OVERDUE since ${dueAt.toLocaleString()}`;
+  }
+  return `due ${dueAt.toLocaleString()}`;
+}
+
+function buildHeartbeatTodoSection(todos: HeartbeatTodo[], now: Date): string {
+  if (todos.length === 0) return '';
+
+  const lines = todos.map((todo) => {
+    const meta: string[] = [formatCreatedLabel(todo.created, now)];
+    if (todo.due) meta.push(formatDueLabel(todo.due, now));
+    if (todo.recurring) meta.push(`recurring: ${todo.recurring}`);
+    return `• [ ] ${todo.text} (${meta.join('; ')})`;
+  });
+
+  return `
+PENDING TO-DOS:
+${lines.join('\n')}
+
+Review these first. Update status with the manage_todo tool as you work.
+`.trim();
+}
+
 /**
  * Heartbeat prompt - explains the context and encourages autonomous work
  */
-export function buildHeartbeatPrompt(time: string, timezone: string, intervalMinutes: number): string {
+export function buildHeartbeatPrompt(
+  time: string,
+  timezone: string,
+  intervalMinutes: number,
+  todos: HeartbeatTodo[] = [],
+  now: Date = new Date(),
+): string {
+  const todoSection = buildHeartbeatTodoSection(todos, now);
   return `
 ${SILENT_MODE_PREFIX}
 
@@ -38,6 +101,8 @@ YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
 To actually contact your human, run:
   lettabot-message send --text "Your message here"
 
+${todoSection || 'PENDING TO-DOS: none right now.'}
+
 This is your time. You can:
 • Work on a project you've been thinking about
 • Research something that interests you
@@ -45,6 +110,7 @@ This is your time. You can:
 • Continue multi-step work from previous heartbeats
 • Pursue curiosities, hobbies, or learning
 
+If you have pending to-dos, prioritize those before starting new work.
 You don't have to do something every time. But don't default to nothing.
 Your human wants you to have a life outside conversations with them.
 
@@ -60,8 +126,11 @@ export function buildCustomHeartbeatPrompt(
   customPrompt: string,
   time: string,
   timezone: string,
-  intervalMinutes: number
+  intervalMinutes: number,
+  todos: HeartbeatTodo[] = [],
+  now: Date = new Date(),
 ): string {
+  const todoSection = buildHeartbeatTodoSection(todos, now);
   return `
 ${SILENT_MODE_PREFIX}
 
@@ -74,6 +143,8 @@ NEXT HEARTBEAT: in ${intervalMinutes} minutes
 YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
 To actually contact your human, run:
   lettabot-message send --text "Your message here"
+
+${todoSection || 'PENDING TO-DOS: none right now.'}
 
 ${customPrompt}
 `.trim();

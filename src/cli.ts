@@ -18,6 +18,7 @@ import { getCronStorePath, getDataDir, getLegacyCronStorePath, getWorkingDir } f
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import updateNotifier from 'update-notifier';
+import { Store } from './core/store.js';
 
 // Get the directory where this CLI file is located (works with npx, global install, etc.)
 const __filename = fileURLToPath(import.meta.url);
@@ -200,6 +201,12 @@ Commands:
   logout               Logout from Letta Platform (revoke OAuth tokens)
   skills               Configure which skills are enabled
   skills status        Show skills status
+  todo                 Manage per-agent to-dos
+  todo list            List todos
+  todo add <text>      Add a todo
+  todo complete <id>   Mark a todo complete
+  todo remove <id>     Remove a todo
+  todo snooze <id>     Snooze a todo until a date
   reset-conversation   Clear conversation ID (fixes corrupted conversations)
   destroy              Delete all local data and start fresh
   pairing list <ch>    List pending pairing requests
@@ -212,6 +219,8 @@ Examples:
   lettabot channels                          # Interactive channel management
   lettabot channels add discord              # Add Discord integration
   lettabot channels remove telegram          # Remove Telegram
+  lettabot todo add "Deliver morning report" --recurring "daily 8am"
+  lettabot todo list --actionable
   lettabot pairing list telegram             # Show pending Telegram pairings
   lettabot pairing approve telegram ABCD1234 # Approve a pairing code
 
@@ -224,8 +233,25 @@ Environment:
   SLACK_BOT_TOKEN         Slack bot token (xoxb-...)
   SLACK_APP_TOKEN         Slack app token (xapp-...)
   HEARTBEAT_INTERVAL_MIN  Heartbeat interval in minutes
+  HEARTBEAT_SKIP_RECENT_USER_MIN  Skip auto-heartbeats after user messages (0 disables)
   CRON_ENABLED            Enable cron jobs (true/false)
 `);
+}
+
+function getDefaultTodoAgentKey(): string {
+  const configuredName =
+    (config.agent?.name?.trim())
+    || (config.agents?.length && config.agents[0].name?.trim())
+    || 'LettaBot';
+
+  try {
+    const store = new Store('lettabot-agent.json', configuredName);
+    if (store.agentId) return store.agentId;
+  } catch {
+    // Ignore; fall back to configured name
+  }
+
+  return configuredName;
 }
 
 async function main() {
@@ -257,6 +283,12 @@ async function main() {
         default:
           await runSkillsSync();
       }
+      break;
+    }
+
+    case 'todo': {
+      const { todoCommand } = await import('./cli/todo.js');
+      await todoCommand(subCommand, args.slice(2), getDefaultTodoAgentKey());
       break;
     }
     

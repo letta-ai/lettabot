@@ -172,7 +172,7 @@ This uses a manifest to pre-configure:
 
 Each channel supports three DM policies:
 
-- **`pairing`** (recommended): Users get a code, you approve via `lettabot pairing approve <channel> <code>`
+- **`pairing`** (recommended): Users get a code, you approve via CLI (`lettabot pairing approve <channel> <code>`) or API (`POST /api/v1/pairing/<channel>/approve`)
 - **`allowlist`**: Only specified user IDs can message
 - **`open`**: Anyone can message (not recommended)
 

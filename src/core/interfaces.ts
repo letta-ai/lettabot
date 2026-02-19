@@ -41,7 +41,7 @@ export interface AgentSession {
   }): Promise<string | undefined>;
 
   /** Get agent status */
-  getStatus(): { agentId: string | null; channels: string[] };
+  getStatus(): { agentId: string | null; conversationId: string | null; channels: string[] };
 
   /** Set agent ID (for container deploys) */
   setAgentId(agentId: string): void;

@@ -137,6 +137,10 @@ export interface BotConfig {
 
   // Security
   allowedUsers?: string[];  // Empty = allow all
+
+  // Conversation routing
+  conversationMode?: 'shared' | 'per-channel'; // Default: shared
+  heartbeatConversation?: string; // "dedicated" | "last-active" | "<channel>" (default: last-active)
 }
 
 /**
@@ -154,7 +158,8 @@ export interface LastMessageTarget {
  */
 export interface AgentStore {
   agentId: string | null;
-  conversationId?: string | null; // Current conversation ID
+  conversationId?: string | null; // Current conversation ID (used in shared mode)
+  conversations?: Record<string, string>; // Per-key conversation IDs (used in per-channel mode)
   baseUrl?: string; // Server URL this agent belongs to
   createdAt?: string;
   lastUsedAt?: string;

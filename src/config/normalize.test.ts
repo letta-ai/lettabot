@@ -383,6 +383,7 @@ describe('normalizeAgents', () => {
         heartbeat: {
           enabled: true,
           intervalMin: 10,
+          skipRecentUserMin: 3,
         },
         maxToolCalls: 50,
       },

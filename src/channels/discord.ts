@@ -11,7 +11,7 @@ import type { DmPolicy } from '../pairing/types.js';
 import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { HELP_TEXT } from '../core/commands.js';
-import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, type GroupModeConfig } from './group-mode.js';
+import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveReceiveBotMessages, type GroupModeConfig } from './group-mode.js';
 
 // Dynamic import to avoid requiring Discord deps if not used
 let Client: typeof import('discord.js').Client;
@@ -25,6 +25,20 @@ export interface DiscordConfig {
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
   groups?: Record<string, GroupModeConfig>;  // Per-guild/channel settings
+}
+
+export function shouldProcessDiscordBotMessage(params: {
+  isFromBot: boolean;
+  isGroup: boolean;
+  authorId?: string;
+  selfUserId?: string;
+  groups?: Record<string, GroupModeConfig>;
+  keys: string[];
+}): boolean {
+  if (!params.isFromBot) return true;
+  if (!params.isGroup) return false;
+  if (params.selfUserId && params.authorId === params.selfUserId) return false;
+  return resolveReceiveBotMessages(params.groups, params.keys);
 }
 
 export class DiscordAdapter implements ChannelAdapter {
@@ -142,7 +156,21 @@ Ask the bot owner to approve with:
     });
 
     this.client.on('messageCreate', async (message) => {
-      if (message.author?.bot) return;
+      const isFromBot = !!message.author?.bot;
+      const isGroup = !!message.guildId;
+      const chatId = message.channel.id;
+      const keys = [chatId];
+      if (message.guildId) keys.push(message.guildId);
+      const selfUserId = this.client?.user?.id;
+
+      if (!shouldProcessDiscordBotMessage({
+        isFromBot,
+        isGroup,
+        authorId: message.author?.id,
+        selfUserId,
+        groups: this.config.groups,
+        keys,
+      })) return;
 
       let content = (message.content || '').trim();
       const userId = message.author?.id;
@@ -221,15 +249,8 @@ Ask the bot owner to approve with:
           return;
         }
         if (this.onCommand) {
-          if (command === 'status') {
-            const result = await this.onCommand('status');
-            if (result) {
-              await message.channel.send(result);
-            }
-            return;
-          }
-          if (command === 'heartbeat') {
-            const result = await this.onCommand('heartbeat');
+          if (command === 'status' || command === 'reset' || command === 'heartbeat') {
+            const result = await this.onCommand(command);
             if (result) {
               await message.channel.send(result);
             }

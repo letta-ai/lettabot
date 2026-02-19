@@ -64,7 +64,7 @@ describe('saveConfig with agents[] format', () => {
         },
         features: {
           cron: false,
-          heartbeat: { enabled: true, intervalMin: 15 },
+          heartbeat: { enabled: true, intervalMin: 15, skipRecentUserMin: 2 },
         },
       }],
       transcription: {
@@ -95,6 +95,7 @@ describe('saveConfig with agents[] format', () => {
     expect(agents[0].channels.telegram?.token).toBe('tg-123');
     expect(agents[0].channels.whatsapp?.selfChat).toBe(true);
     expect(agents[0].features?.heartbeat?.intervalMin).toBe(15);
+    expect(agents[0].features?.heartbeat?.skipRecentUserMin).toBe(2);
 
     // Global fields should survive
     expect(loaded.transcription?.apiKey).toBe('whisper-key');
@@ -166,6 +167,23 @@ describe('server.api config (canonical location)', () => {
     expect(env.PORT).toBe('6702');
     expect(env.API_HOST).toBe('0.0.0.0');
     expect(env.API_CORS_ORIGIN).toBe('*');
+  });
+
+  it('configToEnv should map heartbeat skip window env var', () => {
+    const config: LettaBotConfig = {
+      ...DEFAULT_CONFIG,
+      features: {
+        heartbeat: {
+          enabled: true,
+          intervalMin: 30,
+          skipRecentUserMin: 4,
+        },
+      },
+    };
+
+    const env = configToEnv(config);
+    expect(env.HEARTBEAT_INTERVAL_MIN).toBe('30');
+    expect(env.HEARTBEAT_SKIP_RECENT_USER_MIN).toBe('4');
   });
 
   it('configToEnv should fall back to top-level api (deprecated)', () => {

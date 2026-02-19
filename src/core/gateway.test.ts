@@ -12,7 +12,7 @@ function createMockSession(channels: string[] = ['telegram']): AgentSession {
     sendToAgent: vi.fn().mockResolvedValue('response'),
     streamToAgent: vi.fn().mockReturnValue((async function* () { yield { type: 'result', success: true }; })()),
     deliverToChannel: vi.fn().mockResolvedValue('msg-123'),
-    getStatus: vi.fn().mockReturnValue({ agentId: 'agent-123', channels }),
+    getStatus: vi.fn().mockReturnValue({ agentId: 'agent-123', conversationId: null, channels }),
     setAgentId: vi.fn(),
     reset: vi.fn(),
     getLastMessageTarget: vi.fn().mockReturnValue(null),

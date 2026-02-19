@@ -114,7 +114,12 @@ features:
   heartbeat:
     enabled: true
     intervalMin: 60    # Default: 60 minutes
+    skipRecentUserMin: 5  # Skip auto-heartbeats for N minutes after user messages (0 disables)
 ```
+
+By default, automatic heartbeats are skipped for 5 minutes after a user message to avoid immediate follow-up noise.
+- Set `skipRecentUserMin: 0` to disable this skip behavior.
+- Manual `/heartbeat` always bypasses the skip check.
 
 ### Manual Trigger
 
@@ -127,6 +132,17 @@ You can trigger a heartbeat manually via the `/heartbeat` command in any channel
 3. If the agent wants to message you, it must use `lettabot-message send`
 
 This prevents unwanted messages while allowing proactive behavior when needed.
+
+### Heartbeat To-Dos
+
+Heartbeats include a `PENDING TO-DOS` section when actionable tasks exist. Tasks can come from:
+- `lettabot todo ...` CLI commands
+- The `manage_todo` tool
+- Built-in Letta Code todo tools (`TodoWrite`, `WriteTodos`, `write_todos`), which are synced into LettaBot's persistent todo store
+
+Only actionable tasks are shown in the heartbeat prompt:
+- `completed: false`
+- `snoozed_until` not set, or already in the past
 
 ## Silent Mode
 

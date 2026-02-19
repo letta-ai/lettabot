@@ -38,28 +38,61 @@ export function getChannelHint(id: ChannelId): string {
 }
 
 // ============================================================================
+// Group ID hints per channel
+// ============================================================================
+
+const GROUP_ID_HINTS: Record<ChannelId, string> = {
+  telegram:
+    'Group IDs are negative numbers (e.g., -1001234567890).\n' +
+    'Forward a group message to @userinfobot, or check bot logs.',
+  discord:
+    'Enable Developer Mode in Settings > Advanced,\n' +
+    'then right-click a channel/server > Copy ID.',
+  slack:
+    'Right-click channel > Copy link > extract ID,\n' +
+    'or Channel Details > Copy Channel ID (e.g., C0123456789).',
+  whatsapp:
+    'Group JIDs appear in bot logs on first message\n' +
+    '(e.g., 120363123456@g.us).',
+  signal:
+    'Group IDs appear in bot logs on first group message.',
+};
+
+// ============================================================================
 // Setup Functions
 // ============================================================================
 
-function parseIdList(input?: string | null): string[] | undefined {
-  if (!input) return undefined;
-  const ids = input.split(',').map(s => s.trim()).filter(Boolean);
-  return ids.length > 0 ? ids : undefined;
+type GroupMode = 'open' | 'listen' | 'mention-only' | 'disabled';
+
+/**
+ * Derive the initial group mode from existing config.
+ * Reads modern groups config first, falls back to deprecated fields.
+ */
+function deriveExistingMode(existing?: any): GroupMode | undefined {
+  // Modern: groups.*.mode
+  const wildcardMode = existing?.groups?.['*']?.mode;
+  if (wildcardMode) return wildcardMode as GroupMode;
+
+  // Deprecated: listeningGroups implies "listen" was the intent
+  if (existing?.listeningGroups?.length > 0) return 'listen';
+
+  return undefined;
 }
 
-async function promptGroupSettings(existing?: any): Promise<{
+async function promptGroupSettings(
+  channelId: ChannelId,
+  existing?: any,
+): Promise<{
+  groups?: Record<string, { mode: GroupMode }>;
   groupDebounceSec?: number;
-  groupPollIntervalMin?: number;
-  instantGroups?: string[];
-  listeningGroups?: string[];
 }> {
-  const hasExisting = existing?.groupDebounceSec !== undefined
-    || existing?.groupPollIntervalMin !== undefined
-    || (existing?.instantGroups && existing.instantGroups.length > 0)
-    || (existing?.listeningGroups && existing.listeningGroups.length > 0);
+  const existingMode = deriveExistingMode(existing);
+  const hasExisting = existingMode !== undefined
+    || existing?.groupDebounceSec !== undefined
+    || (existing?.groups && Object.keys(existing.groups).length > 0);
 
   const configure = await p.confirm({
-    message: 'Configure group settings?',
+    message: 'Configure group chat settings?',
     initialValue: hasExisting,
   });
   if (p.isCancel(configure)) {
@@ -68,58 +101,81 @@ async function promptGroupSettings(existing?: any): Promise<{
   }
 
   if (!configure) {
+    // Preserve existing config as-is
     return {
+      groups: existing?.groups,
       groupDebounceSec: existing?.groupDebounceSec,
-      groupPollIntervalMin: existing?.groupPollIntervalMin,
-      instantGroups: existing?.instantGroups,
-      listeningGroups: existing?.listeningGroups,
     };
   }
 
-  const debounceRaw = await p.text({
-    message: 'Group debounce seconds (blank = default)',
-    placeholder: '5',
-    initialValue: existing?.groupDebounceSec !== undefined ? String(existing.groupDebounceSec) : '',
-    validate: (value) => {
-      const trimmed = value.trim();
-      if (!trimmed) return undefined;
-      const num = Number(trimmed);
-      if (!Number.isFinite(num) || num < 0) return 'Enter a non-negative number or leave blank';
-      return undefined;
-    },
+  // Step 1: Default group mode
+  const mode = await p.select({
+    message: 'Default group behavior',
+    options: [
+      { value: 'mention-only', label: 'Mention-only (recommended)', hint: 'Only respond when @mentioned' },
+      { value: 'listen', label: 'Listen', hint: 'Read all messages, only respond when mentioned' },
+      { value: 'open', label: 'Open', hint: 'Respond to all group messages' },
+      { value: 'disabled', label: 'Disabled', hint: 'Ignore all group messages' },
+    ],
+    initialValue: existingMode || 'mention-only',
   });
-  if (p.isCancel(debounceRaw)) {
+  if (p.isCancel(mode)) {
     p.cancel('Cancelled');
     process.exit(0);
   }
 
-  const instantRaw = await p.text({
-    message: 'Instant group IDs (comma-separated, optional)',
-    placeholder: '123,456',
-    initialValue: Array.isArray(existing?.instantGroups) ? existing.instantGroups.join(',') : '',
-  });
-  if (p.isCancel(instantRaw)) {
-    p.cancel('Cancelled');
-    process.exit(0);
+  // Step 2: Debounce (skip for disabled)
+  let groupDebounceSec: number | undefined = existing?.groupDebounceSec;
+  if (mode !== 'disabled') {
+    const debounceRaw = await p.text({
+      message: 'Group debounce seconds (blank = 5s default)',
+      placeholder: '5',
+      initialValue: existing?.groupDebounceSec !== undefined ? String(existing.groupDebounceSec) : '',
+      validate: (value) => {
+        const trimmed = value.trim();
+        if (!trimmed) return undefined;
+        const num = Number(trimmed);
+        if (!Number.isFinite(num) || num < 0) return 'Enter a non-negative number or leave blank';
+        return undefined;
+      },
+    });
+    if (p.isCancel(debounceRaw)) {
+      p.cancel('Cancelled');
+      process.exit(0);
+    }
+    const debounceValue = typeof debounceRaw === 'string' ? debounceRaw.trim() : '';
+    groupDebounceSec = debounceValue ? Number(debounceValue) : undefined;
   }
 
-  const listeningRaw = await p.text({
-    message: 'Listening group IDs (comma-separated, optional)',
-    placeholder: '123,456',
-    initialValue: Array.isArray(existing?.listeningGroups) ? existing.listeningGroups.join(',') : '',
-  });
-  if (p.isCancel(listeningRaw)) {
-    p.cancel('Cancelled');
-    process.exit(0);
+  // Step 3: Channel-specific hint for finding group IDs
+  const hint = GROUP_ID_HINTS[channelId];
+  if (hint && mode !== 'disabled') {
+    p.note(
+      hint + '\n\n' +
+      'Tip: Start with this default and check logs for IDs.\n' +
+      'Add per-group overrides in lettabot.yaml later.',
+      'Finding Group IDs'
+    );
   }
 
-  const debounceValue = debounceRaw?.trim() || '';
+  // Build groups config: set wildcard default, preserve any existing per-group overrides
+  const groups: Record<string, any> = {};
+
+  // Carry over existing per-group entries (non-wildcard)
+  if (existing?.groups) {
+    for (const [key, value] of Object.entries(existing.groups)) {
+      if (key !== '*') {
+        groups[key] = value;
+      }
+    }
+  }
+
+  // Set the wildcard default
+  groups['*'] = { mode: mode as GroupMode };
 
   return {
-    groupDebounceSec: debounceValue ? Number(debounceValue) : undefined,
-    groupPollIntervalMin: existing?.groupPollIntervalMin,
-    instantGroups: parseIdList(instantRaw),
-    listeningGroups: parseIdList(listeningRaw),
+    groups,
+    groupDebounceSec,
   };
 }
 
@@ -172,7 +228,7 @@ export async function setupTelegram(existing?: any): Promise<any> {
     }
   }
   
-  const groupSettings = await promptGroupSettings(existing);
+  const groupSettings = await promptGroupSettings('telegram', existing);
 
   return {
     enabled: true,
@@ -216,7 +272,7 @@ export async function setupSlack(existing?: any): Promise<any> {
     });
     
     if (result) {
-      const groupSettings = await promptGroupSettings(existing);
+      const groupSettings = await promptGroupSettings('slack', existing);
       return {
         enabled: true,
         appToken: result.appToken,
@@ -266,7 +322,7 @@ export async function setupSlack(existing?: any): Promise<any> {
   }
   
   const allowedUsers = await stepAccessControl(existing?.allowedUsers);
-  const groupSettings = await promptGroupSettings(existing);
+  const groupSettings = await promptGroupSettings('slack', existing);
   
   return {
     enabled: true,
@@ -345,7 +401,7 @@ export async function setupDiscord(existing?: any): Promise<any> {
     }
   }
   
-  const groupSettings = await promptGroupSettings(existing);
+  const groupSettings = await promptGroupSettings('discord', existing);
 
   return {
     enabled: true,
@@ -405,7 +461,7 @@ export async function setupWhatsApp(existing?: any): Promise<any> {
     }
   }
   
-  const groupSettings = await promptGroupSettings(existing);
+  const groupSettings = await promptGroupSettings('whatsapp', existing);
 
   p.log.info('Run "lettabot server" to see the QR code and complete pairing.');
   
@@ -494,7 +550,7 @@ export async function setupSignal(existing?: any): Promise<any> {
     }
   }
   
-  const groupSettings = await promptGroupSettings(existing);
+  const groupSettings = await promptGroupSettings('signal', existing);
 
   return {
     enabled: true,
