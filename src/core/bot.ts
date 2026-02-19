@@ -982,14 +982,6 @@ export class LettaBot implements AgentSession {
       const msgTypeCounts: Record<string, number> = {};
       
       const finalizeMessage = async () => {
-        if (response.trim() === '<no-reply/>') {
-          console.log('[Bot] Agent chose not to reply (no-reply marker)');
-          sentAnyMessage = true;
-          response = '';
-          messageId = null;
-          lastUpdate = Date.now();
-          return;
-        }
         // Parse and execute XML directives before sending
         if (response.trim()) {
           const { cleanText, directives } = parseDirectives(response);
@@ -998,6 +990,17 @@ export class LettaBot implements AgentSession {
             sentAnyMessage = true;
           }
         }
+
+        // Check for no-reply AFTER directive parsing
+        if (response.trim() === '<no-reply/>') {
+          console.log('[Bot] Agent chose not to reply (no-reply marker)');
+          sentAnyMessage = true;
+          response = '';
+          messageId = null;
+          lastUpdate = Date.now();
+          return;
+        }
+
         if (!suppressDelivery && response.trim()) {
           try {
             const prefixed = this.prefixResponse(response);
@@ -1186,12 +1189,6 @@ export class LettaBot implements AgentSession {
         adapter.stopTypingIndicator?.(msg.chatId)?.catch(() => {});
       }
       lap('stream complete');
-      
-      // Handle no-reply marker
-      if (response.trim() === '<no-reply/>') {
-        sentAnyMessage = true;
-        response = '';
-      }
 
       // Parse and execute XML directives (e.g. <actions><react emoji="eyes" /></actions>)
       if (response.trim()) {
@@ -1200,6 +1197,12 @@ export class LettaBot implements AgentSession {
         if (await this.executeDirectives(directives, adapter, msg.chatId, msg.messageId)) {
           sentAnyMessage = true;
         }
+      }
+
+      // Handle no-reply marker AFTER directive parsing
+      if (response.trim() === '<no-reply/>') {
+        sentAnyMessage = true;
+        response = '';
       }
 
       // Detect unsupported multimodal
