@@ -261,6 +261,8 @@ export class LettaBot implements AgentSession {
       ],
       cwd: this.config.workingDir,
       tools: [createManageTodoTool(this.getTodoAgentKey())],
+      // Memory filesystem (context repository): true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
+      ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
       // In bypassPermissions mode, canUseTool is only called for interactive
       // tools (AskUserQuestion, ExitPlanMode). When no callback is provided
       // (background triggers), the SDK auto-denies interactive tools.

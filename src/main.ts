@@ -527,6 +527,7 @@ async function main() {
       disallowedTools: globalConfig.disallowedTools,
       displayName: agentConfig.displayName,
       maxToolCalls: agentConfig.features?.maxToolCalls,
+      memfs: agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : process.env.LETTABOT_MEMFS === 'false' ? false : undefined),
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
       skills: {

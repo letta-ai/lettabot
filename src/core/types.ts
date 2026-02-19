@@ -135,6 +135,9 @@ export interface BotConfig {
   // Safety
   maxToolCalls?: number; // Abort if agent calls this many tools in one turn (default: 100)
 
+  // Memory filesystem (context repository)
+  memfs?: boolean; // true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
+
   // Security
   allowedUsers?: string[];  // Empty = allow all
 
