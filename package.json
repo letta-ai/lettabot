@@ -15,6 +15,7 @@
     "setup": "tsx src/setup.ts",
     "dev": "tsx src/main.ts",
     "build": "tsc",
+    "postbuild": "node scripts/fix-bin-permissions.mjs",
     "prepare": "npx patch-package || true",
     "prepublishOnly": "npm run build && npm run test:run",
     "start": "node dist/main.js",
