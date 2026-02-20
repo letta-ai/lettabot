@@ -141,6 +141,7 @@ export class LettaBot implements AgentSession {
   // channel (and optionally heartbeat) gets its own subprocess.
   private sessions: Map<string, Session> = new Map();
   private currentCanUseTool: CanUseToolCallback | undefined;
+  private conversationOverrides: Set<string> = new Set();
   // Stable callback wrapper so the Session options never change, but we can
   // swap out the per-message handler before each send().
   private readonly sessionCanUseTool: CanUseToolCallback = async (toolName, toolInput) => {
@@ -154,6 +155,9 @@ export class LettaBot implements AgentSession {
     this.config = config;
     mkdirSync(config.workingDir, { recursive: true });
     this.store = new Store('lettabot-agent.json', config.agentName);
+    if (config.conversationOverrides?.length) {
+      this.conversationOverrides = new Set(config.conversationOverrides.map((ch) => ch.toLowerCase()));
+    }
     console.log(`LettaBot initialized. Agent ID: ${this.store.agentId || '(new)'}`);
   }
 
@@ -319,7 +323,10 @@ export class LettaBot implements AgentSession {
    * In shared mode returns "shared"; in per-channel mode returns the channel id.
    */
   private resolveConversationKey(channel: string): string {
-    return this.config.conversationMode === 'per-channel' ? channel : 'shared';
+    const normalized = channel.toLowerCase();
+    if (this.config.conversationMode === 'per-channel') return normalized;
+    if (this.conversationOverrides.has(normalized)) return normalized;
+    return 'shared';
   }
 
   /**
@@ -598,8 +605,8 @@ export class LettaBot implements AgentSession {
       }
     }
 
-    if (this.config.conversationMode === 'per-channel') {
-      const convKey = this.resolveConversationKey(effective.channel);
+    const convKey = this.resolveConversationKey(effective.channel);
+    if (convKey !== 'shared') {
       this.enqueueForKey(convKey, effective, adapter);
     } else {
       this.messageQueue.push({ msg: effective, adapter });
@@ -793,10 +800,9 @@ export class LettaBot implements AgentSession {
       return;
     }
 
-    if (this.config.conversationMode === 'per-channel') {
-      // Per-channel mode: messages on different channels can run in parallel.
-      // Only serialize within the same conversation key.
-      const convKey = this.resolveConversationKey(msg.channel);
+    const convKey = this.resolveConversationKey(msg.channel);
+    if (convKey !== 'shared') {
+      // Per-channel or override mode: messages on different keys can run in parallel.
       this.enqueueForKey(convKey, msg, adapter);
     } else {
       // Shared mode: single global queue (existing behavior)
@@ -1291,7 +1297,7 @@ export class LettaBot implements AgentSession {
   private async acquireLock(convKey: string): Promise<boolean> {
     if (convKey === 'heartbeat') return false; // No lock needed
 
-    if (this.config.conversationMode === 'per-channel') {
+    if (convKey !== 'shared') {
       while (this.processingKeys.has(convKey)) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
@@ -1307,7 +1313,7 @@ export class LettaBot implements AgentSession {
 
   private releaseLock(convKey: string, acquired: boolean): void {
     if (!acquired) return;
-    if (this.config.conversationMode === 'per-channel') {
+    if (convKey !== 'shared') {
       this.processingKeys.delete(convKey);
     } else {
       this.processing = false;

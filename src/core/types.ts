@@ -141,6 +141,7 @@ export interface BotConfig {
   // Conversation routing
   conversationMode?: 'shared' | 'per-channel'; // Default: shared
   heartbeatConversation?: string; // "dedicated" | "last-active" | "<channel>" (default: last-active)
+  conversationOverrides?: string[]; // Channels that always use their own conversation (shared mode)
 }
 
 /**
