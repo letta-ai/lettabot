@@ -43,7 +43,7 @@ export interface TriggerContext {
 // Original Types
 // =============================================================================
 
-export type ChannelId = 'telegram' | 'telegram-mtproto' | 'slack' | 'whatsapp' | 'signal' | 'discord' | 'mock';
+export type ChannelId = 'telegram' | 'telegram-mtproto' | 'slack' | 'whatsapp' | 'signal' | 'discord' | 'bluesky' | 'mock';
 
 export interface InboundAttachment {
   id?: string;
@@ -84,6 +84,18 @@ export interface InboundMessage {
   isBatch?: boolean;                  // Is this a batched group message?
   batchedMessages?: InboundMessage[]; // Original individual messages (for batch formatting)
   isListeningMode?: boolean;          // Listening mode: agent processes for memory but response is suppressed
+  source?: {
+    uri?: string;
+    collection?: string;
+    cid?: string;
+    rkey?: string;
+    threadRootUri?: string;
+    threadParentUri?: string;
+    threadRootCid?: string;
+    threadParentCid?: string;
+    subjectUri?: string;
+    subjectCid?: string;
+  };
 }
 
 /**

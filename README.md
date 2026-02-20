@@ -1,6 +1,6 @@
 # LettaBot
 
-Your personal AI assistant that remembers everything across **Telegram, Slack, Discord, WhatsApp, and Signal**. Powered by the [Letta Code SDK](https://github.com/letta-ai/letta-code-sdk).
+Your personal AI assistant that remembers everything across **Telegram, Slack, Discord, WhatsApp, and Signal** — plus Bluesky Jetstream feed ingestion. Powered by the [Letta Code SDK](https://github.com/letta-ai/letta-code-sdk).
 
 <img width="750" alt="lettabot-preview" src="https://github.com/user-attachments/assets/9f01b845-d5b0-447b-927d-ae15f9ec7511" />
 
@@ -16,6 +16,7 @@ Your personal AI assistant that remembers everything across **Telegram, Slack, D
 ## Features
 
 - **Multi-Channel** - Chat seamlessly across Telegram, Slack, Discord, WhatsApp, and Signal
+- **Feed Ingestion** - Read-only Bluesky Jetstream stream for selected DID(s)
 - **Unified Memory** - Single agent remembers everything from all channels
 - **Persistent Memory** - Agent remembers conversations across sessions (days/weeks/months)
 - **Local Tool Execution** - Agent can read files, search code, run commands on your machine
@@ -215,6 +216,7 @@ Signal ────┘
 | Discord | [Setup Guide](docs/discord-setup.md) | Discord bot + Message Content Intent |
 | WhatsApp | [Setup Guide](docs/whatsapp-setup.md) | Phone with WhatsApp |
 | Signal | [Setup Guide](docs/signal-setup.md) | signal-cli + phone number |
+| Bluesky (read-only) | [Setup Guide](docs/bluesky-setup.md) | Jetstream WebSocket + DID filter |
 
 At least one channel is required. Telegram is the easiest to start with.
 

@@ -61,6 +61,23 @@ channels:
   # whatsapp:
   #   enabled: true
   #   selfChat: false
+  # bluesky:
+  #   enabled: true
+  #   wantedDids: ["did:plc:..."]
+  #   # groups:
+  #   #   "*": { mode: listen }
+  #   #   "did:plc:...": { mode: open }
+  #   # lists:
+  #   #   "at://did:plc:.../app.bsky.graph.list/xyz": { mode: listen }
+  #   # wantedCollections: ["app.bsky.feed.post"]
+  #   # notifications:
+  #   #   enabled: true
+  #   #   intervalSec: 60
+  #   #   reasons: ["mention", "reply", "quote"]
+  #   # jetstreamUrl: wss://jetstream2.us-east.bsky.network/subscribe
+  #   # handle: you.bsky.social
+  #   # appPassword: xxxx-xxxx-xxxx-xxxx
+  #   # serviceUrl: https://bsky.social
 
 features:
   cron: false

@@ -23,6 +23,7 @@ const CHANNEL_FORMATS: Record<string, string> = {
   telegram: 'MarkdownV2: *bold* _italic_ `code` [links](url) - NO: headers, tables',
   whatsapp: '*bold* _italic_ `code` - NO: headers, code fences, links, tables',
   signal: 'ONLY: *bold* _italic_ `code` - NO: headers, code fences, links, quotes, tables',
+  bluesky: 'Plain text only (no markdown, no tables).',
 };
 
 export interface EnvelopeOptions {
@@ -121,6 +122,9 @@ function formatSender(msg: InboundMessage): string {
       return msg.userId;
     
     case 'telegram':
+      return msg.userHandle ? `@${msg.userHandle}` : msg.userId;
+
+    case 'bluesky':
       return msg.userHandle ? `@${msg.userHandle}` : msg.userId;
     
     default:
