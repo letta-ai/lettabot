@@ -52,6 +52,8 @@ export class BlueskyAdapter implements ChannelAdapter {
   private reconnectAttempts = 0;
   private lastCursor?: number;
   private handleByDid = new Map<string, string>();
+  private handleFetchInFlight = new Map<string, Promise<string | undefined>>();
+  private lastHandleFetchAt = new Map<string, number>();
   private lastPostByChatId = new Map<string, {
     uri: string;
     cid?: string;
@@ -77,6 +79,7 @@ export class BlueskyAdapter implements ChannelAdapter {
   private runtimeDisabled = false;
   private lastRuntimeRefreshAt?: string;
   private lastRuntimeReloadAt?: string;
+  private readonly handleFetchCooldownMs = 5 * 60 * 1000;
 
   onMessage?: (msg: InboundMessage) => Promise<void>;
   onCommand?: (command: string) => Promise<string | null>;
@@ -306,6 +309,14 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (payload.did && payload.account?.handle) {
       this.handleByDid.set(payload.did, payload.account.handle);
       pruneMap(this.handleByDid, HANDLE_CACHE_MAX);
+    }
+
+    if (payload.did && !this.handleByDid.get(payload.did)) {
+      const resolved = await this.resolveHandleForDid(payload.did);
+      if (resolved) {
+        this.handleByDid.set(payload.did, resolved);
+        pruneMap(this.handleByDid, HANDLE_CACHE_MAX);
+      }
     }
 
     if (!payload.commit) {
@@ -957,6 +968,45 @@ export class BlueskyAdapter implements ChannelAdapter {
     }
   }
 
+  private async resolveHandleForDid(did: string): Promise<string | undefined> {
+    if (!did || did === 'unknown') return undefined;
+    const cached = this.handleByDid.get(did);
+    if (cached) return cached;
+
+    const lastFetched = this.lastHandleFetchAt.get(did);
+    if (lastFetched && Date.now() - lastFetched < this.handleFetchCooldownMs) {
+      return undefined;
+    }
+
+    const existing = this.handleFetchInFlight.get(did);
+    if (existing) return existing;
+
+    const promise = (async () => {
+      try {
+        const url = `${this.getAppViewUrl()}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          return undefined;
+        }
+        const data = await res.json() as { handle?: string };
+        if (data.handle && typeof data.handle === 'string') {
+          this.handleByDid.set(did, data.handle);
+          pruneMap(this.handleByDid, HANDLE_CACHE_MAX);
+          return data.handle;
+        }
+      } catch {
+        return undefined;
+      } finally {
+        this.lastHandleFetchAt.set(did, Date.now());
+        this.handleFetchInFlight.delete(did);
+      }
+      return undefined;
+    })();
+
+    this.handleFetchInFlight.set(did, promise);
+    return promise;
+  }
+
   private async processNotification(notification: {
     uri: string;
     cid?: string;
@@ -968,10 +1018,17 @@ export class BlueskyAdapter implements ChannelAdapter {
     isRead?: boolean;
   }): Promise<void> {
     const authorDid = notification.author?.did || 'unknown';
-    const authorHandle = notification.author?.handle;
+    let authorHandle = notification.author?.handle;
     if (authorDid && authorHandle) {
       this.handleByDid.set(authorDid, authorHandle);
       pruneMap(this.handleByDid, HANDLE_CACHE_MAX);
+    }
+    if (authorDid && !authorHandle) {
+      authorHandle = await this.resolveHandleForDid(authorDid);
+      if (authorHandle) {
+        this.handleByDid.set(authorDid, authorHandle);
+        pruneMap(this.handleByDid, HANDLE_CACHE_MAX);
+      }
     }
     const record = isRecord(notification.record) ? notification.record : undefined;
     const recordType = record ? readString(record.$type) : undefined;
