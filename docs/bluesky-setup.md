@@ -38,6 +38,8 @@ channels:
 
 If you omit `wantedCollections`, you’ll see **all** collections for the included DIDs (posts, likes, reposts, follows, blocks, etc.).
 
+If there are **no** `wantedDids` (after list expansion), Jetstream does **not** connect. Notifications polling can still run if auth is configured.
+
 ### Mentions
 
 Jetstream does not provide mention notifications. Mentions are surfaced via the Notifications API (see below). `mention-only` mode only triggers replies for **mention notifications**.

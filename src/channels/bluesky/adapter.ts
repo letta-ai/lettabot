@@ -103,7 +103,11 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (!this.running) return;
     if (!this.runtimeDisabled) {
       this.startNotificationsPolling();
-      this.connect();
+      if (this.hasJetstreamTargets()) {
+        this.connect();
+      } else {
+        console.warn('[Bluesky] Jetstream disabled (no wantedDids or list-expanded DIDs).');
+      }
     }
   }
 
@@ -179,6 +183,10 @@ export class BlueskyAdapter implements ChannelAdapter {
 
   private connect(): void {
     if (!this.running) return;
+    if (!this.hasJetstreamTargets()) {
+      console.warn('[Bluesky] Jetstream disabled (no wantedDids or list-expanded DIDs).');
+      return;
+    }
 
     const url = this.buildJetstreamUrl();
     console.log(`[Bluesky] Connecting to Jetstream: ${url}`);
@@ -219,6 +227,10 @@ export class BlueskyAdapter implements ChannelAdapter {
   private scheduleReconnect(): void {
     if (!this.running) return;
     if (this.reconnectTimer) return;
+    if (!this.hasJetstreamTargets()) {
+      console.warn('[Bluesky] Jetstream reconnect skipped (no wantedDids or list-expanded DIDs).');
+      return;
+    }
 
     const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, this.reconnectAttempts));
     this.reconnectAttempts += 1;
@@ -236,10 +248,6 @@ export class BlueskyAdapter implements ChannelAdapter {
     const url = new URL(base);
 
     const wantedDids = this.getWantedDids();
-    if (wantedDids.length === 0) {
-      console.warn('[Bluesky] No wantedDids configured. Stream may be extremely noisy.');
-    }
-
     url.searchParams.delete('wantedDids');
     for (const did of wantedDids) {
       url.searchParams.append('wantedDids', did);
@@ -260,6 +268,10 @@ export class BlueskyAdapter implements ChannelAdapter {
     }
 
     return url.toString();
+  }
+
+  private hasJetstreamTargets(): boolean {
+    return this.getWantedDids().length > 0;
   }
 
   private getAppViewUrl(): string {
@@ -867,11 +879,19 @@ export class BlueskyAdapter implements ChannelAdapter {
   private async resumeRuntime(): Promise<void> {
     await this.expandLists();
     this.startNotificationsPolling();
-    this.connect();
+    if (this.hasJetstreamTargets()) {
+      this.connect();
+    } else {
+      console.warn('[Bluesky] Jetstream disabled (no wantedDids or list-expanded DIDs).');
+    }
     console.log('[Bluesky] Runtime re-enabled via kill switch.');
   }
 
   private reconnectJetstream(): void {
+    if (!this.hasJetstreamTargets()) {
+      console.warn('[Bluesky] Jetstream reconnect skipped (no wantedDids or list-expanded DIDs).');
+      return;
+    }
     if (this.ws) {
       try {
         this.ws.close();
