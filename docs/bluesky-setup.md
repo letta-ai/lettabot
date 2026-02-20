@@ -29,6 +29,16 @@ channels:
     # appViewUrl: https://public.api.bsky.app
 ```
 
+### Conversation routing
+
+If you want Bluesky to keep its own conversation history while other channels stay shared, add a per-channel override:
+
+```yaml
+conversations:
+  mode: shared
+  perChannel: ["bluesky"]
+```
+
 ### Filters (how Jetstream is narrowed)
 
 - `wantedDids`: list of DID(s) to include. Multiple entries are **OR**ed.

@@ -20,6 +20,11 @@ agent:
   # Note: model is configured on the Letta agent server-side.
   # Select a model during `lettabot onboard` or change it with `lettabot model set <handle>`.
 
+conversations:
+  mode: shared        # shared (single conversation) or per-channel
+  heartbeat: last-active
+  # perChannel: ["bluesky"]  # Always use a separate conversation for these channels
+
 # BYOK Providers (optional, api mode only)
 # These will be synced to Letta API on startup
 # providers:

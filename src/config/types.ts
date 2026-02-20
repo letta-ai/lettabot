@@ -52,6 +52,7 @@ export interface AgentConfig {
   conversations?: {
     mode?: 'shared' | 'per-channel';  // Default: shared (single conversation across all channels)
     heartbeat?: string;               // "dedicated" | "last-active" | "<channel>" (default: last-active)
+    perChannel?: string[];            // Channels that should always have their own conversation
   };
   /** Features for this agent */
   features?: {
@@ -123,6 +124,7 @@ export interface LettaBotConfig {
   conversations?: {
     mode?: 'shared' | 'per-channel';  // Default: shared (single conversation across all channels)
     heartbeat?: string;               // "dedicated" | "last-active" | "<channel>" (default: last-active)
+    perChannel?: string[];            // Channels that should always have their own conversation
   };
 
   // Features
@@ -610,6 +612,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     displayName: config.agent?.displayName,
     model,
     channels,
+    conversations: config.conversations,
     features: config.features,
     polling: config.polling,
     integrations: config.integrations,

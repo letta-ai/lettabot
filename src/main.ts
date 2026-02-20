@@ -554,6 +554,7 @@ async function main() {
       maxToolCalls: agentConfig.features?.maxToolCalls,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
+      conversationOverrides: agentConfig.conversations?.perChannel,
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
         googleEnabled: !!agentConfig.integrations?.google?.enabled || !!agentConfig.polling?.gmail?.enabled,
