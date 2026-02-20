@@ -538,7 +538,6 @@ export class BlueskyAdapter implements ChannelAdapter {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${this.refreshJwt}`,
       },
-      body: JSON.stringify({}),
     });
 
     if (!res.ok) {
