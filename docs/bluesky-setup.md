@@ -64,6 +64,8 @@ lettabot-bluesky repost at://did:plc:.../app.bsky.feed.post/... --agent <name>
 
 Posts over 300 characters require `--threaded` to explicitly split into a reply thread.
 
+If there are **no** `wantedDids` (after list expansion), Jetstream does **not** connect. Notifications polling can still run if auth is configured.
+
 ### Mentions
 
 Jetstream does not provide mention notifications. Mentions are surfaced via the Notifications API (see below). `mention-only` mode only triggers replies for mention notifications.
