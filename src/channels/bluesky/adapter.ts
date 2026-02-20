@@ -149,8 +149,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     return this.running;
   }
 
-  async sendMessage(_msg: OutboundMessage): Promise<{ messageId: string }>
-  {
+  async sendMessage(_msg: OutboundMessage): Promise<{ messageId: string }> {
     if (this.runtimeDisabled) {
       throw new Error('Bluesky runtime disabled via kill switch.');
     }
@@ -160,16 +159,46 @@ export class BlueskyAdapter implements ChannelAdapter {
       throw new Error('No recent post target to reply to.');
     }
 
-    const text = this.truncatePostText(_msg.text);
-    if (!text.trim()) {
+    const chunks = this.splitPostText(_msg.text);
+    if (chunks.length === 0) {
       throw new Error('Refusing to post empty reply.');
     }
 
-    const postUri = await this.createReply(text, target);
-    if (!postUri) {
-      throw new Error('Reply post returned no URI.');
+    const rootUri = target.rootUri || target.uri;
+    const rootCid = target.rootCid || target.cid;
+    if (!rootUri || !rootCid) {
+      throw new Error('Missing reply root metadata.');
     }
-    return { messageId: postUri };
+
+    let currentTarget = {
+      uri: target.uri,
+      cid: target.cid,
+      rootUri,
+      rootCid,
+    };
+    let lastUri = '';
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const post = await this.createReply(chunk, currentTarget);
+      const postUri = post?.uri;
+      if (!postUri) {
+        throw new Error('Reply post returned no URI.');
+      }
+      const isLast = i === chunks.length - 1;
+      if (!isLast && !post?.cid) {
+        throw new Error('Reply post returned no CID.');
+      }
+      lastUri = postUri;
+      if (!isLast && post?.cid) {
+        currentTarget = {
+          uri: postUri,
+          cid: post.cid,
+          rootUri,
+          rootCid,
+        };
+      }
+    }
+    return { messageId: lastUri };
   }
 
   async editMessage(_chatId: string, _messageId: string, _text: string): Promise<void> {
@@ -473,10 +502,42 @@ export class BlueskyAdapter implements ChannelAdapter {
     };
   }
 
-  private truncatePostText(text: string): string {
+  private splitPostText(text: string): string[] {
     const chars = Array.from(text);
-    if (chars.length <= POST_MAX_CHARS) return text;
-    return chars.slice(0, POST_MAX_CHARS).join('');
+    if (chars.length === 0) return [];
+    if (chars.length <= POST_MAX_CHARS) {
+      const trimmed = text.trim();
+      return trimmed ? [trimmed] : [];
+    }
+
+    const chunks: string[] = [];
+    let start = 0;
+
+    while (start < chars.length) {
+      let end = Math.min(start + POST_MAX_CHARS, chars.length);
+
+      if (end < chars.length) {
+        let split = end;
+        for (let i = end - 1; i > start; i--) {
+          if (/\s/.test(chars[i])) {
+            split = i;
+            break;
+          }
+        }
+        end = split > start ? split : end;
+      }
+
+      let chunk = chars.slice(start, end).join('');
+      chunk = chunk.replace(/^\s+/, '').replace(/\s+$/, '');
+      if (chunk) chunks.push(chunk);
+
+      start = end;
+      while (start < chars.length && /\s/.test(chars[start])) {
+        start++;
+      }
+    }
+
+    return chunks;
   }
 
   private getServiceUrl(): string {
@@ -1122,7 +1183,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     await this.onMessage?.(inbound);
   }
 
-  private async createReply(text: string, target: { uri: string; cid?: string; rootUri?: string; rootCid?: string }): Promise<string | undefined> {
+  private async createReply(text: string, target: { uri: string; cid?: string; rootUri?: string; rootCid?: string }): Promise<{ uri?: string; cid?: string } | undefined> {
     await this.ensureSession();
 
     const rootUri = target.rootUri || target.uri;
@@ -1169,8 +1230,38 @@ export class BlueskyAdapter implements ChannelAdapter {
       throw new Error(`createRecord failed: ${detail}`);
     }
 
-    const data = await res.json() as { uri?: string };
-    return data.uri;
+    const data = await res.json() as { uri?: string; cid?: string };
+    if (!data.cid && data.uri) {
+      data.cid = await this.resolveRecordCid(data.uri);
+    }
+    return data;
+  }
+
+  private parseAtUri(uri: string): { did: string; collection: string; rkey: string } | undefined {
+    if (!uri.startsWith('at://')) return undefined;
+    const parts = uri.slice('at://'.length).split('/');
+    if (parts.length < 3) return undefined;
+    return {
+      did: parts[0],
+      collection: parts[1],
+      rkey: parts[2],
+    };
+  }
+
+  private async resolveRecordCid(uri: string): Promise<string | undefined> {
+    const parsed = this.parseAtUri(uri);
+    if (!parsed) return undefined;
+    const qs = new URLSearchParams({
+      repo: parsed.did,
+      collection: parsed.collection,
+      rkey: parsed.rkey,
+    });
+    const res = await fetch(`${this.getServiceUrl()}/xrpc/com.atproto.repo.getRecord?${qs.toString()}`, {
+      headers: this.accessJwt ? { 'Authorization': `Bearer ${this.accessJwt}` } : undefined,
+    });
+    if (!res.ok) return undefined;
+    const data = await res.json() as { cid?: string };
+    return data.cid;
   }
 
   private loadState(): void {

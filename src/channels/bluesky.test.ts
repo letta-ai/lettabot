@@ -116,4 +116,14 @@ describe('BlueskyAdapter', () => {
     const wanted = (adapter as any).getWantedDids();
     expect(wanted).toEqual([]);
   });
+
+  it('splits long replies into multiple posts', () => {
+    const adapter = makeAdapter();
+    const text = Array.from({ length: 120 }, () => 'word').join(' ');
+    const chunks = (adapter as any).splitPostText(text) as string[];
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every(chunk => Array.from(chunk).length <= 300)).toBe(true);
+    const total = chunks.reduce((sum, chunk) => sum + Array.from(chunk).length, 0);
+    expect(total).toBeGreaterThan(300);
+  });
 });
