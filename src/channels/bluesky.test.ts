@@ -103,4 +103,17 @@ describe('BlueskyAdapter', () => {
     expect(messages[0].isListeningMode).toBe(false);
     expect(messages[1].isListeningMode).toBe(true);
   });
+
+  it('excludes disabled DIDs from wantedDids', () => {
+    const adapter = makeAdapter({
+      wantedDids: ['did:plc:disabled'],
+      groups: {
+        '*': { mode: 'listen' },
+        'did:plc:disabled': { mode: 'disabled' },
+      },
+    });
+
+    const wanted = (adapter as any).getWantedDids();
+    expect(wanted).toEqual([]);
+  });
 });
