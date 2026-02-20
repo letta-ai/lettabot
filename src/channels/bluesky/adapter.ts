@@ -176,6 +176,10 @@ export class BlueskyAdapter implements ChannelAdapter {
     console.warn('[Bluesky] editMessage is not supported (read-only channel).');
   }
 
+  supportsEditing(): boolean {
+    return false;
+  }
+
   async sendTypingIndicator(_chatId: string): Promise<void> {
     // No typing indicator on Bluesky
   }
