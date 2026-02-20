@@ -81,6 +81,8 @@ lettabot bluesky refresh-lists --agent MyAgent
 
 Kill switch state is stored in `bluesky-runtime.json` (per agent) under the data directory and polled by the running server.
 
+When you use `bluesky add-did`, `bluesky add-list`, or `bluesky set-default`, the CLI also triggers a runtime config reload so the running server updates Jetstream subscriptions without restart.
+
 ## Per-DID Modes (using `groups` syntax)
 
 Bluesky uses the same `groups` pattern as other channels, where `"*"` is the default:

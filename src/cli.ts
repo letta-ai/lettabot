@@ -322,8 +322,8 @@ async function blueskyCommand(action?: string, rest: string[] = []): Promise<voi
   }
 
   const runtimePath = join(getDataDir(), 'bluesky-runtime.json');
-  const writeRuntimeState = (patch: Partial<{ disabled: boolean; refreshListsAt: string }>): void => {
-    let state: { agents?: Record<string, { disabled?: boolean; refreshListsAt?: string }> } = {};
+  const writeRuntimeState = (patch: Partial<{ disabled: boolean; refreshListsAt: string; reloadConfigAt: string }>): void => {
+    let state: { agents?: Record<string, { disabled?: boolean; refreshListsAt?: string; reloadConfigAt?: string }> } = {};
     if (existsSync(runtimePath)) {
       try {
         state = JSON.parse(readFileSync(runtimePath, 'utf-8'));
@@ -355,6 +355,7 @@ async function blueskyCommand(action?: string, rest: string[] = []): Promise<voi
       bluesky.groups = bluesky.groups || { '*': { mode: 'listen' } };
       bluesky.groups[did] = { mode: mode as any };
       saveConfig(config);
+      writeRuntimeState({ reloadConfigAt: new Date().toISOString() });
       console.log(`✓ Added DID ${did} with mode ${mode}`);
       console.log(`  Config: ${resolveConfigPath()}`);
       break;
@@ -371,6 +372,7 @@ async function blueskyCommand(action?: string, rest: string[] = []): Promise<voi
       bluesky.lists = bluesky.lists || {};
       bluesky.lists[listUri] = { mode: mode as any };
       saveConfig(config);
+      writeRuntimeState({ reloadConfigAt: new Date().toISOString(), refreshListsAt: new Date().toISOString() });
       console.log(`✓ Added list ${listUri} with mode ${mode}`);
       console.log(`  Config: ${resolveConfigPath()}`);
       break;
@@ -385,6 +387,7 @@ async function blueskyCommand(action?: string, rest: string[] = []): Promise<voi
       bluesky.groups = bluesky.groups || {};
       bluesky.groups['*'] = { mode: mode as any };
       saveConfig(config);
+      writeRuntimeState({ reloadConfigAt: new Date().toISOString() });
       console.log(`✓ Set Bluesky default mode to ${mode}`);
       console.log(`  Config: ${resolveConfigPath()}`);
       break;

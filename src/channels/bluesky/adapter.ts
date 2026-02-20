@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import type { ChannelAdapter } from '../types.js';
 import type { InboundMessage, OutboundFile, OutboundMessage } from '../../core/types.js';
 import { getDataDir } from '../../utils/paths.js';
+import { loadConfig } from '../../config/io.js';
 import type { BlueskyConfig, DidMode, JetstreamEvent } from './types.js';
 import {
   CURSOR_BACKTRACK_US,
@@ -75,6 +76,7 @@ export class BlueskyAdapter implements ChannelAdapter {
   private runtimeTimer: ReturnType<typeof setInterval> | null = null;
   private runtimeDisabled = false;
   private lastRuntimeRefreshAt?: string;
+  private lastRuntimeReloadAt?: string;
 
   onMessage?: (msg: InboundMessage) => Promise<void>;
   onCommand?: (command: string) => Promise<string | null>;
@@ -845,7 +847,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (!this.runtimePath) return;
     if (!existsSync(this.runtimePath)) return;
     const raw = JSON.parse(readFileSync(this.runtimePath, 'utf-8')) as {
-      agents?: Record<string, { disabled?: boolean; refreshListsAt?: string }>;
+      agents?: Record<string, { disabled?: boolean; refreshListsAt?: string; reloadConfigAt?: string }>;
     };
 
     const agentKey = this.config.agentName || 'default';
@@ -867,6 +869,47 @@ export class BlueskyAdapter implements ChannelAdapter {
       if (!this.runtimeDisabled) {
         this.reconnectJetstream();
       }
+    }
+
+    if (agentState.reloadConfigAt && agentState.reloadConfigAt !== this.lastRuntimeReloadAt) {
+      this.lastRuntimeReloadAt = agentState.reloadConfigAt;
+      this.reloadConfig();
+      await this.expandLists();
+      if (!this.runtimeDisabled) {
+        this.reconnectJetstream();
+      }
+    }
+  }
+
+  private reloadConfig(): void {
+    try {
+      const nextConfig = loadConfig();
+      let nextBluesky: BlueskyConfig | undefined;
+      if (nextConfig.agents && nextConfig.agents.length > 0) {
+        const agent = nextConfig.agents.find(a => a.name === this.config.agentName);
+        nextBluesky = agent?.channels?.bluesky as BlueskyConfig | undefined;
+      } else {
+        nextBluesky = nextConfig.channels?.bluesky as BlueskyConfig | undefined;
+      }
+
+      if (!nextBluesky) {
+        console.warn('[Bluesky] Config reload skipped (no bluesky config found).');
+        return;
+      }
+
+      this.config = {
+        ...this.config,
+        ...nextBluesky,
+        agentName: this.config.agentName,
+      };
+      this.loadDidModes();
+      this.listModes = {};
+      this.maybeInitPostingIdentity().catch(err => {
+        console.warn('[Bluesky] Posting identity init failed after reload:', err);
+      });
+      console.log('[Bluesky] Config reloaded.');
+    } catch (err) {
+      console.warn('[Bluesky] Config reload failed:', err);
     }
   }
 
