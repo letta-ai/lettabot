@@ -78,6 +78,7 @@ features:
     enabled: false
     intervalMin: 30
     # skipRecentUserMin: 5   # Skip auto-heartbeats for N minutes after user message (0 disables)
+  # sendFileDir: ./data/outbound  # Restrict <send-file> directive to this directory (default: workingDir)
 
 # Message hooks (optional)
 # hooks:
