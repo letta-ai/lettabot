@@ -1049,7 +1049,14 @@ export class BlueskyAdapter implements ChannelAdapter {
     const promise = (async () => {
       try {
         const url = `${this.getAppViewUrl()}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`;
-        const res = await fetch(url);
+        const headers: Record<string, string> = {};
+
+        // Use authenticated endpoint if available for complete metadata
+        if (this.accessJwt && !this.isExpired(this.accessJwtExpiresAt)) {
+          headers['Authorization'] = `Bearer ${this.accessJwt}`;
+        }
+
+        const res = await fetch(url, { headers });
         if (!res.ok) {
           return undefined;
         }
