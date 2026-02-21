@@ -480,7 +480,7 @@ features:
 
 When `memfs` is enabled, the SDK passes `--memfs` to the Letta Code CLI on each session. When set to `false`, `--no-memfs` is passed to explicitly disable it. When omitted (default), the agent's existing memfs setting is left unchanged.
 
-You can also enable memfs via environment variable:
+You can also enable memfs via environment variable (only `true` and `false` are recognized):
 
 ```bash
 LETTABOT_MEMFS=true npm start

@@ -536,6 +536,11 @@ async function main() {
       },
     });
     
+    // Log memfs config
+    if (agentConfig.features?.memfs !== undefined) {
+      console.log(`[Agent:${agentConfig.name}] memfs: ${agentConfig.features.memfs ? 'enabled' : 'disabled'}`);
+    }
+
     // Apply explicit agent ID from config (before store verification)
     let initialStatus = bot.getStatus();
     if (agentConfig.id && !initialStatus.agentId) {
