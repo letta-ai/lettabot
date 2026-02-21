@@ -55,19 +55,21 @@ export function extractMediaPreview(messageContent: any): { hasMedia: boolean; c
  * Handles 5 media types: image, video, audio, document, sticker.
  * Downloads using Baileys' downloadContentFromMessage and saves to disk.
  * Enforces size limits and supports metadata-only mode.
+ * Transcribes voice messages (ptt: true) using configured transcription provider.
  *
  * @param params - Attachment collection parameters
- * @returns Attachments array and optional caption
+ * @returns Attachments array, optional caption, and optional transcribed text for voice messages
  */
 export async function collectAttachments(params: {
   messageContent: any;
   chatId: string;
   messageId: string;
   downloadContentFromMessage: (message: any, type: string) => Promise<AsyncIterable<Uint8Array>>;
+  sock: import("@whiskeysockets/baileys").WASocket;
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
-}): Promise<{ attachments: InboundAttachment[]; caption?: string }> {
-  const { messageContent, chatId, messageId, downloadContentFromMessage, attachmentsDir, attachmentsMaxBytes } = params;
+}): Promise<{ attachments: InboundAttachment[]; caption?: string; voiceTranscription?: string }> {
+  const { messageContent, chatId, messageId, downloadContentFromMessage, sock, attachmentsDir, attachmentsMaxBytes } = params;
   const attachments: InboundAttachment[] = [];
 
   if (!messageContent) return { attachments };
@@ -122,6 +124,10 @@ export async function collectAttachments(params: {
     kind,
   };
 
+  // Check if this is a voice message (ptt = push-to-talk)
+  const isPttVoiceMessage = mediaType === 'audio' && mediaMessage.ptt === true;
+  let voiceTranscription: string | undefined;
+
   // Download if attachmentsDir is configured
   if (attachmentsDir) {
     // Metadata-only mode (attachmentsMaxBytes = 0)
@@ -151,9 +157,52 @@ export async function collectAttachments(params: {
     }
   }
 
+  // Transcribe voice messages
+  if (isPttVoiceMessage) {
+    try {
+      const { isTranscriptionConfigured } = await import('../../../transcription/index.js');
+      if (!isTranscriptionConfigured()) {
+        // Send error message directly to user (matches Telegram/Slack/Discord/Signal behavior)
+        try {
+          await sock.sendMessage(chatId, {
+            text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages'
+          });
+        } catch (sendError) {
+          console.error('[WhatsApp] Failed to send transcription error message:', sendError);
+        }
+        // Don't forward error to agent - return early
+        const caption = mediaMessage.caption as string | undefined;
+        return { attachments, caption };
+      }
+
+      // Download audio buffer for transcription
+      const stream = await downloadContentFromMessage(mediaMessage, mediaType);
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      const buffer = Buffer.concat(chunks);
+
+      // Transcribe audio
+      const { transcribeAudio } = await import('../../../transcription/index.js');
+      const result = await transcribeAudio(buffer, name);
+
+      if (result.success && result.text) {
+        console.log(`[WhatsApp] Transcribed voice message: "${result.text.slice(0, 50)}..."`);
+        voiceTranscription = `[Voice message]: ${result.text}`;
+      } else {
+        console.error(`[WhatsApp] Transcription failed: ${result.error}`);
+        voiceTranscription = `[Voice message - transcription failed: ${result.error}]`;
+      }
+    } catch (error) {
+      console.error('[WhatsApp] Error transcribing voice message:', error);
+      voiceTranscription = `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`;
+    }
+  }
+
   attachments.push(attachment);
   const caption = mediaMessage.caption as string | undefined;
-  return { attachments, caption };
+  return { attachments, caption, voiceTranscription };
 }
 
 /**
