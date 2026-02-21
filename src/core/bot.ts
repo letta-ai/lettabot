@@ -180,8 +180,6 @@ export class LettaBot implements AgentSession {
     this.config = config;
     mkdirSync(config.workingDir, { recursive: true });
     this.store = new Store('lettabot-agent.json', config.agentName);
-    if (config.conversationOverrides?.length) {
-      this.conversationOverrides = new Set(config.conversationOverrides.map((ch) => ch.toLowerCase()));
     this.hooksConfig = config.hooks;
     if (this.hooksConfig?.preMessage || this.hooksConfig?.postMessage) {
       const baseDir = config.hooksDir || process.cwd();
