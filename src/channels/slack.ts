@@ -227,6 +227,7 @@ export class SlackAdapter implements ChannelAdapter {
           isGroup,
           groupName: isGroup ? channelId : undefined,
           wasMentioned: true, // app_mention is always a mention
+          isListeningMode: false, // Mentions are always responsive, not listening-only
           attachments,
         });
       }

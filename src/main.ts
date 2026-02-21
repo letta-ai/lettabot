@@ -6,7 +6,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, promises as fs } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
 // API server imports
@@ -25,7 +25,8 @@ import {
 import { isLettaApiUrl } from './utils/server.js';
 import { getDataDir, getWorkingDir, hasRailwayVolume } from './utils/paths.js';
 const yamlConfig = loadAppConfigOrExit();
-const configSource = existsSync(resolveConfigPath()) ? resolveConfigPath() : 'defaults + environment variables';
+const mainConfigPath = resolveConfigPath();
+const configSource = existsSync(mainConfigPath) ? mainConfigPath : 'defaults + environment variables';
 console.log(`[Config] Loaded from ${configSource}`);
 if (yamlConfig.agents?.length) {
   console.log(`[Config] Mode: ${serverModeLabel(yamlConfig.server.mode)}, Agents: ${yamlConfig.agents.map(a => a.name).join(', ')}`);
@@ -170,9 +171,9 @@ import { agentExists, findAgentByName, ensureNoToolApprovals } from './tools/let
 // Skills are now installed to agent-scoped location after agent creation (see bot.ts)
 
 // Check if config exists (skip in Railway/Docker where env vars are used directly)
-const configPath = resolveConfigPath();
+const startupConfigPath = resolveConfigPath();
 const isContainerDeploy = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RENDER || process.env.FLY_APP_NAME || process.env.DOCKER_DEPLOY);
-if (!existsSync(configPath) && !isContainerDeploy) {
+if (!existsSync(startupConfigPath) && !isContainerDeploy) {
   console.log(`
 No config file found. Searched locations:
   1. LETTABOT_CONFIG env var (not set)
@@ -457,6 +458,7 @@ const globalConfig = {
   cronEnabled: process.env.CRON_ENABLED === 'true',  // Legacy env var fallback
   heartbeatSkipRecentUserMin: parseNonNegativeNumber(process.env.HEARTBEAT_SKIP_RECENT_USER_MIN),
 };
+const hooksDir = dirname(mainConfigPath);
 
 // Validate LETTA_API_KEY is set for API mode (docker mode doesn't require it)
 if (!isDockerServerMode(yamlConfig.server.mode) && !process.env.LETTA_API_KEY) {
@@ -529,6 +531,8 @@ async function main() {
       maxToolCalls: agentConfig.features?.maxToolCalls,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
+      hooks: agentConfig.hooks,
+      hooksDir,
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
         googleEnabled: !!agentConfig.integrations?.google?.enabled || !!agentConfig.polling?.gmail?.enabled,

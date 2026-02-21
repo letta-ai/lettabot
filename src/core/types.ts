@@ -2,6 +2,8 @@
  * Core Types for LettaBot
  */
 
+import type { SendMessage } from '@letta-ai/letta-code-sdk';
+
 // =============================================================================
 // Output Control Types (NEW)
 // =============================================================================
@@ -36,6 +38,42 @@ export interface TriggerContext {
   notifyTarget?: {
     channel: string;
     chatId: string;
+  };
+}
+
+// =============================================================================
+// Message Hooks
+// =============================================================================
+
+export type HookMode = 'await' | 'parallel';
+
+export interface HookHandlerConfig {
+  file: string;          // Path to ESM module exporting preMessage/postMessage
+  mode?: HookMode;       // 'await' (default) or 'parallel'
+  timeoutMs?: number;    // Optional timeout (ms)
+}
+
+export interface MessageHooksConfig {
+  preMessage?: HookHandlerConfig;
+  postMessage?: HookHandlerConfig;
+}
+
+export interface MessageHookContext {
+  stage: 'pre' | 'post';
+  isHeartbeat: boolean;
+  suppressDelivery: boolean;
+  trigger?: TriggerContext;
+  inboundMessage?: InboundMessage;
+  formattedText?: string;
+  message: SendMessage;
+  response?: string;
+  delivered?: boolean;
+  error?: string;
+  agent?: {
+    id?: string | null;
+    name?: string;
+    conversationId?: string | null;
+    conversationKey?: string;
   };
 }
 
@@ -125,6 +163,8 @@ export interface BotConfig {
   agentName?: string; // Name for the agent (set via API after creation)
   allowedTools: string[];
   disallowedTools?: string[];
+  hooks?: MessageHooksConfig;
+  hooksDir?: string; // Base dir for resolving hook module paths
 
   // Display
   displayName?: string; // Prefix outbound messages (e.g. "💜 Signo")
