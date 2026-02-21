@@ -47,6 +47,8 @@ lettabot-bluesky mute <did|handle> --agent <name>
 lettabot-bluesky unmute <did|handle> --agent <name>
 lettabot-bluesky block <did|handle> --agent <name>
 lettabot-bluesky unblock <blockUri> --agent <name>
+lettabot-bluesky blocks --limit 50 --agent <name>
+lettabot-bluesky mutes --limit 50 --agent <name>
 ```
 
 Notes:

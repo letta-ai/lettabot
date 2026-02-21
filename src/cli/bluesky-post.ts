@@ -19,6 +19,8 @@
  *   lettabot-bluesky unblock <blockUri> --agent <name>
  *   lettabot-bluesky mute <did|handle> --agent <name>
  *   lettabot-bluesky unmute <did|handle> --agent <name>
+ *   lettabot-bluesky blocks --limit 50 --agent <name>
+ *   lettabot-bluesky mutes --limit 50 --agent <name>
  */
 
 import { loadAppConfigOrExit, normalizeAgents } from '../config/index.js';
@@ -26,7 +28,7 @@ import type { AgentConfig, BlueskyConfig } from '../config/types.js';
 import { DEFAULT_APPVIEW_URL, DEFAULT_SERVICE_URL, POST_MAX_CHARS } from '../channels/bluesky/constants.js';
 
 function usage(): void {
-  console.log(`\nUsage:\n  lettabot-bluesky post --text "Hello" --agent <name>\n  lettabot-bluesky post --reply-to <at://...> --text "Reply" --agent <name>\n  lettabot-bluesky post --text "Long..." --threaded --agent <name>\n  lettabot-bluesky like <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --text "Quote" --agent <name> [--threaded]\n  lettabot-bluesky profile <did|handle> --agent <name>\n  lettabot-bluesky thread <at://...> --agent <name>\n  lettabot-bluesky author-feed <did|handle> --limit 25 --agent <name>\n  lettabot-bluesky list-feed <listUri> --limit 25 --agent <name>\n  lettabot-bluesky search --query \"...\" --limit 25 --agent <name>\n  lettabot-bluesky notifications --limit 25 --reasons mention,reply --agent <name>\n  lettabot-bluesky block <did|handle> --agent <name>\n  lettabot-bluesky unblock <blockUri> --agent <name>\n  lettabot-bluesky mute <did|handle> --agent <name>\n  lettabot-bluesky unmute <did|handle> --agent <name>\n`);
+  console.log(`\nUsage:\n  lettabot-bluesky post --text "Hello" --agent <name>\n  lettabot-bluesky post --reply-to <at://...> --text "Reply" --agent <name>\n  lettabot-bluesky post --text "Long..." --threaded --agent <name>\n  lettabot-bluesky like <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --text "Quote" --agent <name> [--threaded]\n  lettabot-bluesky profile <did|handle> --agent <name>\n  lettabot-bluesky thread <at://...> --agent <name>\n  lettabot-bluesky author-feed <did|handle> --limit 25 --agent <name>\n  lettabot-bluesky list-feed <listUri> --limit 25 --agent <name>\n  lettabot-bluesky search --query \"...\" --limit 25 --agent <name>\n  lettabot-bluesky notifications --limit 25 --reasons mention,reply --agent <name>\n  lettabot-bluesky block <did|handle> --agent <name>\n  lettabot-bluesky unblock <blockUri> --agent <name>\n  lettabot-bluesky mute <did|handle> --agent <name>\n  lettabot-bluesky unmute <did|handle> --agent <name>\n  lettabot-bluesky blocks --limit 50 --agent <name>\n  lettabot-bluesky mutes --limit 50 --agent <name>\n`);
 }
 
 function parseAtUri(uri: string): { did: string; collection: string; rkey: string } | undefined {
@@ -496,7 +498,7 @@ async function handleReadCommand(
     return;
   }
 
-  if (command === 'search' || command === 'timeline' || command === 'notifications') {
+  if (command === 'search' || command === 'timeline' || command === 'notifications' || command === 'blocks' || command === 'mutes') {
     const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
     if (command === 'search') {
       if (!query) throw new Error('Missing query');
@@ -521,6 +523,20 @@ async function handleReadCommand(
         for (const reason of reasons) qs.append('reasons', reason);
       }
       const url = `${serviceUrl}/xrpc/app.bsky.notification.listNotifications?${qs.toString()}`;
+      const data = await fetchJson(url, { 'Authorization': `Bearer ${session.accessJwt}` });
+      console.log(JSON.stringify(data, null, 2));
+      return;
+    }
+
+    if (command === 'blocks') {
+      const url = `${serviceUrl}/xrpc/app.bsky.graph.getBlocks?limit=${effectiveLimit}`;
+      const data = await fetchJson(url, { 'Authorization': `Bearer ${session.accessJwt}` });
+      console.log(JSON.stringify(data, null, 2));
+      return;
+    }
+
+    if (command === 'mutes') {
+      const url = `${serviceUrl}/xrpc/app.bsky.graph.getMutes?limit=${effectiveLimit}`;
       const data = await fetchJson(url, { 'Authorization': `Bearer ${session.accessJwt}` });
       console.log(JSON.stringify(data, null, 2));
       return;
