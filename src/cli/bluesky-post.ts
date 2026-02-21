@@ -15,6 +15,10 @@
  *   lettabot-bluesky list-feed <listUri> --limit 25 --agent <name>
  *   lettabot-bluesky search --query "..." --limit 25 --agent <name>
  *   lettabot-bluesky notifications --limit 25 --reasons mention,reply --agent <name>
+ *   lettabot-bluesky block <did|handle> --agent <name>
+ *   lettabot-bluesky unblock <blockUri> --agent <name>
+ *   lettabot-bluesky mute <did|handle> --agent <name>
+ *   lettabot-bluesky unmute <did|handle> --agent <name>
  */
 
 import { loadAppConfigOrExit, normalizeAgents } from '../config/index.js';
@@ -22,7 +26,7 @@ import type { AgentConfig, BlueskyConfig } from '../config/types.js';
 import { DEFAULT_APPVIEW_URL, DEFAULT_SERVICE_URL, POST_MAX_CHARS } from '../channels/bluesky/constants.js';
 
 function usage(): void {
-  console.log(`\nUsage:\n  lettabot-bluesky post --text "Hello" --agent <name>\n  lettabot-bluesky post --reply-to <at://...> --text "Reply" --agent <name>\n  lettabot-bluesky post --text "Long..." --threaded --agent <name>\n  lettabot-bluesky like <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --text "Quote" --agent <name> [--threaded]\n  lettabot-bluesky profile <did|handle> --agent <name>\n  lettabot-bluesky thread <at://...> --agent <name>\n  lettabot-bluesky author-feed <did|handle> --limit 25 --agent <name>\n  lettabot-bluesky list-feed <listUri> --limit 25 --agent <name>\n  lettabot-bluesky search --query \"...\" --limit 25 --agent <name>\n  lettabot-bluesky notifications --limit 25 --reasons mention,reply --agent <name>\n`);
+  console.log(`\nUsage:\n  lettabot-bluesky post --text "Hello" --agent <name>\n  lettabot-bluesky post --reply-to <at://...> --text "Reply" --agent <name>\n  lettabot-bluesky post --text "Long..." --threaded --agent <name>\n  lettabot-bluesky like <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --text "Quote" --agent <name> [--threaded]\n  lettabot-bluesky profile <did|handle> --agent <name>\n  lettabot-bluesky thread <at://...> --agent <name>\n  lettabot-bluesky author-feed <did|handle> --limit 25 --agent <name>\n  lettabot-bluesky list-feed <listUri> --limit 25 --agent <name>\n  lettabot-bluesky search --query \"...\" --limit 25 --agent <name>\n  lettabot-bluesky notifications --limit 25 --reasons mention,reply --agent <name>\n  lettabot-bluesky block <did|handle> --agent <name>\n  lettabot-bluesky unblock <blockUri> --agent <name>\n  lettabot-bluesky mute <did|handle> --agent <name>\n  lettabot-bluesky unmute <did|handle> --agent <name>\n`);
 }
 
 function parseAtUri(uri: string): { did: string; collection: string; rkey: string } | undefined {
@@ -126,6 +130,23 @@ async function fetchJson(url: string, headers?: Record<string, string>): Promise
   return res.json();
 }
 
+async function postJson(url: string, body: Record<string, unknown>, headers?: Record<string, string>): Promise<unknown> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(headers || {}),
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Request failed: ${detail}`);
+  }
+  if (res.status === 204) return {};
+  return res.json();
+}
+
 async function getRecord(serviceUrl: string, accessJwt: string, uri: string): Promise<{ cid: string; value: Record<string, unknown> }> {
   const parsed = parseAtUri(uri);
   if (!parsed) throw new Error(`Invalid at:// URI: ${uri}`);
@@ -144,6 +165,19 @@ async function getRecord(serviceUrl: string, accessJwt: string, uri: string): Pr
   const data = await res.json() as { cid?: string; value?: Record<string, unknown> };
   if (!data.cid || !data.value) throw new Error('getRecord missing cid/value');
   return { cid: data.cid, value: data.value };
+}
+
+async function resolveHandleToDid(bluesky: BlueskyConfig, handle: string): Promise<string> {
+  const appViewUrl = getAppViewUrl(bluesky);
+  const url = `${appViewUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`;
+  const data = await fetchJson(url) as { did?: string };
+  if (!data.did) throw new Error(`resolveHandle failed for ${handle}`);
+  return data.did;
+}
+
+async function resolveActorDid(bluesky: BlueskyConfig, actor: string): Promise<string> {
+  if (actor.startsWith('did:')) return actor;
+  return resolveHandleToDid(bluesky, actor);
 }
 
 async function ensureCid(serviceUrl: string, accessJwt: string, uri: string, cid?: string): Promise<string> {
@@ -336,6 +370,47 @@ async function handleSubjectRecord(
   console.log(`✓ ${collection === 'app.bsky.feed.like' ? 'Liked' : 'Reposted'}: ${uri}`);
 }
 
+async function handleMute(bluesky: BlueskyConfig, actor: string, muted: boolean): Promise<void> {
+  const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
+  const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
+  const did = await resolveActorDid(bluesky, actor);
+  const endpoint = muted ? 'app.bsky.graph.muteActor' : 'app.bsky.graph.unmuteActor';
+  await postJson(`${serviceUrl}/xrpc/${endpoint}`, { actor: did }, { 'Authorization': `Bearer ${session.accessJwt}` });
+  console.log(`✓ ${muted ? 'Muted' : 'Unmuted'}: ${did}`);
+}
+
+async function handleBlock(bluesky: BlueskyConfig, actor: string): Promise<void> {
+  const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
+  const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
+  const did = await resolveActorDid(bluesky, actor);
+  const createdAt = new Date().toISOString();
+  const res = await createRecord(serviceUrl, session.accessJwt, session.did, 'app.bsky.graph.block', {
+    subject: did,
+    createdAt,
+  });
+  if (!res.uri) throw new Error('createRecord returned no uri');
+  console.log(`✓ Blocked: ${did} (${res.uri})`);
+}
+
+async function handleUnblock(bluesky: BlueskyConfig, blockUri: string): Promise<void> {
+  const parsed = parseAtUri(blockUri);
+  if (!parsed || parsed.collection !== 'app.bsky.graph.block') {
+    throw new Error('unblock requires a block record URI (at://.../app.bsky.graph.block/...)');
+  }
+  const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
+  const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
+  await postJson(
+    `${serviceUrl}/xrpc/com.atproto.repo.deleteRecord`,
+    {
+      repo: session.did,
+      collection: parsed.collection,
+      rkey: parsed.rkey,
+    },
+    { 'Authorization': `Bearer ${session.accessJwt}` },
+  );
+  console.log(`✓ Unblocked: ${blockUri}`);
+}
+
 async function handleReadCommand(
   bluesky: BlueskyConfig,
   command: string,
@@ -468,6 +543,8 @@ async function main(): Promise<void> {
   let replyTo = '';
   let threaded = false;
   let uriArg = '';
+  let actor = '';
+  let blockUri = '';
   let query = '';
   let limit: number | undefined;
   let reasons: string[] | undefined;
@@ -488,6 +565,12 @@ async function main(): Promise<void> {
       i++;
     } else if (arg === '--reply-to' && next) {
       replyTo = next;
+      i++;
+    } else if (arg === '--actor' && next) {
+      actor = next;
+      i++;
+    } else if (arg === '--block-uri' && next) {
+      blockUri = next;
       i++;
     } else if (arg === '--threaded') {
       threaded = true;
@@ -534,6 +617,34 @@ async function main(): Promise<void> {
     } else {
       await handleSubjectRecord(bluesky, uriArg, 'app.bsky.feed.repost');
     }
+    return;
+  }
+
+  if (command === 'mute') {
+    const target = actor || uriArg;
+    if (!target) throw new Error('Missing actor');
+    await handleMute(bluesky, target, true);
+    return;
+  }
+
+  if (command === 'unmute') {
+    const target = actor || uriArg;
+    if (!target) throw new Error('Missing actor');
+    await handleMute(bluesky, target, false);
+    return;
+  }
+
+  if (command === 'block') {
+    const target = actor || uriArg;
+    if (!target) throw new Error('Missing actor');
+    await handleBlock(bluesky, target);
+    return;
+  }
+
+  if (command === 'unblock') {
+    const target = blockUri || uriArg;
+    if (!target) throw new Error('Missing block URI');
+    await handleUnblock(bluesky, target);
     return;
   }
 

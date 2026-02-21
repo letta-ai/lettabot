@@ -40,6 +40,18 @@ lettabot-bluesky timeline --limit 25 --agent <name>
 lettabot-bluesky notifications --limit 25 --reasons mention,reply --agent <name>
 ```
 
+## Moderation (Mute / Block)
+
+```bash
+lettabot-bluesky mute <did|handle> --agent <name>
+lettabot-bluesky unmute <did|handle> --agent <name>
+lettabot-bluesky block <did|handle> --agent <name>
+lettabot-bluesky unblock <blockUri> --agent <name>
+```
+
+Notes:
+- `unblock` requires the **block record URI** (returned by the `block` command).
+
 ## Notes
 
 - Posts are capped at 300 characters unless you pass `--threaded`.
