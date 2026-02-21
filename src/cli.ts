@@ -419,52 +419,86 @@ async function main() {
     }
     
     case 'reset-conversation': {
-      const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
-      const { join } = await import('node:path');
       const p = await import('@clack/prompts');
       
-      const dataDir = getDataDir();
-      const agentJsonPath = join(dataDir, 'lettabot-agent.json');
-      
       p.intro('Reset Conversation');
-      
-      if (!existsSync(agentJsonPath)) {
-        p.log.error('No agent store found. Run the server first to create an agent.');
+
+      const configuredName =
+        (config.agent?.name?.trim())
+        || (config.agents?.length && config.agents[0].name?.trim())
+        || 'LettaBot';
+
+      const configuredAgents = (config.agents?.length ? config.agents : [{ name: configuredName }])
+        .map(agent => agent.name?.trim())
+        .filter((name): name is string => !!name);
+
+      const uniqueAgents = Array.from(new Set(configuredAgents));
+
+      let targetAgents = uniqueAgents;
+      if (uniqueAgents.length > 1) {
+        const choice = await p.select({
+          message: 'Which agent should be reset?',
+          options: [
+            { value: '__all__', label: 'All configured agents' },
+            ...uniqueAgents.map(name => ({ value: name, label: name })),
+          ],
+        });
+        if (p.isCancel(choice)) {
+          p.cancel('Cancelled');
+          break;
+        }
+        targetAgents = choice === '__all__' ? uniqueAgents : [choice as string];
+      }
+
+      const entries = targetAgents.map((name) => {
+        const store = new Store('lettabot-agent.json', name);
+        const info = store.getInfo();
+        const perChannelKeys = info.conversations ? Object.keys(info.conversations) : [];
+        return {
+          name,
+          store,
+          hasLegacy: !!info.conversationId,
+          perChannelKeys,
+        };
+      });
+
+      const hasAny = entries.some(entry => entry.hasLegacy || entry.perChannelKeys.length > 0);
+      if (!hasAny) {
+        p.log.info('No conversation IDs stored. Nothing to reset.');
         break;
       }
-      
-      const store = JSON.parse(readFileSync(agentJsonPath, 'utf-8'));
-      const oldConversationId = store.conversationId;
-      
-      if (!oldConversationId) {
-        p.log.info('No conversation ID stored. Nothing to reset.');
-        break;
+
+      for (const entry of entries) {
+        if (entry.hasLegacy) {
+          p.log.warn(`Current conversation (${entry.name}): ${entry.store.conversationId}`);
+        } else if (entry.perChannelKeys.length > 0) {
+          p.log.warn(`Current per-channel conversations (${entry.name}): ${entry.perChannelKeys.length}`);
+        }
       }
-      
-      p.log.warn(`Current conversation: ${oldConversationId}`);
       p.log.message('');
-      p.log.message('This will clear the conversation ID, causing the bot to create');
+      p.log.message('This will clear the conversation ID(s), causing the bot to create');
       p.log.message('a new conversation on the next message. Use this if you see:');
       p.log.message('  • "stop_reason: error" with empty responses');
       p.log.message('  • Messages not reaching the agent');
       p.log.message('  • Agent returning empty results');
       p.log.message('');
       p.log.message('The agent and its memory will be preserved.');
-      
+
       const confirmed = await p.confirm({
-        message: 'Reset conversation?',
+        message: `Reset conversation${entries.length > 1 ? 's' : ''}?`,
         initialValue: true,
       });
-      
+
       if (!confirmed || p.isCancel(confirmed)) {
         p.cancel('Cancelled');
         break;
       }
-      
-      store.conversationId = null;
-      writeFileSync(agentJsonPath, JSON.stringify(store, null, 2));
-      
-      p.log.success('Conversation ID cleared');
+
+      for (const entry of entries) {
+        entry.store.clearConversation();
+      }
+
+      p.log.success(`Conversation ID${entries.length > 1 ? 's' : ''} cleared`);
       p.outro('Restart the server - a new conversation will be created on the next message.');
       break;
     }

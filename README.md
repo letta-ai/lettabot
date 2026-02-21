@@ -193,7 +193,7 @@ Then ask your bot things like:
 
 ## Channel Setup
 
-LettaBot uses a **single agent with a single conversation** across all channels:
+By default, LettaBot uses a **single agent with a single shared conversation** across all channels:
 
 ```
 Telegram ──┐
@@ -207,6 +207,35 @@ Signal ────┘
 - Continue it on Slack
 - Pick it up on WhatsApp
 - The agent remembers everything!
+
+You can also enable **per-channel conversations** (one conversation per channel adapter, not per chat/user):
+
+```
+Telegram ──→ CONVERSATION (telegram)
+Slack ─────→ CONVERSATION (slack)
+Discord ───→ CONVERSATION (discord)
+WhatsApp ──→ CONVERSATION (whatsapp)
+Signal ────→ CONVERSATION (signal)
+        (shared agent memory across channels)
+```
+
+Configure in `lettabot.yaml`:
+
+```yaml
+conversations:
+  mode: shared        # default: one conversation across all channels
+  heartbeat: last-active  # "dedicated" | "last-active" | "<channel>"
+```
+
+For multi-agent configs, the same block lives under each agent:
+
+```yaml
+agents:
+  - name: MyAgent
+    conversations:
+      mode: per-channel
+      heartbeat: dedicated
+```
 
 | Channel | Guide | Requirements |
 |---------|-------|--------------|
@@ -226,11 +255,22 @@ Configure group batching and per-group response modes in `lettabot.yaml`:
 channels:
   slack:
     groupDebounceSec: 5
-    instantGroups: ["C0123456789"]
+    mentionPatterns: ["@mybot", "hey bot"]
     groups:
-      "*": { mode: open }
-      "C0987654321": { mode: listen } # observe only, reply on mention
+      "*": { mode: mention-only }             # default for all groups
+      "C0987654321": { mode: listen }         # observe, only reply on mention
+      "C0123456789": { mode: open, allowedUsers: ["U123"] }
 ```
+
+Group modes:
+- `open`: process + respond to all group messages
+- `listen`: process for memory, but auto-replies only on mention
+- `mention-only`: only process when mentioned
+- `disabled`: ignore all group messages
+
+Notes:
+- `instantGroups` still bypasses batching (legacy).  
+- `listeningGroups` and `groups.<id>.requireMention` are deprecated; use `groups.<id>.mode`.
 
 See `SKILL.md` for the full environment variable list and examples.
 
@@ -244,7 +284,9 @@ See `SKILL.md` for the full environment variable list and examples.
 
 ## Background Tasks (Heartbeats & Cron)
 
-Heartbeats and cron jobs run in **Silent Mode** - the agent's text responses are NOT automatically sent to users during these background tasks. This is intentional: the agent decides when something is worth interrupting you for.
+Heartbeats always run in **Silent Mode**. Cron jobs are **silent by default**, but can auto-deliver responses when created with `--deliver channel:chatId`.
+
+Silent Mode means the agent's text responses are NOT automatically sent to users during background tasks. This is intentional: the agent decides when something is worth interrupting you for.
 
 To send messages during silent mode, the agent must explicitly use the CLI:
 
@@ -254,9 +296,9 @@ lettabot-message send --text "Hey, I found something interesting!"
 
 The agent sees a clear `[SILENT MODE]` banner when triggered by heartbeats/cron, along with instructions on how to use the CLI.
 
-**Requirements for background messaging:**
+**Requirements for background messaging (silent mode):**
 - The **Bash tool must be enabled** for the agent to run the CLI
-- A user must have messaged the bot at least once (to establish a delivery target)
+- A user must have messaged the bot at least once (to establish a delivery target) unless you provide an explicit target
 
 If your agent isn't sending messages during heartbeats, check the [ADE](https://app.letta.com) to see what the agent is doing and whether it's attempting to use `lettabot-message`.
 
