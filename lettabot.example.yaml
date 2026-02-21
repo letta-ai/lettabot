@@ -68,6 +68,7 @@ channels:
   #   selfChat: false
   # bluesky:
   #   enabled: true
+  #   # autoReply: true  # Enable auto-replies (default: false / read-only)
   #   wantedDids: ["did:plc:..."]
   #   # groups:
   #   #   "*": { mode: listen }

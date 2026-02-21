@@ -6,8 +6,8 @@ LettaBot can ingest Bluesky events using the Jetstream WebSocket feed. This chan
 
 - **Jetstream** provides a firehose of ATProto commit events.
 - You filter by **DID(s)** and optionally by **collection**.
-- Events are delivered to the agent in **listening mode** by default (no auto-reply).
-- If enabled, the bot can **reply to posts** using the ATProto XRPC API.
+- Events are delivered to the agent in **listening mode** by default (read‑only).
+- If enabled, the bot can **auto‑reply** to posts using the ATProto XRPC API.
 
 ## Configuration (lettabot.yaml)
 
@@ -15,6 +15,7 @@ LettaBot can ingest Bluesky events using the Jetstream WebSocket feed. This chan
 channels:
   bluesky:
     enabled: true
+    # autoReply: true  # Enable auto-replies (default: false / read-only)
     wantedDids: ["did:plc:..."]
     # lists:
     #   "at://did:plc:.../app.bsky.graph.list/xyz": { mode: listen }
@@ -49,6 +50,19 @@ conversations:
 If you omit `wantedCollections`, you’ll see **all** collections for the included DIDs (posts, likes, reposts, follows, blocks, etc.).
 
 If there are **no** `wantedDids` (after list expansion), Jetstream does **not** connect. Notifications polling can still run if auth is configured.
+
+### Manual posting (skill/CLI)
+
+Bluesky is read‑only by default. To post, reply, like, or repost, use the CLI:
+
+```bash
+lettabot-bluesky post --text "Hello" --agent <name>
+lettabot-bluesky post --reply-to at://did:plc:.../app.bsky.feed.post/... --text "Reply" --agent <name>
+lettabot-bluesky like at://did:plc:.../app.bsky.feed.post/... --agent <name>
+lettabot-bluesky repost at://did:plc:.../app.bsky.feed.post/... --agent <name>
+```
+
+Posts over 300 characters require `--threaded` to explicitly split into a reply thread.
 
 ### Mentions
 

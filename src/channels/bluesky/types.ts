@@ -3,6 +3,7 @@ export type DidMode = 'open' | 'listen' | 'mention-only' | 'disabled';
 export interface BlueskyConfig {
   enabled?: boolean;
   agentName?: string;
+  autoReply?: boolean; // Allow auto-replies (default: false / read-only)
   jetstreamUrl?: string;
   wantedDids?: string[] | string;
   wantedCollections?: string[] | string;

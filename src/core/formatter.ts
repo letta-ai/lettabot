@@ -355,6 +355,17 @@ export function formatMessageEnvelope(
     sections.push(`## Chat Context\n${contextLines.join('\n')}`);
   }
 
+  // Channel-specific action hints
+  if (msg.channel === 'bluesky') {
+    const blueskyLines = [
+      '- This channel is read-only; your text response will NOT be posted.',
+      '- Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
+      '- Reply: `lettabot-bluesky post --reply-to <uri> --text "..."`',
+      '- Posts over 300 chars require `--threaded` to create a reply thread.',
+    ];
+    sections.push(`## Bluesky Actions\n${blueskyLines.join('\n')}`);
+  }
+
   // Response directives hint
   const directiveLines = [
     `- To skip replying: \`<no-reply/>\``,

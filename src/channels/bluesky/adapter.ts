@@ -371,8 +371,8 @@ export class BlueskyAdapter implements ChannelAdapter {
     }
 
     const isPost = payload.commit?.collection === 'app.bsky.feed.post';
-
-    const shouldReply = isPost && didMode === 'open';
+    const allowReplies = this.config.autoReply === true;
+    const shouldReply = allowReplies && isPost && didMode === 'open';
 
     const inbound: InboundMessage = {
       channel: 'bluesky',
@@ -1162,7 +1162,8 @@ export class BlueskyAdapter implements ChannelAdapter {
     const actionable = notification.reason === 'mention'
       || notification.reason === 'reply'
       || notification.reason === 'quote';
-    const shouldReply = actionable
+    const allowReplies = this.config.autoReply === true;
+    const shouldReply = allowReplies && actionable
       && recordType === 'app.bsky.feed.post'
       && (didMode === 'open' || (didMode === 'mention-only' && notification.reason === 'mention'));
 

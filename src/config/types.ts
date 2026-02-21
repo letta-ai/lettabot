@@ -293,6 +293,7 @@ export interface DiscordConfig {
 
 export interface BlueskyConfig {
   enabled: boolean;
+  autoReply?: boolean;          // Allow auto-replies (default: false / read-only)
   jetstreamUrl?: string;
   wantedDids?: string[];         // DID(s) to follow (e.g., did:plc:...)
   wantedCollections?: string[];  // Optional collection filters (e.g., app.bsky.feed.post)
