@@ -11,154 +11,12 @@
  */
 
 // Config loaded from lettabot.yaml
-import { loadAppConfigOrExit, applyConfigToEnv, resolveConfigPath, normalizeAgents, type AgentConfig } from '../config/index.js';
-import { dirname } from 'node:path';
+import { loadAppConfigOrExit, applyConfigToEnv } from '../config/index.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { loadLastTarget } from './shared.js';
-import { MessageHookRunner } from '../core/hooks.js';
-import { Store } from '../core/store.js';
-import type { MessageHookContext, MessageHooksConfig } from '../core/types.js';
-import { resolveTriggerContext } from './trigger-context.js';
 
 const config = loadAppConfigOrExit();
 applyConfigToEnv(config);
-const normalizedAgents = normalizeAgents(config);
-const configPath = resolveConfigPath();
-const hooksDir = dirname(configPath);
-
-type AgentSelection = {
-  name?: string;
-  id?: string;
-  explicit: boolean;
-};
-
-function resolveAgentSelection(agentName?: string, agentId?: string): AgentSelection {
-  const envName = process.env.LETTABOT_AGENT_NAME || process.env.LETTA_AGENT_NAME;
-  const envId = process.env.LETTABOT_AGENT_ID || process.env.LETTA_AGENT_ID;
-  const name = (agentName ?? envName)?.trim() || undefined;
-  const id = (agentId ?? envId)?.trim() || undefined;
-  return { name, id, explicit: Boolean(name || id) };
-}
-
-function findAgentByName(agents: AgentConfig[], name?: string): AgentConfig | undefined {
-  if (!name) return undefined;
-  const exact = agents.find(agent => agent.name === name);
-  if (exact) return exact;
-  const lower = name.toLowerCase();
-  return agents.find(agent => agent.name.toLowerCase() === lower);
-}
-
-function findAgentById(agents: AgentConfig[], id?: string): AgentConfig | undefined {
-  if (!id) return undefined;
-  return agents.find(agent => agent.id === id);
-}
-
-function resolveSelectedAgent(selection: AgentSelection): AgentConfig | undefined {
-  if (selection.name) {
-    const byName = findAgentByName(normalizedAgents, selection.name);
-    if (byName) return byName;
-  }
-  if (selection.id) {
-    return findAgentById(normalizedAgents, selection.id);
-  }
-  return undefined;
-}
-
-function resolveHooksConfig(selection: AgentSelection): MessageHooksConfig | undefined {
-  if (normalizedAgents.length === 1) {
-    return normalizedAgents[0].hooks;
-  }
-  if (selection.explicit) {
-    const selected = resolveSelectedAgent(selection);
-    return selected?.hooks ?? config.hooks;
-  }
-  return config.hooks;
-}
-
-function resolveHookAgentContext(
-  selection: AgentSelection,
-  channel?: string,
-): { agent?: MessageHookContext['agent']; warning?: string } {
-  const isMultiAgent = normalizedAgents.length > 1;
-  const selected = resolveSelectedAgent(selection);
-
-  if (!selection.explicit && isMultiAgent) {
-    return {
-      warning: '[Hooks] Multiple agents configured. Use --agent/--agent-id or LETTA(BOT)_AGENT_NAME/LETTA(BOT)_AGENT_ID to include agent context.',
-    };
-  }
-
-  let agentName = selection.name ?? selected?.name;
-  let agentId = selection.id ?? selected?.id;
-
-  if (!selected && !selection.explicit && normalizedAgents.length === 1) {
-    const only = normalizedAgents[0];
-    agentName = agentName ?? only.name;
-    agentId = agentId ?? only.id;
-  }
-
-  const store = agentName ? new Store('lettabot-agent.json', agentName) : null;
-  if (!agentId && store?.agentId) {
-    agentId = store.agentId || undefined;
-  }
-
-  if (!agentName && !agentId) {
-    return {};
-  }
-
-  const conversationMode = selected?.conversations?.mode ?? config.conversations?.mode ?? 'shared';
-  const channelKey = channel ? channel.toLowerCase() : undefined;
-  const conversationKey = conversationMode === 'per-channel' && channelKey ? channelKey : 'shared';
-  const conversationId = store
-    ? (conversationKey === 'shared' ? store.conversationId : store.getConversationId(conversationKey))
-    : null;
-
-  const agent: MessageHookContext['agent'] = {
-    ...(agentId ? { id: agentId } : {}),
-    ...(agentName ? { name: agentName } : {}),
-    ...(conversationId ? { conversationId } : {}),
-    ...(conversationKey ? { conversationKey } : {}),
-  };
-
-  return { agent };
-}
-
-const hookRunner = new MessageHookRunner(hooksDir);
-
-async function applyPostHook(
-  text: string,
-  options: {
-    channel?: string;
-    chatId?: string;
-    agentName?: string;
-    agentId?: string;
-    triggerType?: string;
-    outputMode?: string;
-    jobId?: string;
-    jobName?: string;
-  } = {},
-): Promise<string> {
-  const selection = resolveAgentSelection(options.agentName, options.agentId);
-  const hooksConfig = resolveHooksConfig(selection);
-  if (!hooksConfig?.postMessage) return text;
-  const { agent, warning } = resolveHookAgentContext(selection, options.channel);
-  if (warning) {
-    console.warn(warning);
-  }
-  const trigger = resolveTriggerContext(options);
-  const ctx: MessageHookContext = {
-    stage: 'post',
-    isHeartbeat: false,
-    suppressDelivery: false,
-    message: text,
-    response: text,
-    delivered: false,
-    ...(trigger ? { trigger } : {}),
-    ...(agent ? { agent } : {}),
-  };
-  const override = await hookRunner.runPost(hooksConfig.postMessage, ctx);
-  return override ?? text;
-}
 
 // Channel senders
 async function sendTelegram(chatId: string, text: string): Promise<void> {
@@ -454,12 +312,6 @@ async function sendCommand(args: string[]): Promise<void> {
   let kind: 'image' | 'file' | undefined = undefined;
   let channel = '';
   let chatId = '';
-  let agentName = '';
-  let agentId = '';
-  let triggerType = '';
-  let outputMode = '';
-  let jobId = '';
-  let jobName = '';
   const fileCapableChannels = new Set(['telegram', 'slack', 'discord', 'whatsapp']);
 
   // Parse args
@@ -481,24 +333,6 @@ async function sendCommand(args: string[]): Promise<void> {
     } else if ((arg === '--chat' || arg === '--to') && next) {
       chatId = next;
       i++;
-    } else if ((arg === '--agent' || arg === '--agent-name') && next) {
-      agentName = next;
-      i++;
-    } else if (arg === '--agent-id' && next) {
-      agentId = next;
-      i++;
-    } else if ((arg === '--trigger' || arg === '--trigger-type') && next) {
-      triggerType = next;
-      i++;
-    } else if (arg === '--output-mode' && next) {
-      outputMode = next;
-      i++;
-    } else if (arg === '--job-id' && next) {
-      jobId = next;
-      i++;
-    } else if (arg === '--job-name' && next) {
-      jobName = next;
-      i++;
     }
   }
 
@@ -513,9 +347,7 @@ async function sendCommand(args: string[]): Promise<void> {
   if (!channel || (!chatId && channel !== 'bluesky')) {
     const lastTarget = loadLastTarget();
     if (lastTarget) {
-      if (!channel) {
-        channel = lastTarget.channel;
-      }
+      channel = channel || lastTarget.channel;
       if (!chatId && channel !== 'bluesky') {
         chatId = lastTarget.chatId;
       }
@@ -536,35 +368,18 @@ async function sendCommand(args: string[]): Promise<void> {
 
   try {
     if (filePath) {
+      if (channel === 'bluesky') {
+        throw new Error('File sending not supported for bluesky');
+      }
       if (!fileCapableChannels.has(channel)) {
         throw new Error(`File sending not supported for ${channel}. Supported: telegram, slack, discord, whatsapp`);
       }
-      const finalText = await applyPostHook(text, {
-        channel,
-        chatId,
-        agentName: agentName || undefined,
-        agentId: agentId || undefined,
-        triggerType: triggerType || undefined,
-        outputMode: outputMode || undefined,
-        jobId: jobId || undefined,
-        jobName: jobName || undefined,
-      });
-      await sendViaApi(channel, chatId, { text: finalText, filePath, kind });
+      await sendViaApi(channel, chatId, { text, filePath, kind });
       return;
     }
 
     // Text-only: direct platform APIs (WhatsApp uses API internally)
-    const finalText = await applyPostHook(text, {
-      channel,
-      chatId,
-      agentName: agentName || undefined,
-      agentId: agentId || undefined,
-      triggerType: triggerType || undefined,
-      outputMode: outputMode || undefined,
-      jobId: jobId || undefined,
-      jobName: jobName || undefined,
-    });
-    await sendToChannel(channel, chatId, finalText);
+    await sendToChannel(channel, chatId || '', text);
   } catch (error) {
     console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
@@ -584,12 +399,6 @@ Send options:
   --image                 Treat file as image (vs document)
   --channel, -c <name>    Channel: telegram, slack, whatsapp, discord, bluesky (default: last used)
   --chat, --to <id>       Chat/conversation ID (default: last messaged; not required for bluesky)
-  --agent, --agent-name <name>  Agent name for hook context (required in multi-agent)
-  --agent-id <id>         Agent ID for hook context (overrides store/config)
-  --trigger <type>        Trigger type for hook context: user_message, heartbeat, cron, webhook, feed
-  --output-mode <mode>    Trigger output mode: responsive, silent
-  --job-id <id>           Cron/job ID for trigger context
-  --job-name <name>       Cron/job name for trigger context
 
 Examples:
   # Send text message
@@ -613,24 +422,15 @@ Environment variables:
   DISCORD_BOT_TOKEN       Required for Discord
   SIGNAL_PHONE_NUMBER     Required for Signal (text only, no files)
   LETTABOT_API_KEY        Required for file sending (telegram, slack, discord, whatsapp) and WhatsApp text
+  LETTABOT_API_URL        API server URL (default: http://localhost:8080)
+  SIGNAL_CLI_REST_API_URL Signal daemon URL (default: http://127.0.0.1:8090)
   BLUESKY_HANDLE          Required for Bluesky posts
   BLUESKY_APP_PASSWORD    Required for Bluesky posts
   BLUESKY_SERVICE_URL     Optional override (default https://bsky.social)
-  LETTABOT_API_URL        API server URL (default: http://localhost:8080)
-  SIGNAL_CLI_REST_API_URL Signal daemon URL (default: http://127.0.0.1:8090)
-  LETTABOT_AGENT_NAME     Agent name for CLI hook context
-  LETTABOT_AGENT_ID       Agent ID for CLI hook context
-  LETTA_AGENT_NAME        Alternate agent name env
-  LETTA_AGENT_ID          Alternate agent ID env
-  LETTABOT_TRIGGER_TYPE   Trigger type for hook context
-  LETTABOT_TRIGGER_OUTPUT_MODE  Trigger output mode for hook context
-  LETTABOT_TRIGGER_JOB_ID Trigger job ID for hook context
-  LETTABOT_TRIGGER_JOB_NAME  Trigger job name for hook context
 
 Note: File sending uses the API server for supported channels (telegram, slack, discord, whatsapp).
       Text-only messages use direct platform APIs (WhatsApp uses API).
-      Hook trigger context is included when --trigger or LETTABOT_TRIGGER_TYPE is set.
-      If --output-mode or --job-* are provided without --trigger, the trigger defaults to "webhook".
+      Bluesky posts use ATProto XRPC.
 `);
 }
 
