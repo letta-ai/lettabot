@@ -47,12 +47,13 @@ lettabot-bluesky mute <did|handle> --agent <name>
 lettabot-bluesky unmute <did|handle> --agent <name>
 lettabot-bluesky block <did|handle> --agent <name>
 lettabot-bluesky unblock <blockUri> --agent <name>
-lettabot-bluesky blocks --limit 50 --agent <name>
-lettabot-bluesky mutes --limit 50 --agent <name>
+lettabot-bluesky blocks --limit 50 --cursor <cursor> --agent <name>
+lettabot-bluesky mutes --limit 50 --cursor <cursor> --agent <name>
 ```
 
 Notes:
 - `unblock` requires the **block record URI** (returned by the `block` command).
+- `blocks` / `mutes` support pagination via `--cursor` (use the `cursor` field from the previous response).
 
 ## Notes
 
