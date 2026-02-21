@@ -23,6 +23,7 @@ const CHANNEL_FORMATS: Record<string, string> = {
   telegram: 'MarkdownV2: *bold* _italic_ `code` [links](url) - NO: headers, tables',
   whatsapp: '*bold* _italic_ `code` - NO: headers, code fences, links, tables',
   signal: 'ONLY: *bold* _italic_ `code` - NO: headers, code fences, links, quotes, tables',
+  bluesky: 'Plain text only (no markdown, no tables).',
 };
 
 export interface EnvelopeOptions {
@@ -121,6 +122,9 @@ function formatSender(msg: InboundMessage): string {
       return msg.userId;
     
     case 'telegram':
+      return msg.userHandle ? `@${msg.userHandle}` : msg.userId;
+
+    case 'bluesky':
       return msg.userHandle ? `@${msg.userHandle}` : msg.userId;
     
     default:
@@ -349,6 +353,17 @@ export function formatMessageEnvelope(
   const contextLines = buildChatContextLines(msg, opts);
   if (contextLines.length > 0) {
     sections.push(`## Chat Context\n${contextLines.join('\n')}`);
+  }
+
+  // Channel-specific action hints
+  if (msg.channel === 'bluesky') {
+    const blueskyLines = [
+      '- This channel is read-only; your text response will NOT be posted.',
+      '- Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
+      '- Reply: `lettabot-bluesky post --reply-to <uri> --text "..."`',
+      '- Posts over 300 chars require `--threaded` to create a reply thread.',
+    ];
+    sections.push(`## Bluesky Actions\n${blueskyLines.join('\n')}`);
   }
 
   // Response directives hint

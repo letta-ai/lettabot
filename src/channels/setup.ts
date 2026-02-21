@@ -18,6 +18,7 @@ export const CHANNELS = [
   { id: 'discord', displayName: 'Discord', hint: 'Bot token + Message Content intent' },
   { id: 'whatsapp', displayName: 'WhatsApp', hint: 'QR code pairing' },
   { id: 'signal', displayName: 'Signal', hint: 'signal-cli daemon' },
+  { id: 'bluesky', displayName: 'Bluesky', hint: 'Jetstream feed (read-only)' },
 ] as const;
 
 export type ChannelId = typeof CHANNELS[number]['id'];
@@ -56,6 +57,8 @@ const GROUP_ID_HINTS: Record<ChannelId, string> = {
     '(e.g., 120363123456@g.us).',
   signal:
     'Group IDs appear in bot logs on first group message.',
+  bluesky:
+    'Bluesky does not support groups. This setting is not used.',
 };
 
 // ============================================================================
@@ -562,6 +565,152 @@ export async function setupSignal(existing?: any): Promise<any> {
   };
 }
 
+export async function setupBluesky(existing?: any): Promise<any> {
+  p.note(
+    'Uses the Bluesky Jetstream WebSocket feed (read-only).\n' +
+    'Provide one or more DID(s) to filter the stream.\n' +
+    'Example DID: did:plc:i3n7ma327gght4kiea5dvpyn',
+    'Bluesky Setup'
+  );
+
+  const didsRaw = await p.text({
+    message: 'Wanted DID(s) (comma-separated)',
+    placeholder: 'did:plc:...',
+    initialValue: Array.isArray(existing?.wantedDids)
+      ? existing.wantedDids.join(',')
+      : (existing?.wantedDids || ''),
+  });
+
+  if (p.isCancel(didsRaw)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+
+  const wantedDids = typeof didsRaw === 'string'
+    ? didsRaw.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+
+  if (wantedDids.length === 0) {
+    p.log.warn('No DID provided. The stream may be very noisy without filters.');
+  }
+
+  const collectionsRaw = await p.text({
+    message: 'Wanted collections (optional, comma-separated)',
+    placeholder: 'app.bsky.feed.post',
+    initialValue: Array.isArray(existing?.wantedCollections)
+      ? existing.wantedCollections.join(',')
+      : (existing?.wantedCollections || ''),
+  });
+
+  if (p.isCancel(collectionsRaw)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+
+  const wantedCollections = typeof collectionsRaw === 'string'
+    ? collectionsRaw.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+
+  const jetstreamUrl = await p.text({
+    message: 'Jetstream WebSocket URL (blank = default)',
+    placeholder: 'wss://jetstream2.us-east.bsky.network/subscribe',
+    initialValue: existing?.jetstreamUrl || '',
+  });
+
+  if (p.isCancel(jetstreamUrl)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+
+  const defaultMode = await p.select({
+    message: 'Default Bluesky behavior',
+    options: [
+      { value: 'listen', label: 'Listen (recommended)', hint: 'Observe only' },
+      { value: 'open', label: 'Open', hint: 'Reply to posts' },
+      { value: 'mention-only', label: 'Mention-only', hint: 'Reply only when @mentioned' },
+      { value: 'disabled', label: 'Disabled', hint: 'Ignore all events' },
+    ],
+    initialValue: existing?.groups?.['*']?.mode || 'listen',
+  });
+
+  if (p.isCancel(defaultMode)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+
+  const enablePosting = await p.confirm({
+    message: 'Configure Bluesky posting credentials? (required to reply)',
+    initialValue: !!(existing?.handle && existing?.appPassword),
+  });
+
+  if (p.isCancel(enablePosting)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+
+  let handle: string | undefined;
+  let appPassword: string | undefined;
+  let serviceUrl: string | undefined;
+
+  if (enablePosting) {
+    p.note(
+      'Replies require a Bluesky app password.\n' +
+      'Create one in Settings → App passwords.',
+      'Bluesky Posting'
+    );
+
+    const handleInput = await p.text({
+      message: 'Bluesky handle (e.g., you.bsky.social)',
+      placeholder: 'you.bsky.social',
+      initialValue: existing?.handle || '',
+    });
+
+    if (p.isCancel(handleInput)) {
+      p.cancel('Cancelled');
+      process.exit(0);
+    }
+
+    const appPasswordInput = await p.password({
+      message: 'Bluesky app password',
+    });
+
+    if (p.isCancel(appPasswordInput)) {
+      p.cancel('Cancelled');
+      process.exit(0);
+    }
+
+    const serviceUrlInput = await p.text({
+      message: 'ATProto service URL (blank = https://bsky.social)',
+      placeholder: 'https://bsky.social',
+      initialValue: existing?.serviceUrl || '',
+    });
+
+    if (p.isCancel(serviceUrlInput)) {
+      p.cancel('Cancelled');
+      process.exit(0);
+    }
+
+    handle = handleInput || undefined;
+    appPassword = appPasswordInput || undefined;
+    serviceUrl = serviceUrlInput || undefined;
+  }
+
+  const groups = {
+    '*': { mode: defaultMode as 'open' | 'listen' | 'mention-only' | 'disabled' },
+  };
+
+  return {
+    enabled: true,
+    wantedDids,
+    wantedCollections: wantedCollections.length > 0 ? wantedCollections : undefined,
+    jetstreamUrl: jetstreamUrl || undefined,
+    groups,
+    handle,
+    appPassword,
+    serviceUrl,
+  };
+}
+
 /** Get the setup function for a channel */
 export function getSetupFunction(id: ChannelId): (existing?: any) => Promise<any> {
   const setupFunctions: Record<ChannelId, (existing?: any) => Promise<any>> = {
@@ -570,6 +719,7 @@ export function getSetupFunction(id: ChannelId): (existing?: any) => Promise<any
     discord: setupDiscord,
     whatsapp: setupWhatsApp,
     signal: setupSignal,
+    bluesky: setupBluesky,
   };
   return setupFunctions[id];
 }

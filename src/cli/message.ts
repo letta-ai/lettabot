@@ -373,6 +373,61 @@ async function sendDiscord(chatId: string, text: string): Promise<void> {
   console.log(`✓ Sent to discord:${chatId} (id: ${result.id || 'unknown'})`);
 }
 
+async function sendBluesky(text: string): Promise<void> {
+  const handle = process.env.BLUESKY_HANDLE;
+  const appPassword = process.env.BLUESKY_APP_PASSWORD;
+  const serviceUrl = (process.env.BLUESKY_SERVICE_URL || 'https://bsky.social').replace(/\/+$/, '');
+
+  if (!handle || !appPassword) {
+    throw new Error('BLUESKY_HANDLE/BLUESKY_APP_PASSWORD not set');
+  }
+
+  const sessionRes = await fetch(`${serviceUrl}/xrpc/com.atproto.server.createSession`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier: handle, password: appPassword }),
+  });
+
+  if (!sessionRes.ok) {
+    const detail = await sessionRes.text();
+    throw new Error(`Bluesky createSession failed: ${detail}`);
+  }
+
+  const session = await sessionRes.json() as { accessJwt: string; did: string };
+
+  const chars = Array.from(text);
+  const trimmed = chars.length > 300 ? chars.slice(0, 300).join('') : text;
+  if (!trimmed.trim()) {
+    throw new Error('Bluesky post text is empty');
+  }
+
+  const record = {
+    text: trimmed,
+    createdAt: new Date().toISOString(),
+  };
+
+  const postRes = await fetch(`${serviceUrl}/xrpc/com.atproto.repo.createRecord`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.accessJwt}`,
+    },
+    body: JSON.stringify({
+      repo: session.did,
+      collection: 'app.bsky.feed.post',
+      record,
+    }),
+  });
+
+  if (!postRes.ok) {
+    const detail = await postRes.text();
+    throw new Error(`Bluesky createRecord failed: ${detail}`);
+  }
+
+  const result = await postRes.json() as { uri?: string };
+  console.log(`✓ Sent to bluesky (uri: ${result.uri || 'unknown'})`);
+}
+
 async function sendToChannel(channel: string, chatId: string, text: string): Promise<void> {
   switch (channel.toLowerCase()) {
     case 'telegram':
@@ -385,8 +440,10 @@ async function sendToChannel(channel: string, chatId: string, text: string): Pro
       return sendWhatsApp(chatId, text);
     case 'discord':
       return sendDiscord(chatId, text);
+    case 'bluesky':
+      return sendBluesky(text);
     default:
-      throw new Error(`Unknown channel: ${channel}. Supported: telegram, slack, signal, whatsapp, discord`);
+      throw new Error(`Unknown channel: ${channel}. Supported: telegram, slack, signal, whatsapp, discord, bluesky`);
   }
 }
 
@@ -453,21 +510,25 @@ async function sendCommand(args: string[]): Promise<void> {
   }
 
   // Resolve defaults from last target
-  if (!channel || !chatId) {
+  if (!channel || (!chatId && channel !== 'bluesky')) {
     const lastTarget = loadLastTarget();
     if (lastTarget) {
-      channel = channel || lastTarget.channel;
-      chatId = chatId || lastTarget.chatId;
+      if (!channel) {
+        channel = lastTarget.channel;
+      }
+      if (!chatId && channel !== 'bluesky') {
+        chatId = lastTarget.chatId;
+      }
     }
   }
 
   if (!channel) {
     console.error('Error: --channel is required (no default available)');
-    console.error('Specify: --channel telegram|slack|signal|discord|whatsapp');
+    console.error('Specify: --channel telegram|slack|signal|discord|whatsapp|bluesky');
     process.exit(1);
   }
 
-  if (!chatId) {
+  if (!chatId && channel !== 'bluesky') {
     console.error('Error: --chat is required (no default available)');
     console.error('Specify: --chat <chat_id>');
     process.exit(1);
@@ -521,8 +582,8 @@ Send options:
   --text, -t <text>       Message text (or caption when used with --file)
   --file, -f <path>       File path (optional, for file messages)
   --image                 Treat file as image (vs document)
-  --channel, -c <name>    Channel: telegram, slack, whatsapp, discord (default: last used)
-  --chat, --to <id>       Chat/conversation ID (default: last messaged)
+  --channel, -c <name>    Channel: telegram, slack, whatsapp, discord, bluesky (default: last used)
+  --chat, --to <id>       Chat/conversation ID (default: last messaged; not required for bluesky)
   --agent, --agent-name <name>  Agent name for hook context (required in multi-agent)
   --agent-id <id>         Agent ID for hook context (overrides store/config)
   --trigger <type>        Trigger type for hook context: user_message, heartbeat, cron, webhook, feed
@@ -552,6 +613,9 @@ Environment variables:
   DISCORD_BOT_TOKEN       Required for Discord
   SIGNAL_PHONE_NUMBER     Required for Signal (text only, no files)
   LETTABOT_API_KEY        Required for file sending (telegram, slack, discord, whatsapp) and WhatsApp text
+  BLUESKY_HANDLE          Required for Bluesky posts
+  BLUESKY_APP_PASSWORD    Required for Bluesky posts
+  BLUESKY_SERVICE_URL     Optional override (default https://bsky.social)
   LETTABOT_API_URL        API server URL (default: http://localhost:8080)
   SIGNAL_CLI_REST_API_URL Signal daemon URL (default: http://127.0.0.1:8090)
   LETTABOT_AGENT_NAME     Agent name for CLI hook context

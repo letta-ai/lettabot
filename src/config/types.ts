@@ -63,6 +63,7 @@ export interface AgentConfig {
     whatsapp?: WhatsAppConfig;
     signal?: SignalConfig;
     discord?: DiscordConfig;
+    bluesky?: BlueskyConfig;
   };
   /** Conversation routing */
   conversations?: {
@@ -136,6 +137,7 @@ export interface LettaBotConfig {
     whatsapp?: WhatsAppConfig;
     signal?: SignalConfig;
     discord?: DiscordConfig;
+    bluesky?: BlueskyConfig;
   };
 
   // Conversation routing
@@ -313,6 +315,30 @@ export interface DiscordConfig {
   groups?: Record<string, GroupConfig>;  // Per-guild/channel settings, "*" for defaults
 }
 
+export interface BlueskyConfig {
+  enabled: boolean;
+  autoReply?: boolean;          // Allow auto-replies (default: false / read-only)
+  jetstreamUrl?: string;
+  wantedDids?: string[];         // DID(s) to follow (e.g., did:plc:...)
+  wantedCollections?: string[];  // Optional collection filters (e.g., app.bsky.feed.post)
+  cursor?: number;               // Jetstream cursor (microseconds)
+  handle?: string;               // Bluesky handle (for posting)
+  appPassword?: string;          // App password (for posting)
+  serviceUrl?: string;           // ATProto service URL (default: https://bsky.social)
+  appViewUrl?: string;           // AppView URL for list/notification APIs
+  groups?: Record<string, GroupConfig>; // Use "*" for defaults, DID for overrides
+  notifications?: BlueskyNotificationsConfig;
+  lists?: Record<string, GroupConfig>;  // List URI -> mode
+}
+
+export interface BlueskyNotificationsConfig {
+  enabled?: boolean;        // Poll notifications API (requires auth)
+  intervalSec?: number;     // Poll interval (default: 60s)
+  limit?: number;           // Max notifications per request (default: 50)
+  priority?: boolean;       // Priority only
+  reasons?: string[];       // Filter reasons (e.g., ['mention','reply'])
+}
+
 /**
  * Telegram MTProto (user account) configuration.
  * Uses TDLib for user account mode instead of Bot API.
@@ -486,6 +512,16 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       normalizeLegacyGroupFields(discord, `${sourcePath}.discord`);
       normalized.discord = discord;
     }
+    if (channels.bluesky && channels.bluesky.enabled !== false) {
+      const bluesky = { ...channels.bluesky, enabled: channels.bluesky.enabled ?? true };
+      const wantsDids = Array.isArray(bluesky.wantedDids) && bluesky.wantedDids.length > 0;
+      const canReply = !!(bluesky.handle && bluesky.appPassword);
+      const hasLists = !!(bluesky.lists && Object.keys(bluesky.lists).length > 0);
+      const wantsNotifications = !!bluesky.notifications?.enabled;
+      if (wantsDids || canReply || hasLists || wantsNotifications) {
+        normalized.bluesky = bluesky;
+      }
+    }
 
     return normalized;
   };
@@ -567,6 +603,32 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       token: process.env.DISCORD_BOT_TOKEN,
       dmPolicy: (process.env.DISCORD_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
       allowedUsers: parseList(process.env.DISCORD_ALLOWED_USERS),
+    };
+  }
+  if (!channels.bluesky && process.env.BLUESKY_WANTED_DIDS) {
+    channels.bluesky = {
+      enabled: true,
+      wantedDids: parseList(process.env.BLUESKY_WANTED_DIDS),
+      wantedCollections: parseList(process.env.BLUESKY_WANTED_COLLECTIONS),
+      jetstreamUrl: process.env.BLUESKY_JETSTREAM_URL,
+      cursor: process.env.BLUESKY_CURSOR ? parseInt(process.env.BLUESKY_CURSOR, 10) : undefined,
+      handle: process.env.BLUESKY_HANDLE,
+      appPassword: process.env.BLUESKY_APP_PASSWORD,
+      serviceUrl: process.env.BLUESKY_SERVICE_URL,
+      appViewUrl: process.env.BLUESKY_APPVIEW_URL,
+      notifications: process.env.BLUESKY_NOTIFICATIONS_ENABLED === 'true'
+        ? {
+            enabled: true,
+            intervalSec: process.env.BLUESKY_NOTIFICATIONS_INTERVAL_SEC
+              ? parseInt(process.env.BLUESKY_NOTIFICATIONS_INTERVAL_SEC, 10)
+              : undefined,
+            limit: process.env.BLUESKY_NOTIFICATIONS_LIMIT
+              ? parseInt(process.env.BLUESKY_NOTIFICATIONS_LIMIT, 10)
+              : undefined,
+            priority: process.env.BLUESKY_NOTIFICATIONS_PRIORITY === 'true',
+            reasons: parseList(process.env.BLUESKY_NOTIFICATIONS_REASONS),
+          }
+        : undefined,
     };
   }
 
