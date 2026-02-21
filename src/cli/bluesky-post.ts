@@ -15,7 +15,7 @@ import type { AgentConfig, BlueskyConfig } from '../config/types.js';
 import { DEFAULT_SERVICE_URL, POST_MAX_CHARS } from '../channels/bluesky/constants.js';
 
 function usage(): void {
-  console.log(`\nUsage:\n  lettabot-bluesky post --text "Hello" --agent <name>\n  lettabot-bluesky post --reply-to <at://...> --text "Reply" --agent <name>\n  lettabot-bluesky post --text "Long..." --threaded --agent <name>\n  lettabot-bluesky like <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --agent <name>\n`);
+  console.log(`\nUsage:\n  lettabot-bluesky post --text "Hello" --agent <name>\n  lettabot-bluesky post --reply-to <at://...> --text "Reply" --agent <name>\n  lettabot-bluesky post --text "Long..." --threaded --agent <name>\n  lettabot-bluesky like <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --text "Quote" --agent <name> [--threaded]\n`);
 }
 
 function parseAtUri(uri: string): { did: string; collection: string; rkey: string } | undefined {
@@ -224,6 +224,78 @@ async function handlePost(
   console.log(`✓ Posted: ${lastUri}`);
 }
 
+async function handleQuote(
+  bluesky: BlueskyConfig,
+  targetUri: string,
+  text: string,
+  threaded = false,
+): Promise<void> {
+  const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
+  const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
+  const charCount = Array.from(text).length;
+  if (charCount > POST_MAX_CHARS && !threaded) {
+    throw new Error(`Post is ${charCount} chars. Use --threaded to split into a thread.`);
+  }
+
+  const target = await getRecord(serviceUrl, session.accessJwt, targetUri);
+  const chunks = threaded ? splitPostText(text) : [text.trim()];
+  if (!chunks[0] || !chunks[0].trim()) {
+    throw new Error('Refusing to post empty text.');
+  }
+
+  let rootUri: string | undefined;
+  let rootCid: string | undefined;
+  let parentUri: string | undefined;
+  let parentCid: string | undefined;
+  const createdAt = new Date().toISOString();
+
+  let lastUri = '';
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const record: Record<string, unknown> = {
+      text: chunk,
+      createdAt,
+    };
+
+    if (i === 0) {
+      record.embed = {
+        $type: 'app.bsky.embed.record',
+        record: {
+          uri: targetUri,
+          cid: target.cid,
+        },
+      };
+    }
+
+    if (parentUri && parentCid && rootUri && rootCid) {
+      record.reply = {
+        root: { uri: rootUri, cid: rootCid },
+        parent: { uri: parentUri, cid: parentCid },
+      };
+    }
+
+    const created = await createRecord(serviceUrl, session.accessJwt, session.did, 'app.bsky.feed.post', record);
+    if (!created.uri) throw new Error('createRecord returned no uri');
+    lastUri = created.uri;
+
+    if (i === 0 && chunks.length > 1) {
+      rootUri = created.uri;
+      rootCid = await ensureCid(serviceUrl, session.accessJwt, created.uri, created.cid);
+      parentUri = rootUri;
+      parentCid = rootCid;
+    } else if (i < chunks.length - 1) {
+      parentUri = created.uri;
+      parentCid = await ensureCid(serviceUrl, session.accessJwt, created.uri, created.cid);
+      if (!rootUri || !rootCid) {
+        rootUri = parentUri;
+        rootCid = parentCid;
+      }
+    }
+  }
+
+  console.log(`✓ Quoted: ${lastUri}`);
+}
+
 async function handleSubjectRecord(
   bluesky: BlueskyConfig,
   uri: string,
@@ -272,6 +344,9 @@ async function main(): Promise<void> {
       i++;
     } else if (arg === '--threaded') {
       threaded = true;
+    } else if (arg === '--quote' && next) {
+      uriArg = next;
+      i++;
     } else if (!arg.startsWith('-') && !uriArg) {
       uriArg = arg;
     } else {
@@ -298,7 +373,11 @@ async function main(): Promise<void> {
 
   if (command === 'repost') {
     if (!uriArg) throw new Error('Missing post URI');
-    await handleSubjectRecord(bluesky, uriArg, 'app.bsky.feed.repost');
+    if (text) {
+      await handleQuote(bluesky, uriArg, text, threaded);
+    } else {
+      await handleSubjectRecord(bluesky, uriArg, 'app.bsky.feed.repost');
+    }
     return;
   }
 
