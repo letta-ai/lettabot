@@ -45,7 +45,7 @@ lettabot-react add --emoji :eyes:
 # Add a reaction to a specific message
 lettabot-react add --emoji :eyes: --channel telegram --chat 123456789 --message 987654321
 
-# Note: File sending supported on telegram, slack, whatsapp (via API)
+# Note: File sending supported on telegram, slack, discord, whatsapp (via API)
 # Signal does not support files or reactions
 
 # Discover channel IDs (Discord and Slack)
@@ -103,6 +103,7 @@ This sends "Great idea!" and reacts with thumbsup.
 
 - \`<react emoji="eyes" />\` -- react to the message you are responding to. Emoji names (eyes, thumbsup, heart, fire, tada, clap) or unicode.
 - \`<react emoji="fire" message="123" />\` -- react to a specific message by ID.
+- \`<send-file path="/path/to/file.png" kind="image" caption="..." />\` -- send a file or image to the same channel/chat.
 
 ### Actions-only response
 

@@ -64,6 +64,7 @@ export interface AgentConfig {
       target?: string;       // Delivery target ("telegram:123", "slack:C123", etc.)
     };
     maxToolCalls?: number;
+    sendFileDir?: string;    // Restrict <send-file> directive to this directory (default: workingDir)
   };
   /** Polling config */
   polling?: PollingYamlConfig;
@@ -136,6 +137,7 @@ export interface LettaBotConfig {
     };
     inlineImages?: boolean;   // Send images directly to the LLM (default: true). Set false to only send file paths.
     maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)
+    sendFileDir?: string;   // Restrict <send-file> directive to this directory (default: workingDir)
   };
 
   // Polling - system-level background checks (Gmail, etc.)

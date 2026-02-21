@@ -22,8 +22,16 @@ export interface ReactDirective {
   messageId?: string;
 }
 
+export interface SendFileDirective {
+  type: 'send-file';
+  path: string;
+  caption?: string;
+  kind?: 'image' | 'file';
+  cleanup?: boolean;
+}
+
 // Union type — extend with more directive types later
-export type Directive = ReactDirective;
+export type Directive = ReactDirective | SendFileDirective;
 
 export interface ParseResult {
   cleanText: string;
@@ -40,7 +48,7 @@ const ACTIONS_BLOCK_REGEX = /^\s*<actions>([\s\S]*?)<\/actions>/;
  * Match self-closing child directive tags inside the actions block.
  * Captures the tag name and the full attributes string.
  */
-const CHILD_DIRECTIVE_REGEX = /<(react)\b([^>]*)\/>/g;
+const CHILD_DIRECTIVE_REGEX = /<(react|send-file)\b([^>]*)\/>/g;
 
 /**
  * Parse a single attribute string like: emoji="eyes" message="123"
@@ -79,6 +87,25 @@ function parseChildDirectives(block: string): Directive[] {
           ...(attrs.message ? { messageId: attrs.message } : {}),
         });
       }
+      continue;
+    }
+
+    if (tagName === 'send-file') {
+      const attrs = parseAttributes(attrString);
+      const path = attrs.path || attrs.file;
+      if (!path) continue;
+      const caption = attrs.caption || attrs.text;
+      const kind = attrs.kind === 'image' || attrs.kind === 'file'
+        ? attrs.kind
+        : undefined;
+      const cleanup = attrs.cleanup === 'true';
+      directives.push({
+        type: 'send-file',
+        path,
+        ...(caption ? { caption } : {}),
+        ...(kind ? { kind } : {}),
+        ...(cleanup ? { cleanup } : {}),
+      });
     }
   }
 
