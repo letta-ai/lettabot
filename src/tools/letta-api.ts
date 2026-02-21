@@ -4,7 +4,7 @@
  * Uses the official @letta-ai/letta-client SDK for all API interactions.
  */
 
-import { Letta } from '@letta-ai/letta-client';
+import { Letta, NotFoundError, APIConnectionError } from '@letta-ai/letta-client';
 
 const LETTA_BASE_URL = process.env.LETTA_BASE_URL || 'https://api.letta.com';
 
@@ -89,15 +89,25 @@ export async function addToolToAgent(agentId: string, toolId: string): Promise<v
 }
 
 /**
- * Check if an agent exists
+ * Check if an agent exists on the Letta server.
+ *
+ * IMPORTANT: Only returns false when the server confirms the agent does not
+ * exist (404). Connection errors and other transient failures are re-thrown
+ * so the caller can retry or wait — never silently treated as "not found".
+ * This prevents accidental agent recreation when the server is temporarily
+ * unreachable (e.g. during a restart).
  */
 export async function agentExists(agentId: string): Promise<boolean> {
+  const client = getClient();
   try {
-    const client = getClient();
     await client.agents.retrieve(agentId);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if (err instanceof NotFoundError) {
+      return false;
+    }
+    // Connection errors, timeouts, 500s, etc. — don't assume agent is gone
+    throw err;
   }
 }
 
