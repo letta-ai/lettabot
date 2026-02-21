@@ -65,12 +65,45 @@ export function saveApiKey(key: string): void {
 }
 
 /**
- * Validate API key from request headers
+ * Extract API key from request headers.
+ * Checks X-Api-Key first (lettabot convention), then Authorization: Bearer <key> (OpenAI convention).
+ * 
+ * Note: When using Authorization header, ensure CORS includes 'Authorization' in Access-Control-Allow-Headers.
+ * 
+ * @param headers - HTTP request headers
+ * @returns The extracted API key, or null if not found
+ */
+export function extractApiKey(headers: IncomingHttpHeaders): string | null {
+  // 1. X-Api-Key header (lettabot convention)
+  const xApiKey = headers['x-api-key'];
+  if (xApiKey && typeof xApiKey === 'string') {
+    return xApiKey;
+  }
+
+  // 2. Authorization: Bearer <key> (OpenAI convention)
+  const auth = headers['authorization'];
+  if (auth && typeof auth === 'string') {
+    const match = auth.match(/^Bearer\s+(.+)$/i);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Validate API key from request headers.
+ * Supports both X-Api-Key and Authorization: Bearer <key> formats.
+ * 
+ * @param headers - HTTP request headers
+ * @param expectedKey - The expected API key to validate against
+ * @returns true if the provided key matches the expected key, false otherwise
  */
 export function validateApiKey(headers: IncomingHttpHeaders, expectedKey: string): boolean {
-  const providedKey = headers['x-api-key'];
+  const providedKey = extractApiKey(headers);
 
-  if (!providedKey || typeof providedKey !== 'string') {
+  if (!providedKey) {
     return false;
   }
 
