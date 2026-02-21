@@ -315,6 +315,15 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.features?.maxToolCalls !== undefined) {
     env.MAX_TOOL_CALLS = String(config.features.maxToolCalls);
   }
+  if (config.features?.maxRetries !== undefined) {
+    env.MAX_RETRIES = String(config.features.maxRetries);
+  }
+  if (config.features?.retryBaseDelayMs !== undefined) {
+    env.RETRY_BASE_DELAY_MS = String(config.features.retryBaseDelayMs);
+  }
+  if (config.features?.retryMaxDelayMs !== undefined) {
+    env.RETRY_MAX_DELAY_MS = String(config.features.retryMaxDelayMs);
+  }
 
   // Polling - top-level polling config (preferred)
   if (config.polling?.gmail?.enabled) {

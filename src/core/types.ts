@@ -135,6 +135,11 @@ export interface BotConfig {
   // Safety
   maxToolCalls?: number; // Abort if agent calls this many tools in one turn (default: 100)
 
+  // Retry
+  maxRetries?: number;          // Max retry attempts for transient errors (default: 3)
+  retryBaseDelayMs?: number;    // Base delay for exponential backoff in ms (default: 5000)
+  retryMaxDelayMs?: number;     // Maximum delay cap for backoff in ms (default: 30000)
+
   // Security
   allowedUsers?: string[];  // Empty = allow all
 
