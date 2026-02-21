@@ -418,6 +418,7 @@ async function handleReadCommand(
   command: string,
   uriArg: string,
   query: string,
+  cursor: string,
   limit?: number,
   reasons?: string[],
   priority?: boolean,
@@ -719,8 +720,10 @@ async function main(): Promise<void> {
     'search',
     'timeline',
     'notifications',
+    'blocks',
+    'mutes',
   ].includes(command)) {
-    await handleReadCommand(bluesky, command, uriArg, query, limit, reasons, priority);
+    await handleReadCommand(bluesky, command, uriArg, query, cursor, limit, reasons, priority);
     return;
   }
 
