@@ -36,6 +36,11 @@ agent:
   # Note: model is configured on the Letta agent server-side.
   # Use `lettabot model set <handle>` to change it.
 
+# Conversation routing (optional)
+conversations:
+  mode: shared                   # "shared" (default) or "per-channel"
+  heartbeat: last-active         # "dedicated" | "last-active" | "<channel>"
+
 # Channel configurations
 channels:
   telegram:
@@ -149,6 +154,9 @@ agents:
     # displayName: "🔧 Work"    # Optional: prefix outbound messages
     model: claude-sonnet-4
     # id: agent-abc123           # Optional: use existing agent
+    conversations:
+      mode: shared
+      heartbeat: last-active
     channels:
       telegram:
         token: ${WORK_TELEGRAM_TOKEN}
@@ -164,6 +172,9 @@ agents:
 
   - name: personal-assistant
     model: claude-sonnet-4
+    conversations:
+      mode: per-channel
+      heartbeat: dedicated
     channels:
       signal:
         phone: "+1234567890"
@@ -187,6 +198,7 @@ Each entry in `agents:` accepts:
 | `id` | string | No | Use existing agent ID (skips creation) |
 | `displayName` | string | No | Prefix outbound messages (e.g. `"💜 Signo"`) |
 | `model` | string | No | Model for agent creation |
+| `conversations` | object | No | Conversation routing config (shared vs per-channel) |
 | `channels` | object | No | Channel configs (same schema as top-level `channels:`). At least one agent must have channels. |
 | `features` | object | No | Per-agent features (cron, heartbeat, maxToolCalls) |
 | `polling` | object | No | Per-agent polling config (Gmail, etc.) |
@@ -243,7 +255,9 @@ All channels share these common options:
 | `dmPolicy` | `'pairing'` \| `'allowlist'` \| `'open'` | Access control mode |
 | `allowedUsers` | string[] | User IDs/numbers for allowlist mode |
 | `groupDebounceSec` | number | Debounce for group messages in seconds (default: 5, 0 = immediate) |
-| `instantGroups` | string[] | Group/channel IDs that bypass debounce entirely |
+| `instantGroups` | string[] | Group/channel IDs that bypass debounce entirely (legacy) |
+| `groups` | object | Per-group configuration map (use `*` as default) |
+| `mentionPatterns` | string[] | Extra regex patterns for mention detection (Telegram/WhatsApp/Signal) |
 
 ### Group Message Debouncing
 
@@ -263,6 +277,31 @@ channels:
 - **`instantGroups`** -- listed groups bypass debounce entirely
 
 The deprecated `groupPollIntervalMin` (minutes) still works for backward compatibility but `groupDebounceSec` takes priority.
+
+### Conversation Routing
+
+By default, all channels share a single conversation. You can split conversations per channel adapter.
+
+**Single-agent config:**
+```yaml
+conversations:
+  mode: shared        # "shared" (default) or "per-channel"
+  heartbeat: last-active  # "dedicated" | "last-active" | "<channel>"
+```
+
+**Multi-agent config:**
+```yaml
+agents:
+  - name: work-assistant
+    conversations:
+      mode: per-channel
+      heartbeat: dedicated
+```
+
+Notes:
+- `per-channel` means one conversation per **channel adapter** (telegram/slack/discord/etc), not per chat/user.
+- Agent memory remains shared across channels; only the conversation history is separated.
+- `heartbeat` controls which conversation background triggers use: a dedicated stream, the last active channel, or an explicit channel name.
 
 ### Group Modes
 
