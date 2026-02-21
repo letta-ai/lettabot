@@ -1259,6 +1259,8 @@ export class BlueskyAdapter implements ChannelAdapter {
   private async resolveRecordCid(uri: string): Promise<string | undefined> {
     const parsed = this.parseAtUri(uri);
     if (!parsed) return undefined;
+
+    // Try PDS first (if on same server)
     const qs = new URLSearchParams({
       repo: parsed.did,
       collection: parsed.collection,
@@ -1267,9 +1269,25 @@ export class BlueskyAdapter implements ChannelAdapter {
     const res = await fetch(`${this.getServiceUrl()}/xrpc/com.atproto.repo.getRecord?${qs.toString()}`, {
       headers: this.accessJwt ? { 'Authorization': `Bearer ${this.accessJwt}` } : undefined,
     });
-    if (!res.ok) return undefined;
-    const data = await res.json() as { cid?: string };
-    return data.cid;
+    if (res.ok) {
+      const data = await res.json() as { cid?: string };
+      return data.cid;
+    }
+
+    // Fallback to AppView for cross-PDS records
+    try {
+      const appViewRes = await fetch(`${this.getAppViewUrl()}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}`, {
+        headers: this.accessJwt ? { 'Authorization': `Bearer ${this.accessJwt}` } : undefined,
+      });
+      if (appViewRes.ok) {
+        const data = await appViewRes.json() as { thread?: { post?: { cid?: string } } };
+        return data.thread?.post?.cid;
+      }
+    } catch {
+      return undefined;
+    }
+
+    return undefined;
   }
 
   private loadState(): void {

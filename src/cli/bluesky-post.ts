@@ -169,6 +169,20 @@ async function getRecord(serviceUrl: string, accessJwt: string, uri: string): Pr
   return { cid: data.cid, value: data.value };
 }
 
+async function getPostFromAppView(appViewUrl: string, accessJwt: string, uri: string): Promise<{ cid: string; value: Record<string, unknown> }> {
+  const res = await fetch(`${appViewUrl}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}`, {
+    headers: { 'Authorization': `Bearer ${accessJwt}` },
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`getPostThread failed: ${detail}`);
+  }
+  const data = await res.json() as { thread?: { post?: { cid?: string; record?: Record<string, unknown> } } };
+  const post = data.thread?.post;
+  if (!post?.cid || !post?.record) throw new Error('getPostThread missing cid/record');
+  return { cid: post.cid, value: post.record };
+}
+
 async function resolveHandleToDid(bluesky: BlueskyConfig, handle: string): Promise<string> {
   const appViewUrl = getAppViewUrl(bluesky);
   const url = `${appViewUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`;
@@ -182,10 +196,16 @@ async function resolveActorDid(bluesky: BlueskyConfig, actor: string): Promise<s
   return resolveHandleToDid(bluesky, actor);
 }
 
-async function ensureCid(serviceUrl: string, accessJwt: string, uri: string, cid?: string): Promise<string> {
+async function ensureCid(serviceUrl: string, appViewUrl: string, accessJwt: string, uri: string, cid?: string): Promise<string> {
   if (cid) return cid;
-  const record = await getRecord(serviceUrl, accessJwt, uri);
-  return record.cid;
+  try {
+    const record = await getRecord(serviceUrl, accessJwt, uri);
+    return record.cid;
+  } catch (err) {
+    // Fallback to AppView if PDS lookup fails (e.g., cross-PDS records)
+    const record = await getPostFromAppView(appViewUrl, accessJwt, uri);
+    return record.cid;
+  }
 }
 
 async function createRecord(
@@ -217,6 +237,7 @@ async function handlePost(
   threaded = false,
 ): Promise<void> {
   const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
+  const appViewUrl = (bluesky.appViewUrl || DEFAULT_APPVIEW_URL).replace(/\/+$/, '');
   const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
   const charCount = Array.from(text).length;
   if (charCount > POST_MAX_CHARS && !threaded) {
@@ -234,7 +255,13 @@ async function handlePost(
   let parentCid: string | undefined;
 
   if (replyTo) {
-    const parent = await getRecord(serviceUrl, session.accessJwt, replyTo);
+    let parent;
+    try {
+      parent = await getRecord(serviceUrl, session.accessJwt, replyTo);
+    } catch (err) {
+      // Fallback to AppView if PDS lookup fails (e.g., cross-PDS records)
+      parent = await getPostFromAppView(appViewUrl, session.accessJwt, replyTo);
+    }
     parentUri = replyTo;
     parentCid = parent.cid;
     const reply = (parent.value.reply as { root?: { uri?: string; cid?: string } } | undefined) || undefined;
@@ -265,12 +292,12 @@ async function handlePost(
 
     if (i === 0 && !replyTo && chunks.length > 1) {
       rootUri = created.uri;
-      rootCid = await ensureCid(serviceUrl, session.accessJwt, created.uri, created.cid);
+      rootCid = await ensureCid(serviceUrl, appViewUrl, session.accessJwt, created.uri, created.cid);
       parentUri = rootUri;
       parentCid = rootCid;
     } else if (i < chunks.length - 1) {
       parentUri = created.uri;
-      parentCid = await ensureCid(serviceUrl, session.accessJwt, created.uri, created.cid);
+      parentCid = await ensureCid(serviceUrl, appViewUrl, session.accessJwt, created.uri, created.cid);
       if (!rootUri || !rootCid) {
         rootUri = parentUri;
         rootCid = parentCid;
@@ -288,13 +315,20 @@ async function handleQuote(
   threaded = false,
 ): Promise<void> {
   const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
+  const appViewUrl = (bluesky.appViewUrl || DEFAULT_APPVIEW_URL).replace(/\/+$/, '');
   const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
   const charCount = Array.from(text).length;
   if (charCount > POST_MAX_CHARS && !threaded) {
     throw new Error(`Post is ${charCount} chars. Use --threaded to split into a thread.`);
   }
 
-  const target = await getRecord(serviceUrl, session.accessJwt, targetUri);
+  let target;
+  try {
+    target = await getRecord(serviceUrl, session.accessJwt, targetUri);
+  } catch (err) {
+    // Fallback to AppView if PDS lookup fails (e.g., cross-PDS records)
+    target = await getPostFromAppView(appViewUrl, session.accessJwt, targetUri);
+  }
   const chunks = threaded ? splitPostText(text) : [text.trim()];
   if (!chunks[0] || !chunks[0].trim()) {
     throw new Error('Refusing to post empty text.');
@@ -337,12 +371,12 @@ async function handleQuote(
 
     if (i === 0 && chunks.length > 1) {
       rootUri = created.uri;
-      rootCid = await ensureCid(serviceUrl, session.accessJwt, created.uri, created.cid);
+      rootCid = await ensureCid(serviceUrl, appViewUrl, session.accessJwt, created.uri, created.cid);
       parentUri = rootUri;
       parentCid = rootCid;
     } else if (i < chunks.length - 1) {
       parentUri = created.uri;
-      parentCid = await ensureCid(serviceUrl, session.accessJwt, created.uri, created.cid);
+      parentCid = await ensureCid(serviceUrl, appViewUrl, session.accessJwt, created.uri, created.cid);
       if (!rootUri || !rootCid) {
         rootUri = parentUri;
         rootCid = parentCid;
@@ -359,8 +393,16 @@ async function handleSubjectRecord(
   collection: 'app.bsky.feed.like' | 'app.bsky.feed.repost',
 ): Promise<void> {
   const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
+  const appViewUrl = (bluesky.appViewUrl || DEFAULT_APPVIEW_URL).replace(/\/+$/, '');
   const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
-  const record = await getRecord(serviceUrl, session.accessJwt, uri);
+
+  let record;
+  try {
+    record = await getRecord(serviceUrl, session.accessJwt, uri);
+  } catch (err) {
+    // Fallback to AppView if PDS lookup fails (e.g., cross-PDS records)
+    record = await getPostFromAppView(appViewUrl, session.accessJwt, uri);
+  }
 
   const createdAt = new Date().toISOString();
   const res = await createRecord(serviceUrl, session.accessJwt, session.did, collection, {
