@@ -152,6 +152,10 @@ async function refreshTokensIfNeeded(): Promise<void> {
 // Run token refresh before importing SDK (which reads LETTA_API_KEY)
 await refreshTokensIfNeeded();
 
+// Initialize Phoenix tracing if configured (must run before other imports)
+import { initTracing } from './tracing/index.js';
+await initTracing();
+
 import { normalizeAgents } from './config/types.js';
 import { LettaGateway } from './core/gateway.js';
 import { LettaBot } from './core/bot.js';

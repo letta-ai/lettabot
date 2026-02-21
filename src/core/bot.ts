@@ -22,6 +22,7 @@ import { parseDirectives, stripActionsBlock, type Directive } from './directives
 import { createManageTodoTool } from '../tools/todo.js';
 import { syncTodosFromTool } from '../todo/store.js';
 import { MessageHookRunner } from './hooks.js';
+import { traceAgentTurn, type TracingSpan } from '../tracing/index.js';
 
 
 /**
@@ -1038,6 +1039,7 @@ export class LettaBot implements AgentSession {
     };
     const suppressDelivery = isResponseDeliverySuppressed(msg);
     const convKey = this.resolveConversationKey(msg.channel);
+    const convId = convKey === 'shared' ? this.store.conversationId : this.store.getConversationId(convKey);
     const triggerContext: TriggerContext = {
       type: 'user_message',
       outputMode: suppressDelivery ? 'silent' : 'responsive',
@@ -1166,8 +1168,24 @@ export class LettaBot implements AgentSession {
       return { behavior: 'allow' as const };
     };
 
-    // Run session
+    // Run session with tracing
     let session: Session | null = null;
+
+    // Wrap the entire session run in a trace span
+    await traceAgentTurn(
+      {
+        input: msg.text || '',
+        sessionId: convId || undefined,
+        userId: msg.userId,
+        channel: msg.channel,
+        agentId: this.store.agentId || undefined,
+        metadata: {
+          chatId: msg.chatId,
+          isGroup: String(!!msg.isGroup),
+          isBatch: String(!!msg.isBatch),
+        },
+      },
+      async (tracingSpan: TracingSpan) => {
     try {
       const run = await this.runSession(messageToSend, { retried, canUseTool, convKey });
       lap('session send');
@@ -1183,6 +1201,7 @@ export class LettaBot implements AgentSession {
       let receivedAnyData = false;
       let sawNonAssistantSinceLastUuid = false;
       const msgTypeCounts: Record<string, number> = {};
+      let accumulatedReasoning = ''; // Accumulate reasoning tokens for single trace event
       
       const finalizeMessage = async () => {
         // Parse and execute XML directives before sending
@@ -1250,18 +1269,38 @@ export class LettaBot implements AgentSession {
             break;
           }
 
-          // Log meaningful events with structured summaries
+          // Log meaningful events with structured summaries + Phoenix tracing
+          // Flush accumulated reasoning when transitioning away from reasoning type
+          if (lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && accumulatedReasoning) {
+            tracingSpan.addReasoning(accumulatedReasoning);
+            accumulatedReasoning = '';
+          }
+
           if (streamMsg.type === 'tool_call') {
             this.syncTodoToolCall(streamMsg);
             console.log(`[Stream] >>> TOOL CALL: ${streamMsg.toolName || 'unknown'} (id: ${streamMsg.toolCallId?.slice(0, 12) || '?'})`);
+            tracingSpan.addToolCall(
+              streamMsg.toolName || 'unknown',
+              (streamMsg.toolInput || {}) as Record<string, unknown>,
+              streamMsg.toolCallId
+            );
             sawNonAssistantSinceLastUuid = true;
           } else if (streamMsg.type === 'tool_result') {
             console.log(`[Stream] <<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
+            tracingSpan.addToolResult(
+              streamMsg.toolCallId || '',
+              streamMsg.content || '',
+              streamMsg.isError
+            );
             sawNonAssistantSinceLastUuid = true;
           } else if (streamMsg.type === 'assistant' && lastMsgType !== 'assistant') {
             console.log(`[Bot] Generating response...`);
-          } else if (streamMsg.type === 'reasoning' && lastMsgType !== 'reasoning') {
-            console.log(`[Bot] Reasoning...`);
+          } else if (streamMsg.type === 'reasoning') {
+            if (lastMsgType !== 'reasoning') {
+              console.log(`[Bot] Reasoning...`);
+            }
+            // Accumulate reasoning tokens - will be logged as single event when type changes
+            accumulatedReasoning += streamMsg.content || '';
             sawNonAssistantSinceLastUuid = true;
           } else if (streamMsg.type !== 'assistant') {
             sawNonAssistantSinceLastUuid = true;
@@ -1325,6 +1364,16 @@ export class LettaBot implements AgentSession {
             const isTerminalError = streamMsg.success === false || !!streamMsg.error;
             console.log(`[Bot] Stream result: success=${streamMsg.success}, hasResponse=${hasResponse}, resultLen=${resultText.length}`);
             console.log(`[Bot] Stream message counts:`, msgTypeCounts);
+
+            // Record output and cost in tracing span
+            tracingSpan.setOutput(response);
+            if (typeof streamMsg.totalCostUsd === 'number') {
+              tracingSpan.setCost(streamMsg.totalCostUsd);
+            }
+            if (streamMsg.error) {
+              tracingSpan.recordError(new Error(streamMsg.error));
+            }
+
             if (streamMsg.error) {
               const detail = resultText.trim();
               const parts = [`error=${streamMsg.error}`];
@@ -1495,6 +1544,7 @@ export class LettaBot implements AgentSession {
     } catch (error) {
       console.error('[Bot] Error processing message:', error);
       hookError = error instanceof Error ? error.message : 'Unknown error';
+      tracingSpan.recordError(error instanceof Error ? error : new Error(String(error)));
       try {
         await adapter.sendMessage({
           chatId: msg.chatId,
@@ -1531,6 +1581,8 @@ export class LettaBot implements AgentSession {
         }
       }
     }
+      } // end traceAgentTurn callback
+    ); // end traceAgentTurn call
   }
 
   // =========================================================================
