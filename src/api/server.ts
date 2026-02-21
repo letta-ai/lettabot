@@ -12,7 +12,7 @@ import { parseMultipart } from './multipart.js';
 import type { AgentRouter } from '../core/interfaces.js';
 import type { ChannelId } from '../core/types.js';
 
-const VALID_CHANNELS: ChannelId[] = ['telegram', 'slack', 'discord', 'whatsapp', 'signal'];
+const VALID_CHANNELS: ChannelId[] = ['telegram', 'telegram-mtproto', 'slack', 'discord', 'whatsapp', 'signal'];
 const MAX_BODY_SIZE = 10 * 1024; // 10KB
 const MAX_TEXT_LENGTH = 10000; // 10k chars
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
