@@ -14,11 +14,46 @@ server:
   # mode: docker
   # baseUrl: http://localhost:8283
 
-agent:
-  name: LettaBot
-  # displayName: "💜 Signo"  # Prefix outbound messages (useful in multi-agent group chats)
-  # Note: model is configured on the Letta agent server-side.
-  # Select a model during `lettabot onboard` or change it with `lettabot model set <handle>`.
+agents:
+  - name: LettaBot
+    # displayName: "💜 Signo"  # Prefix outbound messages (useful in multi-agent group chats)
+    # Note: model is configured on the Letta agent server-side.
+    # Select a model during `lettabot onboard` or change it with `lettabot model set <handle>`.
+
+    # Conversation routing (optional)
+    conversations:
+      mode: shared        # "shared" (default) or "per-channel"
+      heartbeat: last-active  # "dedicated" | "last-active" | "<channel>"
+
+    channels:
+      telegram:
+        enabled: true
+        token: YOUR-TELEGRAM-BOT-TOKEN
+        dmPolicy: pairing  # 'pairing', 'allowlist', or 'open'
+        # groupDebounceSec: 5           # Debounce seconds (default: 5, 0 = immediate)
+        # instantGroups: ["-100123456"] # Groups that bypass batching (legacy)
+        # Group access + response mode:
+        # groups:
+        #   "*": { mode: listen }                      # Observe all groups; only reply when @mentioned
+        #   "-1001234567890": { mode: open }           # This group gets all messages
+        #   "-1009876543210": { mode: mention-only }   # Drop unless @mentioned
+        # mentionPatterns: ["hey bot"]                 # Additional regex patterns for mention detection
+      # slack:
+      #   enabled: true
+      #   appToken: xapp-...
+      #   botToken: xoxb-...
+      #   groups:
+      #     "*": { mode: listen }
+      #     "C0123456789": { mode: open }
+      # discord:
+      #   enabled: true
+      #   token: YOUR-DISCORD-BOT-TOKEN
+      #   groups:
+      #     "*": { mode: listen }
+      #     "1234567890123456789": { mode: open }  # Server or channel ID
+      # whatsapp:
+      #   enabled: true
+      #   selfChat: false
 
 # BYOK Providers (optional, api mode only)
 # These will be synced to Letta API on startup
@@ -31,36 +66,6 @@ agent:
 #     name: lc-openai
 #     type: openai
 #     apiKey: sk-YOUR-OPENAI-KEY
-
-channels:
-  telegram:
-    enabled: true
-    token: YOUR-TELEGRAM-BOT-TOKEN
-    dmPolicy: pairing  # 'pairing', 'allowlist', or 'open'
-    # groupPollIntervalMin: 5       # Batch interval for group messages (default: 10)
-    # instantGroups: ["-100123456"] # Groups that bypass batching
-    # Group access + response mode:
-    # groups:
-    #   "*": { mode: listen }                      # Observe all groups; only reply when @mentioned
-    #   "-1001234567890": { mode: open }           # This group gets all messages
-    #   "-1009876543210": { mode: mention-only }   # Drop unless @mentioned
-    # mentionPatterns: ["hey bot"]                  # Additional regex patterns for mention detection
-  # slack:
-  #   enabled: true
-  #   appToken: xapp-...
-  #   botToken: xoxb-...
-  #   groups:
-  #     "*": { mode: listen }
-  #     "C0123456789": { mode: open }
-  # discord:
-  #   enabled: true
-  #   token: YOUR-DISCORD-BOT-TOKEN
-  #   groups:
-  #     "*": { mode: listen }
-  #     "1234567890123456789": { mode: open }  # Server or channel ID
-  # whatsapp:
-  #   enabled: true
-  #   selfChat: false
 
 features:
   cron: false

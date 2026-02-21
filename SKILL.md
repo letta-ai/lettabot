@@ -176,21 +176,52 @@ Each channel supports three DM policies:
 - **`allowlist`**: Only specified user IDs can message
 - **`open`**: Anyone can message (not recommended)
 
+## Conversation Routing
+
+By default, all channels share **one conversation**. You can switch to per-channel conversation histories.
+
+**Single-agent config (top-level):**
+```yaml
+conversations:
+  mode: shared        # "shared" (default) or "per-channel"
+  heartbeat: last-active  # "dedicated" | "last-active" | "<channel>"
+```
+
+**Multi-agent config (per agent):**
+```yaml
+agents:
+  - name: MyAgent
+    conversations:
+      mode: per-channel
+      heartbeat: dedicated
+```
+
+Notes:
+- `per-channel` means one conversation per **channel adapter** (telegram/slack/discord/etc), not per chat/user.
+- Agent memory remains shared across channels; only the conversation history is separated.
+- `heartbeat` controls which conversation background triggers use: a dedicated stream, the last active channel, or an explicit channel name.
+
 ## Group Settings (Optional)
 
 Group settings apply to Telegram, Slack, Discord, WhatsApp, and Signal.
 
 **YAML fields (per channel under `channels.<name>`):**
 - `groupDebounceSec`: Debounce seconds for group batching (default: 5)
+- `groups`: Map of group IDs to config (use `*` as the default)
+  - `mode`: `open` | `listen` | `mention-only` | `disabled`
+  - `allowedUsers`: Restrict who can trigger the bot in that group
+  - `receiveBotMessages`: Allow bot/bot messages (default: false)
+- `mentionPatterns`: Extra regex patterns for mention detection (Telegram/WhatsApp/Signal)
+- `instantGroups`: Group IDs that bypass batching (**legacy**)
 - `groupPollIntervalMin`: Deprecated (minutes)
-- `instantGroups`: Group IDs that bypass batching
-- `listeningGroups`: Group IDs where the bot observes and only replies when mentioned
+- `listeningGroups`: Deprecated (use `groups.<id>.mode: listen`)
 
-**Environment variables (non-interactive onboarding):**
+**Environment variables (non-interactive onboarding):**  
+Only legacy group options are supported here; prefer editing `lettabot.yaml` for `groups` config.
 - `<CHANNEL>_GROUP_DEBOUNCE_SEC` (seconds, e.g. `5`)
 - `<CHANNEL>_GROUP_POLL_INTERVAL_MIN` (deprecated, use `_GROUP_DEBOUNCE_SEC` instead)
-- `<CHANNEL>_INSTANT_GROUPS` (comma-separated)
-- `<CHANNEL>_LISTENING_GROUPS` (comma-separated)
+- `<CHANNEL>_INSTANT_GROUPS` (comma-separated, legacy)
+- `<CHANNEL>_LISTENING_GROUPS` (comma-separated, legacy)
 
 Example:
 
@@ -201,8 +232,11 @@ channels:
     botToken: xoxb-...
     appToken: xapp-...
     groupDebounceSec: 5
-    instantGroups: ["C0123456789"]
-    listeningGroups: ["C0987654321"]
+    mentionPatterns: ["@mybot", "hey bot"]
+    groups:
+      "*": { mode: mention-only }
+      "C0987654321": { mode: listen }
+      "C0123456789": { mode: open, allowedUsers: ["U123"] }
 ```
 
 ## Configuration File
@@ -214,6 +248,10 @@ server:
   baseUrl: https://api.letta.com
   apiKey: letta_...
   agentId: agent-...
+
+conversations:
+  mode: shared
+  heartbeat: last-active
 
 channels:
   telegram:
