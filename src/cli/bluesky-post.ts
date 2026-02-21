@@ -8,14 +8,21 @@
  *   lettabot-bluesky post --text "Long..." --threaded --agent <name>
  *   lettabot-bluesky like <at://...> --agent <name>
  *   lettabot-bluesky repost <at://...> --agent <name>
+ *   lettabot-bluesky repost <at://...> --text "Quote" --agent <name> [--threaded]
+ *   lettabot-bluesky profile <did|handle> --agent <name>
+ *   lettabot-bluesky thread <at://...> --agent <name>
+ *   lettabot-bluesky author-feed <did|handle> --limit 25 --agent <name>
+ *   lettabot-bluesky list-feed <listUri> --limit 25 --agent <name>
+ *   lettabot-bluesky search --query "..." --limit 25 --agent <name>
+ *   lettabot-bluesky notifications --limit 25 --reasons mention,reply --agent <name>
  */
 
 import { loadAppConfigOrExit, normalizeAgents } from '../config/index.js';
 import type { AgentConfig, BlueskyConfig } from '../config/types.js';
-import { DEFAULT_SERVICE_URL, POST_MAX_CHARS } from '../channels/bluesky/constants.js';
+import { DEFAULT_APPVIEW_URL, DEFAULT_SERVICE_URL, POST_MAX_CHARS } from '../channels/bluesky/constants.js';
 
 function usage(): void {
-  console.log(`\nUsage:\n  lettabot-bluesky post --text "Hello" --agent <name>\n  lettabot-bluesky post --reply-to <at://...> --text "Reply" --agent <name>\n  lettabot-bluesky post --text "Long..." --threaded --agent <name>\n  lettabot-bluesky like <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --text "Quote" --agent <name> [--threaded]\n`);
+  console.log(`\nUsage:\n  lettabot-bluesky post --text "Hello" --agent <name>\n  lettabot-bluesky post --reply-to <at://...> --text "Reply" --agent <name>\n  lettabot-bluesky post --text "Long..." --threaded --agent <name>\n  lettabot-bluesky like <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --text "Quote" --agent <name> [--threaded]\n  lettabot-bluesky profile <did|handle> --agent <name>\n  lettabot-bluesky thread <at://...> --agent <name>\n  lettabot-bluesky author-feed <did|handle> --limit 25 --agent <name>\n  lettabot-bluesky list-feed <listUri> --limit 25 --agent <name>\n  lettabot-bluesky search --query \"...\" --limit 25 --agent <name>\n  lettabot-bluesky notifications --limit 25 --reasons mention,reply --agent <name>\n`);
 }
 
 function parseAtUri(uri: string): { did: string; collection: string; rkey: string } | undefined {
@@ -91,6 +98,11 @@ function resolveBlueskyConfig(agent: AgentConfig): BlueskyConfig {
   return config;
 }
 
+function getAppViewUrl(bluesky: BlueskyConfig): string {
+  const raw = bluesky.appViewUrl || DEFAULT_APPVIEW_URL;
+  return raw.replace(/\/+$/, '');
+}
+
 async function createSession(serviceUrl: string, handle: string, appPassword: string): Promise<{ accessJwt: string; did: string }> {
   const res = await fetch(`${serviceUrl}/xrpc/com.atproto.server.createSession`, {
     method: 'POST',
@@ -103,6 +115,15 @@ async function createSession(serviceUrl: string, handle: string, appPassword: st
   }
   const data = await res.json() as { accessJwt: string; did: string };
   return data;
+}
+
+async function fetchJson(url: string, headers?: Record<string, string>): Promise<unknown> {
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Request failed: ${detail}`);
+  }
+  return res.json();
 }
 
 async function getRecord(serviceUrl: string, accessJwt: string, uri: string): Promise<{ cid: string; value: Record<string, unknown> }> {
@@ -315,6 +336,125 @@ async function handleSubjectRecord(
   console.log(`✓ ${collection === 'app.bsky.feed.like' ? 'Liked' : 'Reposted'}: ${uri}`);
 }
 
+async function handleReadCommand(
+  bluesky: BlueskyConfig,
+  command: string,
+  uriArg: string,
+  query: string,
+  limit?: number,
+  reasons?: string[],
+  priority?: boolean,
+): Promise<void> {
+  const appViewUrl = getAppViewUrl(bluesky);
+  const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
+  const effectiveLimit = limit ?? 25;
+
+  if (command === 'resolve') {
+    if (!uriArg) throw new Error('Missing handle');
+    const url = `${appViewUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(uriArg)}`;
+    const data = await fetchJson(url);
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  if (command === 'profile') {
+    if (!uriArg) throw new Error('Missing actor');
+    const url = `${appViewUrl}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(uriArg)}`;
+    const data = await fetchJson(url);
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  if (command === 'thread') {
+    if (!uriArg) throw new Error('Missing post URI');
+    const url = `${appViewUrl}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uriArg)}`;
+    const data = await fetchJson(url);
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  if (command === 'author-feed') {
+    if (!uriArg) throw new Error('Missing actor');
+    const url = `${appViewUrl}/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(uriArg)}&limit=${effectiveLimit}`;
+    const data = await fetchJson(url);
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  if (command === 'list-feed') {
+    if (!uriArg) throw new Error('Missing list URI');
+    const url = `${appViewUrl}/xrpc/app.bsky.feed.getListFeed?list=${encodeURIComponent(uriArg)}&limit=${effectiveLimit}`;
+    const data = await fetchJson(url);
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  if (command === 'actor-feeds') {
+    if (!uriArg) throw new Error('Missing actor');
+    const url = `${appViewUrl}/xrpc/app.bsky.feed.getActorFeeds?actor=${encodeURIComponent(uriArg)}&limit=${effectiveLimit}`;
+    const data = await fetchJson(url);
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  if (command === 'followers') {
+    if (!uriArg) throw new Error('Missing actor');
+    const url = `${appViewUrl}/xrpc/app.bsky.graph.getFollowers?actor=${encodeURIComponent(uriArg)}&limit=${effectiveLimit}`;
+    const data = await fetchJson(url);
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  if (command === 'follows') {
+    if (!uriArg) throw new Error('Missing actor');
+    const url = `${appViewUrl}/xrpc/app.bsky.graph.getFollows?actor=${encodeURIComponent(uriArg)}&limit=${effectiveLimit}`;
+    const data = await fetchJson(url);
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  if (command === 'lists') {
+    if (!uriArg) throw new Error('Missing actor');
+    const url = `${appViewUrl}/xrpc/app.bsky.graph.getLists?actor=${encodeURIComponent(uriArg)}&limit=${effectiveLimit}`;
+    const data = await fetchJson(url);
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  if (command === 'search' || command === 'timeline' || command === 'notifications') {
+    const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
+    if (command === 'search') {
+      if (!query) throw new Error('Missing query');
+      const url = `${serviceUrl}/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&limit=${effectiveLimit}`;
+      const data = await fetchJson(url, { 'Authorization': `Bearer ${session.accessJwt}` });
+      console.log(JSON.stringify(data, null, 2));
+      return;
+    }
+
+    if (command === 'timeline') {
+      const url = `${serviceUrl}/xrpc/app.bsky.feed.getTimeline?limit=${effectiveLimit}`;
+      const data = await fetchJson(url, { 'Authorization': `Bearer ${session.accessJwt}` });
+      console.log(JSON.stringify(data, null, 2));
+      return;
+    }
+
+    if (command === 'notifications') {
+      const qs = new URLSearchParams();
+      qs.set('limit', String(effectiveLimit));
+      if (priority) qs.set('priority', 'true');
+      if (reasons && reasons.length > 0) {
+        for (const reason of reasons) qs.append('reasons', reason);
+      }
+      const url = `${serviceUrl}/xrpc/app.bsky.notification.listNotifications?${qs.toString()}`;
+      const data = await fetchJson(url, { 'Authorization': `Bearer ${session.accessJwt}` });
+      console.log(JSON.stringify(data, null, 2));
+      return;
+    }
+  }
+
+  throw new Error(`Unknown read command: ${command}`);
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const command = args.shift();
@@ -328,6 +468,10 @@ async function main(): Promise<void> {
   let replyTo = '';
   let threaded = false;
   let uriArg = '';
+  let query = '';
+  let limit: number | undefined;
+  let reasons: string[] | undefined;
+  let priority = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -339,11 +483,23 @@ async function main(): Promise<void> {
     } else if ((arg === '--text' || arg === '-t') && next) {
       text = next;
       i++;
+    } else if ((arg === '--query' || arg === '-q') && next) {
+      query = next;
+      i++;
     } else if (arg === '--reply-to' && next) {
       replyTo = next;
       i++;
     } else if (arg === '--threaded') {
       threaded = true;
+    } else if (arg === '--limit' && next) {
+      const parsed = parseInt(next, 10);
+      if (!Number.isNaN(parsed)) limit = parsed;
+      i++;
+    } else if (arg === '--reasons' && next) {
+      reasons = next.split(',').map(v => v.trim()).filter(Boolean);
+      i++;
+    } else if (arg === '--priority') {
+      priority = true;
     } else if (arg === '--quote' && next) {
       uriArg = next;
       i++;
@@ -378,6 +534,24 @@ async function main(): Promise<void> {
     } else {
       await handleSubjectRecord(bluesky, uriArg, 'app.bsky.feed.repost');
     }
+    return;
+  }
+
+  if ([
+    'resolve',
+    'profile',
+    'thread',
+    'author-feed',
+    'list-feed',
+    'actor-feeds',
+    'followers',
+    'follows',
+    'lists',
+    'search',
+    'timeline',
+    'notifications',
+  ].includes(command)) {
+    await handleReadCommand(bluesky, command, uriArg, query, limit, reasons, priority);
     return;
   }
 

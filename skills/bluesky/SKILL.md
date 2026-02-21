@@ -18,6 +18,28 @@ lettabot-bluesky repost at://did:plc:.../app.bsky.feed.post/... --agent <name>
 lettabot-bluesky repost at://did:plc:.../app.bsky.feed.post/... --text "Quote" --agent <name> [--threaded]
 ```
 
+## Read Commands (public API)
+
+```bash
+lettabot-bluesky profile <did|handle> --agent <name>
+lettabot-bluesky thread <at://did:plc:.../app.bsky.feed.post/...> --agent <name>
+lettabot-bluesky author-feed <did|handle> --limit 25 --agent <name>
+lettabot-bluesky list-feed <listUri> --limit 25 --agent <name>
+lettabot-bluesky resolve <handle> --agent <name>
+lettabot-bluesky followers <did|handle> --limit 25 --agent <name>
+lettabot-bluesky follows <did|handle> --limit 25 --agent <name>
+lettabot-bluesky lists <did|handle> --limit 25 --agent <name>
+lettabot-bluesky actor-feeds <did|handle> --limit 25 --agent <name>
+```
+
+## Auth‑Required Reads (uses app password)
+
+```bash
+lettabot-bluesky search --query "memory agents" --limit 25 --agent <name>
+lettabot-bluesky timeline --limit 25 --agent <name>
+lettabot-bluesky notifications --limit 25 --reasons mention,reply --agent <name>
+```
+
 ## Notes
 
 - Posts are capped at 300 characters unless you pass `--threaded`.
