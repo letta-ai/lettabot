@@ -55,6 +55,11 @@ agents:
       #   enabled: true
       #   selfChat: false
 
+conversations:
+  mode: shared        # shared (single conversation) or per-channel
+  heartbeat: last-active
+  # perChannel: ["bluesky"]  # Always use a separate conversation for these channels
+
 # BYOK Providers (optional, api mode only)
 # These will be synced to Letta API on startup
 # providers:
