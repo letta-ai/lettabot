@@ -527,6 +527,9 @@ async function main() {
       disallowedTools: globalConfig.disallowedTools,
       displayName: agentConfig.displayName,
       maxToolCalls: agentConfig.features?.maxToolCalls,
+      maxRetries: agentConfig.features?.maxRetries,
+      retryBaseDelayMs: agentConfig.features?.retryBaseDelayMs,
+      retryMaxDelayMs: agentConfig.features?.retryMaxDelayMs,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
       skills: {

@@ -907,7 +907,7 @@ export class LettaBot implements AgentSession {
   // processMessage - User-facing message handling
   // =========================================================================
   
-  private async processMessage(msg: InboundMessage, adapter: ChannelAdapter, retried = false): Promise<void> {
+  private async processMessage(msg: InboundMessage, adapter: ChannelAdapter, retryAttempt = 0): Promise<void> {
     // Track timing and last target
     const debugTiming = !!process.env.LETTABOT_DEBUG_TIMING;
     const t0 = debugTiming ? performance.now() : 0;
@@ -1005,7 +1005,7 @@ export class LettaBot implements AgentSession {
     let session: Session | null = null;
     try {
       const convKey = this.resolveConversationKey(msg.channel);
-      const run = await this.runSession(messageToSend, { retried, canUseTool, convKey });
+      const run = await this.runSession(messageToSend, { retried: retryAttempt > 0, canUseTool, convKey });
       lap('session send');
       session = run.session;
 
@@ -1189,35 +1189,61 @@ export class LettaBot implements AgentSession {
               const retryConvId = retryConvKey === 'shared'
                 ? this.store.conversationId
                 : this.store.getConversationId(retryConvKey);
-              if (!retried && this.store.agentId && retryConvId) {
+              const maxRetries = this.config.maxRetries ?? 3;
+              if (retryAttempt < maxRetries && this.store.agentId && retryConvId) {
                 const reason = shouldRetryForErrorResult ? 'error result' : 'empty result';
-                console.log(`[Bot] ${reason} - attempting orphaned approval recovery...`);
+
+                // On first attempt, try orphaned approval recovery
+                if (retryAttempt === 0) {
+                  console.log(`[Bot] ${reason} - attempting orphaned approval recovery...`);
+                  this.invalidateSession(retryConvKey);
+                  session = null;
+                  clearInterval(typingInterval);
+                  const convResult = await recoverOrphanedConversationApproval(
+                    this.store.agentId,
+                    retryConvId
+                  );
+                  if (convResult.recovered) {
+                    console.log(`[Bot] Recovery succeeded (${convResult.details}), retrying message...`);
+                    return this.processMessage(msg, adapter, retryAttempt + 1);
+                  }
+                  console.warn(`[Bot] No orphaned approvals found: ${convResult.details}`);
+                }
+
+                // Exponential backoff: base * 2^attempt, capped at max
+                const baseDelay = this.config.retryBaseDelayMs ?? 5000;
+                const maxDelay = this.config.retryMaxDelayMs ?? 30000;
+                const delay = Math.min(baseDelay * Math.pow(2, retryAttempt), maxDelay);
+                console.log(`[Bot] Retry ${retryAttempt + 1}/${maxRetries} after ${reason} — waiting ${delay}ms (exponential backoff)...`);
+
+                // Notify user that we're retrying (only on first retry to avoid spam)
+                if (retryAttempt === 0 && !suppressDelivery) {
+                  try {
+                    await adapter.sendMessage({
+                      chatId: msg.chatId,
+                      text: '⏳ Server temporarily unavailable — retrying...',
+                      threadId: msg.threadId,
+                    });
+                  } catch { /* best-effort notification */ }
+                }
+
                 this.invalidateSession(retryConvKey);
                 session = null;
                 clearInterval(typingInterval);
-                const convResult = await recoverOrphanedConversationApproval(
-                  this.store.agentId,
-                  retryConvId
-                );
-                if (convResult.recovered) {
-                  console.log(`[Bot] Recovery succeeded (${convResult.details}), retrying message...`);
-                  return this.processMessage(msg, adapter, true);
-                }
-                console.warn(`[Bot] No orphaned approvals found: ${convResult.details}`);
-
-                // Some client-side approval failures do not surface as pending approvals.
-                // Retry once anyway in case the previous run terminated mid-tool cycle.
-                if (shouldRetryForErrorResult) {
-                  console.log('[Bot] Retrying once after terminal error (no orphaned approvals detected)...');
-                  return this.processMessage(msg, adapter, true);
-                }
+                await new Promise(resolve => setTimeout(resolve, delay));
+                return this.processMessage(msg, adapter, retryAttempt + 1);
               }
             }
 
             if (isTerminalError && !hasResponse && !sentAnyMessage) {
-              const err = streamMsg.error || 'unknown error';
-              const reason = streamMsg.stopReason ? ` [${streamMsg.stopReason}]` : '';
-              response = `(Agent run failed: ${err}${reason}. Try sending your message again.)`;
+              const maxRetries = this.config.maxRetries ?? 3;
+              if (retryAttempt >= maxRetries) {
+                response = `Sorry, the AI server is currently unavailable. I tried ${retryAttempt} times with no luck. Please try again in a minute or two.`;
+              } else {
+                const err = streamMsg.error || 'unknown error';
+                const reason = streamMsg.stopReason ? ` [${streamMsg.stopReason}]` : '';
+                response = `(Agent run failed: ${err}${reason}. Try sending your message again.)`;
+              }
             }
             
             break;
