@@ -100,6 +100,8 @@ No one messaged you. The system woke you up on schedule.
 YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
 To actually contact your human, run:
   lettabot-message send --text "Your message here"
+If hooks need trigger context, add:
+  lettabot-message send --text "Your message here" --trigger heartbeat --output-mode silent
 
 ${todoSection || 'PENDING TO-DOS: none right now.'}
 
@@ -143,6 +145,8 @@ NEXT HEARTBEAT: in ${intervalMinutes} minutes
 YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
 To actually contact your human, run:
   lettabot-message send --text "Your message here"
+If hooks need trigger context, add:
+  lettabot-message send --text "Your message here" --trigger heartbeat --output-mode silent
 
 ${todoSection || 'PENDING TO-DOS: none right now.'}
 
@@ -171,6 +175,8 @@ TIME: ${time} (${timezone})
 YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
 To send results to your human, run:
   lettabot-message send --text "Your results here"
+If hooks need trigger context, add:
+  lettabot-message send --text "Your results here" --trigger cron --output-mode silent
 
 TASK:
 ${jobPrompt}
@@ -223,6 +229,8 @@ TIME: ${time}
 YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
 To notify your human about this data, run:
   lettabot-message send --text "Important: ..."
+If hooks need trigger context, add:
+  lettabot-message send --text "Important: ..." --trigger feed --output-mode silent
 
 INCOMING DATA:
 ${data}
@@ -245,6 +253,8 @@ You have access to the \`lettabot-message\` CLI for sending messages:
 • During normal conversations, your text replies go to the user automatically
 • During heartbeats/cron/background tasks, use the CLI to contact the user:
     lettabot-message send --text "Hello!"
+• If hooks need trigger context, add:
+    lettabot-message send --text "Hello!" --trigger heartbeat --output-mode silent
 • You can also specify channel and chat:
     lettabot-message send --text "Hi" --channel discord --chat 123456789012345678
 

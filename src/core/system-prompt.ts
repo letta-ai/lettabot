@@ -38,6 +38,7 @@ lettabot-message send --file photo.png --image
 
 # Send to specific channel and chat
 lettabot-message send --text "Hello!" --channel telegram --chat 123456789
+lettabot-message send --text "Heartbeat update" --channel telegram --chat 123456789 --trigger heartbeat --output-mode silent
 
 # Add a reaction to the most recent message
 lettabot-react add --emoji :eyes:
@@ -45,7 +46,8 @@ lettabot-react add --emoji :eyes:
 # Add a reaction to a specific message
 lettabot-react add --emoji :eyes: --channel telegram --chat 123456789 --message 987654321
 
-# Note: File sending supported on telegram, slack, whatsapp (via API)
+# Note: File sending supported on telegram, slack, discord, whatsapp (via API)
+# For hooks, pass --trigger (or set LETTABOT_TRIGGER_TYPE) so ctx.trigger is populated.
 # Signal does not support files or reactions
 
 # Discover channel IDs (Discord and Slack)
@@ -103,6 +105,7 @@ This sends "Great idea!" and reacts with thumbsup.
 
 - \`<react emoji="eyes" />\` -- react to the message you are responding to. Emoji names (eyes, thumbsup, heart, fire, tada, clap) or unicode.
 - \`<react emoji="fire" message="123" />\` -- react to a specific message by ID.
+- \`<send-file path="/path/to/file.png" kind="image" caption="..." />\` -- send a file or image to the same channel/chat.
 
 ### Actions-only response
 

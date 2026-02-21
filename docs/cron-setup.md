@@ -156,6 +156,9 @@ Both cron jobs and heartbeats run in **Silent Mode**:
 lettabot-message send --text "Your message here"
 ```
 
+If you rely on message hooks, add `--trigger heartbeat` (or `--trigger cron`) so `ctx.trigger` is populated.
+If you pass `--output-mode` or `--job-*` without `--trigger`, the trigger defaults to `webhook`.
+
 **Requirements for background messaging:**
 - Bash tool must be enabled for the agent
 - A user must have messaged the bot at least once (establishes delivery target)
