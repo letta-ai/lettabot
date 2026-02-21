@@ -1076,16 +1076,14 @@ export class LettaBot implements AgentSession {
             || '<actions>'.startsWith(trimmed)
             || (trimmed.startsWith('<actions') && !trimmed.includes('</actions>'));
           const streamText = stripActionsBlock(response).trim();
-          if (canEdit && !mayBeHidden && !suppressDelivery && streamText.length > 0) {
+          // Only edit an existing message — never send a new one.
+          // The streaming edit loop (inside the assistant token handler) is responsible
+          // for the initial sendMessage. The flush timer's job is just to push the
+          // latest accumulated text to an already-sent message.
+          if (canEdit && !mayBeHidden && !suppressDelivery && streamText.length > 0 && messageId) {
             try {
               const prefixedStream = this.prefixResponse(streamText);
-              if (messageId) {
-                await adapter.editMessage(msg.chatId, messageId, prefixedStream);
-              } else {
-                const result = await adapter.sendMessage({ chatId: msg.chatId, text: prefixedStream, threadId: msg.threadId });
-                messageId = result.messageId;
-                sentAnyMessage = true;
-              }
+              await adapter.editMessage(msg.chatId, messageId, prefixedStream);
               lastUpdate = Date.now();
             } catch (flushErr) {
               // "message is not modified" is expected if streaming edit already sent same content
