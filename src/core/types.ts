@@ -71,6 +71,9 @@ export interface FormatterHints {
   /** Custom action hints for this channel (e.g., "Use CLI to reply") */
   actionsSection?: string[];
   
+  /** Additional context lines to display in Chat Context section */
+  contextSection?: string[];
+  
   /** Whether to skip the Response Directives section */
   skipDirectives?: boolean;
   

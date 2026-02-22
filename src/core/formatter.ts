@@ -273,6 +273,11 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
     lines.push(...attachmentLines);
   }
 
+  // Channel-specific context lines
+  if (msg.formatterHints?.contextSection && msg.formatterHints.contextSection.length > 0) {
+    lines.push(...msg.formatterHints.contextSection);
+  }
+
   return lines;
 }
 
@@ -321,18 +326,10 @@ export function buildSessionContext(options: SessionContextOptions): string[] {
 export function formatMessageEnvelope(
   msg: InboundMessage,
   options: EnvelopeOptions = {},
-  sessionContext?: SessionContextOptions,
+  _sessionContext?: SessionContextOptions,
 ): string {
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const sections: string[] = [];
-
-  // Session context section (for first message in a chat session)
-  if (sessionContext) {
-    const sessionLines = buildSessionContext(sessionContext);
-    if (sessionLines.length > 0) {
-      sections.push(`## Session Context\n${sessionLines.join('\n')}`);
-    }
-  }
 
   // Message metadata section
   const metadataLines = buildMetadataLines(msg, opts);
