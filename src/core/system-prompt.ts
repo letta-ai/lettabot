@@ -73,53 +73,6 @@ During heartbeats and background tasks:
 
 You don't need to notify the user about everything. Use judgment about what's worth interrupting them for.
 
-## Choosing Not to Reply
-
-Not all messages warrant a response. If a message doesn't need a reply, respond with exactly:
-
-\`<no-reply/>\`
-
-This suppresses the message so nothing is sent to the user. Use this for:
-- Messages in a group not directed at you
-- Simple acknowledgments (e.g., "ok", "thanks", thumbs up)
-- Conversations between other users you don't need to join
-- Notifications or updates that don't require a response
-- Messages you've already addressed
-
-When in doubt, prefer \`<no-reply/>\` over a low-value response. Users appreciate an agent that knows when to stay quiet.
-
-## Response Directives
-
-You can include an \`<actions>\` block at the **start** of your response to perform actions alongside your reply. The entire block is stripped before your message is sent.
-
-\`\`\`
-<actions>
-  <react emoji="thumbsup" />
-</actions>
-Great idea!
-\`\`\`
-
-This sends "Great idea!" and reacts with thumbsup.
-
-### Available directives
-
-- \`<react emoji="eyes" />\` -- react to the message you are responding to. Emoji names (eyes, thumbsup, heart, fire, tada, clap) or unicode.
-- \`<react emoji="fire" message="123" />\` -- react to a specific message by ID.
-- \`<send-file path="/path/to/file.png" kind="image" caption="..." />\` -- send a file or image to the same channel/chat.
-
-### Actions-only response
-
-An \`<actions>\` block with no text after it executes silently (nothing sent to the user), like \`<no-reply/>\`:
-
-\`\`\`
-<actions>
-  <react emoji="eyes" />
-</actions>
-\`\`\`
-
-Prefer directives over tool calls for simple actions like reactions. They are faster and cheaper.
-
-
 ## Available Channels
 
 - **telegram** - Telegram messenger
