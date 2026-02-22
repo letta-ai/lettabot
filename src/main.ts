@@ -519,6 +519,9 @@ async function main() {
   for (const agentConfig of agents) {
     console.log(`\n[Setup] Configuring agent: ${agentConfig.name}`);
     
+    // Resolve memfs: YAML config takes precedence, then env var, then undefined (leave unchanged)
+    const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : process.env.LETTABOT_MEMFS === 'false' ? false : undefined);
+
     // Create LettaBot for this agent
     const bot = new LettaBot({
       workingDir: globalConfig.workingDir,
@@ -527,7 +530,7 @@ async function main() {
       disallowedTools: globalConfig.disallowedTools,
       displayName: agentConfig.displayName,
       maxToolCalls: agentConfig.features?.maxToolCalls,
-      memfs: agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : process.env.LETTABOT_MEMFS === 'false' ? false : undefined),
+      memfs: resolvedMemfs,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
       skills: {
@@ -536,9 +539,10 @@ async function main() {
       },
     });
     
-    // Log memfs config
-    if (agentConfig.features?.memfs !== undefined) {
-      console.log(`[Agent:${agentConfig.name}] memfs: ${agentConfig.features.memfs ? 'enabled' : 'disabled'}`);
+    // Log memfs config (from either YAML or env var)
+    if (resolvedMemfs !== undefined) {
+      const source = agentConfig.features?.memfs !== undefined ? '' : ' (from LETTABOT_MEMFS env)';
+      console.log(`[Agent:${agentConfig.name}] memfs: ${resolvedMemfs ? 'enabled' : 'disabled'}${source}`);
     }
 
     // Apply explicit agent ID from config (before store verification)
