@@ -50,6 +50,7 @@ export class BlueskyAdapter implements ChannelAdapter {
   private running = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
+  private intentionalClose = false;
   private lastCursor?: number;
   private handleByDid = new Map<string, string>();
   private handleFetchInFlight = new Map<string, Promise<string | undefined>>();
@@ -221,6 +222,7 @@ export class BlueskyAdapter implements ChannelAdapter {
 
   private connect(): void {
     if (!this.running) return;
+    if (this.ws) return; // Already connected — prevent double-connections
     if (!this.hasJetstreamTargets()) {
       console.warn('[Bluesky] Jetstream disabled (no wantedDids or list-expanded DIDs).');
       return;
@@ -229,20 +231,21 @@ export class BlueskyAdapter implements ChannelAdapter {
     const url = this.buildJetstreamUrl();
     console.log(`[Bluesky] Connecting to Jetstream: ${url}`);
 
-    this.ws = new WebSocket(url);
+    const ws = new WebSocket(url);
+    this.ws = ws;
 
-    this.ws.addEventListener('open', () => {
+    ws.addEventListener('open', () => {
       this.reconnectAttempts = 0;
       console.log('[Bluesky] Connected');
     });
 
-    this.ws.addEventListener('message', (event) => {
+    ws.addEventListener('message', (event) => {
       this.handleMessageEvent(event).catch(err => {
         console.error('[Bluesky] Failed to process event:', err);
       });
     });
 
-    this.ws.addEventListener('error', (event) => {
+    ws.addEventListener('error', (event) => {
       const error = (event as { error?: unknown; message?: string }).error
         || (event as { error?: unknown; message?: string }).message
         || 'Unknown WebSocket error';
@@ -253,9 +256,18 @@ export class BlueskyAdapter implements ChannelAdapter {
       });
     });
 
-    this.ws.addEventListener('close', () => {
+    ws.addEventListener('close', () => {
+      if (this.ws !== ws) {
+        // Stale/orphaned connection closed — a new connection is already active, ignore
+        return;
+      }
       this.ws = null;
       console.warn('[Bluesky] Disconnected');
+      if (this.intentionalClose) {
+        // reconnectJetstream() already called connect() — don't schedule another reconnect
+        this.intentionalClose = false;
+        return;
+      }
       if (!this.runtimeDisabled) {
         this.scheduleReconnect();
       }
@@ -1021,6 +1033,8 @@ export class BlueskyAdapter implements ChannelAdapter {
       return;
     }
     if (this.ws) {
+      // Signal the close handler not to schedule its own reconnect — we're handling it below
+      this.intentionalClose = true;
       try {
         this.ws.close();
       } catch {
