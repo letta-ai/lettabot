@@ -1010,7 +1010,7 @@ export class LettaBot implements AgentSession {
     // Wrap the entire session run in a trace span
     await traceAgentTurn(
       {
-        input: msg.text || '',
+        input: formattedText, // Use full formatted text with envelope and hints
         sessionId: convId || undefined,
         userId: msg.userId,
         channel: msg.channel,
