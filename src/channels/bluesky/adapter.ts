@@ -400,6 +400,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       source,
       formatterHints: {
         isReadOnly: !shouldReply,
+        formatHint: 'Plain text only (no markdown, no tables).',
         actionsSection: [
           'This channel is read-only; your text response will NOT be posted.',
           'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
@@ -1214,6 +1215,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       source,
       formatterHints: {
         isReadOnly: !shouldReply,
+        formatHint: 'Plain text only (no markdown, no tables).',
         actionsSection: [
           'This channel is read-only; your text response will NOT be posted.',
           'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
