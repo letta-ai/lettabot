@@ -201,6 +201,8 @@ export async function traceAgentTurn<T>(
 
   // Use withSpan if available, otherwise fall back to manual span
   if (withSpanFn) {
+    // withSpan is a decorator factory: withSpan(fn, opts) returns a wrapped function.
+    // We must call the returned function to actually execute fn inside a span.
     return withSpanFn(
       async () => {
         const span = trace?.getActiveSpan?.() || null;
@@ -224,7 +226,7 @@ export async function traceAgentTurn<T>(
         return fn(createTracingSpan(span));
       },
       { name: 'agent_turn', kind: 'AGENT' }
-    );
+    )(); // ← invoke the wrapped function returned by withSpan
   }
 
   // Fallback: manual span creation
