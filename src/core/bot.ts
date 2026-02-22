@@ -52,6 +52,47 @@ function isConversationMissingError(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Map a structured API error into a clear, user-facing message.
+ * The `error` object comes from the SDK's new SDKErrorMessage type.
+ */
+function formatApiErrorForUser(error: { message: string; stopReason: string; apiError?: Record<string, unknown> }): string {
+  const msg = error.message.toLowerCase();
+  const apiError = error.apiError || {};
+  const apiMsg = (typeof apiError.message === 'string' ? apiError.message : '').toLowerCase();
+  const reasons: string[] = Array.isArray(apiError.reasons) ? apiError.reasons : [];
+
+  // Rate limiting / usage exceeded (429)
+  if (msg.includes('rate limit') || msg.includes('429') || msg.includes('usage limit')
+    || apiMsg.includes('rate limit') || apiMsg.includes('usage limit')) {
+    if (reasons.includes('premium-usage-exceeded') || msg.includes('hosted model usage limit')) {
+      return '(Rate limited -- your Letta Cloud usage limit has been exceeded. Check your plan at app.letta.com.)';
+    }
+    const reasonStr = reasons.length > 0 ? `: ${reasons.join(', ')}` : '';
+    return `(Rate limited${reasonStr}. Try again in a moment.)`;
+  }
+
+  // Authentication
+  if (msg.includes('401') || msg.includes('403') || msg.includes('unauthorized') || msg.includes('forbidden')) {
+    return '(Authentication failed -- check your API key in lettabot.yaml.)';
+  }
+
+  // Agent/conversation not found
+  if (msg.includes('not found') || msg.includes('404')) {
+    return '(Agent or conversation not found -- the configured agent may have been deleted. Try re-onboarding.)';
+  }
+
+  // Server errors
+  if (msg.includes('500') || msg.includes('502') || msg.includes('503') || msg.includes('internal server error')) {
+    return '(Letta API server error -- try again in a moment.)';
+  }
+
+  // Fallback: use the actual error message (truncated for safety)
+  const detail = error.message.length > 200 ? error.message.slice(0, 200) + '...' : error.message;
+  const trimmed = detail.replace(/[.\s]+$/, '');
+  return `(Agent error: ${trimmed}. Try sending your message again.)`;
+}
+
 const SUPPORTED_IMAGE_MIMES = new Set([
   'image/png', 'image/jpeg', 'image/gif', 'image/webp',
 ]);
@@ -1021,6 +1062,8 @@ export class LettaBot implements AgentSession {
       let sentAnyMessage = false;
       let receivedAnyData = false;
       let sawNonAssistantSinceLastUuid = false;
+      let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | null = null;
+      let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       const msgTypeCounts: Record<string, number> = {};
       
       const finalizeMessage = async () => {
@@ -1101,6 +1144,21 @@ export class LettaBot implements AgentSession {
             console.log(`[Bot] Generating response...`);
           } else if (streamMsg.type === 'reasoning' && lastMsgType !== 'reasoning') {
             console.log(`[Bot] Reasoning...`);
+            sawNonAssistantSinceLastUuid = true;
+          } else if (streamMsg.type === 'error') {
+            // SDK now surfaces error detail that was previously dropped.
+            // Store for use in the user-facing error message.
+            lastErrorDetail = {
+              message: (streamMsg as any).message || 'unknown',
+              stopReason: (streamMsg as any).stopReason || 'error',
+              apiError: (streamMsg as any).apiError,
+            };
+            console.error(`[Bot] Stream error detail: ${lastErrorDetail.message} [${lastErrorDetail.stopReason}]`);
+            sawNonAssistantSinceLastUuid = true;
+          } else if (streamMsg.type === 'retry') {
+            const rm = streamMsg as any;
+            retryInfo = { attempt: rm.attempt, maxAttempts: rm.maxAttempts, reason: rm.reason };
+            console.log(`[Bot] Retrying (${rm.attempt}/${rm.maxAttempts}): ${rm.reason}`);
             sawNonAssistantSinceLastUuid = true;
           } else if (streamMsg.type !== 'assistant') {
             sawNonAssistantSinceLastUuid = true;
@@ -1218,9 +1276,13 @@ export class LettaBot implements AgentSession {
             }
 
             if (isTerminalError && !hasResponse && !sentAnyMessage) {
-              const err = streamMsg.error || 'unknown error';
-              const reason = streamMsg.stopReason ? ` [${streamMsg.stopReason}]` : '';
-              response = `(Agent run failed: ${err}${reason}. Try sending your message again.)`;
+              if (lastErrorDetail) {
+                response = formatApiErrorForUser(lastErrorDetail);
+              } else {
+                const err = streamMsg.error || 'unknown error';
+                const reason = streamMsg.stopReason ? ` [${streamMsg.stopReason}]` : '';
+                response = `(Agent run failed: ${err}${reason}. Try sending your message again.)`;
+              }
             }
             
             break;
