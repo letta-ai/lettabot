@@ -152,7 +152,10 @@ async function refreshTokensIfNeeded(): Promise<void> {
 // Run token refresh before importing SDK (which reads LETTA_API_KEY)
 await refreshTokensIfNeeded();
 
-// Initialize Phoenix tracing if configured (must run before other imports)
+// Initialize Phoenix tracing if configured.
+// Note: static imports are hoisted by the JS engine regardless of source order,
+// so initTracing() runs after all module-level imports resolve. This is safe
+// because imported modules don't call instrumented code at import time.
 import { initTracing } from './tracing/index.js';
 await initTracing();
 

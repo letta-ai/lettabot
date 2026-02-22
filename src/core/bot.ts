@@ -1417,6 +1417,8 @@ export class LettaBot implements AgentSession {
                 );
                 if (convResult.recovered) {
                   console.log(`[Bot] Recovery succeeded (${convResult.details}), retrying message...`);
+                  // Note: the retry creates its own traceAgentTurn span (child of this one).
+                  // The current span ends without output.value set; the retry span is the meaningful one.
                   return this.processMessage(msg, adapter, true);
                 }
                 console.warn(`[Bot] No orphaned approvals found: ${convResult.details}`);
@@ -1425,6 +1427,7 @@ export class LettaBot implements AgentSession {
                 // Retry once anyway in case the previous run terminated mid-tool cycle.
                 if (shouldRetryForErrorResult) {
                   console.log('[Bot] Retrying once after terminal error (no orphaned approvals detected)...');
+                  // Note: the retry creates its own traceAgentTurn span (child of this one).
                   return this.processMessage(msg, adapter, true);
                 }
               }

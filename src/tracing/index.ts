@@ -34,6 +34,7 @@ export const isPhoenixEnabled = Boolean(
 let tracer: any = null;
 let trace: any = null;
 let withSpanFn: any = null;
+let tracerProvider: { shutdown(): Promise<void> } | null = null;
 
 /**
  * Initialize Phoenix tracing if enabled.
@@ -53,8 +54,8 @@ export async function initTracing(): Promise<void> {
       import('@arizeai/openinference-core'),
     ]);
 
-    // Register the tracer provider
-    phoenixOtel.register({
+    // Register the tracer provider (save reference for shutdown)
+    tracerProvider = phoenixOtel.register({
       projectName: process.env.PHOENIX_PROJECT_NAME || 'lettabot',
       // url and apiKey are read from env vars automatically:
       // PHOENIX_COLLECTOR_ENDPOINT, PHOENIX_API_KEY
@@ -199,7 +200,8 @@ export async function traceAgentTurn<T>(
     return fn(noopSpan);
   }
 
-  // Use withSpan if available, otherwise fall back to manual span
+  // Use withSpan if available — idiomatic OpenInference way to create spans,
+  // handles propagation and kind conventions automatically.
   if (withSpanFn) {
     // withSpan is a decorator factory: withSpan(fn, opts) returns a wrapped function.
     // We must call the returned function to actually execute fn inside a span.
@@ -241,6 +243,12 @@ export async function traceAgentTurn<T>(
       if (ctx.channel) span.setAttribute('metadata.channel', ctx.channel);
       if (ctx.agentId) span.setAttribute('metadata.agent_id', ctx.agentId);
 
+      if (ctx.metadata) {
+        for (const [key, value] of Object.entries(ctx.metadata)) {
+          span.setAttribute(`metadata.${key}`, value);
+        }
+      }
+
       const result = await fn(createTracingSpan(span));
       return result;
     } catch (error) {
@@ -257,15 +265,13 @@ export async function traceAgentTurn<T>(
  * Call this before process exit.
  */
 export async function shutdownTracing(): Promise<void> {
-  if (!isPhoenixEnabled) return;
+  if (!isPhoenixEnabled || !tracerProvider) return;
 
   try {
-    const phoenixOtel = await import('@arizeai/phoenix-otel');
-    // The register function returns a provider with shutdown method
-    // but we don't have a reference to it here. In practice, the
-    // process exit will flush batched spans.
-    console.log('[Tracing] Tracing shutdown requested');
-  } catch {
-    // Ignore - packages not installed
+    console.log('[Tracing] Flushing pending spans...');
+    await tracerProvider.shutdown();
+    console.log('[Tracing] Shutdown complete');
+  } catch (err) {
+    console.warn('[Tracing] Error during shutdown:', err);
   }
 }
