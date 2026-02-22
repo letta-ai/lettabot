@@ -17,13 +17,6 @@ export const SYSTEM_REMINDER_CLOSE = `</${SYSTEM_REMINDER_TAG}>`;
  * Channel format hints - tells the agent what formatting syntax to use
  * Each channel has different markdown support - hints help agent format appropriately.
  */
-const CHANNEL_FORMATS: Record<string, string> = {
-  slack: 'Markdown (auto-converted to Slack mrkdwn): **bold** _italic_ `code` [links](url) ```code blocks``` - NO: headers, tables',
-  discord: '**bold** *italic* `code` [links](url) ```code blocks``` - NO: headers, tables',
-  telegram: 'MarkdownV2: *bold* _italic_ `code` [links](url) - NO: headers, tables',
-  whatsapp: '*bold* _italic_ `code` - NO: headers, code fences, links, tables',
-  signal: 'ONLY: *bold* _italic_ `code` - NO: headers, code fences, links, quotes, tables',
-};
 
 export interface EnvelopeOptions {
   timezone?: 'local' | 'utc' | string;  // IANA timezone or 'local'/'utc'
@@ -229,7 +222,7 @@ function buildMetadataLines(msg: InboundMessage, options: EnvelopeOptions): stri
   lines.push(`- **Timestamp**: ${formatTimestamp(msg.timestamp, options)}`);
 
   // Format support hint
-  const formatHint = CHANNEL_FORMATS[msg.channel];
+  const formatHint = msg.formatterHints?.formatHint;
   if (formatHint) {
     lines.push(`- **Format support**: ${formatHint}`);
   }
@@ -351,13 +344,20 @@ export function formatMessageEnvelope(
     sections.push(`## Chat Context\n${contextLines.join('\n')}`);
   }
 
-  // Response directives hint
-  const directiveLines = [
-    `- To skip replying: \`<no-reply/>\``,
-    `- To perform actions: wrap in \`<actions>\` at the start of your response`,
-    `  Example: \`<actions><react emoji="thumbsup" /></actions>Your text here\``,
-  ];
-  sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
+  // Channel-specific action hints
+  if (msg.formatterHints?.actionsSection && msg.formatterHints.actionsSection.length > 0) {
+    sections.push(`## Channel Actions\n${msg.formatterHints.actionsSection.join('\n')}`);
+  }
+
+  // Response directives hint (skip if hints say so, or if in listening mode)
+  if (!msg.formatterHints?.skipDirectives && !msg.isListeningMode) {
+    const directiveLines = [
+      `- To skip replying: \`<no-reply/>\``,
+      `- To perform actions: wrap in \`<actions>\` at the start of your response`,
+      `  Example: \`<actions><react emoji="thumbsup" /></actions>Your text here\``,
+    ];
+    sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
+  }
 
   // Build the full system-reminder block
   const reminderContent = sections.join('\n\n');
@@ -426,7 +426,7 @@ export function formatGroupBatchEnvelope(
   });
 
   // Format hint
-  const formatHint = CHANNEL_FORMATS[first.channel];
+  const formatHint = first.formatterHints?.formatHint;
   const hint = formatHint ? `\n(Format: ${formatHint})` : '';
 
   return `${header}\n${lines.join('\n')}${hint}`;
