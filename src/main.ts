@@ -166,7 +166,7 @@ import { collectGroupBatchingConfig } from './core/group-batching-config.js';
 import { CronService } from './cron/service.js';
 import { HeartbeatService } from './cron/heartbeat.js';
 import { PollingService, parseGmailAccounts } from './polling/service.js';
-import { agentExists, findAgentByName, ensureNoToolApprovals } from './tools/letta-api.js';
+import { agentExists, findAgentByName, ensureNoToolApprovals, recoverOrphanedConversationApproval } from './tools/letta-api.js';
 // Skills are now installed to agent-scoped location after agent creation (see bot.ts)
 
 // Check if config exists (skip in Railway/Docker where env vars are used directly)
@@ -577,11 +577,22 @@ async function main() {
       console.log(`[Agent:${agentConfig.name}] No agent found - will create on first message`);
     }
     
-    // Disable tool approvals
+    // Disable tool approvals and clear any orphaned approval requests from previous session
     if (initialStatus.agentId) {
       ensureNoToolApprovals(initialStatus.agentId).catch(err => {
         console.warn(`[Agent:${agentConfig.name}] Failed to check tool approvals:`, err);
       });
+      if (initialStatus.conversationId) {
+        recoverOrphanedConversationApproval(initialStatus.agentId, initialStatus.conversationId)
+          .then(result => {
+            if (result.recovered) {
+              console.log(`[Agent:${agentConfig.name}] Startup: cleared orphaned approvals: ${result.details}`);
+            }
+          })
+          .catch(err => {
+            console.warn(`[Agent:${agentConfig.name}] Startup: failed to check orphaned approvals:`, err);
+          });
+      }
     }
 
     // Create and register channels

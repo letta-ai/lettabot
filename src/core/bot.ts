@@ -141,6 +141,8 @@ export class LettaBot implements AgentSession {
   // channel (and optionally heartbeat) gets its own subprocess.
   private sessions: Map<string, Session> = new Map();
   private currentCanUseTool: CanUseToolCallback | undefined;
+  /** Set when the previous run ended with a suspiciously short turn or error, triggering proactive approval cleanup on the next message. */
+  private needsApprovalCheck = false;
   // Stable callback wrapper so the Session options never change, but we can
   // swap out the per-message handler before each send().
   private readonly sessionCanUseTool: CanUseToolCallback = async (toolName, toolInput) => {
@@ -521,6 +523,23 @@ export class LettaBot implements AgentSession {
     const convId = convKey === 'shared'
       ? this.store.conversationId
       : this.store.getConversationId(convKey);
+
+    // Proactive approval cleanup: if the previous turn was suspicious, check for
+    // orphaned approvals before sending. This catches the "limping agent" pattern
+    // where orphaned approvals cause each turn to bail out early without a hard error.
+    if (this.needsApprovalCheck && this.store.agentId && convId) {
+      this.needsApprovalCheck = false;
+      try {
+        const result = await recoverOrphanedConversationApproval(this.store.agentId, convId);
+        if (result.recovered) {
+          console.log(`[Bot] Pre-message cleanup: ${result.details}`);
+          this.invalidateSession(convKey);
+          session = await this.ensureSessionForKey(convKey);
+        }
+      } catch (err) {
+        console.warn('[Bot] Pre-message approval check failed:', err instanceof Error ? err.message : err);
+      }
+    }
 
     // Send message with fallback chain
     try {
@@ -1221,6 +1240,15 @@ export class LettaBot implements AgentSession {
               const err = streamMsg.error || 'unknown error';
               const reason = streamMsg.stopReason ? ` [${streamMsg.stopReason}]` : '';
               response = `(Agent run failed: ${err}${reason}. Try sending your message again.)`;
+            }
+
+            // Flag for proactive approval cleanup on the next message.
+            // Triggers when the turn ended with an error, or completed with
+            // suspiciously few tool calls (< 3 assistant messages suggests the
+            // agent bailed out early, possibly due to orphaned approvals).
+            const assistantCount = msgTypeCounts.assistant || 0;
+            if (isTerminalError || (streamMsg.success && assistantCount > 0 && assistantCount < 3)) {
+              this.needsApprovalCheck = true;
             }
             
             break;
