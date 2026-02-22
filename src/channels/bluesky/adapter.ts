@@ -370,7 +370,7 @@ export class BlueskyAdapter implements ChannelAdapter {
 
     const did = payload.did || 'unknown';
     const handle = payload.did ? this.handleByDid.get(payload.did) : undefined;
-    const { text, messageId, source } = this.formatCommit(payload, handle);
+    const { text, messageId, source, contextLines: contextSection } = this.formatCommit(payload, handle);
     if (!text) return;
 
     const timestamp = payload.time_us
@@ -401,6 +401,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       formatterHints: {
         isReadOnly: !shouldReply,
         formatHint: 'Plain text only (no markdown, no tables).',
+        contextSection,
         actionsSection: [
           'This channel is read-only; your text response will NOT be posted.',
           'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
@@ -430,6 +431,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     text: string;
     messageId?: string;
     source?: InboundMessage['source'];
+    contextLines: string[];
   } {
     const commit = payload.commit || {};
     const operation = commit.operation || 'commit';
@@ -443,16 +445,16 @@ export class BlueskyAdapter implements ChannelAdapter {
       rkey: commit.rkey,
     };
 
-    const lines: string[] = [];
-    lines.push(`[Bluesky] ${operation} ${collection}`);
+    const contextLines: string[] = [];
+    contextLines.push(`- **Operation**: ${operation} ${collection}`);
     if (handle) {
-      lines.push(`Handle: @${handle}`);
+      contextLines.push(`- **Handle**: @${handle}`);
     }
     if (payload.did) {
-      lines.push(`DID: ${payload.did}`);
+      contextLines.push(`- **DID**: ${payload.did}`);
     }
     if (uri) {
-      lines.push(`URI: ${uri}`);
+      contextLines.push(`- **URI**: ${uri}`);
     }
 
     const record = isRecord(commit.record) ? commit.record : undefined;
@@ -461,22 +463,22 @@ export class BlueskyAdapter implements ChannelAdapter {
       const details = extractPostDetails(record);
 
       if (details.text) {
-        lines.push(`Text: ${details.text}`);
+        // Post text extracted separately
       }
       if (details.createdAt) {
-        lines.push(`Created: ${details.createdAt}`);
+        contextLines.push(`- **Created**: ${details.createdAt}`);
       }
       if (details.langs.length > 0) {
-        lines.push(`Langs: ${details.langs.join(', ')}`);
+        contextLines.push(`- **Languages**: ${details.langs.join(', ')}`);
       }
       if (details.replyRefs.rootUri) {
-        lines.push(`Thread root: ${details.replyRefs.rootUri}`);
+        contextLines.push(`- **Thread root**: ${details.replyRefs.rootUri}`);
       }
       if (details.replyRefs.parentUri) {
-        lines.push(`Reply parent: ${details.replyRefs.parentUri}`);
+        contextLines.push(`- **Reply parent**: ${details.replyRefs.parentUri}`);
       }
       if (details.embedLines.length > 0) {
-        lines.push(...details.embedLines);
+        // Embeds handled separately
       }
 
       if (details.replyRefs.rootUri) source.threadRootUri = details.replyRefs.rootUri;
@@ -484,7 +486,8 @@ export class BlueskyAdapter implements ChannelAdapter {
       if (details.replyRefs.parentUri) source.threadParentUri = details.replyRefs.parentUri;
       if (details.replyRefs.parentCid) source.threadParentCid = details.replyRefs.parentCid;
       return {
-        text: lines.join('\n'),
+        text: details.text || '',
+        contextLines,
         messageId: commit.cid || commit.rkey,
         source,
       };
@@ -495,10 +498,10 @@ export class BlueskyAdapter implements ChannelAdapter {
       const createdAt = readString(record.createdAt);
 
       if (subjectUri) {
-        lines.push(`Subject: ${subjectUri}`);
+        contextLines.push(`- **Subject**: ${subjectUri}`);
       }
       if (createdAt) {
-        lines.push(`Created: ${createdAt}`);
+        contextLines.push(`- **Created**: ${createdAt}`);
       }
 
       if (subjectUri) source.subjectUri = subjectUri;
@@ -507,21 +510,22 @@ export class BlueskyAdapter implements ChannelAdapter {
       const subjectDid = readString(record.subject);
       const createdAt = readString(record.createdAt);
       if (subjectDid) {
-        lines.push(`Subject DID: ${subjectDid}`);
+        contextLines.push(`- **Subject DID**: ${subjectDid}`);
       }
       if (createdAt) {
-        lines.push(`Created: ${createdAt}`);
+        contextLines.push(`- **Created**: ${createdAt}`);
       }
     } else if (record) {
       const createdAt = readString(record.createdAt);
       if (createdAt) {
-        lines.push(`Created: ${createdAt}`);
+        contextLines.push(`- **Created**: ${createdAt}`);
       }
-      lines.push(`Record: ${truncate(JSON.stringify(record))}`);
+      contextLines.push(`- **Record**: ${truncate(JSON.stringify(record))}`);
     }
 
     return {
-      text: lines.join('\n'),
+      text: '', // No post text for non-post collections
+      contextLines,
       messageId: commit.cid || commit.rkey,
       source,
     };
@@ -1138,40 +1142,39 @@ export class BlueskyAdapter implements ChannelAdapter {
       cid: notification.cid,
     };
 
-    const lines: string[] = [];
-    lines.push(`[Bluesky] notification ${notification.reason}`);
+    const contextLines: string[] = [];
+    contextLines.push(`- **Operation**: notification ${notification.reason}`);
     if (authorHandle) {
-      lines.push(`Handle: @${authorHandle}`);
+      contextLines.push(`- **Handle**: @${authorHandle}`);
     }
     if (authorDid) {
-      lines.push(`DID: ${authorDid}`);
+      contextLines.push(`- **DID**: ${authorDid}`);
     }
     if (notification.reasonSubject) {
-      lines.push(`Subject: ${notification.reasonSubject}`);
+      contextLines.push(`- **Subject**: ${notification.reasonSubject}`);
     }
     if (notification.uri) {
-      lines.push(`URI: ${notification.uri}`);
+      contextLines.push(`- **URI**: ${notification.uri}`);
     }
 
+    let postText = '';
     if (recordType === 'app.bsky.feed.post' && record) {
       const details = extractPostDetails(record);
-      if (details.text) {
-        lines.push(`Text: ${details.text}`);
-      }
+      postText = details.text || '';
       if (details.createdAt) {
-        lines.push(`Created: ${details.createdAt}`);
+        contextLines.push(`- **Created**: ${details.createdAt}`);
       }
       if (details.langs.length > 0) {
-        lines.push(`Langs: ${details.langs.join(', ')}`);
+        contextLines.push(`- **Languages**: ${details.langs.join(', ')}`);
       }
       if (details.replyRefs.rootUri) {
-        lines.push(`Thread root: ${details.replyRefs.rootUri}`);
+        contextLines.push(`- **Thread root**: ${details.replyRefs.rootUri}`);
       }
       if (details.replyRefs.parentUri) {
-        lines.push(`Reply parent: ${details.replyRefs.parentUri}`);
+        contextLines.push(`- **Reply parent**: ${details.replyRefs.parentUri}`);
       }
       if (details.embedLines.length > 0) {
-        lines.push(...details.embedLines);
+        // Embeds handled separately
       }
 
       if (details.replyRefs.rootUri) source.threadRootUri = details.replyRefs.rootUri;
@@ -1187,7 +1190,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       });
       pruneMap(this.lastPostByChatId, LAST_POST_CACHE_MAX);
     } else if (record) {
-      lines.push(`Record: ${truncate(JSON.stringify(record))}`);
+      contextLines.push(`Record: ${truncate(JSON.stringify(record))}`);
     }
 
     const didMode = this.getDidMode(authorDid);
@@ -1208,7 +1211,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       userHandle: authorHandle,
       userName: authorHandle ? `@${authorHandle}` : undefined,
       messageId: notification.cid || notification.uri,
-      text: lines.join('\n'),
+      text: postText,
       timestamp,
       isGroup: false,
       isListeningMode: shouldReply ? false : true,
@@ -1216,6 +1219,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       formatterHints: {
         isReadOnly: !shouldReply,
         formatHint: 'Plain text only (no markdown, no tables).',
+        contextSection: contextLines,
         actionsSection: [
           'This channel is read-only; your text response will NOT be posted.',
           'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
