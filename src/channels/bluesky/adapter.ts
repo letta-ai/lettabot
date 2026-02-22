@@ -398,6 +398,18 @@ export class BlueskyAdapter implements ChannelAdapter {
       isGroup: false,
       isListeningMode: shouldReply ? false : true,
       source,
+      formatterHints: {
+        isReadOnly: !shouldReply,
+        actionsSection: [
+          'This channel is read-only; your text response will NOT be posted.',
+          'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
+          'Reply: `lettabot-bluesky post --reply-to <uri> --text "..."`',
+          'Like: `lettabot-bluesky like <uri>`',
+          'Posts over 300 chars require `--threaded` to create a reply thread.',
+          'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
+        ],
+        skipDirectives: true,
+      },
     };
 
     if (payload.commit?.collection === 'app.bsky.feed.post' && source?.uri) {
@@ -1200,6 +1212,18 @@ export class BlueskyAdapter implements ChannelAdapter {
       isGroup: false,
       isListeningMode: shouldReply ? false : true,
       source,
+      formatterHints: {
+        isReadOnly: !shouldReply,
+        actionsSection: [
+          'This channel is read-only; your text response will NOT be posted.',
+          'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
+          'Reply: `lettabot-bluesky post --reply-to <uri> --text "..."`',
+          'Like: `lettabot-bluesky like <uri>`',
+          'Posts over 300 chars require `--threaded` to create a reply thread.',
+          'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
+        ],
+        skipDirectives: true,
+      },
     };
 
     await this.onMessage?.(inbound);
