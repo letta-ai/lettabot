@@ -67,15 +67,21 @@ export interface InboundReaction {
 export interface FormatterHints {
   /** Whether the channel is read-only (text response won't be posted) */
   isReadOnly?: boolean;
-  
+
   /** Custom action hints for this channel (e.g., "Use CLI to reply") */
   actionsSection?: string[];
-  
+
   /** Whether to skip the Response Directives section */
   skipDirectives?: boolean;
-  
+
   /** Custom format hint (overrides default channel format) */
   formatHint?: string;
+
+  /** Whether this channel supports emoji reactions */
+  supportsReactions?: boolean;
+
+  /** Whether this channel supports file/image sending */
+  supportsFiles?: boolean;
 }
 
 /**
@@ -101,6 +107,7 @@ export interface InboundMessage {
   isBatch?: boolean;                  // Is this a batched group message?
   batchedMessages?: InboundMessage[]; // Original individual messages (for batch formatting)
   isListeningMode?: boolean;          // Listening mode: agent processes for memory but response is suppressed
+  extraContext?: Record<string, string>; // Extra key/value pairs rendered in Chat Context header
   formatterHints?: FormatterHints;   // Channel-specific formatting hints
 }
 
