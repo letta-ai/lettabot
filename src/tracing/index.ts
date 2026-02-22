@@ -32,8 +32,7 @@ export const isPhoenixEnabled = Boolean(
 
 // Lazy-loaded tracer (initialized only if Phoenix is enabled)
 let tracer: any = null;
-let trace: any = null;
-let withSpanFn: any = null;
+let tracerProvider: { shutdown(): Promise<void> } | null = null;
 
 /**
  * Initialize Phoenix tracing if enabled.
@@ -47,29 +46,24 @@ export async function initTracing(): Promise<void> {
   }
 
   try {
-    // Dynamically import Phoenix packages (they're optional dependencies)
-    const [phoenixOtel, openinferenceCore] = await Promise.all([
-      import('@arizeai/phoenix-otel'),
-      import('@arizeai/openinference-core'),
-    ]);
+    // Dynamically import Phoenix package (optional dependency)
+    const phoenixOtel = await import('@arizeai/phoenix-otel');
 
-    // Register the tracer provider
-    phoenixOtel.register({
+    // Register the tracer provider (save reference for shutdown)
+    tracerProvider = phoenixOtel.register({
       projectName: process.env.PHOENIX_PROJECT_NAME || 'lettabot',
       // url and apiKey are read from env vars automatically:
       // PHOENIX_COLLECTOR_ENDPOINT, PHOENIX_API_KEY
     });
 
     // Store references for later use
-    trace = phoenixOtel.trace;
-    tracer = trace.getTracer('lettabot');
-    withSpanFn = openinferenceCore.withSpan;
+    tracer = phoenixOtel.trace.getTracer('lettabot');
 
     const endpoint = process.env.PHOENIX_COLLECTOR_ENDPOINT || 'http://localhost:6006';
     console.log(`[Tracing] Phoenix tracing enabled, sending to ${endpoint}`);
   } catch (err) {
     console.warn('[Tracing] Failed to initialize Phoenix tracing:', err);
-    console.warn('[Tracing] Install optional dependencies: npm install @arizeai/phoenix-otel @arizeai/openinference-core');
+    console.warn('[Tracing] Install optional dependency: npm install @arizeai/phoenix-otel');
   }
 }
 
@@ -199,37 +193,6 @@ export async function traceAgentTurn<T>(
     return fn(noopSpan);
   }
 
-  // Use withSpan if available, otherwise fall back to manual span
-  if (withSpanFn) {
-    // withSpan is a decorator factory: withSpan(fn, opts) returns a wrapped function.
-    // We must call the returned function to actually execute fn inside a span.
-    return withSpanFn(
-      async () => {
-        const span = trace?.getActiveSpan?.() || null;
-
-        // Set input attributes
-        span?.setAttribute('input.value', ctx.input);
-        span?.setAttribute('input.mime_type', 'text/plain');
-        span?.setAttribute('openinference.span.kind', 'AGENT');
-
-        if (ctx.sessionId) span?.setAttribute('session.id', ctx.sessionId);
-        if (ctx.userId) span?.setAttribute('user.id', ctx.userId);
-        if (ctx.channel) span?.setAttribute('metadata.channel', ctx.channel);
-        if (ctx.agentId) span?.setAttribute('metadata.agent_id', ctx.agentId);
-
-        if (ctx.metadata) {
-          for (const [key, value] of Object.entries(ctx.metadata)) {
-            span?.setAttribute(`metadata.${key}`, value);
-          }
-        }
-
-        return fn(createTracingSpan(span));
-      },
-      { name: 'agent_turn', kind: 'AGENT' }
-    )(); // ← invoke the wrapped function returned by withSpan
-  }
-
-  // Fallback: manual span creation
   return tracer.startActiveSpan('agent_turn', async (span: OTelSpan) => {
     try {
       span.setAttribute('input.value', ctx.input);
@@ -240,6 +203,12 @@ export async function traceAgentTurn<T>(
       if (ctx.userId) span.setAttribute('user.id', ctx.userId);
       if (ctx.channel) span.setAttribute('metadata.channel', ctx.channel);
       if (ctx.agentId) span.setAttribute('metadata.agent_id', ctx.agentId);
+
+      if (ctx.metadata) {
+        for (const [key, value] of Object.entries(ctx.metadata)) {
+          span.setAttribute(`metadata.${key}`, value);
+        }
+      }
 
       const result = await fn(createTracingSpan(span));
       return result;
@@ -257,15 +226,13 @@ export async function traceAgentTurn<T>(
  * Call this before process exit.
  */
 export async function shutdownTracing(): Promise<void> {
-  if (!isPhoenixEnabled) return;
+  if (!isPhoenixEnabled || !tracerProvider) return;
 
   try {
-    const phoenixOtel = await import('@arizeai/phoenix-otel');
-    // The register function returns a provider with shutdown method
-    // but we don't have a reference to it here. In practice, the
-    // process exit will flush batched spans.
-    console.log('[Tracing] Tracing shutdown requested');
-  } catch {
-    // Ignore - packages not installed
+    console.log('[Tracing] Flushing pending spans...');
+    await tracerProvider.shutdown();
+    console.log('[Tracing] Shutdown complete');
+  } catch (err) {
+    console.warn('[Tracing] Error during shutdown:', err);
   }
 }
