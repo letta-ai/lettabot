@@ -236,7 +236,10 @@ function buildMetadataLines(msg: InboundMessage, options: EnvelopeOptions): stri
 function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): string[] {
   const lines: string[] = [];
 
-  if (msg.isGroup) {
+  // Determine message type, defaulting to 'dm'
+  const messageType = msg.messageType ?? (msg.isGroup ? 'group' : 'dm');
+
+  if (messageType === 'group') {
     lines.push(`- **Type**: Group chat`);
     if (options.includeGroup !== false && msg.groupName?.trim()) {
       if (msg.channel === 'slack' || msg.channel === 'discord') {
@@ -252,6 +255,8 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
     if (!msg.isListeningMode) {
       lines.push(`- **Hint**: See Response Directives below for \`<no-reply/>\` and \`<actions>\``);
     }
+  } else if (messageType === 'public') {
+    lines.push(`- **Type**: Public post`);
   } else {
     lines.push(`- **Type**: Direct message`);
   }
@@ -310,7 +315,8 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
   const lines: string[] = [];
   const supportsReactions = msg.formatterHints?.supportsReactions ?? false;
   const supportsFiles = msg.formatterHints?.supportsFiles ?? false;
-  const isGroup = msg.isGroup ?? false;
+  const messageType = msg.messageType ?? (msg.isGroup ? 'group' : 'dm');
+  const isGroup = messageType === 'group';
 
   // no-reply
   if (isGroup) {
