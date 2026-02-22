@@ -249,7 +249,9 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
     if (msg.wasMentioned) {
       lines.push(`- **Mentioned**: yes`);
     }
-    lines.push(`- **Hint**: See Response Directives below for \`<no-reply/>\` and \`<actions>\``);
+    if (!msg.isListeningMode) {
+      lines.push(`- **Hint**: See Response Directives below for \`<no-reply/>\` and \`<actions>\``);
+    }
   } else {
     lines.push(`- **Type**: Direct message`);
   }
@@ -273,9 +275,11 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
     lines.push(...attachmentLines);
   }
 
-  // Channel-specific context lines
-  if (msg.formatterHints?.contextSection && msg.formatterHints.contextSection.length > 0) {
-    lines.push(...msg.formatterHints.contextSection);
+  // Extra channel-specific context (key/value pairs)
+  if (msg.extraContext) {
+    for (const [key, value] of Object.entries(msg.extraContext)) {
+      lines.push(`- **${key}**: ${value}`);
+    }
   }
 
   return lines;
@@ -294,6 +298,41 @@ export function buildSessionContext(options: SessionContextOptions): string[] {
   }
   if (options.serverUrl) {
     lines.push(`- **Server**: ${options.serverUrl}`);
+  }
+
+  return lines;
+}
+
+/**
+ * Build context-aware Response Directives lines based on channel capabilities and chat type.
+ */
+function buildResponseDirectives(msg: InboundMessage): string[] {
+  const lines: string[] = [];
+  const supportsReactions = msg.formatterHints?.supportsReactions ?? false;
+  const supportsFiles = msg.formatterHints?.supportsFiles ?? false;
+  const isGroup = msg.isGroup ?? false;
+
+  // no-reply
+  if (isGroup) {
+    lines.push(`- \`<no-reply/>\` — skip replying when the message isn't directed at you`);
+  } else {
+    lines.push(`- \`<no-reply/>\` — skip replying when the message doesn't need a response`);
+  }
+
+  // actions/react (only if supported)
+  if (supportsReactions) {
+    lines.push(`- \`<actions><react emoji="thumbsup" /></actions>\` — react without sending text`);
+    lines.push(`- \`<actions><react emoji="eyes" /></actions>Your text here\` — react and reply`);
+    if (isGroup) {
+      lines.push(`- \`<actions><react emoji="fire" message="123" /></actions>\` — react to a specific message`);
+    }
+    lines.push(`- Emoji names: eyes, thumbsup, heart, fire, tada, clap — or unicode`);
+    lines.push(`- Prefer directives over tool calls for reactions (faster and cheaper)`);
+  }
+
+  // file sending (only if supported)
+  if (supportsFiles) {
+    lines.push(`- To send a file: \`lettabot-message send --file /path/to/file.jpg\` (or \`--image\` for photos)`);
   }
 
   return lines;
@@ -326,10 +365,18 @@ export function buildSessionContext(options: SessionContextOptions): string[] {
 export function formatMessageEnvelope(
   msg: InboundMessage,
   options: EnvelopeOptions = {},
-  _sessionContext?: SessionContextOptions,
+  sessionContext?: SessionContextOptions,
 ): string {
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const sections: string[] = [];
+
+  // Session context section (agent/server info, shown first)
+  if (sessionContext) {
+    const sessionLines = buildSessionContext(sessionContext);
+    if (sessionLines.length > 0) {
+      sections.push(`## Session Context\n${sessionLines.join('\n')}`);
+    }
+  }
 
   // Message metadata section
   const metadataLines = buildMetadataLines(msg, opts);
@@ -346,13 +393,9 @@ export function formatMessageEnvelope(
     sections.push(`## Channel Actions\n${msg.formatterHints.actionsSection.join('\n')}`);
   }
 
-  // Response directives hint (skip if hints say so, or if in listening mode)
+  // Response directives (skip if hints say so, or if in listening mode)
   if (!msg.formatterHints?.skipDirectives && !msg.isListeningMode) {
-    const directiveLines = [
-      `- To skip replying: \`<no-reply/>\``,
-      `- To perform actions: wrap in \`<actions>\` at the start of your response`,
-      `  Example: \`<actions><react emoji="thumbsup" /></actions>Your text here\``,
-    ];
+    const directiveLines = buildResponseDirectives(msg);
     sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
   }
 
@@ -426,5 +469,16 @@ export function formatGroupBatchEnvelope(
   const formatHint = first.formatterHints?.formatHint;
   const hint = formatHint ? `\n(Format: ${formatHint})` : '';
 
-  return `${header}\n${lines.join('\n')}${hint}`;
+  // Response directives (compact form for batch)
+  let directives = '';
+  if (!isListeningMode) {
+    const supportsReactions = first.formatterHints?.supportsReactions ?? false;
+    const parts = ['`<no-reply/>` to skip replying'];
+    if (supportsReactions) {
+      parts.push('`<actions><react emoji="thumbsup" /></actions>` to react');
+    }
+    directives = `\n(Directives: ${parts.join(', ')})`;
+  }
+
+  return `${header}\n${lines.join('\n')}${hint}${directives}`;
 }

@@ -69,6 +69,7 @@ describe('BlueskyAdapter', () => {
 
   it('mention-only replies only on mention notifications', async () => {
     const adapter = makeAdapter({
+      autoReply: true,
       groups: { '*': { mode: 'mention-only' } },
     });
 

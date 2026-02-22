@@ -55,6 +55,13 @@ export class MockChannelAdapter implements ChannelAdapter {
   supportsEditing(): boolean {
     return false; // Disable streaming edits for simpler testing
   }
+
+  getFormatterHints() {
+    return {
+      supportsReactions: false,
+      formatHint: 'Plain text only',
+    };
+  }
   
   /**
    * Simulate an inbound message and wait for response

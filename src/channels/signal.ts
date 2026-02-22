@@ -306,6 +306,13 @@ This code expires in 1 hour.`;
     return this.config.dmPolicy || 'pairing';
   }
 
+  getFormatterHints() {
+    return {
+      supportsReactions: false,
+      formatHint: 'Plain text only — NO markdown',
+    };
+  }
+
   supportsEditing(): boolean {
     return false;
   }
@@ -802,6 +809,7 @@ This code expires in 1 hour.`;
         wasMentioned,
         isListeningMode,
         attachments: collectedAttachments.length > 0 ? collectedAttachments : undefined,
+        formatterHints: this.getFormatterHints(),
       };
       
       this.onMessage?.(msg).catch((err) => {

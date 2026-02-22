@@ -306,6 +306,7 @@ Ask the bot owner to approve with:
           wasMentioned,
           isListeningMode,
           attachments,
+          formatterHints: this.getFormatterHints(),
         });
       }
     });
@@ -391,6 +392,14 @@ Ask the bot owner to approve with:
     return this.config.dmPolicy || 'pairing';
   }
 
+  getFormatterHints() {
+    return {
+      supportsReactions: true,
+      supportsFiles: false,
+      formatHint: 'Discord markdown: **bold** *italic* `code` — supports headers, code blocks',
+    };
+  }
+
   supportsEditing(): boolean {
     return true;
   }
@@ -454,6 +463,7 @@ Ask the bot owner to approve with:
         messageId: message.id,
         action,
       },
+      formatterHints: this.getFormatterHints(),
     }).catch((err) => {
       console.error('[Discord] Error handling reaction:', err);
     });
