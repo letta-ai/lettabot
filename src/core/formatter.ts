@@ -233,7 +233,7 @@ function buildMetadataLines(msg: InboundMessage, options: EnvelopeOptions): stri
   lines.push(`- **Timestamp**: ${formatTimestamp(msg.timestamp, options)}`);
 
   // Format support hint
-  const formatHint = CHANNEL_FORMATS[msg.channel];
+  const formatHint = msg.formatterHints?.formatHint || CHANNEL_FORMATS[msg.channel];
   if (formatHint) {
     lines.push(`- **Format support**: ${formatHint}`);
   }
@@ -356,6 +356,7 @@ export function formatMessageEnvelope(
   }
 
   // Channel-specific action hints
+  // TODO: Bluesky should migrate to use formatterHints instead of hardcoded logic
   if (msg.channel === 'bluesky') {
     const blueskyLines = [
       '- This channel is read-only; your text response will NOT be posted.',
@@ -364,15 +365,19 @@ export function formatMessageEnvelope(
       '- Posts over 300 chars require `--threaded` to create a reply thread.',
     ];
     sections.push(`## Bluesky Actions\n${blueskyLines.join('\n')}`);
+  } else if (msg.formatterHints?.actionsSection && msg.formatterHints.actionsSection.length > 0) {
+    sections.push(`## Channel Actions\n${msg.formatterHints.actionsSection.join('\n')}`);
   }
 
-  // Response directives hint
-  const directiveLines = [
-    `- To skip replying: \`<no-reply/>\``,
-    `- To perform actions: wrap in \`<actions>\` at the start of your response`,
-    `  Example: \`<actions><react emoji="thumbsup" /></actions>Your text here\``,
-  ];
-  sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
+  // Response directives hint (skip if hints say so, or if in listening mode)
+  if (!msg.formatterHints?.skipDirectives && !msg.isListeningMode) {
+    const directiveLines = [
+      `- To skip replying: \`<no-reply/>\``,
+      `- To perform actions: wrap in \`<actions>\` at the start of your response`,
+      `  Example: \`<actions><react emoji="thumbsup" /></actions>Your text here\``,
+    ];
+    sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
+  }
 
   // Build the full system-reminder block
   const reminderContent = sections.join('\n\n');
