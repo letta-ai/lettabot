@@ -17,13 +17,6 @@ export const SYSTEM_REMINDER_CLOSE = `</${SYSTEM_REMINDER_TAG}>`;
  * Channel format hints - tells the agent what formatting syntax to use
  * Each channel has different markdown support - hints help agent format appropriately.
  */
-const CHANNEL_FORMATS: Record<string, string> = {
-  slack: 'Markdown (auto-converted to Slack mrkdwn): **bold** _italic_ `code` [links](url) ```code blocks``` - NO: headers, tables',
-  discord: '**bold** *italic* `code` [links](url) ```code blocks``` - NO: headers, tables',
-  telegram: 'MarkdownV2: *bold* _italic_ `code` [links](url) - NO: headers, tables',
-  whatsapp: '*bold* _italic_ `code` - NO: headers, code fences, links, tables',
-  signal: 'ONLY: *bold* _italic_ `code` - NO: headers, code fences, links, quotes, tables',
-};
 
 export interface EnvelopeOptions {
   timezone?: 'local' | 'utc' | string;  // IANA timezone or 'local'/'utc'
@@ -229,7 +222,7 @@ function buildMetadataLines(msg: InboundMessage, options: EnvelopeOptions): stri
   lines.push(`- **Timestamp**: ${formatTimestamp(msg.timestamp, options)}`);
 
   // Format support hint
-  const formatHint = msg.formatterHints?.formatHint || CHANNEL_FORMATS[msg.channel];
+  const formatHint = msg.formatterHints?.formatHint;
   if (formatHint) {
     lines.push(`- **Format support**: ${formatHint}`);
   }
@@ -433,7 +426,7 @@ export function formatGroupBatchEnvelope(
   });
 
   // Format hint
-  const formatHint = CHANNEL_FORMATS[first.channel];
+  const formatHint = first.formatterHints?.formatHint;
   const hint = formatHint ? `\n(Format: ${formatHint})` : '';
 
   return `${header}\n${lines.join('\n')}${hint}`;
