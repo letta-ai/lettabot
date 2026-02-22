@@ -45,6 +45,14 @@ export interface TriggerContext {
 
 export type ChannelId = 'telegram' | 'telegram-mtproto' | 'slack' | 'whatsapp' | 'signal' | 'discord' | 'bluesky' | 'mock';
 
+/**
+ * Message type indicating the context of the message.
+ * - 'dm': Direct message (private 1:1 conversation)
+ * - 'group': Group chat (multiple participants)
+ * - 'public': Public post (e.g., Bluesky feed, visible to anyone)
+ */
+export type MessageType = 'dm' | 'group' | 'public';
+
 export interface InboundAttachment {
   id?: string;
   name?: string;
@@ -97,7 +105,8 @@ export interface InboundMessage {
   text: string;
   timestamp: Date;
   threadId?: string;      // Slack thread_ts
-  isGroup?: boolean;      // Is this from a group chat?
+  messageType?: MessageType; // 'dm', 'group', or 'public' (defaults to 'dm')
+  isGroup?: boolean;      // DEPRECATED: Use messageType instead. True if messageType === 'group'
   groupName?: string;     // Group/channel name if applicable
   serverId?: string;      // Server/guild ID (Discord only)
   wasMentioned?: boolean; // Was bot explicitly mentioned? (groups only)
