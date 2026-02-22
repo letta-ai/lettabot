@@ -119,6 +119,7 @@ An \`<actions>\` block with no text after it executes silently (nothing sent to 
 
 Prefer directives over tool calls for simple actions like reactions. They are faster and cheaper.
 
+
 ## Available Channels
 
 - **telegram** - Telegram messenger

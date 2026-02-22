@@ -105,18 +105,21 @@ export interface InboundReaction {
 export interface FormatterHints {
   /** Whether the channel is read-only (text response won't be posted) */
   isReadOnly?: boolean;
-  
+
   /** Custom action hints for this channel (e.g., "Use CLI to reply") */
   actionsSection?: string[];
-  
-  /** Additional context lines to display in Chat Context section */
-  contextSection?: string[];
-  
+
   /** Whether to skip the Response Directives section */
   skipDirectives?: boolean;
-  
+
   /** Custom format hint (overrides default channel format) */
   formatHint?: string;
+
+  /** Whether this channel supports emoji reactions */
+  supportsReactions?: boolean;
+
+  /** Whether this channel supports file/image sending */
+  supportsFiles?: boolean;
 }
 
 /**
@@ -154,6 +157,7 @@ export interface InboundMessage {
     subjectUri?: string;
     subjectCid?: string;
   };
+  extraContext?: Record<string, string>; // Extra key/value pairs rendered in Chat Context header
   formatterHints?: FormatterHints;   // Channel-specific formatting hints
 }
 

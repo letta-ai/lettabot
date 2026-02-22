@@ -4,7 +4,7 @@
  * Each channel (Telegram, Slack, Discord, WhatsApp, Signal) implements this interface.
  */
 
-import type { ChannelId, InboundMessage, OutboundMessage, OutboundFile } from '../core/types.js';
+import type { ChannelId, InboundMessage, OutboundMessage, OutboundFile, FormatterHints } from '../core/types.js';
 
 /**
  * Channel adapter - implement this for each messaging platform
@@ -29,6 +29,7 @@ export interface ChannelAdapter {
   sendFile?(file: OutboundFile): Promise<{ messageId: string }>;
   addReaction?(chatId: string, messageId: string, emoji: string): Promise<void>;
   getDmPolicy?(): string;
+  getFormatterHints(): FormatterHints;
   
   // Event handlers (set by bot core)
   onMessage?: (msg: InboundMessage) => Promise<void>;

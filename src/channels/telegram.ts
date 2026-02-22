@@ -284,6 +284,7 @@ export class TelegramAdapter implements ChannelAdapter {
           groupName,
           wasMentioned,
           isListeningMode,
+          formatterHints: this.getFormatterHints(),
         });
       }
     });
@@ -329,6 +330,7 @@ export class TelegramAdapter implements ChannelAdapter {
             messageId: String(messageId),
             action,
           },
+          formatterHints: this.getFormatterHints(),
         });
       }
     });
@@ -390,6 +392,7 @@ export class TelegramAdapter implements ChannelAdapter {
             groupName,
             wasMentioned,
             isListeningMode,
+            formatterHints: this.getFormatterHints(),
           });
         }
       } catch (error) {
@@ -408,6 +411,7 @@ export class TelegramAdapter implements ChannelAdapter {
             groupName,
             wasMentioned,
             isListeningMode,
+            formatterHints: this.getFormatterHints(),
           });
         }
       }
@@ -442,6 +446,7 @@ export class TelegramAdapter implements ChannelAdapter {
           wasMentioned,
           isListeningMode,
           attachments,
+          formatterHints: this.getFormatterHints(),
         });
       }
     });
@@ -578,6 +583,14 @@ export class TelegramAdapter implements ChannelAdapter {
   
   getDmPolicy(): string {
     return this.config.dmPolicy || 'pairing';
+  }
+
+  getFormatterHints() {
+    return {
+      supportsReactions: true,
+      supportsFiles: true,
+      formatHint: 'MarkdownV2: *bold* _italic_ `code` [link](url) — NO: headers, tables',
+    };
   }
 
   async sendTypingIndicator(chatId: string): Promise<void> {

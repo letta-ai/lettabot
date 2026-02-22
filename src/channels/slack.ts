@@ -166,6 +166,7 @@ export class SlackAdapter implements ChannelAdapter {
           wasMentioned: false, // Regular messages; app_mention handles mentions
           isListeningMode: mode === 'listen',
           attachments,
+          formatterHints: this.getFormatterHints(),
         });
       }
     });
@@ -229,6 +230,7 @@ export class SlackAdapter implements ChannelAdapter {
           wasMentioned: true, // app_mention is always a mention
           isListeningMode: false, // Mentions are always responsive, not listening-only
           attachments,
+          formatterHints: this.getFormatterHints(),
         });
       }
     });
@@ -320,6 +322,14 @@ export class SlackAdapter implements ChannelAdapter {
     return this.config.dmPolicy || 'pairing';
   }
 
+  getFormatterHints() {
+    return {
+      supportsReactions: true,
+      supportsFiles: true,
+      formatHint: 'Slack mrkdwn: *bold* _italic_ `code` <URL|text> — NO standard markdown headers',
+    };
+  }
+
   /** Check if a channel is allowed by the groups config allowlist */
   private isChannelAllowed(channelId: string): boolean {
     return isGroupAllowed(this.config.groups, [channelId]);
@@ -374,6 +384,7 @@ export class SlackAdapter implements ChannelAdapter {
         messageId,
         action,
       },
+      formatterHints: this.getFormatterHints(),
     });
   }
 
