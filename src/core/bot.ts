@@ -1331,16 +1331,22 @@ export class LettaBot implements AgentSession {
    * In per-channel mode with a dedicated key, no lock needed (parallel OK).
    * In per-channel mode with a channel key, wait for that key's queue.
    * In shared mode, use the global processing flag.
+   *
+   * @param tryOnly - If true, return false immediately when the lock is held
+   *   instead of spinning. Used by background triggers (heartbeats, cron) to
+   *   avoid blocking when a user conversation is in progress.
    */
-  private async acquireLock(convKey: string): Promise<boolean> {
+  private async acquireLock(convKey: string, tryOnly = false): Promise<boolean> {
     if (convKey === 'heartbeat') return false; // No lock needed
 
     if (this.config.conversationMode === 'per-channel') {
+      if (tryOnly && this.processingKeys.has(convKey)) return false;
       while (this.processingKeys.has(convKey)) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
       this.processingKeys.add(convKey);
     } else {
+      if (tryOnly && this.processing) return false;
       while (this.processing) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
@@ -1364,7 +1370,13 @@ export class LettaBot implements AgentSession {
     _context?: TriggerContext
   ): Promise<string> {
     const convKey = this.resolveHeartbeatConversationKey();
-    const acquired = await this.acquireLock(convKey);
+    // Use non-blocking lock for background triggers to avoid deadlocking
+    // user conversations. If the channel is busy, skip this invocation.
+    const acquired = await this.acquireLock(convKey, /* tryOnly */ true);
+    if (!acquired && convKey !== 'heartbeat') {
+      console.log(`[Bot] sendToAgent skipped: channel "${convKey}" is busy processing a user message`);
+      return '';
+    }
     
     try {
       const { stream } = await this.runSession(text, { convKey });
@@ -1407,7 +1419,11 @@ export class LettaBot implements AgentSession {
     _context?: TriggerContext
   ): AsyncGenerator<StreamMsg> {
     const convKey = this.resolveHeartbeatConversationKey();
-    const acquired = await this.acquireLock(convKey);
+    const acquired = await this.acquireLock(convKey, /* tryOnly */ true);
+    if (!acquired && convKey !== 'heartbeat') {
+      console.log(`[Bot] streamToAgent skipped: channel "${convKey}" is busy processing a user message`);
+      return;
+    }
 
     try {
       const { stream } = await this.runSession(text, { convKey });

@@ -208,6 +208,13 @@ export class HeartbeatService {
       // Send to agent - response text is NOT delivered (silent mode)
       // Agent must use `lettabot-message` CLI via Bash to send messages
       const response = await this.bot.sendToAgent(message, triggerContext);
+
+      // Empty response means the channel was busy (user conversation in progress)
+      if (response === '') {
+        console.log(`[Heartbeat] Skipped — channel busy with user conversation`);
+        logEvent('heartbeat_skipped_channel_busy', {});
+        return;
+      }
       
       // Log results
       console.log(`[Heartbeat] Agent finished.`);
