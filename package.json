@@ -87,6 +87,8 @@
     "yaml": "^2.8.2"
   },
   "optionalDependencies": {
+    "@arizeai/openinference-core": "^2.0.5",
+    "@arizeai/phoenix-otel": "^0.4.1",
     "@slack/bolt": "^4.6.0",
     "@whiskeysockets/baileys": "6.7.21",
     "discord.js": "^14.25.1",
