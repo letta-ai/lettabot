@@ -1065,6 +1065,40 @@ export class LettaBot implements AgentSession {
         adapter.sendTypingIndicator(msg.chatId).catch(() => {});
       }, 4000);
       
+      // Flush timer: ensures accumulated assistant text is sent to the user
+      // even when the stream stalls (e.g., waiting for tool execution on the server).
+      // Without this, partial text sits in `response` unsent between the last
+      // assistant token and the next stream event (which can be 10-60s for tool calls).
+      let flushTimer: ReturnType<typeof setTimeout> | null = null;
+      const scheduleFlush = () => {
+        if (flushTimer) clearTimeout(flushTimer);
+        flushTimer = setTimeout(async () => {
+          const canEdit = adapter.supportsEditing?.() ?? true;
+          const trimmed = response.trim();
+          const mayBeHidden = '<no-reply/>'.startsWith(trimmed)
+            || '<actions>'.startsWith(trimmed)
+            || (trimmed.startsWith('<actions') && !trimmed.includes('</actions>'));
+          const streamText = stripActionsBlock(response).trim();
+          // Only edit an existing message — never send a new one.
+          // The streaming edit loop (inside the assistant token handler) is responsible
+          // for the initial sendMessage. The flush timer's job is just to push the
+          // latest accumulated text to an already-sent message.
+          if (canEdit && !mayBeHidden && !suppressDelivery && streamText.length > 0 && messageId) {
+            try {
+              const prefixedStream = this.prefixResponse(streamText);
+              await adapter.editMessage(msg.chatId, messageId, prefixedStream);
+              lastUpdate = Date.now();
+            } catch (flushErr) {
+              // "message is not modified" is expected if streaming edit already sent same content
+              const errMsg = flushErr instanceof Error ? flushErr.message : String(flushErr);
+              if (!errMsg.includes('message is not modified')) {
+                console.warn('[Bot] Flush edit failed:', errMsg);
+              }
+            }
+          }
+        }, 600); // Slightly longer than the 500ms streaming throttle to avoid races
+      };
+      
       try {
         let firstChunkLogged = false;
         for await (const streamMsg of run.stream()) {
@@ -1125,6 +1159,10 @@ export class LettaBot implements AgentSession {
             lastAssistantUuid = msgUuid || lastAssistantUuid;
             
             response += streamMsg.content || '';
+            
+            // Schedule a flush so the full text is sent even if no more tokens arrive
+            // (e.g., when the server starts executing tool calls)
+            scheduleFlush();
             
             // Live-edit streaming for channels that support it
             // Hold back streaming edits while response could still be <no-reply/> or <actions> block
@@ -1227,6 +1265,7 @@ export class LettaBot implements AgentSession {
           }
         }
       } finally {
+        if (flushTimer) clearTimeout(flushTimer);
         clearInterval(typingInterval);
         adapter.stopTypingIndicator?.(msg.chatId)?.catch(() => {});
       }
