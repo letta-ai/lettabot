@@ -23,7 +23,6 @@ const CHANNEL_FORMATS: Record<string, string> = {
   telegram: 'MarkdownV2: *bold* _italic_ `code` [links](url) - NO: headers, tables',
   whatsapp: '*bold* _italic_ `code` - NO: headers, code fences, links, tables',
   signal: 'ONLY: *bold* _italic_ `code` - NO: headers, code fences, links, quotes, tables',
-  bluesky: 'Plain text only (no markdown, no tables).',
 };
 
 export interface EnvelopeOptions {
@@ -122,9 +121,6 @@ function formatSender(msg: InboundMessage): string {
       return msg.userId;
     
     case 'telegram':
-      return msg.userHandle ? `@${msg.userHandle}` : msg.userId;
-
-    case 'bluesky':
       return msg.userHandle ? `@${msg.userHandle}` : msg.userId;
     
     default:
@@ -233,7 +229,7 @@ function buildMetadataLines(msg: InboundMessage, options: EnvelopeOptions): stri
   lines.push(`- **Timestamp**: ${formatTimestamp(msg.timestamp, options)}`);
 
   // Format support hint
-  const formatHint = CHANNEL_FORMATS[msg.channel];
+  const formatHint = msg.formatterHints?.formatHint || CHANNEL_FORMATS[msg.channel];
   if (formatHint) {
     lines.push(`- **Format support**: ${formatHint}`);
   }
@@ -356,23 +352,19 @@ export function formatMessageEnvelope(
   }
 
   // Channel-specific action hints
-  if (msg.channel === 'bluesky') {
-    const blueskyLines = [
-      '- This channel is read-only; your text response will NOT be posted.',
-      '- Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
-      '- Reply: `lettabot-bluesky post --reply-to <uri> --text "..."`',
-      '- Posts over 300 chars require `--threaded` to create a reply thread.',
-    ];
-    sections.push(`## Bluesky Actions\n${blueskyLines.join('\n')}`);
+  if (msg.formatterHints?.actionsSection && msg.formatterHints.actionsSection.length > 0) {
+    sections.push(`## Channel Actions\n${msg.formatterHints.actionsSection.join('\n')}`);
   }
 
-  // Response directives hint
-  const directiveLines = [
-    `- To skip replying: \`<no-reply/>\``,
-    `- To perform actions: wrap in \`<actions>\` at the start of your response`,
-    `  Example: \`<actions><react emoji="thumbsup" /></actions>Your text here\``,
-  ];
-  sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
+  // Response directives hint (skip if hints say so, or if in listening mode)
+  if (!msg.formatterHints?.skipDirectives && !msg.isListeningMode) {
+    const directiveLines = [
+      `- To skip replying: \`<no-reply/>\``,
+      `- To perform actions: wrap in \`<actions>\` at the start of your response`,
+      `  Example: \`<actions><react emoji="thumbsup" /></actions>Your text here\``,
+    ];
+    sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
+  }
 
   // Build the full system-reminder block
   const reminderContent = sections.join('\n\n');

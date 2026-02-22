@@ -43,7 +43,7 @@ export interface TriggerContext {
 // Original Types
 // =============================================================================
 
-export type ChannelId = 'telegram' | 'telegram-mtproto' | 'slack' | 'whatsapp' | 'signal' | 'discord' | 'bluesky' | 'mock';
+export type ChannelId = 'telegram' | 'telegram-mtproto' | 'slack' | 'whatsapp' | 'signal' | 'discord' | 'mock';
 
 export interface InboundAttachment {
   id?: string;
@@ -59,6 +59,23 @@ export interface InboundReaction {
   emoji: string;
   messageId: string;
   action?: 'added' | 'removed';
+}
+
+/**
+ * Formatter hints provided by channel adapters
+ */
+export interface FormatterHints {
+  /** Whether the channel is read-only (text response won't be posted) */
+  isReadOnly?: boolean;
+  
+  /** Custom action hints for this channel (e.g., "Use CLI to reply") */
+  actionsSection?: string[];
+  
+  /** Whether to skip the Response Directives section */
+  skipDirectives?: boolean;
+  
+  /** Custom format hint (overrides default channel format) */
+  formatHint?: string;
 }
 
 /**
@@ -84,18 +101,7 @@ export interface InboundMessage {
   isBatch?: boolean;                  // Is this a batched group message?
   batchedMessages?: InboundMessage[]; // Original individual messages (for batch formatting)
   isListeningMode?: boolean;          // Listening mode: agent processes for memory but response is suppressed
-  source?: {
-    uri?: string;
-    collection?: string;
-    cid?: string;
-    rkey?: string;
-    threadRootUri?: string;
-    threadParentUri?: string;
-    threadRootCid?: string;
-    threadParentCid?: string;
-    subjectUri?: string;
-    subjectCid?: string;
-  };
+  formatterHints?: FormatterHints;   // Channel-specific formatting hints
 }
 
 /**
@@ -153,7 +159,6 @@ export interface BotConfig {
   // Conversation routing
   conversationMode?: 'shared' | 'per-channel'; // Default: shared
   heartbeatConversation?: string; // "dedicated" | "last-active" | "<channel>" (default: last-active)
-  conversationOverrides?: string[]; // Channels that always use their own conversation (shared mode)
 }
 
 /**
