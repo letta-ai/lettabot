@@ -553,13 +553,42 @@ async function main() {
       initialStatus = bot.getStatus();
     }
     
-    // Verify agent exists (clear stale ID if deleted)
+    // Verify agent exists (clear stale ID only on confirmed 404, never on transient errors)
     if (initialStatus.agentId) {
-      const exists = await agentExists(initialStatus.agentId);
-      if (!exists) {
-        console.log(`[Agent:${agentConfig.name}] Stored agent ${initialStatus.agentId} not found on server`);
-        bot.reset();
-        initialStatus = bot.getStatus();
+      let agentVerified = false;
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+          agentVerified = await agentExists(initialStatus.agentId);
+          break; // Server responded — trust the result
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[Agent:${agentConfig.name}] Server unreachable checking agent (attempt ${attempt}/5): ${msg}`);
+          if (attempt < 5) {
+            // Exponential backoff: 2s, 4s, 8s, 16s
+            const delay = Math.min(2000 * Math.pow(2, attempt - 1), 16000);
+            console.log(`[Agent:${agentConfig.name}] Retrying in ${delay / 1000}s...`);
+            await new Promise(r => setTimeout(r, delay));
+          }
+        }
+      }
+      if (!agentVerified && initialStatus.agentId) {
+        // All retries exhausted without a definitive answer. Do one final
+        // confirmation: if the server is reachable AND the agent is still
+        // not found, only then reset. This guards against the race where
+        // the server comes up between the last retry and this check.
+        try {
+          const finalCheck = await agentExists(initialStatus.agentId);
+          if (finalCheck) {
+            console.log(`[Agent:${agentConfig.name}] Agent found on final check (server may have just come up)`);
+          } else {
+            console.log(`[Agent:${agentConfig.name}] Stored agent ${initialStatus.agentId} confirmed not found on server`);
+            bot.reset();
+            initialStatus = bot.getStatus();
+          }
+        } catch {
+          // Server still unreachable — keep the stored agent ID, don't reset
+          console.warn(`[Agent:${agentConfig.name}] Server unreachable after retries — keeping stored agent ID ${initialStatus.agentId}`);
+        }
       }
     }
 
