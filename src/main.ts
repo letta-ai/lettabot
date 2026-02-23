@@ -573,8 +573,10 @@ async function main() {
   for (const agentConfig of agents) {
     console.log(`\n[Setup] Configuring agent: ${agentConfig.name}`);
     
-    // Resolve memfs: YAML config takes precedence, then env var, then undefined (leave unchanged)
-    const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : process.env.LETTABOT_MEMFS === 'false' ? false : undefined);
+    // Resolve memfs: YAML config takes precedence, then env var, then default false.
+    // Default false prevents the SDK from auto-enabling memfs, which crashes on
+    // self-hosted Letta servers that don't have the git endpoint.
+    const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : false);
 
     // Create LettaBot for this agent
     const bot = new LettaBot({
