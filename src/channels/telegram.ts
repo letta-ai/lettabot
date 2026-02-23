@@ -255,6 +255,14 @@ export class TelegramAdapter implements ChannelAdapter {
         await ctx.reply(result || 'Reset complete');
       }
     });
+
+    // Handle /cancel - abort active agent run
+    this.bot.command('cancel', async (ctx) => {
+      if (this.onCommand) {
+        const result = await this.onCommand('cancel');
+        if (result) await ctx.reply(result);
+      }
+    });
     
     // Handle text messages
     this.bot.on('message:text', async (ctx) => {

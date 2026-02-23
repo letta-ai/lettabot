@@ -248,7 +248,7 @@ Ask the bot owner to approve with:
           return;
         }
         if (this.onCommand) {
-          if (command === 'status' || command === 'reset' || command === 'heartbeat') {
+          if (command === 'status' || command === 'reset' || command === 'heartbeat' || command === 'cancel') {
             const result = await this.onCommand(command);
             if (result) {
               await message.channel.send(result);

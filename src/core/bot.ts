@@ -173,6 +173,7 @@ export class LettaBot implements AgentSession {
   private listeningGroupIds: Set<string> = new Set();
   private processing = false; // Global lock for shared mode
   private processingKeys: Set<string> = new Set(); // Per-key locks for per-channel mode
+  private activeRunKeys: Set<string> = new Set(); // Tracks which conversation keys have an active agent run
 
   // AskUserQuestion support: resolves when the next user message arrives
   private pendingQuestionResolver: ((text: string) => void) | null = null;
@@ -802,6 +803,36 @@ export class LettaBot implements AgentSession {
           return 'Conversation reset. Send a message to start a new conversation. (Agent memory is preserved.)';
         }
       }
+      case 'cancel': {
+        const convKey = channelId ? this.resolveConversationKey(channelId) : 'shared';
+        if (!this.activeRunKeys.has(convKey)) {
+          return 'Nothing to cancel -- no active run.';
+        }
+
+        // 1. Abort client-side stream
+        const session = this.sessions.get(convKey);
+        if (session) {
+          session.abort().catch(() => {});
+          console.log(`[Command] /cancel - aborted session stream (key=${convKey})`);
+        }
+
+        // 2. Cancel server-side run
+        const agentId = this.store.agentId;
+        if (agentId) {
+          const { cancelRuns } = await import('../tools/letta-api.js');
+          const cancelled = await cancelRuns(agentId);
+          if (cancelled) {
+            console.log(`[Command] /cancel - cancelled server-side runs for agent ${agentId}`);
+          } else {
+            console.warn(`[Command] /cancel - server-side cancellation failed (agent ${agentId})`);
+          }
+        }
+
+        // 3. Clean up active run tracking
+        this.activeRunKeys.delete(convKey);
+        console.log(`[Command] /cancel - run cancelled (key=${convKey})`);
+        return 'Run cancelled.';
+      }
       default:
         return null;
     }
@@ -1099,11 +1130,12 @@ export class LettaBot implements AgentSession {
 
     // Run session
     let session: Session | null = null;
+    const convKey = this.resolveConversationKey(msg.channel);
     try {
-      const convKey = this.resolveConversationKey(msg.channel);
       const run = await this.runSession(messageToSend, { retried, canUseTool, convKey });
       lap('session send');
       session = run.session;
+      this.activeRunKeys.add(convKey);
 
       // Stream response with delivery
       let response = '';
@@ -1464,6 +1496,7 @@ export class LettaBot implements AgentSession {
       }
     } finally {
       // Session stays alive for reuse -- only invalidated on errors
+      this.activeRunKeys.delete(convKey);
     }
   }
 
