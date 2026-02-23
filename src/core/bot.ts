@@ -817,20 +817,26 @@ export class LettaBot implements AgentSession {
         }
 
         // 2. Cancel server-side run
+        // TODO: cancelRuns() cancels all runs for this agent. In per-channel mode this
+        // could cancel runs from other channels. To scope cancellation per-conversation,
+        // we'd need run IDs from the stream -- SDK only exposes these on error/retry messages.
+        let serverCancelled = true;
         const agentId = this.store.agentId;
         if (agentId) {
-          const { cancelRuns } = await import('../tools/letta-api.js');
-          const cancelled = await cancelRuns(agentId);
-          if (cancelled) {
+          serverCancelled = await cancelRuns(agentId);
+          if (serverCancelled) {
             console.log(`[Command] /cancel - cancelled server-side runs for agent ${agentId}`);
           } else {
-            console.warn(`[Command] /cancel - server-side cancellation failed (agent ${agentId})`);
+            console.error(`[Command] /cancel - server-side cancellation failed (agent ${agentId})`);
           }
         }
 
         // 3. Clean up active run tracking
         this.activeRunKeys.delete(convKey);
         console.log(`[Command] /cancel - run cancelled (key=${convKey})`);
+        if (!serverCancelled) {
+          return 'Run cancelled locally, but server-side cancellation failed -- the run may still complete on the server.';
+        }
         return 'Run cancelled.';
       }
       default:
@@ -1131,11 +1137,11 @@ export class LettaBot implements AgentSession {
     // Run session
     let session: Session | null = null;
     const convKey = this.resolveConversationKey(msg.channel);
+    this.activeRunKeys.add(convKey); // Mark active before starting so /cancel works during runSession()
     try {
       const run = await this.runSession(messageToSend, { retried, canUseTool, convKey });
       lap('session send');
       session = run.session;
-      this.activeRunKeys.add(convKey);
 
       // Stream response with delivery
       let response = '';
