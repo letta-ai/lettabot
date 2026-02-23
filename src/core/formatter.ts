@@ -414,16 +414,9 @@ export function formatMessageEnvelope(
     sections.push(`## Chat Context\n${contextLines.join('\n')}`);
   }
 
-  // Channel-specific action hints
-  if (msg.formatterHints?.actionsSection && msg.formatterHints.actionsSection.length > 0) {
-    sections.push(`## Channel Actions\n${msg.formatterHints.actionsSection.join('\n')}`);
-  }
-
-  // Response directives (skip only if hints say so)
-  if (!msg.formatterHints?.skipDirectives) {
-    const directiveLines = buildResponseDirectives(msg);
-    sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
-  }
+  // Response directives
+  const directiveLines = buildResponseDirectives(msg);
+  sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
 
   // Build the full system-reminder block
   const reminderContent = sections.join('\n\n');
