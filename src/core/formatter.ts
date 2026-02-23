@@ -414,9 +414,16 @@ export function formatMessageEnvelope(
     sections.push(`## Chat Context\n${contextLines.join('\n')}`);
   }
 
-  // Response directives
-  const directiveLines = buildResponseDirectives(msg);
-  sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
+  // Channel-specific action hints (Bluesky: replaces standard directives)
+  if (msg.formatterHints?.actionsSection && msg.formatterHints.actionsSection.length > 0) {
+    sections.push(`## Channel Actions\n${msg.formatterHints.actionsSection.join('\n')}`);
+  }
+
+  // Response directives (skip if channel provides its own actionsSection)
+  if (!msg.formatterHints?.skipDirectives) {
+    const directiveLines = buildResponseDirectives(msg);
+    sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
+  }
 
   // Build the full system-reminder block
   const reminderContent = sections.join('\n\n');
