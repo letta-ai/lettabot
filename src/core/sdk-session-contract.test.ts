@@ -164,4 +164,91 @@ describe('SDK session contract', () => {
     expect(secondSession.close).toHaveBeenCalledTimes(1);
     expect(vi.mocked(createSession)).toHaveBeenCalledTimes(2);
   });
+
+  it('passes memfs: true to createSession when config sets memfs true', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'ack' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      memfs: true,
+    });
+
+    await bot.sendToAgent('test');
+
+    const opts = vi.mocked(createSession).mock.calls[0][1];
+    expect(opts).toHaveProperty('memfs', true);
+  });
+
+  it('passes memfs: false to createSession when config sets memfs false', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'ack' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      memfs: false,
+    });
+
+    await bot.sendToAgent('test');
+
+    const opts = vi.mocked(createSession).mock.calls[0][1];
+    expect(opts).toHaveProperty('memfs', false);
+  });
+
+  it('omits memfs key from createSession options when config memfs is undefined', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'ack' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      // memfs intentionally omitted
+    });
+
+    await bot.sendToAgent('test');
+
+    const opts = vi.mocked(createSession).mock.calls[0][1];
+    expect(opts).not.toHaveProperty('memfs');
+  });
 });
