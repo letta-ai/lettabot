@@ -239,6 +239,11 @@ export class LettaBot implements AgentSession {
     return this.hookRunner.runPre(this.hooksConfig.preMessage, ctx);
   }
 
+  private async runPostReasoningHook(ctx: MessageHookContext): Promise<void> {
+    if (!this.hookRunner || !this.hooksConfig?.postReasoning) return;
+    await this.hookRunner.runPostReasoning(this.hooksConfig.postReasoning, ctx);
+  }
+
   private async runPostMessageHook(ctx: MessageHookContext): Promise<string | undefined> {
     if (!this.hookRunner || !this.hooksConfig?.postMessage) return undefined;
     return this.hookRunner.runPost(this.hooksConfig.postMessage, ctx);
@@ -1201,7 +1206,7 @@ export class LettaBot implements AgentSession {
       let receivedAnyData = false;
       let sawNonAssistantSinceLastUuid = false;
       const msgTypeCounts: Record<string, number> = {};
-      let accumulatedReasoning = ''; // Accumulate reasoning tokens for single trace event
+      let accumulatedReasoning = ''; // Accumulate reasoning tokens for postReasoning hook and tracing
       
       const finalizeMessage = async () => {
         // Parse and execute XML directives before sending
@@ -1302,9 +1307,28 @@ export class LettaBot implements AgentSession {
             // Accumulate reasoning tokens - will be logged as single event when type changes
             accumulatedReasoning += streamMsg.content || '';
             sawNonAssistantSinceLastUuid = true;
+          } else if (streamMsg.type === 'reasoning') {
+            // Accumulate reasoning tokens
+            accumulatedReasoning += streamMsg.content || '';
+            sawNonAssistantSinceLastUuid = true;
           } else if (streamMsg.type !== 'assistant') {
             sawNonAssistantSinceLastUuid = true;
           }
+
+          // Flush reasoning when transitioning away from reasoning type
+          if (lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && accumulatedReasoning) {
+            // Call postReasoning hook with accumulated reasoning
+            if (hookMessage && hookContextBase) {
+              await this.runPostReasoningHook({
+                stage: 'postReasoning',
+                message: hookMessage,
+                reasoning: accumulatedReasoning,
+                ...hookContextBase,
+              });
+            }
+            accumulatedReasoning = '';
+          }
+
           lastMsgType = streamMsg.type;
           
           if (streamMsg.type === 'assistant') {
