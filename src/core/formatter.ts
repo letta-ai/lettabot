@@ -252,8 +252,12 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
     if (msg.wasMentioned) {
       lines.push(`- **Mentioned**: yes`);
     }
-    if (!msg.isListeningMode) {
+    if (msg.isListeningMode) {
+      lines.push(`- **Mode**: Listen only — observe and update memories, do not send text replies`);
+    } else if (msg.formatterHints?.supportsReactions) {
       lines.push(`- **Hint**: See Response Directives below for \`<no-reply/>\` and \`<actions>\``);
+    } else {
+      lines.push(`- **Hint**: See Response Directives below for \`<no-reply/>\``);
     }
   } else if (messageType === 'public') {
     lines.push(`- **Type**: Public post`);
@@ -310,6 +314,9 @@ export function buildSessionContext(options: SessionContextOptions): string[] {
 
 /**
  * Build context-aware Response Directives lines based on channel capabilities and chat type.
+ *
+ * In listening mode, only shows minimal directives (no-reply and reactions).
+ * In normal mode, shows full directive set.
  */
 function buildResponseDirectives(msg: InboundMessage): string[] {
   const lines: string[] = [];
@@ -317,6 +324,19 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
   const supportsFiles = msg.formatterHints?.supportsFiles ?? false;
   const messageType = msg.messageType ?? (msg.isGroup ? 'group' : 'dm');
   const isGroup = messageType === 'group';
+  const isListeningMode = msg.isListeningMode ?? false;
+
+  // In listening mode, show minimal directives
+  if (isListeningMode) {
+    lines.push(`- \`<no-reply/>\` — acknowledge without replying (recommended)`);
+    if (supportsReactions) {
+      lines.push(`- \`<actions><react emoji="eyes" /></actions>\` — react to show you saw this`);
+      lines.push(`- Emoji names: eyes, thumbsup, heart, fire, tada, clap — or unicode`);
+    }
+    return lines;
+  }
+
+  // Normal mode: full directives
 
   // no-reply
   if (isGroup) {
@@ -327,7 +347,7 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
 
   // actions/react (only if supported)
   if (supportsReactions) {
-    lines.push(`- \`<actions><react emoji="thumbsup" /></actions>\` — react without sending text`);
+    lines.push(`- \`<actions><react emoji="thumbsup" /></actions>\` — react without sending text (executes silently, like \`<no-reply/>\`)`);
     lines.push(`- \`<actions><react emoji="eyes" /></actions>Your text here\` — react and reply`);
     if (isGroup) {
       lines.push(`- \`<actions><react emoji="fire" message="123" /></actions>\` — react to a specific message`);
@@ -399,8 +419,8 @@ export function formatMessageEnvelope(
     sections.push(`## Channel Actions\n${msg.formatterHints.actionsSection.join('\n')}`);
   }
 
-  // Response directives (skip if hints say so, or if in listening mode)
-  if (!msg.formatterHints?.skipDirectives && !msg.isListeningMode) {
+  // Response directives (skip only if hints say so)
+  if (!msg.formatterHints?.skipDirectives) {
     const directiveLines = buildResponseDirectives(msg);
     sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
   }
@@ -450,7 +470,7 @@ export function formatGroupBatchEnvelope(
   headerParts.push(`${messages.length} message${messages.length === 1 ? '' : 's'}`);
   let header = `[${headerParts.join(' - ')}]`;
   if (isListeningMode) {
-    header += '\n[OBSERVATION ONLY - Update memories. Do not reply unless addressed.]';
+    header += '\n[OBSERVATION ONLY — Update memories, do not send text replies]';
   }
 
   // Chat log lines
@@ -477,8 +497,14 @@ export function formatGroupBatchEnvelope(
 
   // Response directives (compact form for batch)
   let directives = '';
-  if (!isListeningMode) {
-    const supportsReactions = first.formatterHints?.supportsReactions ?? false;
+  const supportsReactions = first.formatterHints?.supportsReactions ?? false;
+  if (isListeningMode) {
+    const parts = ['`<no-reply/>` to acknowledge'];
+    if (supportsReactions) {
+      parts.push('`<actions><react emoji="eyes" /></actions>` to react');
+    }
+    directives = `\n(Directives: ${parts.join(', ')})`;
+  } else {
     const parts = ['`<no-reply/>` to skip replying'];
     if (supportsReactions) {
       parts.push('`<actions><react emoji="thumbsup" /></actions>` to react');
