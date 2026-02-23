@@ -21,7 +21,7 @@ import { SYSTEM_PROMPT } from './system-prompt.js';
 import { parseDirectives, stripActionsBlock, type Directive } from './directives.js';
 import { createManageTodoTool } from '../tools/todo.js';
 import { syncTodosFromTool } from '../todo/store.js';
-import { MessageHookRunner } from './hooks.js';
+import { MessageHookRunner, type PreHookResult } from './hooks.js';
 import { traceAgentTurn, type TracingSpan } from '../tracing/index.js';
 
 
@@ -319,8 +319,8 @@ export class LettaBot implements AgentSession {
     };
   }
 
-  private async runPreMessageHook(ctx: MessageHookContext): Promise<SendMessage | undefined> {
-    if (!this.hookRunner || !this.hooksConfig?.preMessage) return undefined;
+  private async runPreMessageHook(ctx: MessageHookContext): Promise<PreHookResult> {
+    if (!this.hookRunner || !this.hooksConfig?.preMessage) return {};
     return this.hookRunner.runPre(this.hooksConfig.preMessage, ctx);
   }
 
@@ -1271,14 +1271,18 @@ export class LettaBot implements AgentSession {
       async (tracingSpan: TracingSpan) => {
     // Run preMessage hook inside the trace span so the OTEL span is already active.
     // getTraceId() in hooks reads trace.getActiveSpan() — it must be called within a span.
-    const hookOverride = await this.runPreMessageHook({
+    const hookResult = await this.runPreMessageHook({
       stage: 'pre',
       message: hookMessage!, // set to messageToSend just above traceAgentTurn
       ...hookBase,
     });
-    if (hookOverride) {
-      messageToSend = hookOverride;
-      hookMessage = hookOverride;
+    if (hookResult.skip) {
+      console.log('[Bot] preMessage hook requested skip — dropping message');
+      return;
+    }
+    if (hookResult.message) {
+      messageToSend = hookResult.message;
+      hookMessage = hookResult.message;
     }
     lap('format message');
 
@@ -1797,13 +1801,17 @@ export class LettaBot implements AgentSession {
       return override ?? currentResponse;
     };
 
-    const hookOverride = await this.runPreMessageHook({
+    const hookResult = await this.runPreMessageHook({
       stage: 'pre',
       message: hookMessage,
       ...hookContextBase,
     });
-    if (hookOverride) {
-      hookMessage = hookOverride;
+    if (hookResult.skip) {
+      console.log('[Bot] preMessage hook requested skip — dropping message');
+      return '';
+    }
+    if (hookResult.message) {
+      hookMessage = hookResult.message;
     }
 
     try {
@@ -1878,13 +1886,17 @@ export class LettaBot implements AgentSession {
       postHookRan = true;
     };
 
-    const hookOverride = await this.runPreMessageHook({
+    const hookResult = await this.runPreMessageHook({
       stage: 'pre',
       message: hookMessage,
       ...hookContextBase,
     });
-    if (hookOverride) {
-      hookMessage = hookOverride;
+    if (hookResult.skip) {
+      console.log('[Bot] preMessage hook requested skip — dropping message');
+      return;
+    }
+    if (hookResult.message) {
+      hookMessage = hookResult.message;
     }
 
     try {

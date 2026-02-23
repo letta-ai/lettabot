@@ -208,6 +208,92 @@ describe('message hooks', () => {
     expect(events[0].isHeartbeat).toBe(true);
   });
 
+  it('skips agent call when preMessage hook returns { skip: true } via sendToAgent', async () => {
+    const hookDir = mkdtempSync(join(tmpdir(), 'lettabot-hook-module-'));
+    const hookPath = join(hookDir, 'hooks.mjs');
+    writeFileSync(
+      hookPath,
+      [
+        'export async function preMessage(_ctx) {',
+        '  return { skip: true };',
+        '}',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const mockSession = makeSession();
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      hooks: {
+        preMessage: { file: './hooks.mjs', mode: 'await' },
+      },
+      hooksDir: hookDir,
+    });
+
+    const result = await bot.sendToAgent('hello');
+
+    expect(mockSession.send).not.toHaveBeenCalled();
+    expect(result).toBe('');
+  });
+
+  it('skips agent call when preMessage hook returns { skip: true } via processMessage', async () => {
+    const hookDir = mkdtempSync(join(tmpdir(), 'lettabot-hook-module-'));
+    const hookPath = join(hookDir, 'hooks.mjs');
+    writeFileSync(
+      hookPath,
+      [
+        'export async function preMessage(_ctx) {',
+        '  return { skip: true };',
+        '}',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const mockSession = makeSession();
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      hooks: {
+        preMessage: { file: './hooks.mjs', mode: 'await' },
+      },
+      hooksDir: hookDir,
+    });
+
+    const adapter = {
+      id: 'telegram',
+      name: 'Telegram',
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async () => ({ messageId: '1' })),
+      editMessage: vi.fn(async () => undefined),
+      sendTypingIndicator: vi.fn(async () => undefined),
+      stopTypingIndicator: vi.fn(async () => undefined),
+      supportsEditing: () => true,
+    };
+
+    const message = {
+      channel: 'telegram',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      messageId: 'msg-123',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(message, adapter);
+
+    expect(mockSession.stream).not.toHaveBeenCalled();
+    expect(adapter.sendMessage).not.toHaveBeenCalled();
+  });
+
   it('flags suppressed delivery in postMessage hook without blocking', async () => {
     const hookDir = mkdtempSync(join(tmpdir(), 'lettabot-hook-module-'));
     const hookPath = join(hookDir, 'hooks.mjs');

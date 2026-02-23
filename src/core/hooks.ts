@@ -10,6 +10,11 @@ type HookModule = {
   postMessage?: (ctx: MessageHookContext) => Promise<unknown> | unknown;
 };
 
+export type PreHookResult = {
+  skip?: boolean;
+  message?: SendMessage;
+};
+
 const DEFAULT_HOOK_MODE: HookHandlerConfig['mode'] = 'await';
 
 function isSendMessage(value: unknown): value is SendMessage {
@@ -111,15 +116,19 @@ export class MessageHookRunner {
     }
   }
 
-  async runPre(config: HookHandlerConfig | undefined, ctx: MessageHookContext): Promise<SendMessage | undefined> {
-    if (!config) return undefined;
+  async runPre(config: HookHandlerConfig | undefined, ctx: MessageHookContext): Promise<PreHookResult> {
+    if (!config) return {};
     const mode = config.mode ?? DEFAULT_HOOK_MODE;
     if (mode === 'parallel') {
       void this.invokeHook('preMessage', config, ctx);
-      return undefined;
+      return {};
     }
     const result = await this.invokeHook('preMessage', config, ctx);
-    return extractSendMessage(result);
+    if (result && typeof result === 'object' && !Array.isArray(result) && (result as Record<string, unknown>).skip === true) {
+      return { skip: true };
+    }
+    const message = extractSendMessage(result);
+    return message ? { message } : {};
   }
 
   async runPostReasoning(config: HookHandlerConfig | undefined, ctx: MessageHookContext): Promise<void> {
