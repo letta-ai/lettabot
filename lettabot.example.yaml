@@ -72,7 +72,6 @@ conversations:
 #     type: openai
 #     apiKey: sk-YOUR-OPENAI-KEY
 
-<<<<<<< HEAD
 channels:
   telegram:
     enabled: true
