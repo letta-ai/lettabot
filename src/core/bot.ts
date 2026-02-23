@@ -1388,17 +1388,15 @@ export class LettaBot implements AgentSession {
               tracingSpan.setCost(streamMsg.totalCostUsd);
             }
             if (streamMsg.error) {
-              tracingSpan.recordError(new Error(streamMsg.error));
-            }
-
-            if (streamMsg.error) {
               const detail = resultText.trim();
               const parts = [`error=${streamMsg.error}`];
               if (streamMsg.stopReason) parts.push(`stopReason=${streamMsg.stopReason}`);
               if (streamMsg.durationMs !== undefined) parts.push(`duration=${streamMsg.durationMs}ms`);
               if (streamMsg.conversationId) parts.push(`conv=${streamMsg.conversationId}`);
               if (detail) parts.push(`detail=${detail.slice(0, 300)}`);
-              console.error(`[Bot] Result error: ${parts.join(', ')}`);
+              const errMsg = parts.join(', ');
+              console.error(`[Bot] Result error: ${errMsg}`);
+              tracingSpan.recordError(new Error(errMsg));
             }
 
             // Retry once when stream ends without any assistant text.
