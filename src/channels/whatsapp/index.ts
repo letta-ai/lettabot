@@ -354,7 +354,13 @@ export class WhatsAppAdapter implements ChannelAdapter {
           this.reconnectState.attempts = 0;
         }
       } catch (error) {
-        console.error("[WhatsApp] Socket error:", error);
+        // Suppress full stack trace for expected startup failures (session corruption recovery)
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.includes("Connection closed during startup")) {
+          // One-liner instead of wall of stack trace -- this is expected during session recovery
+        } else {
+          console.error("[WhatsApp] Socket error:", msg);
+        }
         // Resolve the disconnect promise if it's still pending
         disconnectResolve!();
       }
@@ -370,8 +376,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
       // Check for session corruption (repeated failures without QR)
       if (this.consecutiveNoQrFailures >= 3) {
-        console.warn(
-          "[WhatsApp] Session appears corrupted (3 failures without QR), clearing session..."
+        console.log(
+          "[WhatsApp] Session expired, clearing credentials and re-pairing..."
         );
         try {
           rmSync(this.sessionPath, { recursive: true, force: true });
@@ -468,12 +474,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
         qrWasShown = true;
       },
       onConnectionUpdate: (update) => {
-        // Track connection close during initial connection
+        // Track connection close during initial connection (silent -- logged at session clear)
         if (update.connection === "close" && !qrWasShown) {
           this.consecutiveNoQrFailures++;
-          console.warn(
-            `[WhatsApp] Connection closed without QR (failure ${this.consecutiveNoQrFailures}/3)`
-          );
         }
       },
     });
