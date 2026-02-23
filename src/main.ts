@@ -553,6 +553,9 @@ async function main() {
   for (const agentConfig of agents) {
     console.log(`\n[Setup] Configuring agent: ${agentConfig.name}`);
     
+    // Resolve memfs: YAML config takes precedence, then env var, then undefined (leave unchanged)
+    const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : process.env.LETTABOT_MEMFS === 'false' ? false : undefined);
+
     // Create LettaBot for this agent
     const bot = new LettaBot({
       workingDir: globalConfig.workingDir,
@@ -562,6 +565,8 @@ async function main() {
       displayName: agentConfig.displayName,
       maxToolCalls: agentConfig.features?.maxToolCalls,
       sendFileDir: agentConfig.features?.sendFileDir,
+      memfs: resolvedMemfs,
+      display: agentConfig.features?.display,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
       conversationOverrides: agentConfig.conversations?.perChannel,
@@ -573,6 +578,12 @@ async function main() {
       },
     });
     
+    // Log memfs config (from either YAML or env var)
+    if (resolvedMemfs !== undefined) {
+      const source = agentConfig.features?.memfs !== undefined ? '' : ' (from LETTABOT_MEMFS env)';
+      console.log(`[Agent:${agentConfig.name}] memfs: ${resolvedMemfs ? 'enabled' : 'disabled'}${source}`);
+    }
+
     // Apply explicit agent ID from config (before store verification)
     let initialStatus = bot.getStatus();
     if (agentConfig.id && !initialStatus.agentId) {
