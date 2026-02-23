@@ -645,6 +645,7 @@ export async function recoverOrphanedConversationApproval(
             reason: `Auto-denied: originating run was ${status}/${stopReason}`,
           }));
           
+          let submitSucceeded = false;
           try {
             await client.conversations.messages.create(conversationId, {
               messages: [{
@@ -653,14 +654,41 @@ export async function recoverOrphanedConversationApproval(
               }],
               streaming: false,
             });
+            submitSucceeded = true;
           } catch (submitErr) {
-            // The conversation may currently be waiting for a different active
-            // approval (from a newer run). Log and skip rather than crashing.
-            const msg = submitErr instanceof Error ? submitErr.message : String(submitErr);
-            console.warn(`[Letta API] Could not submit ${approvalResponses.length} denial(s) for run ${runId}: ${msg}`);
-            details.push(`Failed to deny ${approvalResponses.length} approval(s) for run ${runId}: ${msg}`);
-            continue;
+            // The server's active approval may have a different tool_call_id than
+            // what's in the conversation messages (e.g. stale history mismatch).
+            // If the error tells us the correct ID, retry once with it.
+            const errMsg = submitErr instanceof Error ? submitErr.message : String(submitErr);
+            const expectedMatch = errMsg.match(/Expected '\['([^']+)'\]/);
+            if (expectedMatch) {
+              const correctToolCallId = expectedMatch[1];
+              console.log(`[Letta API] Retrying denial for run ${runId} with corrected tool_call_id ${correctToolCallId}`);
+              try {
+                await client.conversations.messages.create(conversationId, {
+                  messages: [{
+                    type: 'approval',
+                    approvals: [{
+                      approve: false as const,
+                      tool_call_id: correctToolCallId,
+                      type: 'approval' as const,
+                      reason: `Auto-denied: originating run was ${status}/${stopReason}`,
+                    }],
+                  }],
+                  streaming: false,
+                });
+                submitSucceeded = true;
+              } catch (retryErr) {
+                const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+                console.warn(`[Letta API] Retry also failed for run ${runId}: ${retryMsg}`);
+                details.push(`Failed to deny approval(s) for run ${runId}: ${retryMsg}`);
+              }
+            } else {
+              console.warn(`[Letta API] Could not submit ${approvalResponses.length} denial(s) for run ${runId}: ${errMsg}`);
+              details.push(`Failed to deny ${approvalResponses.length} approval(s) for run ${runId}: ${errMsg}`);
+            }
           }
+          if (!submitSucceeded) continue;
 
           // Cancel active stuck runs after rejecting their approvals
           let cancelled = false;
