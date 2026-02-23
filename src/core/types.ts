@@ -73,15 +73,6 @@ export interface InboundReaction {
  * Formatter hints provided by channel adapters
  */
 export interface FormatterHints {
-  /** Whether the channel is read-only (text response won't be posted) */
-  isReadOnly?: boolean;
-
-  /** Custom action hints for this channel (e.g., "Use CLI to reply") */
-  actionsSection?: string[];
-
-  /** Whether to skip the Response Directives section */
-  skipDirectives?: boolean;
-
   /** Custom format hint (overrides default channel format) */
   formatHint?: string;
 
@@ -90,6 +81,17 @@ export interface FormatterHints {
 
   /** Whether this channel supports file/image sending */
   supportsFiles?: boolean;
+
+  // Bluesky-specific fields (used by the Bluesky adapter)
+
+  /** Whether the channel is read-only (text response won't be posted, agent must use CLI) */
+  isReadOnly?: boolean;
+
+  /** Custom action hints replacing the standard Response Directives section */
+  actionsSection?: string[];
+
+  /** Whether to skip the standard Response Directives section entirely */
+  skipDirectives?: boolean;
 }
 
 /**
