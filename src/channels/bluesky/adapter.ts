@@ -22,6 +22,7 @@ import {
   DEFAULT_SERVICE_URL,
   HANDLE_CACHE_MAX,
   LAST_POST_CACHE_MAX,
+  SEEN_MESSAGE_IDS_MAX,
   POST_MAX_CHARS,
   RECONNECT_BASE_MS,
   RECONNECT_MAX_MS,
@@ -55,6 +56,7 @@ export class BlueskyAdapter implements ChannelAdapter {
   private handleByDid = new Map<string, string>();
   private handleFetchInFlight = new Map<string, Promise<string | undefined>>();
   private lastHandleFetchAt = new Map<string, number>();
+  private seenMessageIds = new Map<string, true>();
   private lastPostByChatId = new Map<string, {
     uri: string;
     cid?: string;
@@ -380,6 +382,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     const handle = payload.did ? this.handleByDid.get(payload.did) : undefined;
     const { text, messageId, source, extraContext } = this.formatCommit(payload, handle);
     if (!text) return;
+    if (messageId && this.seenMessageIds.has(messageId)) return;
 
     const timestamp = payload.time_us
       ? new Date(Math.floor(payload.time_us / 1000))
@@ -433,6 +436,10 @@ export class BlueskyAdapter implements ChannelAdapter {
       pruneMap(this.lastPostByChatId, LAST_POST_CACHE_MAX);
     }
 
+    if (messageId) {
+      this.seenMessageIds.set(messageId, true);
+      pruneMap(this.seenMessageIds, SEEN_MESSAGE_IDS_MAX);
+    }
     await this.onMessage?.(inbound);
   }
 
@@ -1199,6 +1206,9 @@ export class BlueskyAdapter implements ChannelAdapter {
     const didMode = this.getDidMode(authorDid);
     if (didMode === 'disabled') return;
 
+    const notificationMessageId = notification.cid || notification.uri;
+    if (notificationMessageId && this.seenMessageIds.has(notificationMessageId)) return;
+
     const actionable = notification.reason === 'mention'
       || notification.reason === 'reply'
       || notification.reason === 'quote';
@@ -1236,6 +1246,10 @@ export class BlueskyAdapter implements ChannelAdapter {
       },
     };
 
+    if (notificationMessageId) {
+      this.seenMessageIds.set(notificationMessageId, true);
+      pruneMap(this.seenMessageIds, SEEN_MESSAGE_IDS_MAX);
+    }
     await this.onMessage?.(inbound);
   }
 
