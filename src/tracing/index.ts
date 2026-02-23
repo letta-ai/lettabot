@@ -90,6 +90,9 @@ export interface AgentTurnContext {
  * Span wrapper with helper methods for agent tracing
  */
 export interface TracingSpan {
+  /** Get the trace ID for linking (e.g., to hooks, database records) */
+  readonly traceId?: string;
+
   /** Add a reasoning/thinking block event */
   addReasoning(content: string): void;
 
@@ -120,6 +123,12 @@ export interface TracingSpan {
  */
 function createTracingSpan(span: OTelSpan | null): TracingSpan {
   return {
+    get traceId() {
+      // Access spanContext from the real OTEL span (not in our interface)
+      const context = (span as any)?.spanContext?.();
+      return context?.traceId;
+    },
+
     addReasoning(content: string) {
       span?.addEvent('reasoning', {
         'message.content': content,
@@ -171,6 +180,7 @@ function createTracingSpan(span: OTelSpan | null): TracingSpan {
  * No-op tracing span for when Phoenix is disabled
  */
 const noopSpan: TracingSpan = {
+  get traceId() { return undefined; },
   addReasoning() {},
   addToolCall() {},
   addToolResult() {},
