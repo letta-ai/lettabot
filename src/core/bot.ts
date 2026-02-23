@@ -977,7 +977,7 @@ export class LettaBot implements AgentSession {
         stage: 'post',
         message: hookMessage,
         response: currentResponse,
-        delivered: false,
+        delivered: hookDelivered,
         error: hookError,
         ...hookContextBase,
       });
@@ -1359,6 +1359,10 @@ export class LettaBot implements AgentSession {
         return;
       }
 
+      // Set hookDelivered from streaming delivery before running the post hook.
+      // For streaming channels, sentAnyMessage is already true here if the response
+      // was streamed to the user. For non-streaming, the final send happens below.
+      hookDelivered = sentAnyMessage && !suppressDelivery;
       response = await runPostHookOnce(response);
       hookResponse = response;
       // Send final response
