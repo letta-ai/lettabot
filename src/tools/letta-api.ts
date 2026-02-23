@@ -475,6 +475,7 @@ export async function getLatestRunError(
     const client = getClient();
     const runs = await client.runs.list({
       agent_id: agentId,
+      conversation_id: conversationId,
       limit: 1,
     });
     const runsArray: Array<Record<string, unknown>> = [];
@@ -484,6 +485,13 @@ export async function getLatestRunError(
     }
     const run = runsArray[0];
     if (!run) return null;
+
+    if (conversationId
+      && typeof run.conversation_id === 'string'
+      && run.conversation_id !== conversationId) {
+      console.warn('[Letta API] Latest run lookup returned a different conversation, skipping enrichment');
+      return null;
+    }
 
     const meta = run.metadata as Record<string, unknown> | undefined;
     const err = meta?.error as Record<string, unknown> | undefined;
@@ -500,6 +508,35 @@ export async function getLatestRunError(
   } catch (e) {
     console.warn('[Letta API] Failed to fetch latest run error:', e instanceof Error ? e.message : e);
     return null;
+  }
+}
+
+async function listActiveConversationRunIds(
+  agentId: string,
+  conversationId: string,
+  limit = 25
+): Promise<string[]> {
+  try {
+    const client = getClient();
+    const runs = await client.runs.list({
+      agent_id: agentId,
+      conversation_id: conversationId,
+      active: true,
+      limit,
+    });
+
+    const runIds: string[] = [];
+    for await (const run of runs) {
+      const id = (run as { id?: unknown }).id;
+      if (typeof id === 'string' && id.length > 0) {
+        runIds.push(id);
+      }
+      if (runIds.length >= limit) break;
+    }
+    return runIds;
+  } catch (e) {
+    console.warn('[Letta API] Failed to list active conversation runs:', e instanceof Error ? e.message : e);
+    return [];
   }
 }
 
@@ -699,11 +736,17 @@ export async function recoverOrphanedConversationApproval(
           // and hits a 409 because the denial's run is still processing.
           await new Promise(resolve => setTimeout(resolve, 3000));
 
-          // Cancel any active runs (the denial may have spawned one that also
-          // hit an approval, or the original stuck run may still be alive).
-          const cancelled = await cancelRuns(agentId);
-          if (cancelled) {
-            console.log(`[Letta API] Cancelled active runs after approval denial`);
+          // Cancel only active runs for this conversation to avoid interrupting
+          // unrelated in-flight requests on other conversations.
+          const activeRunIds = await listActiveConversationRunIds(agentId, conversationId);
+          let cancelled = false;
+          if (activeRunIds.length > 0) {
+            cancelled = await cancelRuns(agentId, activeRunIds);
+            if (cancelled) {
+              console.log(`[Letta API] Cancelled ${activeRunIds.length} active conversation run(s) after approval denial`);
+            }
+          } else {
+            console.log(`[Letta API] No active runs to cancel for conversation ${conversationId}`);
           }
           
           recoveredCount += approvals.length;

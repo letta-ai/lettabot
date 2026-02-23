@@ -1340,13 +1340,20 @@ export class LettaBot implements AgentSession {
             // the current buffer, but finalizeMessage() clears it on type changes.
             // sentAnyMessage is the authoritative "did we deliver output" flag.
             const nothingDelivered = !hasResponse && !sentAnyMessage;
+            const retryConvKey = this.resolveConversationKey(msg.channel);
+            const retryConvIdFromStore = (retryConvKey === 'shared'
+              ? this.store.conversationId
+              : this.store.getConversationId(retryConvKey)) ?? undefined;
+            const retryConvId = (typeof streamMsg.conversationId === 'string' && streamMsg.conversationId.length > 0)
+              ? streamMsg.conversationId
+              : retryConvIdFromStore;
 
             // Enrich opaque error detail from run metadata (single fast API call).
             // The wire protocol's stop_reason often just says "error" -- the run
             // metadata has the actual detail (e.g. "waiting for approval on a tool call").
             if (isTerminalError && this.store.agentId &&
                 (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
-              const enriched = await getLatestRunError(this.store.agentId);
+              const enriched = await getLatestRunError(this.store.agentId, retryConvId);
               if (enriched) {
                 lastErrorDetail = { message: enriched.message, stopReason: enriched.stopReason };
               }
@@ -1361,10 +1368,6 @@ export class LettaBot implements AgentSession {
             const isApprovalConflict = isConflictError &&
               lastErrorDetail?.message?.toLowerCase().includes('waiting for approval');
             if (isApprovalConflict && !retried && this.store.agentId) {
-              const retryConvKey = this.resolveConversationKey(msg.channel);
-              const retryConvId = retryConvKey === 'shared'
-                ? this.store.conversationId
-                : this.store.getConversationId(retryConvKey);
               if (retryConvId) {
                 console.log('[Bot] Approval conflict detected -- attempting targeted recovery...');
                 this.invalidateSession(retryConvKey);
@@ -1391,10 +1394,6 @@ export class LettaBot implements AgentSession {
                 console.error(`[Bot] Warning: Agent returned terminal error (error=${streamMsg.error}, stopReason=${streamMsg.stopReason || 'N/A'}) with no response.`);
               }
 
-              const retryConvKey = this.resolveConversationKey(msg.channel);
-              const retryConvId = retryConvKey === 'shared'
-                ? this.store.conversationId
-                : this.store.getConversationId(retryConvKey);
               if (!retried && this.store.agentId && retryConvId) {
                 const reason = shouldRetryForErrorResult ? 'error result' : 'empty result';
                 console.log(`[Bot] ${reason} - attempting orphaned approval recovery...`);
