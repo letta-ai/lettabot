@@ -5,7 +5,7 @@
  * The key difference is whether assistant text auto-delivers or not.
  */
 
-import { consumeResumeContext, type ResumeContext } from './resume-context.js';
+import type { ResumeContext } from './resume-context.js';
 
 /**
  * Silent mode prefix - injected for heartbeats, cron, and other background triggers
@@ -59,20 +59,6 @@ function formatDueLabel(due: string, now: Date): string {
   return `due ${dueAt.toLocaleString()}`;
 }
 
-function buildResumeSection(resumeCtx: ResumeContext | null): string {
-  if (!resumeCtx) return '';
-  const reason = resumeCtx.reason ? ` Reason for restart: ${resumeCtx.reason}.` : '';
-  return `
-⚡ RESUME AFTER RESTART ⚡
-You were restarted. Before the restart, you set a resume flag:
-  Task: ${resumeCtx.task}
-  Set at: ${resumeCtx.setAt}${reason}
-
-PRIORITY: Resume this task before doing anything else. Check your archival memory
-for "last_session_state" if you need more context about where you left off.
-`.trim();
-}
-
 function buildHeartbeatTodoSection(todos: HeartbeatTodo[], now: Date): string {
   if (todos.length === 0) return '';
 
@@ -102,8 +88,6 @@ export function buildHeartbeatPrompt(
   now: Date = new Date(),
 ): string {
   const todoSection = buildHeartbeatTodoSection(todos, now);
-  const resumeCtx = consumeResumeContext();
-  const resumeSection = buildResumeSection(resumeCtx);
   return `
 ${SILENT_MODE_PREFIX}
 
@@ -112,14 +96,14 @@ TIME: ${time} (${timezone})
 NEXT HEARTBEAT: in ${intervalMinutes} minutes
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${resumeSection ? `\n${resumeSection}\n` : ''}
+
 YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
 To actually contact your human, run:
   lettabot-message send --text "Your message here"
 
 ${todoSection || 'PENDING TO-DOS: none right now.'}
 
-${resumeSection ? `Heartbeat — resume your interrupted task above, then check in as normal.` : `This is your time. You can:
+This is your time. You can:
 • Work on a project you've been thinking about
 • Research something that interests you
 • Reflect on recent conversations and update your memory
@@ -128,7 +112,7 @@ ${resumeSection ? `Heartbeat — resume your interrupted task above, then check 
 
 If you have pending to-dos, prioritize those before starting new work.
 You don't have to do something every time. But don't default to nothing.
-Your human wants you to have a life outside conversations with them.`}
+Your human wants you to have a life outside conversations with them.
 
 If you discover something worth sharing → use lettabot-message
 If you have nothing to do → just end your turn (no output needed)
@@ -147,8 +131,6 @@ export function buildCustomHeartbeatPrompt(
   now: Date = new Date(),
 ): string {
   const todoSection = buildHeartbeatTodoSection(todos, now);
-  const resumeCtx = consumeResumeContext();
-  const resumeSection = buildResumeSection(resumeCtx);
   return `
 ${SILENT_MODE_PREFIX}
 
@@ -157,7 +139,7 @@ TIME: ${time} (${timezone})
 NEXT HEARTBEAT: in ${intervalMinutes} minutes
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${resumeSection ? `\n${resumeSection}\n` : ''}
+
 YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
 To actually contact your human, run:
   lettabot-message send --text "Your message here"

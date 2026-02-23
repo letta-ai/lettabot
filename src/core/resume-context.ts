@@ -45,6 +45,10 @@ export interface SerializedMessage {
   groupName?: string;
   serverId?: string;
   wasMentioned?: boolean;
+  replyToUser?: string;
+  isListeningMode?: boolean;
+  // Note: attachments, reactions, and batch data are not persisted across restarts
+  // as they contain non-serializable data (file handles, etc.)
 }
 
 function getResumePath(): string {

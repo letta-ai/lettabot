@@ -10,6 +10,7 @@ import type { ChannelAdapter } from '../channels/types.js';
 import type { InboundMessage, TriggerContext } from './types.js';
 import type { GroupBatcher } from './group-batcher.js';
 import type { StreamMsg } from './bot.js';
+import type { SerializedMessage } from './resume-context.js';
 
 export interface AgentSession {
   /** Register a channel adapter */
@@ -56,7 +57,7 @@ export interface AgentSession {
   getLastUserMessageTime(): Date | null;
 
   /** Get pending messages from the queue (for saving before shutdown) */
-  getPendingMessages(): Array<{ channel: string; chatId: string; userId: string; userName?: string; userHandle?: string; messageId?: string; text: string; timestamp: string; threadId?: string; isGroup?: boolean; groupName?: string; serverId?: string; wasMentioned?: boolean }>;
+  getPendingMessages(): SerializedMessage[];
 
   /** Inject a message into the processing pipeline (for replaying saved messages) */
   injectMessage(msg: InboundMessage): void;

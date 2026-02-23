@@ -19,6 +19,7 @@ import { SYSTEM_PROMPT } from './system-prompt.js';
 import { parseDirectives, stripActionsBlock, type Directive } from './directives.js';
 import { createManageTodoTool } from '../tools/todo.js';
 import { syncTodosFromTool } from '../todo/store.js';
+import type { SerializedMessage } from './resume-context.js';
 
 
 /**
@@ -692,46 +693,36 @@ export class LettaBot implements AgentSession {
    * Get all pending messages from the queue (for saving before shutdown).
    * Returns serialized messages that can be persisted to disk.
    */
-  getPendingMessages(): Array<{ channel: string; chatId: string; userId: string; userName?: string; userHandle?: string; messageId?: string; text: string; timestamp: string; threadId?: string; isGroup?: boolean; groupName?: string; serverId?: string; wasMentioned?: boolean }> {
-    const pending: Array<{ channel: string; chatId: string; userId: string; userName?: string; userHandle?: string; messageId?: string; text: string; timestamp: string; threadId?: string; isGroup?: boolean; groupName?: string; serverId?: string; wasMentioned?: boolean }> = [];
+  getPendingMessages(): SerializedMessage[] {
+    const serialize = (msg: InboundMessage): SerializedMessage => ({
+      channel: msg.channel,
+      chatId: msg.chatId,
+      userId: msg.userId,
+      userName: msg.userName,
+      userHandle: msg.userHandle,
+      messageId: msg.messageId,
+      text: msg.text,
+      timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : String(msg.timestamp),
+      threadId: msg.threadId,
+      isGroup: msg.isGroup,
+      groupName: msg.groupName,
+      serverId: msg.serverId,
+      wasMentioned: msg.wasMentioned,
+      replyToUser: msg.replyToUser,
+      isListeningMode: msg.isListeningMode,
+    });
+
+    const pending: SerializedMessage[] = [];
 
     // Collect from global queue (shared mode)
     for (const { msg } of this.messageQueue) {
-      pending.push({
-        channel: msg.channel,
-        chatId: msg.chatId,
-        userId: msg.userId,
-        userName: msg.userName,
-        userHandle: msg.userHandle,
-        messageId: msg.messageId,
-        text: msg.text,
-        timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : String(msg.timestamp),
-        threadId: msg.threadId,
-        isGroup: msg.isGroup,
-        groupName: msg.groupName,
-        serverId: msg.serverId,
-        wasMentioned: msg.wasMentioned,
-      });
+      pending.push(serialize(msg));
     }
 
     // Collect from keyed queues (per-channel mode)
     for (const [, queue] of this.keyedQueues) {
       for (const { msg } of queue) {
-        pending.push({
-          channel: msg.channel,
-          chatId: msg.chatId,
-          userId: msg.userId,
-          userName: msg.userName,
-          userHandle: msg.userHandle,
-          messageId: msg.messageId,
-          text: msg.text,
-          timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : String(msg.timestamp),
-          threadId: msg.threadId,
-          isGroup: msg.isGroup,
-          groupName: msg.groupName,
-          serverId: msg.serverId,
-          wasMentioned: msg.wasMentioned,
-        });
+        pending.push(serialize(msg));
       }
     }
 

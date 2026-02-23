@@ -795,6 +795,8 @@ async function main() {
             groupName: saved.groupName,
             serverId: saved.serverId,
             wasMentioned: saved.wasMentioned,
+            replyToUser: saved.replyToUser,
+            isListeningMode: saved.isListeningMode,
           });
         }
       }
