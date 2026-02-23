@@ -461,6 +461,9 @@ export class LettaBot implements AgentSession {
    * creating and initializing it if needed.
    */
   private async ensureSessionForKey(key: string): Promise<Session> {
+    // Pull latest agent/conversation mapping before deciding how to route.
+    this.store.refresh();
+
     const existing = this.sessions.get(key);
     if (existing) return existing;
 
@@ -543,6 +546,7 @@ export class LettaBot implements AgentSession {
    * Pre-warm the session subprocess at startup. Call after config/agent is loaded.
    */
   async warmSession(): Promise<void> {
+    this.store.refresh();
     if (!this.store.agentId && !this.store.conversationId) return;
     try {
       // In shared mode, warm the single session. In per-channel mode, warm nothing
@@ -1600,6 +1604,7 @@ export class LettaBot implements AgentSession {
   }
 
   getStatus(): { agentId: string | null; conversationId: string | null; channels: string[] } {
+    this.store.refresh();
     return {
       agentId: this.store.agentId,
       conversationId: this.store.conversationId,
