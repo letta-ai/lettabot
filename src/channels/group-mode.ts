@@ -36,7 +36,7 @@ function coerceMode(config?: GroupModeConfig): GroupMode | undefined {
  * If no groups config exists, this returns true (open allowlist).
  */
 export function isGroupAllowed(groups: GroupsConfig | undefined, keys: string[]): boolean {
-  if (!groups) return true;
+  if (!groups) return false; // No groups config = don't participate in groups
   if (Object.keys(groups).length === 0) return false;
   if (Object.hasOwn(groups, '*')) return true;
   return keys.some((key) => Object.hasOwn(groups, key));

@@ -5,12 +5,27 @@ describe('applySignalGroupGating', () => {
   const selfPhoneNumber = '+15551234567';
   const selfUuid = 'abc-123-uuid';
 
-  describe('open mode (default)', () => {
+  describe('no groups config', () => {
+    it('rejects all group messages when no groupsConfig provided', () => {
+      const result = applySignalGroupGating({
+        text: 'Hello everyone!',
+        groupId: 'test-group',
+        selfPhoneNumber,
+      });
+
+      expect(result.shouldProcess).toBe(false);
+    });
+  });
+
+  describe('open mode (explicit config)', () => {
+    const openConfig = { '*': { mode: 'open' as const } };
+
     it('allows messages without mention', () => {
       const result = applySignalGroupGating({
         text: 'Hello everyone!',
         groupId: 'test-group',
         selfPhoneNumber,
+        groupsConfig: openConfig,
       });
 
       expect(result.shouldProcess).toBe(true);
@@ -23,6 +38,7 @@ describe('applySignalGroupGating', () => {
         groupId: 'test-group',
         mentions: [{ number: '+15551234567', start: 4, length: 4 }],
         selfPhoneNumber,
+        groupsConfig: openConfig,
       });
 
       expect(result.shouldProcess).toBe(true);
@@ -37,6 +53,7 @@ describe('applySignalGroupGating', () => {
         mentions: [{ uuid: selfUuid, start: 4, length: 4 }],
         selfPhoneNumber,
         selfUuid,
+        groupsConfig: openConfig,
       });
 
       expect(result.shouldProcess).toBe(true);
@@ -49,6 +66,7 @@ describe('applySignalGroupGating', () => {
         groupId: 'test-group',
         mentions: [{ number: '+19998887777', start: 4, length: 6 }],
         selfPhoneNumber,
+        groupsConfig: openConfig,
       });
 
       expect(result.shouldProcess).toBe(true);
@@ -61,6 +79,7 @@ describe('applySignalGroupGating', () => {
         groupId: 'test-group',
         selfPhoneNumber,
         mentionPatterns: ['@lettabot', '@bot'],
+        groupsConfig: openConfig,
       });
 
       expect(result.shouldProcess).toBe(true);
@@ -73,6 +92,7 @@ describe('applySignalGroupGating', () => {
         groupId: 'test-group',
         quote: { author: '+15551234567', text: 'Previous message' },
         selfPhoneNumber,
+        groupsConfig: openConfig,
       });
 
       expect(result.shouldProcess).toBe(true);
@@ -84,6 +104,7 @@ describe('applySignalGroupGating', () => {
         text: 'Hey 15551234567 check this out',
         groupId: 'test-group',
         selfPhoneNumber,
+        groupsConfig: openConfig,
       });
 
       expect(result.shouldProcess).toBe(true);

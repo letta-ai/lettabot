@@ -189,9 +189,9 @@ export interface LettaBotConfig {
 }
 
 export interface TranscriptionConfig {
-  provider: 'openai';  // Only OpenAI supported currently
-  apiKey?: string;     // Falls back to OPENAI_API_KEY env var
-  model?: string;      // Defaults to 'whisper-1'
+  provider: 'openai' | 'mistral';
+  apiKey?: string;     // Falls back to OPENAI_API_KEY or MISTRAL_API_KEY env var
+  model?: string;      // Defaults to 'whisper-1' (OpenAI) or 'voxtral-mini-latest' (Mistral)
 }
 
 export interface PollingYamlConfig {

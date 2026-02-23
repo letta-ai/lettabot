@@ -12,7 +12,7 @@ import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
-import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
+import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval, getLatestRunError } from '../tools/letta-api.js';
 import { installSkillsToAgent } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
@@ -72,6 +72,11 @@ function formatApiErrorForUser(error: { message: string; stopReason: string; api
     }
     const reasonStr = reasons.length > 0 ? `: ${reasons.join(', ')}` : '';
     return `(Rate limited${reasonStr}. Try again in a moment.)`;
+  }
+
+  // 409 CONFLICT (concurrent request on same conversation)
+  if (msg.includes('conflict') || msg.includes('409') || msg.includes('another request is currently being processed')) {
+    return '(Another request is still processing on this conversation. Wait a moment and try again.)';
   }
 
   // Authentication
@@ -258,7 +263,7 @@ export class LettaBot implements AgentSession {
   private formatToolCallDisplay(streamMsg: StreamMsg): string {
     const name = streamMsg.toolName || 'unknown';
     const params = this.abbreviateToolInput(streamMsg);
-    return params ? `> **Tool:** ${name} (${params})` : `> **Tool:** ${name}`;
+    return params ? `**Tool:** ${name} (${params})` : `**Tool:** ${name}`;
   }
 
   /**
@@ -267,7 +272,8 @@ export class LettaBot implements AgentSession {
   private abbreviateToolInput(streamMsg: StreamMsg): string {
     const input = streamMsg.toolInput as Record<string, unknown> | undefined;
     if (!input || typeof input !== 'object') return '';
-    const entries = Object.entries(input).slice(0, 2);
+    // Filter out undefined/null values (SDK yields {raw: undefined} for partial chunks)
+    const entries = Object.entries(input).filter(([, v]) => v != null).slice(0, 2);
     return entries
       .map(([k, v]) => {
         let str: string;
@@ -290,9 +296,9 @@ export class LettaBot implements AgentSession {
     const truncated = maxChars > 0 && text.length > maxChars
       ? text.slice(0, maxChars) + '...'
       : text;
-    // Prefix every line with "> " so the whole block renders as a blockquote
-    const lines = truncated.split('\n').map(line => `> ${line}`);
-    return `> **Thinking**\n${lines.join('\n')}`;
+    // Use italic for reasoning -- works across all channels including Signal
+    // (Signal only supports bold/italic/code, no blockquotes)
+    return `**Thinking**\n_${truncated}_`;
   }
 
   // =========================================================================
@@ -564,6 +570,13 @@ export class LettaBot implements AgentSession {
    * creating and initializing it if needed.
    */
   private async ensureSessionForKey(key: string): Promise<Session> {
+    // Re-read the store file from disk so we pick up agent/conversation ID
+    // changes made by other processes (e.g. after a restart or container deploy).
+    // This costs one synchronous disk read per incoming message, which is fine
+    // at chat-bot throughput. If this ever becomes a bottleneck, throttle to
+    // refresh at most once per second.
+    this.store.refresh();
+
     const existing = this.sessions.get(key);
     if (existing) return existing;
 
@@ -646,6 +659,7 @@ export class LettaBot implements AgentSession {
    * Pre-warm the session subprocess at startup. Call after config/agent is loaded.
    */
   async warmSession(): Promise<void> {
+    this.store.refresh();
     if (!this.store.agentId && !this.store.conversationId) return;
     try {
       // In shared mode, warm the single session. In per-channel mode, warm nothing
@@ -1212,6 +1226,9 @@ export class LettaBot implements AgentSession {
       let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | null = null;
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
+      // Buffer the latest tool_call by ID so we display it once with full args
+      // (the SDK streams multiple tool_call messages per call -- first has empty input).
+      let pendingToolDisplay: { toolCallId: string; msg: any } | null = null;
       const msgTypeCounts: Record<string, number> = {};
       
       const finalizeMessage = async () => {
@@ -1266,23 +1283,46 @@ export class LettaBot implements AgentSession {
           const preview = JSON.stringify(streamMsg).slice(0, 300);
           console.log(`[Stream] type=${streamMsg.type} ${preview}`);
           
+          // stream_event is a low-level streaming primitive (partial deltas), not a
+          // semantic type change. Skip it for type-transition logic so it doesn't
+          // prematurely flush reasoning buffers or finalize assistant messages.
+          const isSemanticType = streamMsg.type !== 'stream_event';
+
           // Finalize on type change (avoid double-handling when result provides full response)
-          if (lastMsgType && lastMsgType !== streamMsg.type && response.trim() && streamMsg.type !== 'result') {
+          if (isSemanticType && lastMsgType && lastMsgType !== streamMsg.type && response.trim() && streamMsg.type !== 'result') {
             await finalizeMessage();
           }
 
           // Flush reasoning buffer when type changes away from reasoning
-          if (lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
+          if (isSemanticType && lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
             if (this.config.display?.showReasoning && !suppressDelivery) {
               try {
                 const text = this.formatReasoningDisplay(reasoningBuffer);
                 await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
-                sentAnyMessage = true;
+                // Note: display messages don't set sentAnyMessage -- they're informational,
+                // not a substitute for an assistant response. Error handling and retry must
+                // still fire even if reasoning was displayed.
               } catch (err) {
                 console.warn('[Bot] Failed to send reasoning display:', err instanceof Error ? err.message : err);
               }
             }
             reasoningBuffer = '';
+          }
+
+          // Flush pending tool call display when type changes away from tool_call.
+          // The SDK streams multiple tool_call messages per call (first has empty args),
+          // so we buffer and display the last one which has the complete input.
+          if (isSemanticType && pendingToolDisplay && streamMsg.type !== 'tool_call') {
+            if (this.config.display?.showToolCalls && !suppressDelivery) {
+              try {
+                const text = this.formatToolCallDisplay(pendingToolDisplay.msg);
+                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+                // Display messages don't set sentAnyMessage (see reasoning display comment).
+              } catch (err) {
+                console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
+              }
+            }
+            pendingToolDisplay = null;
           }
           
           // Tool loop detection
@@ -1297,18 +1337,13 @@ export class LettaBot implements AgentSession {
           // Log meaningful events with structured summaries
           if (streamMsg.type === 'tool_call') {
             this.syncTodoToolCall(streamMsg);
-            console.log(`[Stream] >>> TOOL CALL: ${streamMsg.toolName || 'unknown'} (id: ${streamMsg.toolCallId?.slice(0, 12) || '?'})`);
+            const tcName = streamMsg.toolName || 'unknown';
+            const tcId = streamMsg.toolCallId?.slice(0, 12) || '?';
+            console.log(`[Stream] >>> TOOL CALL: ${tcName} (id: ${tcId})`);
             sawNonAssistantSinceLastUuid = true;
-            // Display tool call in channel if configured
-            if (this.config.display?.showToolCalls && !suppressDelivery) {
-              try {
-                const text = this.formatToolCallDisplay(streamMsg);
-                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
-                sentAnyMessage = true;
-              } catch (err) {
-                console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
-              }
-            }
+            // Buffer the tool call -- the SDK streams multiple chunks per call
+            // (first has empty args). We display the last chunk when type changes.
+            pendingToolDisplay = { toolCallId: streamMsg.toolCallId || '', msg: streamMsg };
           } else if (streamMsg.type === 'tool_result') {
             console.log(`[Stream] <<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
             sawNonAssistantSinceLastUuid = true;
@@ -1341,7 +1376,9 @@ export class LettaBot implements AgentSession {
           } else if (streamMsg.type !== 'assistant') {
             sawNonAssistantSinceLastUuid = true;
           }
-          lastMsgType = streamMsg.type;
+          // Don't let stream_event overwrite lastMsgType -- it's noise between
+          // semantic types and would cause false type-transition triggers.
+          if (isSemanticType) lastMsgType = streamMsg.type;
           
           if (streamMsg.type === 'assistant') {
             const msgUuid = streamMsg.uuid;
@@ -1414,8 +1451,52 @@ export class LettaBot implements AgentSession {
             // the current buffer, but finalizeMessage() clears it on type changes.
             // sentAnyMessage is the authoritative "did we deliver output" flag.
             const nothingDelivered = !hasResponse && !sentAnyMessage;
+            const retryConvKey = this.resolveConversationKey(msg.channel);
+            const retryConvIdFromStore = (retryConvKey === 'shared'
+              ? this.store.conversationId
+              : this.store.getConversationId(retryConvKey)) ?? undefined;
+            const retryConvId = (typeof streamMsg.conversationId === 'string' && streamMsg.conversationId.length > 0)
+              ? streamMsg.conversationId
+              : retryConvIdFromStore;
+
+            // Enrich opaque error detail from run metadata (single fast API call).
+            // The wire protocol's stop_reason often just says "error" -- the run
+            // metadata has the actual detail (e.g. "waiting for approval on a tool call").
+            if (isTerminalError && this.store.agentId &&
+                (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
+              const enriched = await getLatestRunError(this.store.agentId, retryConvId);
+              if (enriched) {
+                lastErrorDetail = { message: enriched.message, stopReason: enriched.stopReason };
+              }
+            }
+
+            // Don't retry on 409 CONFLICT -- the conversation is busy, retrying
+            // immediately will just get the same error and waste a session.
+            const isConflictError = lastErrorDetail?.message?.toLowerCase().includes('conflict') || false;
+
+            // For approval-specific conflicts, attempt recovery directly (don't
+            // enter the generic retry path which would just get another CONFLICT).
+            const isApprovalConflict = isConflictError &&
+              lastErrorDetail?.message?.toLowerCase().includes('waiting for approval');
+            if (isApprovalConflict && !retried && this.store.agentId) {
+              if (retryConvId) {
+                console.log('[Bot] Approval conflict detected -- attempting targeted recovery...');
+                this.invalidateSession(retryConvKey);
+                session = null;
+                clearInterval(typingInterval);
+                const convResult = await recoverOrphanedConversationApproval(
+                  this.store.agentId, retryConvId, true /* deepScan */
+                );
+                if (convResult.recovered) {
+                  console.log(`[Bot] Approval recovery succeeded (${convResult.details}), retrying message...`);
+                  return this.processMessage(msg, adapter, true);
+                }
+                console.warn(`[Bot] Approval recovery failed: ${convResult.details}`);
+              }
+            }
+
             const shouldRetryForEmptyResult = streamMsg.success && resultText === '' && nothingDelivered;
-            const shouldRetryForErrorResult = isTerminalError && nothingDelivered;
+            const shouldRetryForErrorResult = isTerminalError && nothingDelivered && !isConflictError;
             if (shouldRetryForEmptyResult || shouldRetryForErrorResult) {
               if (shouldRetryForEmptyResult) {
                 console.error(`[Bot] Warning: Agent returned empty result with no response. stopReason=${streamMsg.stopReason || 'N/A'}, conv=${streamMsg.conversationId || 'N/A'}`);
@@ -1424,10 +1505,6 @@ export class LettaBot implements AgentSession {
                 console.error(`[Bot] Warning: Agent returned terminal error (error=${streamMsg.error}, stopReason=${streamMsg.stopReason || 'N/A'}) with no response.`);
               }
 
-              const retryConvKey = this.resolveConversationKey(msg.channel);
-              const retryConvId = retryConvKey === 'shared'
-                ? this.store.conversationId
-                : this.store.getConversationId(retryConvKey);
               if (!retried && this.store.agentId && retryConvId) {
                 const reason = shouldRetryForErrorResult ? 'error result' : 'empty result';
                 console.log(`[Bot] ${reason} - attempting orphaned approval recovery...`);
@@ -1703,6 +1780,7 @@ export class LettaBot implements AgentSession {
   }
 
   getStatus(): { agentId: string | null; conversationId: string | null; channels: string[] } {
+    this.store.refresh();
     return {
       agentId: this.store.agentId,
       conversationId: this.store.conversationId,

@@ -60,9 +60,9 @@ export class SlackAdapter implements ChannelAdapter {
     
     // Handle messages
     this.app.message(async ({ message, say, client }) => {
-      // Type guard for regular messages
-      if (message.subtype !== undefined) return;
-      if (!('user' in message) || !('text' in message)) return;
+      // Type guard for regular messages (allow file_share for voice messages)
+      if (message.subtype !== undefined && message.subtype !== 'file_share') return;
+      if (!('user' in message)) return;
       
       const userId = message.user;
       let text = message.text || '';
@@ -74,10 +74,9 @@ export class SlackAdapter implements ChannelAdapter {
       const audioFile = files?.find(f => f.mimetype?.startsWith('audio/'));
       if (audioFile?.url_private_download) {
         try {
-          const { loadConfig } = await import('../config/index.js');
-          const config = loadConfig();
-          if (!config.transcription?.apiKey && !process.env.OPENAI_API_KEY) {
-            await say('Voice messages require OpenAI API key for transcription. See: https://github.com/letta-ai/lettabot#voice-messages');
+          const { isTranscriptionConfigured } = await import('../transcription/index.js');
+          if (!isTranscriptionConfigured()) {
+            await say('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages');
           } else {
             // Download file (requires bot token for auth)
             const response = await fetch(audioFile.url_private_download, {
@@ -173,10 +172,43 @@ export class SlackAdapter implements ChannelAdapter {
     // Handle app mentions (@bot)
     this.app.event('app_mention', async ({ event }) => {
       const userId = event.user || '';
-      const text = (event.text || '').replace(/<@[A-Z0-9]+>/g, '').trim(); // Remove mention
+      let text = (event.text || '').replace(/<@[A-Z0-9]+>/g, '').trim(); // Remove mention
       const channelId = event.channel;
       const threadTs = event.thread_ts || event.ts; // Reply in thread, or start new thread from the mention
-      
+
+      // Handle audio file attachments
+      const files = (event as any).files as Array<{ mimetype?: string; url_private_download?: string; name?: string }> | undefined;
+      const audioFile = files?.find(f => f.mimetype?.startsWith('audio/'));
+      if (audioFile?.url_private_download) {
+        try {
+          const { isTranscriptionConfigured } = await import('../transcription/index.js');
+          if (!isTranscriptionConfigured()) {
+            await this.sendMessage({ chatId: channelId, text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages', threadId: threadTs });
+            return;
+          }
+          // Download file (requires bot token for auth)
+          const response = await fetch(audioFile.url_private_download, {
+            headers: { 'Authorization': `Bearer ${this.config.botToken}` }
+          });
+          const buffer = Buffer.from(await response.arrayBuffer());
+
+          const { transcribeAudio } = await import('../transcription/index.js');
+          const ext = audioFile.mimetype?.split('/')[1] || 'mp3';
+          const result = await transcribeAudio(buffer, audioFile.name || `audio.${ext}`);
+
+          if (result.success && result.text) {
+            console.log(`[Slack] Transcribed audio: "${result.text.slice(0, 50)}..."`);
+            text = (text ? text + '\n' : '') + `[Voice message]: ${result.text}`;
+          } else {
+            console.error(`[Slack] Transcription failed: ${result.error}`);
+            text = (text ? text + '\n' : '') + `[Voice message - transcription failed: ${result.error}]`;
+          }
+        } catch (error) {
+          console.error('[Slack] Error transcribing audio:', error);
+          text = (text ? text + '\n' : '') + `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`;
+        }
+      }
+
       if (this.config.allowedUsers && this.config.allowedUsers.length > 0) {
         if (!userId || !this.config.allowedUsers.includes(userId)) {
           // Can't use say() in app_mention event the same way

@@ -462,6 +462,85 @@ export async function cancelRuns(
 }
 
 /**
+ * Fetch the error detail from the latest failed run on an agent.
+ * Returns the actual error detail from run metadata (which is more
+ * descriptive than the opaque `stop_reason=error` wire message).
+ * Single API call -- fast enough to use on every error.
+ */
+export async function getLatestRunError(
+  agentId: string,
+  conversationId?: string
+): Promise<{ message: string; stopReason: string; isApprovalError: boolean } | null> {
+  try {
+    const client = getClient();
+    const runs = await client.runs.list({
+      agent_id: agentId,
+      conversation_id: conversationId,
+      limit: 1,
+    });
+    const runsArray: Array<Record<string, unknown>> = [];
+    for await (const run of runs) {
+      runsArray.push(run as unknown as Record<string, unknown>);
+      break; // Only need the first one
+    }
+    const run = runsArray[0];
+    if (!run) return null;
+
+    if (conversationId
+      && typeof run.conversation_id === 'string'
+      && run.conversation_id !== conversationId) {
+      console.warn('[Letta API] Latest run lookup returned a different conversation, skipping enrichment');
+      return null;
+    }
+
+    const meta = run.metadata as Record<string, unknown> | undefined;
+    const err = meta?.error as Record<string, unknown> | undefined;
+    const detail = typeof err?.detail === 'string' ? err.detail : '';
+    const stopReason = typeof run.stop_reason === 'string' ? run.stop_reason : 'error';
+
+    if (!detail) return null;
+
+    const isApprovalError = detail.toLowerCase().includes('waiting for approval')
+      || detail.toLowerCase().includes('approve or deny');
+
+    console.log(`[Letta API] Latest run error: ${detail.slice(0, 150)}${isApprovalError ? ' [approval]' : ''}`);
+    return { message: detail, stopReason, isApprovalError };
+  } catch (e) {
+    console.warn('[Letta API] Failed to fetch latest run error:', e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+async function listActiveConversationRunIds(
+  agentId: string,
+  conversationId: string,
+  limit = 25
+): Promise<string[]> {
+  try {
+    const client = getClient();
+    const runs = await client.runs.list({
+      agent_id: agentId,
+      conversation_id: conversationId,
+      active: true,
+      limit,
+    });
+
+    const runIds: string[] = [];
+    for await (const run of runs) {
+      const id = (run as { id?: unknown }).id;
+      if (typeof id === 'string' && id.length > 0) {
+        runIds.push(id);
+      }
+      if (runIds.length >= limit) break;
+    }
+    return runIds;
+  } catch (e) {
+    console.warn('[Letta API] Failed to list active conversation runs:', e instanceof Error ? e.message : e);
+    return [];
+  }
+}
+
+/**
  * Disable tool approval requirement for a specific tool on an agent.
  * This sets requires_approval: false at the server level.
  */
@@ -548,13 +627,17 @@ export async function ensureNoToolApprovals(agentId: string): Promise<void> {
  */
 export async function recoverOrphanedConversationApproval(
   agentId: string,
-  conversationId: string
+  conversationId: string,
+  deepScan = false
 ): Promise<{ recovered: boolean; details: string }> {
   try {
     const client = getClient();
     
-    // List recent messages from the conversation to find orphaned approvals
-    const messagesPage = await client.conversations.messages.list(conversationId, { limit: 50 });
+    // List recent messages from the conversation to find orphaned approvals.
+    // Default: 50 (fast path). Deep scan: 500 (for conversations with many approvals).
+    const scanLimit = deepScan ? 500 : 50;
+    console.log(`[Letta API] Scanning ${scanLimit} messages for orphaned approvals...`);
+    const messagesPage = await client.conversations.messages.list(conversationId, { limit: scanLimit });
     const messages: Array<Record<string, unknown>> = [];
     for await (const msg of messagesPage) {
       messages.push(msg as unknown as Record<string, unknown>);
@@ -648,19 +731,26 @@ export async function recoverOrphanedConversationApproval(
             streaming: false,
           });
           
-          // Cancel active stuck runs after rejecting their approvals
+          // The denial triggers a new agent run server-side. Wait for it to
+          // settle before returning, otherwise the caller retries immediately
+          // and hits a 409 because the denial's run is still processing.
+          await new Promise(resolve => setTimeout(resolve, 3000));
+
+          // Cancel only active runs for this conversation to avoid interrupting
+          // unrelated in-flight requests on other conversations.
+          const activeRunIds = await listActiveConversationRunIds(agentId, conversationId);
           let cancelled = false;
-          if (isStuckApproval) {
-            cancelled = await cancelRuns(agentId, [runId]);
+          if (activeRunIds.length > 0) {
+            cancelled = await cancelRuns(agentId, activeRunIds);
             if (cancelled) {
-              console.log(`[Letta API] Cancelled stuck run ${runId}`);
-            } else {
-              console.warn(`[Letta API] Failed to cancel stuck run ${runId}`);
+              console.log(`[Letta API] Cancelled ${activeRunIds.length} active conversation run(s) after approval denial`);
             }
+          } else {
+            console.log(`[Letta API] No active runs to cancel for conversation ${conversationId}`);
           }
           
           recoveredCount += approvals.length;
-          const suffix = isStuckApproval ? (cancelled ? ' (cancelled)' : ' (cancel failed)') : '';
+          const suffix = cancelled ? ' (runs cancelled)' : '';
           details.push(`Denied ${approvals.length} approval(s) from ${status} run ${runId}${suffix}`);
         } else {
           details.push(`Run ${runId} is ${status}/${stopReason} - not orphaned`);

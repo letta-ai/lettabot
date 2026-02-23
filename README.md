@@ -109,11 +109,13 @@ That's it! Message your bot on Telegram.
 
 ## Voice Messages
 
-LettaBot can transcribe voice messages using OpenAI Whisper. Voice messages are automatically converted to text and sent to the agent with a `[Voice message]:` prefix.
+LettaBot can transcribe voice messages using either OpenAI Whisper or Mistral Voxtral. Voice messages are automatically converted to text and sent to the agent with a `[Voice message]:` prefix.
 
 **Supported channels:** Telegram, WhatsApp, Signal, Slack, Discord
 
 ### Configuration
+
+**Option 1: OpenAI Whisper**
 
 Add your OpenAI API key to `lettabot.yaml`:
 
@@ -130,7 +132,23 @@ Or set via environment variable:
 export OPENAI_API_KEY=sk-...
 ```
 
-If no API key is configured, voice messages are silently ignored.
+**Option 2: Mistral Voxtral** (2x faster, 2x cheaper)
+
+Add your Mistral API key to `lettabot.yaml`:
+
+```yaml
+transcription:
+  provider: mistral
+  apiKey: ...
+```
+
+Or set via environment variable:
+
+```bash
+export MISTRAL_API_KEY=...
+```
+
+If no API key is configured, users will receive an error message with a link to this section.
 
 ## Skills
 LettaBot is compatible with [skills.sh](https://skills.sh) and [Clawdhub](https://clawdhub.com/). 

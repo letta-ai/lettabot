@@ -512,6 +512,39 @@ LETTABOT_MEMFS=true npm start
 
 For more details, see the [Letta Code memory documentation](https://docs.letta.com/letta-code/memory/) and the [Context Repositories blog post](https://www.letta.com/blog/context-repositories).
 
+### Display Tool Calls and Reasoning
+
+Show optional "what the agent is doing" messages directly in channel output.
+
+```yaml
+features:
+  display:
+    showToolCalls: true
+    showReasoning: false
+    reasoningMaxChars: 1200
+```
+
+In multi-agent configs, set this per agent:
+
+```yaml
+agents:
+  - name: work-assistant
+    features:
+      display:
+        showToolCalls: true
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.display.showToolCalls` | boolean | `false` | Show tool invocation summaries in chat output |
+| `features.display.showReasoning` | boolean | `false` | Show model reasoning/thinking text in chat output |
+| `features.display.reasoningMaxChars` | number | `0` | Truncate reasoning to N chars (`0` = no limit) |
+
+Notes:
+- Tool call display filters out empty/null input fields and shows the final args for the tool call.
+- Reasoning display uses plain bold/italic markdown for better cross-channel compatibility (including Signal).
+- Display messages are informational; they do not replace the assistant response. Normal retry/error handling still applies if no assistant reply is produced.
+
 ### No-Reply (Opt-Out)
 
 The agent can choose not to respond to a message by sending exactly:

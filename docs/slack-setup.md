@@ -48,6 +48,7 @@ Socket Mode lets your bot connect without exposing a public endpoint.
 |-------|---------|
 | `app_mentions:read` | React when someone @mentions your bot |
 | `chat:write` | Send messages |
+| `files:read` | Download voice message attachments |
 | `im:history` | Read DM message history |
 | `im:read` | View DM channel info |
 | `im:write` | Start DM conversations |
