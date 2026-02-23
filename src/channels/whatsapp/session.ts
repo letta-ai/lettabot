@@ -203,10 +203,12 @@ export async function createWaSocket(options: SocketOptions): Promise<SocketResu
     markOnlineOnConnect: false,
     logger: logger as any,
     printQRInTerminal: false,
-    // getMessage for retry capability - store is populated when we SEND messages, not here
+    // getMessage for retry capability - store is populated on both send and receive
     getMessage: async (key: { id?: string | null }) => {
       if (!key.id) return undefined;
-      return messageStore.get(key.id);
+      const msg = messageStore.get(key.id);
+      // Return just the proto.IMessage content, not the full WAMessage wrapper
+      return msg?.message ?? undefined;
     },
   });
 

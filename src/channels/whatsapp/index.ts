@@ -142,7 +142,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
   // Group metadata cache
   private groupMetaCache: GroupMetaCache;
 
-  // Message store for getMessage callback (populated when we SEND, not receive)
+  // Message store for getMessage callback (populated on both send and receive for retry capability)
   private messageStore: Map<string, any> = new Map();
 
   // Attachment configuration
@@ -603,6 +603,17 @@ export class WhatsAppAdapter implements ChannelAdapter {
         if (DEBUG_WA) console.log(`[WhatsApp:Debug] Skipped own sent message: ${messageId}`);
         this.sentMessageIds.delete(messageId);
         continue;
+      }
+
+      // Store received message for getMessage retry capability (enables "Waiting for this message" fix)
+      // Must happen early so even messages we skip are available for protocol-level retries
+      if (m.key?.id && m.message) {
+        this.messageStore.set(m.key.id, m);
+        // Auto-cleanup after 24 hours
+        const storedId = m.key.id;
+        setTimeout(() => {
+          this.messageStore.delete(storedId);
+        }, 24 * 60 * 60 * 1000);
       }
 
       // Build dedupe key (but don't check yet - wait until after extraction succeeds)
