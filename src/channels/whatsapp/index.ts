@@ -94,7 +94,7 @@ const WATCHDOG_INTERVAL_MS = 60 * 1000;
 const WATCHDOG_TIMEOUT_MS = 30 * 60 * 1000;
 
 /** Session corruption threshold - clear session after N failures without QR */
-const SESSION_CORRUPTION_THRESHOLD = 3;
+const SESSION_CORRUPTION_THRESHOLD = 8;
 
 /** Message deduplication TTL (20 minutes) */
 const DEDUPE_TTL_MS = 20 * 60 * 1000;
@@ -374,13 +374,11 @@ export class WhatsAppAdapter implements ChannelAdapter {
       // Check if logged out
       if (!this.running) break;
 
-      // Check for session corruption (repeated failures without QR)
-      if (this.consecutiveNoQrFailures >= 3) {
-        // Don't auto-clear credentials -- that's destructive (destroys encryption keys,
-        // forces QR re-pair, causes "Waiting for this message" for pending messages).
-        // Just log and let the reconnect backoff handle transient failures.
+      // Check for persistent session failures (only warn after many attempts -- 
+      // 1-3 failures on startup is normal WhatsApp reconnection cooldown)
+      if (this.consecutiveNoQrFailures >= SESSION_CORRUPTION_THRESHOLD) {
         console.warn(
-          "[WhatsApp] 3 consecutive connection failures without QR. Session may be expired -- use /reset whatsapp to re-pair if this persists."
+          `[WhatsApp] ${SESSION_CORRUPTION_THRESHOLD} consecutive connection failures without QR. Session may need re-pairing -- use /reset whatsapp if this persists.`
         );
         this.consecutiveNoQrFailures = 0;
       }
