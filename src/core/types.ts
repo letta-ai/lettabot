@@ -170,12 +170,20 @@ export interface BotConfig {
 
   // Display
   displayName?: string; // Prefix outbound messages (e.g. "💜 Signo")
+  display?: {
+    showToolCalls?: boolean;      // Show tool invocations in channel output
+    showReasoning?: boolean;      // Show agent reasoning/thinking in channel output
+    reasoningMaxChars?: number;   // Truncate reasoning to N chars (default: 0 = no limit)
+  };
 
   // Skills
   skills?: SkillsConfig;
 
   // Safety
   maxToolCalls?: number; // Abort if agent calls this many tools in one turn (default: 100)
+
+  // Memory filesystem (context repository)
+  memfs?: boolean; // true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
 
   // Security
   allowedUsers?: string[];  // Empty = allow all
