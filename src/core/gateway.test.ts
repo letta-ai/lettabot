@@ -17,6 +17,8 @@ function createMockSession(channels: string[] = ['telegram']): AgentSession {
     reset: vi.fn(),
     getLastMessageTarget: vi.fn().mockReturnValue(null),
     getLastUserMessageTime: vi.fn().mockReturnValue(null),
+    getPendingMessages: vi.fn().mockReturnValue([]),
+    injectMessage: vi.fn(),
   };
 }
 

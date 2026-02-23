@@ -251,6 +251,23 @@ something they need to know or act on.
 }
 
 /**
+ * Resume prompt (responsive mode) — injected as a user message on startup
+ * when a resume context exists. Unlike the heartbeat resume, this runs in
+ * responsive mode: the agent's text output IS delivered to the user.
+ */
+export function buildResumePrompt(resumeCtx: ResumeContext): string {
+  const reason = resumeCtx.reason ? ` Reason for restart: ${resumeCtx.reason}.` : '';
+  return `\
+⚡ RESUME AFTER RESTART ⚡
+You were restarted. Before the restart, you set a resume flag:
+  Task: ${resumeCtx.task}
+  Set at: ${resumeCtx.setAt}${reason}
+
+PRIORITY: Resume this task immediately. Your response WILL be delivered to the user.
+Check your archival memory for "last_session_state" if you need more context.`;
+}
+
+/**
  * Base persona addition for message CLI awareness
  * 
  * This should be added to the agent's persona/system prompt to ensure

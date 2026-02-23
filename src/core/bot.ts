@@ -684,6 +684,75 @@ export class LettaBot implements AgentSession {
     console.log('[Bot] Group batcher configured');
   }
 
+  // =========================================================================
+  // Message Queue Persistence (for restart resume)
+  // =========================================================================
+
+  /**
+   * Get all pending messages from the queue (for saving before shutdown).
+   * Returns serialized messages that can be persisted to disk.
+   */
+  getPendingMessages(): Array<{ channel: string; chatId: string; userId: string; userName?: string; userHandle?: string; messageId?: string; text: string; timestamp: string; threadId?: string; isGroup?: boolean; groupName?: string; serverId?: string; wasMentioned?: boolean }> {
+    const pending: Array<{ channel: string; chatId: string; userId: string; userName?: string; userHandle?: string; messageId?: string; text: string; timestamp: string; threadId?: string; isGroup?: boolean; groupName?: string; serverId?: string; wasMentioned?: boolean }> = [];
+
+    // Collect from global queue (shared mode)
+    for (const { msg } of this.messageQueue) {
+      pending.push({
+        channel: msg.channel,
+        chatId: msg.chatId,
+        userId: msg.userId,
+        userName: msg.userName,
+        userHandle: msg.userHandle,
+        messageId: msg.messageId,
+        text: msg.text,
+        timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : String(msg.timestamp),
+        threadId: msg.threadId,
+        isGroup: msg.isGroup,
+        groupName: msg.groupName,
+        serverId: msg.serverId,
+        wasMentioned: msg.wasMentioned,
+      });
+    }
+
+    // Collect from keyed queues (per-channel mode)
+    for (const [, queue] of this.keyedQueues) {
+      for (const { msg } of queue) {
+        pending.push({
+          channel: msg.channel,
+          chatId: msg.chatId,
+          userId: msg.userId,
+          userName: msg.userName,
+          userHandle: msg.userHandle,
+          messageId: msg.messageId,
+          text: msg.text,
+          timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : String(msg.timestamp),
+          threadId: msg.threadId,
+          isGroup: msg.isGroup,
+          groupName: msg.groupName,
+          serverId: msg.serverId,
+          wasMentioned: msg.wasMentioned,
+        });
+      }
+    }
+
+    return pending;
+  }
+
+  /**
+   * Inject a message into the processing pipeline as if it came from a channel.
+   * Used for replaying saved messages after restart and for resume prompts.
+   */
+  injectMessage(msg: InboundMessage): void {
+    // Find the adapter for this channel
+    const adapter = this.channels.get(msg.channel);
+    if (!adapter) {
+      console.warn(`[Bot] Cannot inject message: no adapter for channel "${msg.channel}"`);
+      return;
+    }
+    console.log(`[Bot] Injecting message from ${msg.userId} on ${msg.channel}: ${msg.text.substring(0, 60)}...`);
+    this.handleMessage(msg, adapter);
+  }
+
   processGroupBatch(msg: InboundMessage, adapter: ChannelAdapter): void {
     const count = msg.batchedMessages?.length || 0;
     console.log(`[Bot] Group batch: ${count} messages from ${msg.channel}:${msg.chatId}`);

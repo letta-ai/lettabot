@@ -55,6 +55,12 @@ export interface AgentSession {
   /** Get the time of the last user message (for heartbeat skip logic) */
   getLastUserMessageTime(): Date | null;
 
+  /** Get pending messages from the queue (for saving before shutdown) */
+  getPendingMessages(): Array<{ channel: string; chatId: string; userId: string; userName?: string; userHandle?: string; messageId?: string; text: string; timestamp: string; threadId?: string; isGroup?: boolean; groupName?: string; serverId?: string; wasMentioned?: boolean }>;
+
+  /** Inject a message into the processing pipeline (for replaying saved messages) */
+  injectMessage(msg: InboundMessage): void;
+
   /** Callback to trigger heartbeat */
   onTriggerHeartbeat?: () => Promise<void>;
 }

@@ -162,6 +162,9 @@ import { SignalAdapter } from './channels/signal.js';
 import { DiscordAdapter } from './channels/discord.js';
 import { GroupBatcher } from './core/group-batcher.js';
 import { printStartupBanner } from './core/banner.js';
+import { consumeResumeContext, consumeMessageQueue, saveMessageQueue, type SerializedMessage } from './core/resume-context.js';
+import { buildResumePrompt } from './core/prompts.js';
+import type { ChannelId } from './core/types.js';
 import { collectGroupBatchingConfig } from './core/group-batching-config.js';
 import { CronService } from './cron/service.js';
 import { HeartbeatService } from './cron/heartbeat.js';
@@ -748,9 +751,89 @@ async function main() {
   });
   printStartupBanner(bannerAgents);
   
+  // =========================================================================
+  // Post-startup: Resume context + message queue replay
+  // =========================================================================
+
+  // Check for resume context (set by agent before restart)
+  const resumeCtx = consumeResumeContext();
+  const savedMessages = consumeMessageQueue();
+
+  if (resumeCtx || savedMessages.length > 0) {
+    // Small delay to let channels fully initialize
+    setTimeout(() => {
+      const agentNames = gateway.getAgentNames();
+      // For now, resume targets the first (usually only) agent
+      const targetAgent = agentNames.length > 0 ? gateway.getAgent(agentNames[0]) : null;
+
+      if (!targetAgent) {
+        console.warn('[Resume] No agent available for resume');
+        return;
+      }
+
+      const lastTarget = targetAgent.getLastMessageTarget();
+      if (!lastTarget) {
+        console.warn('[Resume] No last message target — cannot deliver resume in responsive mode. Will fall back to heartbeat.');
+        return;
+      }
+
+      // Replay saved messages first (they were queued before the restart)
+      if (savedMessages.length > 0) {
+        console.log(`[Resume] Replaying ${savedMessages.length} saved message(s)...`);
+        for (const saved of savedMessages) {
+          targetAgent.injectMessage({
+            channel: saved.channel as ChannelId,
+            chatId: saved.chatId,
+            userId: saved.userId,
+            userName: saved.userName,
+            userHandle: saved.userHandle,
+            messageId: saved.messageId,
+            text: saved.text,
+            timestamp: new Date(saved.timestamp),
+            threadId: saved.threadId,
+            isGroup: saved.isGroup,
+            groupName: saved.groupName,
+            serverId: saved.serverId,
+            wasMentioned: saved.wasMentioned,
+          });
+        }
+      }
+
+      // Then inject the resume prompt as a responsive-mode message
+      if (resumeCtx) {
+        console.log(`[Resume] Injecting resume prompt to ${lastTarget.channel}:${lastTarget.chatId}`);
+        targetAgent.injectMessage({
+          channel: lastTarget.channel as ChannelId,
+          chatId: lastTarget.chatId,
+          userId: 'system',
+          userName: 'System',
+          text: buildResumePrompt(resumeCtx),
+          timestamp: new Date(),
+        });
+      }
+    }, 2000); // 2s delay for channel initialization
+  }
+
+  // =========================================================================
   // Shutdown
+  // =========================================================================
+
   const shutdown = async () => {
     console.log('\nShutting down...');
+
+    // Save pending messages from all agents before stopping
+    const allPending: SerializedMessage[] = [];
+    for (const name of gateway.getAgentNames()) {
+      const agent = gateway.getAgent(name);
+      if (agent) {
+        const pending = agent.getPendingMessages();
+        allPending.push(...pending);
+      }
+    }
+    if (allPending.length > 0) {
+      saveMessageQueue(allPending);
+    }
+
     services.groupBatchers.forEach(b => b.stop());
     services.heartbeatServices.forEach(h => h.stop());
     services.cronServices.forEach(c => c.stop());
