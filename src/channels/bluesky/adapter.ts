@@ -1206,7 +1206,11 @@ export class BlueskyAdapter implements ChannelAdapter {
     const didMode = this.getDidMode(authorDid);
     if (didMode === 'disabled') return;
 
-    const notificationMessageId = notification.cid || notification.uri;
+    const baseMsgId = notification.cid || notification.uri;
+    // Cross-path dedup: skip if Jetstream already delivered this CID (stored as bare CID)
+    if (baseMsgId && this.seenMessageIds.has(baseMsgId)) return;
+    // Within-notification dedup: same reason+CID pair seen before (use reason-scoped key)
+    const notificationMessageId = notification.reason ? `${notification.reason}:${baseMsgId}` : baseMsgId;
     if (notificationMessageId && this.seenMessageIds.has(notificationMessageId)) return;
 
     const actionable = notification.reason === 'mention'
