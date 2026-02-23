@@ -218,7 +218,7 @@ export class LettaBot implements AgentSession {
   private formatToolCallDisplay(streamMsg: StreamMsg): string {
     const name = streamMsg.toolName || 'unknown';
     const params = this.abbreviateToolInput(streamMsg);
-    return params ? `> **Tool:** ${name} (${params})` : `> **Tool:** ${name}`;
+    return params ? `**Tool:** ${name} (${params})` : `**Tool:** ${name}`;
   }
 
   /**
@@ -227,7 +227,8 @@ export class LettaBot implements AgentSession {
   private abbreviateToolInput(streamMsg: StreamMsg): string {
     const input = streamMsg.toolInput as Record<string, unknown> | undefined;
     if (!input || typeof input !== 'object') return '';
-    const entries = Object.entries(input).slice(0, 2);
+    // Filter out undefined/null values (SDK yields {raw: undefined} for partial chunks)
+    const entries = Object.entries(input).filter(([, v]) => v != null).slice(0, 2);
     return entries
       .map(([k, v]) => {
         let str: string;
