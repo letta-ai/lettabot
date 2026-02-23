@@ -1154,6 +1154,7 @@ export class BlueskyAdapter implements ChannelAdapter {
 
     const extraContext: Record<string, string> = {};
     extraContext['Operation'] = `notification ${notification.reason}`;
+    if (notification.reason) extraContext['NotificationReason'] = notification.reason;
     if (authorHandle) {
       extraContext['Handle'] = `@${authorHandle}`;
     }
