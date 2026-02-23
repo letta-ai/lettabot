@@ -252,7 +252,9 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
     if (msg.wasMentioned) {
       lines.push(`- **Mentioned**: yes`);
     }
-    if (!msg.isListeningMode) {
+    if (msg.isListeningMode) {
+      lines.push(`- **Mode**: Listen only (do not respond unless directly mentioned)`);
+    } else {
       lines.push(`- **Hint**: See Response Directives below for \`<no-reply/>\` and \`<actions>\``);
     }
   } else if (messageType === 'public') {
