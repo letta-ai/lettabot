@@ -135,8 +135,8 @@ function printUnsupported(platform: string): void {
   console.log(`${platform}: Channel listing not supported (platform does not expose a bot-visible channel list).`);
 }
 
-function resolveAgentConfig(agentName?: string): AgentConfig | null {
-  if (!agentName) return null;
+export function resolveAgentConfig(agentName?: string): AgentConfig | undefined {
+  if (!agentName) return undefined;
 
   const config = loadAppConfigOrExit();
   const agents = normalizeAgents(config);
@@ -145,10 +145,14 @@ function resolveAgentConfig(agentName?: string): AgentConfig | null {
   if (exact) return exact;
 
   const lower = agentName.toLowerCase();
-  return agents.find(a => a.name.toLowerCase() === lower) || null;
+  const found = agents.find(a => a.name.toLowerCase() === lower);
+  if (found) return found;
+
+  console.error(`Agent "${agentName}" not found in config`);
+  process.exit(1);
 }
 
-function parseChannelArgs(args: string[]): { channel?: string; agent?: string; error?: string } {
+export function parseChannelArgs(args: string[]): { channel?: string; agent?: string; error?: string } {
   let channel: string | undefined;
   let agent: string | undefined;
 
@@ -171,8 +175,13 @@ function parseChannelArgs(args: string[]): { channel?: string; agent?: string; e
     if (arg === '--agent') {
       return { error: 'Missing value for --agent' };
     }
-    if (!arg.startsWith('-') && !channel) {
-      channel = arg.toLowerCase();
+    if (!arg.startsWith('-')) {
+      if (!channel) {
+        channel = arg.toLowerCase();
+      } else {
+        return { error: `Unexpected argument: ${arg}` };
+      }
+      continue;
     }
   }
 
@@ -181,11 +190,6 @@ function parseChannelArgs(args: string[]): { channel?: string; agent?: string; e
 
 export async function listGroups(channel?: string, agentName?: string): Promise<void> {
   const agentConfig = resolveAgentConfig(agentName);
-
-  if (agentName && !agentConfig) {
-    console.error(`Agent "${agentName}" not found in config`);
-    process.exit(1);
-  }
 
   // Resolve tokens from agent config or fall back to env vars
   const discordToken = agentConfig?.channels?.discord?.token || process.env.DISCORD_BOT_TOKEN;

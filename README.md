@@ -186,7 +186,7 @@ Then ask your bot things like:
 | `lettabot onboard` | Interactive setup wizard |
 | `lettabot server` | Start the bot server |
 | `lettabot configure` | View and edit configuration |
-| `lettabot channels list-groups [channel]` | List group/channel IDs for Slack/Discord |
+| `lettabot channels list-groups [--channel discord\|slack] [--agent name]` | List group/channel IDs for Slack/Discord |
 | `lettabot skills status` | Show enabled and available skills |
 | `lettabot destroy` | Delete all local data and start fresh |
 | `lettabot help` | Show help |

@@ -25,6 +25,7 @@ Commands:
 
 List options:
   --channel, -c <name>    Platform to list: discord, slack (default: all configured)
+  --agent <name>          Agent name from lettabot.yaml (reads tokens from that agent's config)
 
 Examples:
   # List channels for all configured platforms
@@ -36,7 +37,11 @@ Examples:
   # List Slack channels only
   lettabot-channels list --channel slack
 
-Environment variables:
+  # List channels for a specific agent (multi-agent setup)
+  lettabot-channels list --agent MyAgent
+  lettabot-channels list --agent MyAgent --channel discord
+
+Environment variables (used as fallback when --agent is not specified):
   DISCORD_BOT_TOKEN       Required for Discord channel listing
   SLACK_BOT_TOKEN         Required for Slack channel listing
 
