@@ -150,6 +150,12 @@ curl http://localhost:8283/v1/health
 
 If the bot hangs after sending a message:
 
+**What LettaBot already does automatically**
+
+- For terminal runs with no assistant output, LettaBot attempts one recovery/retry cycle.
+- If the failure is an approval-related conflict, LettaBot scans the same conversation for unresolved approvals, auto-denies orphaned ones, cancels active runs for that same conversation, then retries once.
+- For generic `409 conflict` ("another request is currently being processed"), LettaBot does not blindly retry; it returns a clear "wait and try again" message.
+
 **1. Check for pending tool approvals**
 
 Some tools may have `requires_approval: true` set. LettaBot disables these on startup, but check:
