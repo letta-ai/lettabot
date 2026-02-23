@@ -582,17 +582,22 @@ export async function recoverOrphanedConversationApproval(
       runId: string;
     }
     const unresolvedByRun = new Map<string, UnresolvedApproval[]>();
-    
+    // Deduplicate tool_call_ids globally — duplicate messages can produce
+    // multiple identical approval requests for the same tool_call_id.
+    const seenToolCallIds = new Set<string>();
+
     for (const msg of messages) {
       if (msg.message_type !== 'approval_request_message') continue;
-      
-      const toolCalls = (msg.tool_calls as Array<{ tool_call_id: string; name: string }>) 
+
+      const toolCalls = (msg.tool_calls as Array<{ tool_call_id: string; name: string }>)
         || (msg.tool_call ? [msg.tool_call as { tool_call_id: string; name: string }] : []);
       const runId = msg.run_id as string | undefined;
-      
+
       for (const tc of toolCalls) {
         if (!tc.tool_call_id || resolvedToolCalls.has(tc.tool_call_id)) continue;
-        
+        if (seenToolCallIds.has(tc.tool_call_id)) continue;
+        seenToolCallIds.add(tc.tool_call_id);
+
         const key = runId || 'unknown';
         if (!unresolvedByRun.has(key)) unresolvedByRun.set(key, []);
         unresolvedByRun.get(key)!.push({
@@ -640,14 +645,23 @@ export async function recoverOrphanedConversationApproval(
             reason: `Auto-denied: originating run was ${status}/${stopReason}`,
           }));
           
-          await client.conversations.messages.create(conversationId, {
-            messages: [{
-              type: 'approval',
-              approvals: approvalResponses,
-            }],
-            streaming: false,
-          });
-          
+          try {
+            await client.conversations.messages.create(conversationId, {
+              messages: [{
+                type: 'approval',
+                approvals: approvalResponses,
+              }],
+              streaming: false,
+            });
+          } catch (submitErr) {
+            // The conversation may currently be waiting for a different active
+            // approval (from a newer run). Log and skip rather than crashing.
+            const msg = submitErr instanceof Error ? submitErr.message : String(submitErr);
+            console.warn(`[Letta API] Could not submit ${approvalResponses.length} denial(s) for run ${runId}: ${msg}`);
+            details.push(`Failed to deny ${approvalResponses.length} approval(s) for run ${runId}: ${msg}`);
+            continue;
+          }
+
           // Cancel active stuck runs after rejecting their approvals
           let cancelled = false;
           if (isStuckApproval) {
