@@ -11,4 +11,5 @@ export const DEFAULT_NOTIFICATIONS_INTERVAL_SEC = 60;
 export const DEFAULT_NOTIFICATIONS_LIMIT = 50;
 export const HANDLE_CACHE_MAX = 10_000;
 export const LAST_POST_CACHE_MAX = 5_000;
+export const SEEN_MESSAGE_IDS_MAX = 5_000;
 export const STATE_VERSION = 1;
