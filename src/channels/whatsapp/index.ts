@@ -74,7 +74,7 @@ import { normalizePhoneForStorage } from "../../utils/phone.js";
 import { parseCommand, HELP_TEXT } from "../../core/commands.js";
 
 // Node imports
-import { rmSync } from "node:fs";
+
 
 // ============================================================================
 // DEBUG MODE
@@ -376,17 +376,13 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
       // Check for session corruption (repeated failures without QR)
       if (this.consecutiveNoQrFailures >= 3) {
-        console.log(
-          "[WhatsApp] Session expired, clearing credentials and re-pairing..."
+        // Don't auto-clear credentials -- that's destructive (destroys encryption keys,
+        // forces QR re-pair, causes "Waiting for this message" for pending messages).
+        // Just log and let the reconnect backoff handle transient failures.
+        console.warn(
+          "[WhatsApp] 3 consecutive connection failures without QR. Session may be expired -- use /reset whatsapp to re-pair if this persists."
         );
-        try {
-          rmSync(this.sessionPath, { recursive: true, force: true });
-          console.log("[WhatsApp] Session cleared, will show QR on next attempt");
-        } catch (err) {
-          console.error("[WhatsApp] Failed to clear session:", err);
-        }
         this.consecutiveNoQrFailures = 0;
-        this.reconnectState.attempts = 0; // Reset attempts after clearing
       }
 
       // Increment and check retry limit
