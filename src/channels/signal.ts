@@ -309,6 +309,7 @@ This code expires in 1 hour.`;
   getFormatterHints() {
     return {
       supportsReactions: false,
+      supportsFiles: false,
       formatHint: 'Plain text only — NO markdown',
     };
   }

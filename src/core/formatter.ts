@@ -254,8 +254,10 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
     }
     if (msg.isListeningMode) {
       lines.push(`- **Mode**: Listen only — observe and update memories, do not send text replies`);
-    } else {
+    } else if (msg.formatterHints?.supportsReactions) {
       lines.push(`- **Hint**: See Response Directives below for \`<no-reply/>\` and \`<actions>\``);
+    } else {
+      lines.push(`- **Hint**: See Response Directives below for \`<no-reply/>\``);
     }
   } else if (messageType === 'public') {
     lines.push(`- **Type**: Public post`);
@@ -345,7 +347,7 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
 
   // actions/react (only if supported)
   if (supportsReactions) {
-    lines.push(`- \`<actions><react emoji="thumbsup" /></actions>\` — react without sending text`);
+    lines.push(`- \`<actions><react emoji="thumbsup" /></actions>\` — react without sending text (executes silently, like \`<no-reply/>\`)`);
     lines.push(`- \`<actions><react emoji="eyes" /></actions>Your text here\` — react and reply`);
     if (isGroup) {
       lines.push(`- \`<actions><react emoji="fire" message="123" /></actions>\` — react to a specific message`);
