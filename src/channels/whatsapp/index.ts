@@ -177,6 +177,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
   // Consecutive failures without QR (session corruption indicator)
   private consecutiveNoQrFailures = 0;
 
+  // One-time hint for missing groups config
+  private loggedNoGroupsHint = false;
+
   // Credential save queue
   private credsSaveQueue: CredsSaveQueue | null = null;
 
@@ -782,7 +785,12 @@ export class WhatsAppAdapter implements ChannelAdapter {
         });
 
         if (!gatingResult.shouldProcess) {
-          console.log(`[WhatsApp] Group message skipped: ${gatingResult.reason}`);
+          if (gatingResult.reason === 'no-groups-config' && !this.loggedNoGroupsHint) {
+            console.log(`[WhatsApp] Group messages ignored (no groups config). Add a "groups" section to your agent config to enable.`);
+            this.loggedNoGroupsHint = true;
+          } else if (gatingResult.reason !== 'no-groups-config') {
+            console.log(`[WhatsApp] Group message skipped: ${gatingResult.reason}`);
+          }
           continue;
         }
 
