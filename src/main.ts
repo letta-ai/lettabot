@@ -531,6 +531,8 @@ async function main() {
       displayName: agentConfig.displayName,
       maxToolCalls: agentConfig.features?.maxToolCalls,
       sendFileDir: agentConfig.features?.sendFileDir,
+      sendFileMaxSize: agentConfig.features?.sendFileMaxSize,
+      sendFileCleanup: agentConfig.features?.sendFileCleanup,
       memfs: resolvedMemfs,
       display: agentConfig.features?.display,
       conversationMode: agentConfig.conversations?.mode || 'shared',

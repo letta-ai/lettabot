@@ -57,7 +57,11 @@ Sends a file or image to the same channel/chat as the triggering message.
 - `kind` (optional) -- `image` or `file` (defaults to auto-detect based on extension)
 - `cleanup` (optional) -- `true` to delete the file after sending (default: false)
 
-**Security:** File paths are restricted to the configured `sendFileDir` directory (defaults to the agent's working directory). Paths outside this directory are blocked and logged.
+**Security:**
+- File paths are restricted to the configured `sendFileDir` directory (defaults to `data/outbound/` under the agent's working directory). Paths outside this directory are blocked and logged.
+- Symlinks that resolve outside the allowed directory are also blocked.
+- File size is limited to `sendFileMaxSize` (default: 50MB).
+- The `cleanup` attribute only works when `sendFileCleanup: true` is set in the agent's features config (disabled by default).
 
 ### `<no-reply/>`
 
