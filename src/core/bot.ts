@@ -250,9 +250,9 @@ export class LettaBot implements AgentSession {
     const truncated = maxChars > 0 && text.length > maxChars
       ? text.slice(0, maxChars) + '...'
       : text;
-    // Prefix every line with "> " so the whole block renders as a blockquote
-    const lines = truncated.split('\n').map(line => `> ${line}`);
-    return `> **Thinking**\n${lines.join('\n')}`;
+    // Use italic for reasoning -- works across all channels including Signal
+    // (Signal only supports bold/italic/code, no blockquotes)
+    return `**Thinking**\n_${truncated}_`;
   }
 
   // =========================================================================
@@ -1109,6 +1109,9 @@ export class LettaBot implements AgentSession {
       let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | null = null;
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
+      // Buffer the latest tool_call by ID so we display it once with full args
+      // (the SDK streams multiple tool_call messages per call -- first has empty input).
+      let pendingToolDisplay: { toolCallId: string; msg: any } | null = null;
       const msgTypeCounts: Record<string, number> = {};
       
       const finalizeMessage = async () => {
@@ -1163,13 +1166,18 @@ export class LettaBot implements AgentSession {
           const preview = JSON.stringify(streamMsg).slice(0, 300);
           console.log(`[Stream] type=${streamMsg.type} ${preview}`);
           
+          // stream_event is a low-level streaming primitive (partial deltas), not a
+          // semantic type change. Skip it for type-transition logic so it doesn't
+          // prematurely flush reasoning buffers or finalize assistant messages.
+          const isSemanticType = streamMsg.type !== 'stream_event';
+
           // Finalize on type change (avoid double-handling when result provides full response)
-          if (lastMsgType && lastMsgType !== streamMsg.type && response.trim() && streamMsg.type !== 'result') {
+          if (isSemanticType && lastMsgType && lastMsgType !== streamMsg.type && response.trim() && streamMsg.type !== 'result') {
             await finalizeMessage();
           }
 
           // Flush reasoning buffer when type changes away from reasoning
-          if (lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
+          if (isSemanticType && lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
             if (this.config.display?.showReasoning && !suppressDelivery) {
               try {
                 const text = this.formatReasoningDisplay(reasoningBuffer);
@@ -1180,6 +1188,22 @@ export class LettaBot implements AgentSession {
               }
             }
             reasoningBuffer = '';
+          }
+
+          // Flush pending tool call display when type changes away from tool_call.
+          // The SDK streams multiple tool_call messages per call (first has empty args),
+          // so we buffer and display the last one which has the complete input.
+          if (isSemanticType && pendingToolDisplay && streamMsg.type !== 'tool_call') {
+            if (this.config.display?.showToolCalls && !suppressDelivery) {
+              try {
+                const text = this.formatToolCallDisplay(pendingToolDisplay.msg);
+                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+                sentAnyMessage = true;
+              } catch (err) {
+                console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
+              }
+            }
+            pendingToolDisplay = null;
           }
           
           // Tool loop detection
@@ -1196,16 +1220,9 @@ export class LettaBot implements AgentSession {
             this.syncTodoToolCall(streamMsg);
             console.log(`[Stream] >>> TOOL CALL: ${streamMsg.toolName || 'unknown'} (id: ${streamMsg.toolCallId?.slice(0, 12) || '?'})`);
             sawNonAssistantSinceLastUuid = true;
-            // Display tool call in channel if configured
-            if (this.config.display?.showToolCalls && !suppressDelivery) {
-              try {
-                const text = this.formatToolCallDisplay(streamMsg);
-                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
-                sentAnyMessage = true;
-              } catch (err) {
-                console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
-              }
-            }
+            // Buffer the tool call -- the SDK streams multiple chunks per call
+            // (first has empty args). We display the last chunk when type changes.
+            pendingToolDisplay = { toolCallId: streamMsg.toolCallId || '', msg: streamMsg };
           } else if (streamMsg.type === 'tool_result') {
             console.log(`[Stream] <<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
             sawNonAssistantSinceLastUuid = true;
@@ -1238,7 +1255,9 @@ export class LettaBot implements AgentSession {
           } else if (streamMsg.type !== 'assistant') {
             sawNonAssistantSinceLastUuid = true;
           }
-          lastMsgType = streamMsg.type;
+          // Don't let stream_event overwrite lastMsgType -- it's noise between
+          // semantic types and would cause false type-transition triggers.
+          if (isSemanticType) lastMsgType = streamMsg.type;
           
           if (streamMsg.type === 'assistant') {
             const msgUuid = streamMsg.uuid;
