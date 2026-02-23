@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock the Letta client before importing the module under test
 const mockConversationsMessagesList = vi.fn();
@@ -35,6 +35,11 @@ function mockPageIterator<T>(items: T[]) {
 describe('recoverOrphanedConversationApproval', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('returns false when no messages in conversation', async () => {
@@ -68,14 +73,18 @@ describe('recoverOrphanedConversationApproval', () => {
     ]));
     mockRunsRetrieve.mockResolvedValue({ status: 'failed', stop_reason: 'error' });
     mockConversationsMessagesCreate.mockResolvedValue({});
+    mockAgentsMessagesCancel.mockResolvedValue(undefined);
 
-    const result = await recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    // Recovery has a 3s delay after denial; advance fake timers to resolve it
+    const resultPromise = recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await resultPromise;
 
     expect(result.recovered).toBe(true);
     expect(result.details).toContain('Denied 1 approval(s) from failed run run-1');
     expect(mockConversationsMessagesCreate).toHaveBeenCalledOnce();
-    // Should NOT cancel -- run is already terminated
-    expect(mockAgentsMessagesCancel).not.toHaveBeenCalled();
+    // Should cancel all runs after denial (denial triggers new server-side run)
+    expect(mockAgentsMessagesCancel).toHaveBeenCalledOnce();
   });
 
   it('recovers from stuck running+requires_approval and cancels the run', async () => {
@@ -91,10 +100,12 @@ describe('recoverOrphanedConversationApproval', () => {
     mockConversationsMessagesCreate.mockResolvedValue({});
     mockAgentsMessagesCancel.mockResolvedValue(undefined);
 
-    const result = await recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    const resultPromise = recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await resultPromise;
 
     expect(result.recovered).toBe(true);
-    expect(result.details).toContain('(cancelled)');
+    expect(result.details).toContain('(runs cancelled)');
     // Should send denial
     expect(mockConversationsMessagesCreate).toHaveBeenCalledOnce();
     const createCall = mockConversationsMessagesCreate.mock.calls[0];
@@ -160,9 +171,12 @@ describe('recoverOrphanedConversationApproval', () => {
     // Cancel fails
     mockAgentsMessagesCancel.mockRejectedValue(new Error('cancel failed'));
 
-    const result = await recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    const resultPromise = recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await resultPromise;
 
     expect(result.recovered).toBe(true);
-    expect(result.details).toContain('(cancel failed)');
+    // Cancel failure is logged but doesn't change the suffix anymore
+    expect(result.details).toContain('Denied 1 approval(s) from running run run-5');
   });
 });

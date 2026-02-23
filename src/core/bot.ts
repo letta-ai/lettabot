@@ -10,7 +10,7 @@ import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
-import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
+import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval, getLatestRunError } from '../tools/letta-api.js';
 import { installSkillsToAgent } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
@@ -70,6 +70,11 @@ function formatApiErrorForUser(error: { message: string; stopReason: string; api
     }
     const reasonStr = reasons.length > 0 ? `: ${reasons.join(', ')}` : '';
     return `(Rate limited${reasonStr}. Try again in a moment.)`;
+  }
+
+  // 409 CONFLICT (concurrent request on same conversation)
+  if (msg.includes('conflict') || msg.includes('409') || msg.includes('another request is currently being processed')) {
+    return '(Another request is still processing on this conversation. Wait a moment and try again.)';
   }
 
   // Authentication
@@ -1183,7 +1188,9 @@ export class LettaBot implements AgentSession {
               try {
                 const text = this.formatReasoningDisplay(reasoningBuffer);
                 await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
-                sentAnyMessage = true;
+                // Note: display messages don't set sentAnyMessage -- they're informational,
+                // not a substitute for an assistant response. Error handling and retry must
+                // still fire even if reasoning was displayed.
               } catch (err) {
                 console.warn('[Bot] Failed to send reasoning display:', err instanceof Error ? err.message : err);
               }
@@ -1199,7 +1206,7 @@ export class LettaBot implements AgentSession {
               try {
                 const text = this.formatToolCallDisplay(pendingToolDisplay.msg);
                 await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
-                sentAnyMessage = true;
+                // Display messages don't set sentAnyMessage (see reasoning display comment).
               } catch (err) {
                 console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
               }
@@ -1219,7 +1226,9 @@ export class LettaBot implements AgentSession {
           // Log meaningful events with structured summaries
           if (streamMsg.type === 'tool_call') {
             this.syncTodoToolCall(streamMsg);
-            console.log(`[Stream] >>> TOOL CALL: ${streamMsg.toolName || 'unknown'} (id: ${streamMsg.toolCallId?.slice(0, 12) || '?'})`);
+            const tcName = streamMsg.toolName || 'unknown';
+            const tcId = streamMsg.toolCallId?.slice(0, 12) || '?';
+            console.log(`[Stream] >>> TOOL CALL: ${tcName} (id: ${tcId})`);
             sawNonAssistantSinceLastUuid = true;
             // Buffer the tool call -- the SDK streams multiple chunks per call
             // (first has empty args). We display the last chunk when type changes.
@@ -1331,8 +1340,49 @@ export class LettaBot implements AgentSession {
             // the current buffer, but finalizeMessage() clears it on type changes.
             // sentAnyMessage is the authoritative "did we deliver output" flag.
             const nothingDelivered = !hasResponse && !sentAnyMessage;
+
+            // Enrich opaque error detail from run metadata (single fast API call).
+            // The wire protocol's stop_reason often just says "error" -- the run
+            // metadata has the actual detail (e.g. "waiting for approval on a tool call").
+            if (isTerminalError && this.store.agentId &&
+                (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
+              const enriched = await getLatestRunError(this.store.agentId);
+              if (enriched) {
+                lastErrorDetail = { message: enriched.message, stopReason: enriched.stopReason };
+              }
+            }
+
+            // Don't retry on 409 CONFLICT -- the conversation is busy, retrying
+            // immediately will just get the same error and waste a session.
+            const isConflictError = lastErrorDetail?.message?.toLowerCase().includes('conflict') || false;
+
+            // For approval-specific conflicts, attempt recovery directly (don't
+            // enter the generic retry path which would just get another CONFLICT).
+            const isApprovalConflict = isConflictError &&
+              lastErrorDetail?.message?.toLowerCase().includes('waiting for approval');
+            if (isApprovalConflict && !retried && this.store.agentId) {
+              const retryConvKey = this.resolveConversationKey(msg.channel);
+              const retryConvId = retryConvKey === 'shared'
+                ? this.store.conversationId
+                : this.store.getConversationId(retryConvKey);
+              if (retryConvId) {
+                console.log('[Bot] Approval conflict detected -- attempting targeted recovery...');
+                this.invalidateSession(retryConvKey);
+                session = null;
+                clearInterval(typingInterval);
+                const convResult = await recoverOrphanedConversationApproval(
+                  this.store.agentId, retryConvId, true /* deepScan */
+                );
+                if (convResult.recovered) {
+                  console.log(`[Bot] Approval recovery succeeded (${convResult.details}), retrying message...`);
+                  return this.processMessage(msg, adapter, true);
+                }
+                console.warn(`[Bot] Approval recovery failed: ${convResult.details}`);
+              }
+            }
+
             const shouldRetryForEmptyResult = streamMsg.success && resultText === '' && nothingDelivered;
-            const shouldRetryForErrorResult = isTerminalError && nothingDelivered;
+            const shouldRetryForErrorResult = isTerminalError && nothingDelivered && !isConflictError;
             if (shouldRetryForEmptyResult || shouldRetryForErrorResult) {
               if (shouldRetryForEmptyResult) {
                 console.error(`[Bot] Warning: Agent returned empty result with no response. stopReason=${streamMsg.stopReason || 'N/A'}, conv=${streamMsg.conversationId || 'N/A'}`);
