@@ -58,7 +58,7 @@ agents:
 conversations:
   mode: shared        # shared (single conversation) or per-channel
   heartbeat: last-active
-  # perChannel: ["bluesky"]  # Always use a separate conversation for these channels
+  # perChannel: ["slack"]  # Keep these channels isolated while others share a conversation
 
 # BYOK Providers (optional, api mode only)
 # These will be synced to Letta API on startup

@@ -158,6 +158,49 @@ export function isResponseDeliverySuppressed(msg: Pick<InboundMessage, 'isListen
   return msg.isListeningMode === true;
 }
 
+/**
+ * Pure function: resolve the conversation key for a channel message.
+ * Returns the channel id in per-channel mode or when the channel is in overrides.
+ * Returns 'shared' otherwise.
+ */
+export function resolveConversationKey(
+  channel: string,
+  conversationMode: string | undefined,
+  conversationOverrides: Set<string>,
+): string {
+  const normalized = channel.toLowerCase();
+  if (conversationMode === 'per-channel') return normalized;
+  if (conversationOverrides.has(normalized)) return normalized;
+  return 'shared';
+}
+
+/**
+ * Pure function: resolve the conversation key for heartbeat/sendToAgent.
+ * In per-channel mode, respects heartbeatConversation setting.
+ * In shared mode with overrides, respects override channels when using last-active.
+ */
+export function resolveHeartbeatConversationKey(
+  conversationMode: string | undefined,
+  heartbeatConversation: string | undefined,
+  conversationOverrides: Set<string>,
+  lastActiveChannel?: string,
+): string {
+  const hb = heartbeatConversation || 'last-active';
+
+  if (conversationMode === 'per-channel') {
+    if (hb === 'dedicated') return 'heartbeat';
+    if (hb === 'last-active') return lastActiveChannel ?? 'shared';
+    return hb;
+  }
+
+  // shared mode — if last-active and overrides exist, respect the override channel
+  if (hb === 'last-active' && conversationOverrides.size > 0 && lastActiveChannel) {
+    return resolveConversationKey(lastActiveChannel, conversationMode, conversationOverrides);
+  }
+
+  return 'shared';
+}
+
 export class LettaBot implements AgentSession {
   private store: Store;
   private config: BotConfig;
@@ -433,30 +476,25 @@ export class LettaBot implements AgentSession {
 
   /**
    * Resolve the conversation key for a channel message.
-   * In shared mode returns "shared"; in per-channel mode returns the channel id.
+   * Returns 'shared' in shared mode (unless channel is in perChannel overrides).
+   * Returns channel id in per-channel mode or for override channels.
    */
   private resolveConversationKey(channel: string): string {
-    const normalized = channel.toLowerCase();
-    if (this.config.conversationMode === 'per-channel') return normalized;
-    if (this.conversationOverrides.has(normalized)) return normalized;
-    return 'shared';
+    return resolveConversationKey(channel, this.config.conversationMode, this.conversationOverrides);
   }
 
   /**
    * Resolve the conversation key for heartbeat/sendToAgent.
+   * Respects perChannel overrides when using last-active in shared mode.
    */
   private resolveHeartbeatConversationKey(): string {
-    if (this.config.conversationMode !== 'per-channel') return 'shared';
-
-    const hb = this.config.heartbeatConversation || 'last-active';
-    if (hb === 'dedicated') return 'heartbeat';
-    if (hb === 'last-active') {
-      // Use the last channel the user messaged on
-      const target = this.store.lastMessageTarget;
-      return target ? target.channel : 'shared';
-    }
-    // Explicit channel name (e.g., "telegram")
-    return hb;
+    const lastActiveChannel = this.store.lastMessageTarget?.channel;
+    return resolveHeartbeatConversationKey(
+      this.config.conversationMode,
+      this.config.heartbeatConversation,
+      this.conversationOverrides,
+      lastActiveChannel,
+    );
   }
 
   // =========================================================================

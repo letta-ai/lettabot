@@ -198,9 +198,8 @@ Each entry in `agents:` accepts:
 | `id` | string | No | Use existing agent ID (skips creation) |
 | `displayName` | string | No | Prefix outbound messages (e.g. `"💜 Signo"`) |
 | `model` | string | No | Model for agent creation |
-| `conversations` | object | No | Conversation routing config (shared vs per-channel) |
-| `channels` | object | No | Channel configs (same schema as top-level `channels:`). At least one agent must have channels. |
 | `conversations` | object | No | Conversation routing (mode, heartbeat, perChannel overrides) |
+| `channels` | object | No | Channel configs (same schema as top-level `channels:`). At least one agent must have channels. |
 | `features` | object | No | Per-agent features (cron, heartbeat, memfs, maxToolCalls) |
 | `polling` | object | No | Per-agent polling config (Gmail, etc.) |
 | `integrations` | object | No | Per-agent integrations (Google, etc.) |
