@@ -970,7 +970,7 @@ export class LettaBot implements AgentSession {
   // processMessage - User-facing message handling
   // =========================================================================
   
-  private async processMessage(msg: InboundMessage, adapter: ChannelAdapter, retried = false): Promise<void> {
+  private async processMessage(msg: InboundMessage, adapter: ChannelAdapter, retried = false, continuationAttempt = 0): Promise<void> {
     // Track timing and last target
     const debugTiming = !!process.env.LETTABOT_DEBUG_TIMING;
     const t0 = debugTiming ? performance.now() : 0;
@@ -1079,6 +1079,7 @@ export class LettaBot implements AgentSession {
       let lastMsgType: string | null = null;
       let lastAssistantUuid: string | null = null;
       let sentAnyMessage = false;
+      let needsContinuation = false;
       let receivedAnyData = false;
       let sawNonAssistantSinceLastUuid = false;
       let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | null = null;
@@ -1294,6 +1295,19 @@ export class LettaBot implements AgentSession {
               }
             }
 
+            // Auto-continue when the agent was truncated by max_tokens.
+            // Unlike the empty-result retry above, this fires even when text
+            // was already delivered — the agent was mid-work and got cut off.
+            // Allows up to MAX_CONTINUATIONS attempts before giving up.
+            const MAX_CONTINUATIONS = 3;
+            const isTruncated = String(streamMsg.stopReason || '') === 'max_tokens_exceeded';
+            if (isTruncated && continuationAttempt < MAX_CONTINUATIONS) {
+              console.log(`[Bot] Agent hit max_tokens (attempt ${continuationAttempt + 1}/${MAX_CONTINUATIONS}) — will send continuation prompt after delivering buffered text.`);
+              needsContinuation = true;
+            } else if (isTruncated) {
+              console.warn(`[Bot] Agent hit max_tokens but exhausted all ${MAX_CONTINUATIONS} continuation attempts. Giving up.`);
+            }
+
             if (isTerminalError && !hasResponse && !sentAnyMessage) {
               if (lastErrorDetail) {
                 response = formatApiErrorForUser(lastErrorDetail);
@@ -1396,6 +1410,18 @@ export class LettaBot implements AgentSession {
         }
       }
       
+      // Auto-continue: after delivering any buffered text, send a
+      // continuation prompt so the agent can finish its truncated work.
+      if (needsContinuation) {
+        const nextAttempt = continuationAttempt + 1;
+        console.log(`[Bot] Sending continuation prompt after max_tokens truncation (attempt ${nextAttempt})...`);
+        const continuationMsg: InboundMessage = {
+          ...msg,
+          text: '[SYSTEM] Your previous turn was truncated at the output token limit. Continue where you left off.',
+        };
+        return this.processMessage(continuationMsg, adapter, retried, nextAttempt);
+      }
+
     } catch (error) {
       console.error('[Bot] Error processing message:', error);
       try {
