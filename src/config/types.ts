@@ -77,6 +77,9 @@ export interface AgentConfig {
     };
     memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
     maxToolCalls?: number;
+    sendFileDir?: string;    // Restrict <send-file> directive to this directory (default: data/outbound)
+    sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
+    sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete after send (default: false)
     display?: DisplayConfig;
   };
   /** Polling config */
@@ -151,6 +154,9 @@ export interface LettaBotConfig {
     inlineImages?: boolean;   // Send images directly to the LLM (default: true). Set false to only send file paths.
     memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
     maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)
+    sendFileDir?: string;   // Restrict <send-file> directive to this directory (default: data/outbound)
+    sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
+    sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete after send (default: false)
     display?: DisplayConfig;  // Show tool calls / reasoning in channel output
   };
 

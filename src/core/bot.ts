@@ -6,6 +6,8 @@
 
 import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
 import { mkdirSync } from 'node:fs';
+import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
+import { extname, resolve, join } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
@@ -101,6 +103,44 @@ function formatApiErrorForUser(error: { message: string; stopReason: string; api
 const SUPPORTED_IMAGE_MIMES = new Set([
   'image/png', 'image/jpeg', 'image/gif', 'image/webp',
 ]);
+
+const IMAGE_FILE_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff',
+]);
+
+/** Infer whether a file is an image or generic file based on extension. */
+export function inferFileKind(filePath: string): 'image' | 'file' {
+  const ext = extname(filePath).toLowerCase();
+  return IMAGE_FILE_EXTENSIONS.has(ext) ? 'image' : 'file';
+}
+
+/**
+ * Check whether a resolved file path is inside the allowed directory.
+ * Prevents path traversal attacks in the send-file directive.
+ *
+ * Uses realpath() for both the file and directory to follow symlinks,
+ * preventing symlink-based escapes (e.g., data/evil -> /etc/passwd).
+ * Falls back to textual resolve() when paths don't exist on disk.
+ */
+export async function isPathAllowed(filePath: string, allowedDir: string): Promise<boolean> {
+  // Resolve the allowed directory -- use realpath if it exists, resolve() otherwise
+  let canonicalDir: string;
+  try {
+    canonicalDir = await realpath(allowedDir);
+  } catch {
+    canonicalDir = resolve(allowedDir);
+  }
+
+  // Resolve the file -- use realpath if it exists, resolve() otherwise
+  let canonicalFile: string;
+  try {
+    canonicalFile = await realpath(filePath);
+  } catch {
+    canonicalFile = resolve(filePath);
+  }
+
+  return canonicalFile === canonicalDir || canonicalFile.startsWith(canonicalDir + '/');
+}
 
 async function buildMultimodalMessage(
   formattedText: string,
@@ -406,6 +446,7 @@ export class LettaBot implements AgentSession {
     adapter: ChannelAdapter,
     chatId: string,
     fallbackMessageId?: string,
+    threadId?: string,
   ): Promise<boolean> {
     let acted = false;
     for (const directive of directives) {
@@ -423,6 +464,68 @@ export class LettaBot implements AgentSession {
           } catch (err) {
             console.warn('[Bot] Directive react failed:', err instanceof Error ? err.message : err);
           }
+        }
+        continue;
+      }
+
+      if (directive.type === 'send-file') {
+        if (typeof adapter.sendFile !== 'function') {
+          console.warn(`[Bot] Directive send-file skipped: ${adapter.name} does not support sendFile`);
+          continue;
+        }
+
+        // Path sandboxing: restrict to configured directory (default: data/outbound under workingDir)
+        const allowedDir = this.config.sendFileDir || join(this.config.workingDir, 'data', 'outbound');
+        const resolvedPath = resolve(directive.path);
+        if (!await isPathAllowed(resolvedPath, allowedDir)) {
+          console.warn(`[Bot] Directive send-file blocked: ${directive.path} is outside allowed directory ${allowedDir}`);
+          continue;
+        }
+
+        // Async file existence + readability check
+        try {
+          await access(resolvedPath, constants.R_OK);
+        } catch {
+          console.warn(`[Bot] Directive send-file skipped: file not found or not readable at ${directive.path}`);
+          continue;
+        }
+
+        // File size guard (default: 50MB)
+        const maxSize = this.config.sendFileMaxSize ?? 50 * 1024 * 1024;
+        try {
+          const fileStat = await stat(resolvedPath);
+          if (fileStat.size > maxSize) {
+            console.warn(`[Bot] Directive send-file blocked: ${directive.path} is ${fileStat.size} bytes (max: ${maxSize})`);
+            continue;
+          }
+        } catch {
+          console.warn(`[Bot] Directive send-file skipped: could not stat ${directive.path}`);
+          continue;
+        }
+
+        try {
+          await adapter.sendFile({
+            chatId,
+            filePath: resolvedPath,
+            caption: directive.caption,
+            kind: directive.kind ?? inferFileKind(resolvedPath),
+            threadId,
+          });
+          acted = true;
+          console.log(`[Bot] Directive: sent file ${resolvedPath}`);
+
+          // Optional cleanup: delete file after successful send.
+          // Only honored when sendFileCleanup is enabled in config (defense-in-depth).
+          if (directive.cleanup && this.config.sendFileCleanup) {
+            try {
+              await unlink(resolvedPath);
+              console.warn(`[Bot] Directive: cleaned up ${resolvedPath}`);
+            } catch (cleanupErr) {
+              console.warn('[Bot] Directive send-file cleanup failed:', cleanupErr instanceof Error ? cleanupErr.message : cleanupErr);
+            }
+          }
+        } catch (err) {
+          console.warn('[Bot] Directive send-file failed:', err instanceof Error ? err.message : err);
         }
       }
     }
@@ -1133,7 +1236,7 @@ export class LettaBot implements AgentSession {
         if (response.trim()) {
           const { cleanText, directives } = parseDirectives(response);
           response = cleanText;
-          if (await this.executeDirectives(directives, adapter, msg.chatId, msg.messageId)) {
+          if (await this.executeDirectives(directives, adapter, msg.chatId, msg.messageId, msg.threadId)) {
             sentAnyMessage = true;
           }
         }
@@ -1450,7 +1553,7 @@ export class LettaBot implements AgentSession {
       if (response.trim()) {
         const { cleanText, directives } = parseDirectives(response);
         response = cleanText;
-        if (await this.executeDirectives(directives, adapter, msg.chatId, msg.messageId)) {
+        if (await this.executeDirectives(directives, adapter, msg.chatId, msg.messageId, msg.threadId)) {
           sentAnyMessage = true;
         }
       }
