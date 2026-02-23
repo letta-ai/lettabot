@@ -1127,16 +1127,6 @@ export class LettaBot implements AgentSession {
       formattedText,
     };
     hookContextBase = hookBase;
-    const hookOverride = await this.runPreMessageHook({
-      stage: 'pre',
-      message: hookMessage,
-      ...hookBase,
-    });
-    if (hookOverride) {
-      messageToSend = hookOverride;
-      hookMessage = hookOverride;
-    }
-    lap('format message');
 
     // Build AskUserQuestion-aware canUseTool callback with channel context.
     // In bypassPermissions mode, this callback is only invoked for interactive
@@ -1191,6 +1181,19 @@ export class LettaBot implements AgentSession {
         },
       },
       async (tracingSpan: TracingSpan) => {
+    // Run preMessage hook inside the trace span so the OTEL span is already active.
+    // getTraceId() in hooks reads trace.getActiveSpan() — it must be called within a span.
+    const hookOverride = await this.runPreMessageHook({
+      stage: 'pre',
+      message: hookMessage!, // set to messageToSend just above traceAgentTurn
+      ...hookBase,
+    });
+    if (hookOverride) {
+      messageToSend = hookOverride;
+      hookMessage = hookOverride;
+    }
+    lap('format message');
+
     try {
       const run = await this.runSession(messageToSend, { retried, canUseTool, convKey });
       lap('session send');
@@ -1274,10 +1277,19 @@ export class LettaBot implements AgentSession {
             break;
           }
 
-          // Log meaningful events with structured summaries + Phoenix tracing
-          // Flush accumulated reasoning when transitioning away from reasoning type
+          // Flush accumulated reasoning when transitioning away from reasoning type.
+          // Both Phoenix tracing and the postReasoning hook fire here together so
+          // accumulatedReasoning is only cleared once.
           if (lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && accumulatedReasoning) {
             tracingSpan.addReasoning(accumulatedReasoning);
+            if (hookMessage && hookContextBase) {
+              await this.runPostReasoningHook({
+                stage: 'postReasoning',
+                message: hookMessage,
+                reasoning: accumulatedReasoning,
+                ...hookContextBase,
+              });
+            }
             accumulatedReasoning = '';
           }
 
@@ -1304,29 +1316,10 @@ export class LettaBot implements AgentSession {
             if (lastMsgType !== 'reasoning') {
               console.log(`[Bot] Reasoning...`);
             }
-            // Accumulate reasoning tokens - will be logged as single event when type changes
-            accumulatedReasoning += streamMsg.content || '';
-            sawNonAssistantSinceLastUuid = true;
-          } else if (streamMsg.type === 'reasoning') {
-            // Accumulate reasoning tokens
             accumulatedReasoning += streamMsg.content || '';
             sawNonAssistantSinceLastUuid = true;
           } else if (streamMsg.type !== 'assistant') {
             sawNonAssistantSinceLastUuid = true;
-          }
-
-          // Flush reasoning when transitioning away from reasoning type
-          if (lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && accumulatedReasoning) {
-            // Call postReasoning hook with accumulated reasoning
-            if (hookMessage && hookContextBase) {
-              await this.runPostReasoningHook({
-                stage: 'postReasoning',
-                message: hookMessage,
-                reasoning: accumulatedReasoning,
-                ...hookContextBase,
-              });
-            }
-            accumulatedReasoning = '';
           }
 
           lastMsgType = streamMsg.type;
