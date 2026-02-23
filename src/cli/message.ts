@@ -243,7 +243,7 @@ async function sendToChannel(channel: string, chatId: string, text: string): Pro
     case 'discord':
       return sendDiscord(chatId, text);
     default:
-      throw new Error(`Unknown channel: ${channel}. Supported: telegram, slack, signal, whatsapp, discord`);
+      throw new Error(`Unknown channel: ${channel}. Supported: telegram, telegram-mtproto, slack, signal, whatsapp, discord`);
   }
 }
 
@@ -295,7 +295,7 @@ async function sendCommand(args: string[]): Promise<void> {
 
   if (!channel) {
     console.error('Error: --channel is required (no default available)');
-    console.error('Specify: --channel telegram|slack|signal|discord|whatsapp');
+    console.error('Specify: --channel telegram|telegram-mtproto|slack|signal|discord|whatsapp');
     process.exit(1);
   }
 
@@ -306,12 +306,13 @@ async function sendCommand(args: string[]): Promise<void> {
   }
 
   try {
-    // Use API for WhatsApp (unified multipart endpoint)
-    if (channel === 'whatsapp') {
-      await sendViaApi(channel, chatId, { text, filePath, kind });
+    // Use API for WhatsApp and telegram-mtproto (unified multipart endpoint)
+    const channelLower = channel.toLowerCase();
+    if (channelLower === 'whatsapp' || channelLower === 'telegram-mtproto') {
+      await sendViaApi(channelLower, chatId, { text, filePath, kind });
     } else if (filePath) {
       // Other channels with files - not yet implemented via API
-      throw new Error(`File sending for ${channel} requires API (currently only WhatsApp supported via API)`);
+      throw new Error(`File sending for ${channel} requires API (currently only WhatsApp and telegram-mtproto supported via API)`);
     } else {
       // Other channels with text only - direct API calls
       await sendToChannel(channel, chatId, text);
@@ -333,7 +334,7 @@ Send options:
   --text, -t <text>       Message text (or caption when used with --file)
   --file, -f <path>       File path (optional, for file messages)
   --image                 Treat file as image (vs document)
-  --channel, -c <name>    Channel: telegram, slack, whatsapp, discord (default: last used)
+  --channel, -c <name>    Channel: telegram, telegram-mtproto, slack, signal, whatsapp, discord (default: last used)
   --chat, --to <id>       Chat/conversation ID (default: last messaged)
 
 Examples:
@@ -357,11 +358,11 @@ Environment variables:
   SLACK_BOT_TOKEN         Required for Slack
   DISCORD_BOT_TOKEN       Required for Discord
   SIGNAL_PHONE_NUMBER     Required for Signal (text only, no files)
-  LETTABOT_API_KEY        Required for WhatsApp (text and files)
+  LETTABOT_API_KEY        Required for WhatsApp and telegram-mtproto
   LETTABOT_API_URL        API server URL (default: http://localhost:8080)
   SIGNAL_CLI_REST_API_URL Signal daemon URL (default: http://127.0.0.1:8090)
 
-Note: WhatsApp uses the API server. Other channels use direct platform APIs.
+Note: WhatsApp and telegram-mtproto use the API server. Other channels use direct platform APIs.
 `);
 }
 
