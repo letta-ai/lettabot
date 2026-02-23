@@ -232,18 +232,6 @@ export interface TelegramConfig {
   groups?: Record<string, GroupConfig>;  // Per-group settings, "*" for defaults
 }
 
-export interface TelegramMTProtoConfig {
-  enabled: boolean;
-  phoneNumber?: string;          // E.164 format: +1234567890
-  apiId?: number;                // From my.telegram.org
-  apiHash?: string;              // From my.telegram.org
-  databaseDirectory?: string;    // Default: ./data/telegram-mtproto
-  dmPolicy?: 'pairing' | 'allowlist' | 'open';
-  allowedUsers?: number[];       // Telegram user IDs
-  groupPolicy?: 'mention' | 'reply' | 'both' | 'off';
-  adminChatId?: number;          // Chat ID for pairing request notifications
-}
-
 export interface SlackConfig {
   enabled: boolean;
   appToken?: string;
