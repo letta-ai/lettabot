@@ -53,6 +53,47 @@ function isConversationMissingError(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Map a structured API error into a clear, user-facing message.
+ * The `error` object comes from the SDK's new SDKErrorMessage type.
+ */
+function formatApiErrorForUser(error: { message: string; stopReason: string; apiError?: Record<string, unknown> }): string {
+  const msg = error.message.toLowerCase();
+  const apiError = error.apiError || {};
+  const apiMsg = (typeof apiError.message === 'string' ? apiError.message : '').toLowerCase();
+  const reasons: string[] = Array.isArray(apiError.reasons) ? apiError.reasons : [];
+
+  // Rate limiting / usage exceeded (429)
+  if (msg.includes('rate limit') || msg.includes('429') || msg.includes('usage limit')
+    || apiMsg.includes('rate limit') || apiMsg.includes('usage limit')) {
+    if (reasons.includes('premium-usage-exceeded') || msg.includes('hosted model usage limit')) {
+      return '(Rate limited -- your Letta Cloud usage limit has been exceeded. Check your plan at app.letta.com.)';
+    }
+    const reasonStr = reasons.length > 0 ? `: ${reasons.join(', ')}` : '';
+    return `(Rate limited${reasonStr}. Try again in a moment.)`;
+  }
+
+  // Authentication
+  if (msg.includes('401') || msg.includes('403') || msg.includes('unauthorized') || msg.includes('forbidden')) {
+    return '(Authentication failed -- check your API key in lettabot.yaml.)';
+  }
+
+  // Agent/conversation not found
+  if (msg.includes('not found') || msg.includes('404')) {
+    return '(Agent or conversation not found -- the configured agent may have been deleted. Try re-onboarding.)';
+  }
+
+  // Server errors
+  if (msg.includes('500') || msg.includes('502') || msg.includes('503') || msg.includes('internal server error')) {
+    return '(Letta API server error -- try again in a moment.)';
+  }
+
+  // Fallback: use the actual error message (truncated for safety)
+  const detail = error.message.length > 200 ? error.message.slice(0, 200) + '...' : error.message;
+  const trimmed = detail.replace(/[.\s]+$/, '');
+  return `(Agent error: ${trimmed}. Try sending your message again.)`;
+}
+
 const SUPPORTED_IMAGE_MIMES = new Set([
   'image/png', 'image/jpeg', 'image/gif', 'image/webp',
 ]);
@@ -171,6 +212,50 @@ export class LettaBot implements AgentSession {
     return `${this.config.displayName}: ${text}`;
   }
 
+  /**
+   * Format a tool call for channel display.
+   * Shows tool name + abbreviated key parameters.
+   */
+  private formatToolCallDisplay(streamMsg: StreamMsg): string {
+    const name = streamMsg.toolName || 'unknown';
+    const params = this.abbreviateToolInput(streamMsg);
+    return params ? `> **Tool:** ${name} (${params})` : `> **Tool:** ${name}`;
+  }
+
+  /**
+   * Extract a brief parameter summary from a tool call's input.
+   */
+  private abbreviateToolInput(streamMsg: StreamMsg): string {
+    const input = streamMsg.toolInput as Record<string, unknown> | undefined;
+    if (!input || typeof input !== 'object') return '';
+    const entries = Object.entries(input).slice(0, 2);
+    return entries
+      .map(([k, v]) => {
+        let str: string;
+        try {
+          str = typeof v === 'string' ? v : (JSON.stringify(v) ?? String(v));
+        } catch {
+          str = String(v);
+        }
+        const truncated = str.length > 80 ? str.slice(0, 77) + '...' : str;
+        return `${k}: ${truncated}`;
+      })
+      .join(', ');
+  }
+
+  /**
+   * Format reasoning text for channel display, respecting truncation config.
+   */
+  private formatReasoningDisplay(text: string): string {
+    const maxChars = this.config.display?.reasoningMaxChars ?? 0;
+    const truncated = maxChars > 0 && text.length > maxChars
+      ? text.slice(0, maxChars) + '...'
+      : text;
+    // Prefix every line with "> " so the whole block renders as a blockquote
+    const lines = truncated.split('\n').map(line => `> ${line}`);
+    return `> **Thinking**\n${lines.join('\n')}`;
+  }
+
   // =========================================================================
   // Session options (shared by processMessage and sendToAgent)
   // =========================================================================
@@ -262,6 +347,8 @@ export class LettaBot implements AgentSession {
       ],
       cwd: this.config.workingDir,
       tools: [createManageTodoTool(this.getTodoAgentKey())],
+      // Memory filesystem (context repository): true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
+      ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
       // In bypassPermissions mode, canUseTool is only called for interactive
       // tools (AskUserQuestion, ExitPlanMode). When no callback is provided
       // (background triggers), the SDK auto-denies interactive tools.
@@ -399,6 +486,7 @@ export class LettaBot implements AgentSession {
       const newAgentId = await createAgent({
         systemPrompt: SYSTEM_PROMPT,
         memory: loadMemoryBlocks(this.config.agentName),
+        ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
       });
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
       this.store.setAgent(newAgentId, currentBaseUrl);
@@ -1036,8 +1124,10 @@ export class LettaBot implements AgentSession {
       let sentAnyMessage = false;
       let receivedAnyData = false;
       let sawNonAssistantSinceLastUuid = false;
+      let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | null = null;
+      let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
+      let reasoningBuffer = '';
       const msgTypeCounts: Record<string, number> = {};
-      let accumulatedReasoning = ''; // Accumulate reasoning tokens for single trace event
       
       const finalizeMessage = async () => {
         // Parse and execute XML directives before sending
@@ -1095,7 +1185,22 @@ export class LettaBot implements AgentSession {
           if (lastMsgType && lastMsgType !== streamMsg.type && response.trim() && streamMsg.type !== 'result') {
             await finalizeMessage();
           }
-          
+
+          // Flush reasoning buffer when type changes away from reasoning
+          if (lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
+            tracingSpan.addReasoning(reasoningBuffer);
+            if (this.config.display?.showReasoning && !suppressDelivery) {
+              try {
+                const text = this.formatReasoningDisplay(reasoningBuffer);
+                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+                sentAnyMessage = true;
+              } catch (err) {
+                console.warn('[Bot] Failed to send reasoning display:', err instanceof Error ? err.message : err);
+              }
+            }
+            reasoningBuffer = '';
+          }
+
           // Tool loop detection
           const maxToolCalls = this.config.maxToolCalls ?? 100;
           if (streamMsg.type === 'tool_call' && (msgTypeCounts['tool_call'] || 0) >= maxToolCalls) {
@@ -1103,13 +1208,6 @@ export class LettaBot implements AgentSession {
             session.abort().catch(() => {});
             response = '(Agent got stuck in a tool loop and was stopped. Try sending your message again.)';
             break;
-          }
-
-          // Log meaningful events with structured summaries + Phoenix tracing
-          // Flush accumulated reasoning when transitioning away from reasoning type
-          if (lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && accumulatedReasoning) {
-            tracingSpan.addReasoning(accumulatedReasoning);
-            accumulatedReasoning = '';
           }
 
           if (streamMsg.type === 'tool_call') {
@@ -1121,6 +1219,16 @@ export class LettaBot implements AgentSession {
               streamMsg.toolCallId
             );
             sawNonAssistantSinceLastUuid = true;
+            // Display tool call in channel if configured
+            if (this.config.display?.showToolCalls && !suppressDelivery) {
+              try {
+                const text = this.formatToolCallDisplay(streamMsg);
+                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+                sentAnyMessage = true;
+              } catch (err) {
+                console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
+              }
+            }
           } else if (streamMsg.type === 'tool_result') {
             console.log(`[Stream] <<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
             tracingSpan.addToolResult(
@@ -1135,8 +1243,22 @@ export class LettaBot implements AgentSession {
             if (lastMsgType !== 'reasoning') {
               console.log(`[Bot] Reasoning...`);
             }
-            // Accumulate reasoning tokens - will be logged as single event when type changes
-            accumulatedReasoning += streamMsg.content || '';
+            reasoningBuffer += streamMsg.content || '';
+            sawNonAssistantSinceLastUuid = true;
+          } else if (streamMsg.type === 'error') {
+            // SDK now surfaces error detail that was previously dropped.
+            // Store for use in the user-facing error message.
+            lastErrorDetail = {
+              message: (streamMsg as any).message || 'unknown',
+              stopReason: (streamMsg as any).stopReason || 'error',
+              apiError: (streamMsg as any).apiError,
+            };
+            console.error(`[Bot] Stream error detail: ${lastErrorDetail.message} [${lastErrorDetail.stopReason}]`);
+            sawNonAssistantSinceLastUuid = true;
+          } else if (streamMsg.type === 'retry') {
+            const rm = streamMsg as any;
+            retryInfo = { attempt: rm.attempt, maxAttempts: rm.maxAttempts, reason: rm.reason };
+            console.log(`[Bot] Retrying (${rm.attempt}/${rm.maxAttempts}): ${rm.reason}`);
             sawNonAssistantSinceLastUuid = true;
           } else if (streamMsg.type !== 'assistant') {
             sawNonAssistantSinceLastUuid = true;
@@ -1265,9 +1387,13 @@ export class LettaBot implements AgentSession {
             }
 
             if (isTerminalError && !hasResponse && !sentAnyMessage) {
-              const err = streamMsg.error || 'unknown error';
-              const reason = streamMsg.stopReason ? ` [${streamMsg.stopReason}]` : '';
-              response = `(Agent run failed: ${err}${reason}. Try sending your message again.)`;
+              if (lastErrorDetail) {
+                response = formatApiErrorForUser(lastErrorDetail);
+              } else {
+                const err = streamMsg.error || 'unknown error';
+                const reason = streamMsg.stopReason ? ` [${streamMsg.stopReason}]` : '';
+                response = `(Agent run failed: ${err}${reason}. Try sending your message again.)`;
+              }
             }
             
             break;
