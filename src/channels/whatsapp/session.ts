@@ -272,7 +272,9 @@ export async function createWaSocket(options: SocketOptions): Promise<SocketResu
       if (update.connection === "close") {
         clearTimeout(timeout);
         sock.ev.off("connection.update", handler);
-        reject(new Error("Connection closed during startup"));
+        const statusCode = (update.lastDisconnect?.error as any)?.output?.statusCode;
+        const reason = update.lastDisconnect?.error?.message || "unknown";
+        reject(new Error(`Connection closed during startup (status: ${statusCode ?? "none"}, reason: ${reason})`));
       }
 
       // Notify callback

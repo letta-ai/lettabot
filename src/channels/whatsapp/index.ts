@@ -354,10 +354,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
           this.reconnectState.attempts = 0;
         }
       } catch (error) {
-        // Suppress full stack trace for expected startup failures (session corruption recovery)
         const msg = error instanceof Error ? error.message : String(error);
         if (msg.includes("Connection closed during startup")) {
-          // One-liner instead of wall of stack trace -- this is expected during session recovery
+          // Log the reason (status code) without the full stack trace
+          console.warn(`[WhatsApp] ${msg}`);
         } else {
           console.error("[WhatsApp] Socket error:", msg);
         }
