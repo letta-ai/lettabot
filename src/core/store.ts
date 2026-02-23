@@ -37,14 +37,20 @@ interface ParsedStore {
   wasV1: boolean;
 }
 
+let warnedAboutBusyWait = false;
+
 function sleepSync(ms: number): void {
   if (typeof Atomics.wait === 'function') {
     Atomics.wait(SLEEP_BUFFER, 0, 0, ms);
     return;
   }
+  if (!warnedAboutBusyWait) {
+    console.warn('[Store] Atomics.wait unavailable, falling back to busy-wait for lock retries');
+    warnedAboutBusyWait = true;
+  }
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    // Fallback for runtimes without Atomics.wait
+    // Busy-wait fallback -- should not be reached in standard Node.js (v8+)
   }
 }
 
@@ -68,6 +74,9 @@ export class Store {
    * Useful before critical operations in long-running multi-instance deployments.
    */
   refresh(): void {
+    // Capture file existence before attempting reads so we can distinguish
+    // "files don't exist" (safe to reset to empty) from "files exist but are
+    // unreadable" (keep current in-memory state as best available data).
     const hasPrimary = existsSync(this.storePath);
     const hasBackup = existsSync(this.backupPath);
 
@@ -80,6 +89,9 @@ export class Store {
     const backup = this.tryReadStore(this.backupPath, 'backup');
     if (backup) {
       this.data = backup.data;
+      // Repair the corrupted/missing primary from backup so the next read
+      // doesn't have to fall through again.
+      this.persistStore(backup.data);
       console.error(`[Store] Recovered in-memory state for ${this.agentName} from backup store.`);
       return;
     }

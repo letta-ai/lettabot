@@ -461,7 +461,11 @@ export class LettaBot implements AgentSession {
    * creating and initializing it if needed.
    */
   private async ensureSessionForKey(key: string): Promise<Session> {
-    // Pull latest agent/conversation mapping before deciding how to route.
+    // Re-read the store file from disk so we pick up agent/conversation ID
+    // changes made by other processes (e.g. after a restart or container deploy).
+    // This costs one synchronous disk read per incoming message, which is fine
+    // at chat-bot throughput. If this ever becomes a bottleneck, throttle to
+    // refresh at most once per second.
     this.store.refresh();
 
     const existing = this.sessions.get(key);
