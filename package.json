@@ -9,7 +9,8 @@
     "lettabot-message": "./dist/cli/message.js",
     "lettabot-react": "./dist/cli/react.js",
     "lettabot-history": "./dist/cli/history.js",
-    "lettabot-channels": "./dist/cli/channels.js"
+    "lettabot-channels": "./dist/cli/channels.js",
+    "lettabot-resume": "./dist/cli/resume.js"
   },
   "scripts": {
     "setup": "tsx src/setup.ts",
