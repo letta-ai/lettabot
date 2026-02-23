@@ -73,15 +73,6 @@ export interface InboundReaction {
  * Formatter hints provided by channel adapters
  */
 export interface FormatterHints {
-  /** Whether the channel is read-only (text response won't be posted) */
-  isReadOnly?: boolean;
-
-  /** Custom action hints for this channel (e.g., "Use CLI to reply") */
-  actionsSection?: string[];
-
-  /** Whether to skip the Response Directives section */
-  skipDirectives?: boolean;
-
   /** Custom format hint (overrides default channel format) */
   formatHint?: string;
 
