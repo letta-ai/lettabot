@@ -33,6 +33,7 @@ export const isPhoenixEnabled = Boolean(
 // Lazy-loaded tracer (initialized only if Phoenix is enabled)
 let tracer: any = null;
 let trace: any = null;
+let otelContext: any = null;
 let withSpanFn: any = null;
 let tracerProvider: { shutdown(): Promise<void> } | null = null;
 
@@ -63,6 +64,7 @@ export async function initTracing(): Promise<void> {
 
     // Store references for later use
     trace = phoenixOtel.trace;
+    otelContext = phoenixOtel.context;
     tracer = trace.getTracer('lettabot');
     withSpanFn = openinferenceCore.withSpan;
 
@@ -122,11 +124,25 @@ export interface TracingSpan {
  * Create a TracingSpan wrapper around an OTEL span
  */
 function createTracingSpan(span: OTelSpan | null): TracingSpan {
+  // Capture the active OTel context now (while the agent_turn span is active).
+  // Used to parent child tool spans correctly even across async continuations.
+  const parentCtx = otelContext?.active?.() ?? null;
+
+  // Track in-flight tool spans by toolCallId so we can close them on result.
+  const openToolSpans = new Map<string, any>();
+
+  function flushOpenToolSpans(): void {
+    for (const [, toolSpan] of openToolSpans) {
+      toolSpan.end();
+    }
+    openToolSpans.clear();
+  }
+
   return {
     get traceId() {
       // Access spanContext from the real OTEL span (not in our interface)
-      const context = (span as any)?.spanContext?.();
-      return context?.traceId;
+      const ctx = (span as any)?.spanContext?.();
+      return ctx?.traceId;
     },
 
     addReasoning(content: string) {
@@ -136,22 +152,49 @@ function createTracingSpan(span: OTelSpan | null): TracingSpan {
     },
 
     addToolCall(toolName: string, toolInput: Record<string, unknown>, toolCallId?: string) {
-      span?.addEvent('tool_call', {
-        'tool.name': toolName,
-        'tool.parameters': JSON.stringify(toolInput),
-        ...(toolCallId && { 'tool_call.id': toolCallId }),
-      });
+      if (tracer && parentCtx) {
+        // Create a proper child span so Phoenix shows it as a node in the trace tree.
+        const toolSpan = tracer.startSpan(toolName, {}, parentCtx);
+        toolSpan.setAttribute('openinference.span.kind', 'TOOL');
+        toolSpan.setAttribute('tool.name', toolName);
+        toolSpan.setAttribute('input.value', JSON.stringify(toolInput));
+        toolSpan.setAttribute('input.mime_type', 'application/json');
+        if (toolCallId) {
+          openToolSpans.set(toolCallId, toolSpan);
+        } else {
+          // No id to correlate a result — end immediately
+          toolSpan.end();
+        }
+      } else {
+        // Fallback when tracer isn't available
+        span?.addEvent('tool_call', {
+          'tool.name': toolName,
+          'tool.parameters': JSON.stringify(toolInput),
+          ...(toolCallId && { 'tool_call.id': toolCallId }),
+        });
+      }
     },
 
     addToolResult(toolCallId: string, content: string, isError = false) {
-      span?.addEvent('tool_result', {
-        'tool_call.id': toolCallId,
-        'output.value': content.slice(0, 10000), // Limit size
-        'error': isError,
-      });
+      const toolSpan = openToolSpans.get(toolCallId);
+      if (toolSpan) {
+        openToolSpans.delete(toolCallId);
+        toolSpan.setAttribute('output.value', content.slice(0, 10000));
+        toolSpan.setAttribute('output.mime_type', 'text/plain');
+        if (isError) toolSpan.setAttribute('error', true);
+        toolSpan.end();
+      } else {
+        // Fallback: event on parent span (e.g. tracer unavailable, or no matching call)
+        span?.addEvent('tool_result', {
+          'tool_call.id': toolCallId,
+          'output.value': content.slice(0, 10000),
+          'error': isError,
+        });
+      }
     },
 
     setOutput(output: string) {
+      flushOpenToolSpans(); // close any tool spans that never got a result
       span?.setAttribute('output.value', output);
       span?.setAttribute('output.mime_type', 'text/plain');
     },
@@ -167,6 +210,7 @@ function createTracingSpan(span: OTelSpan | null): TracingSpan {
     },
 
     recordError(error: Error) {
+      flushOpenToolSpans();
       span?.recordException(error);
     },
 
