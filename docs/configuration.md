@@ -200,7 +200,7 @@ Each entry in `agents:` accepts:
 | `model` | string | No | Model for agent creation |
 | `conversations` | object | No | Conversation routing config (shared vs per-channel) |
 | `channels` | object | No | Channel configs (same schema as top-level `channels:`). At least one agent must have channels. |
-| `features` | object | No | Per-agent features (cron, heartbeat, maxToolCalls) |
+| `features` | object | No | Per-agent features (cron, heartbeat, memfs, maxToolCalls) |
 | `polling` | object | No | Per-agent polling config (Gmail, etc.) |
 | `integrations` | object | No | Per-agent integrations (Google, etc.) |
 
@@ -463,6 +463,39 @@ features:
 ```
 
 Enable scheduled tasks. See [Cron Setup](./cron-setup.md).
+
+### Memory Filesystem (memfs)
+
+Memory filesystem (also known as **Context Repositories**) syncs your agent's memory blocks to local files in a git-backed directory. This enables:
+
+- **Persistent local memory**: Memory blocks are synced to `~/.letta/agents/<agent-id>/memory/` as Markdown files
+- **Git versioning**: Every change to memory is automatically versioned with informative commit messages
+- **Direct editing**: Memory files can be edited with standard tools and synced back to the agent
+- **Multi-agent collaboration**: Subagents can work in git worktrees and merge changes back
+
+```yaml
+features:
+  memfs: true
+```
+
+When `memfs` is enabled, the SDK passes `--memfs` to the Letta Code CLI on each session. When set to `false`, `--no-memfs` is passed to explicitly disable it. When omitted (default), the agent's existing memfs setting is left unchanged.
+
+You can also enable memfs via environment variable (only `true` and `false` are recognized):
+
+```bash
+LETTABOT_MEMFS=true npm start
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.memfs` | boolean | _(undefined)_ | Enable/disable memory filesystem. `true` enables, `false` disables, omit to leave unchanged. |
+
+#### Known Limitations
+
+- **Headless conflict resolution** ([letta-ai/letta-code#808](https://github.com/letta-ai/letta-code/issues/808)): If memory filesystem sync conflicts exist, the CLI exits with code 1 in headless mode (which is how lettabot runs). There is currently no way to resolve conflicts programmatically. **Workaround**: Run the agent interactively first (`letta --agent <agent-id>`) to resolve conflicts, then restart lettabot.
+- **Windows paths** ([letta-ai/letta-code#914](https://github.com/letta-ai/letta-code/issues/914)): Path separator issues on Windows have been fixed in Letta Code, but ensure you're on the latest version.
+
+For more details, see the [Letta Code memory documentation](https://docs.letta.com/letta-code/memory/) and the [Context Repositories blog post](https://www.letta.com/blog/context-repositories).
 
 ### No-Reply (Opt-Out)
 
