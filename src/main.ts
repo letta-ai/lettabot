@@ -155,7 +155,7 @@ await refreshTokensIfNeeded();
 // Note: static imports are hoisted by the JS engine regardless of source order,
 // so initTracing() runs after all module-level imports resolve. This is safe
 // because imported modules don't call instrumented code at import time.
-import { initTracing } from './tracing/index.js';
+import { initTracing, shutdownTracing } from './tracing/index.js';
 await initTracing();
 
 import { normalizeAgents } from './config/types.js';
@@ -722,6 +722,7 @@ async function main() {
     services.cronServices.forEach(c => c.stop());
     services.pollingServices.forEach(p => p.stop());
     await gateway.stop();
+    await shutdownTracing(); // flush pending trace spans
     process.exit(0);
   };
   

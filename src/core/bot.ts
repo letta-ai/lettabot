@@ -19,7 +19,7 @@ import { SYSTEM_PROMPT } from './system-prompt.js';
 import { parseDirectives, stripActionsBlock, type Directive } from './directives.js';
 import { createManageTodoTool } from '../tools/todo.js';
 import { syncTodosFromTool } from '../todo/store.js';
-import { traceAgentTurn, type TracingSpan } from '../tracing/index.js';
+import { traceAgentTurn, isPhoenixEnabled, type TracingSpan } from '../tracing/index.js';
 
 
 /**
@@ -1091,7 +1091,6 @@ export class LettaBot implements AgentSession {
     };
 
     // Run session with tracing
-    let session: Session | null = null;
     const convKey = this.resolveConversationKey(msg.channel);
     const convId = convKey === 'shared' ? this.store.conversationId : this.store.getConversationId(convKey);
 
@@ -1109,7 +1108,29 @@ export class LettaBot implements AgentSession {
           isBatch: String(!!msg.isBatch),
         },
       },
-      async (tracingSpan: TracingSpan) => {
+      (tracingSpan: TracingSpan) => this._executeAgentTurn(
+        msg, adapter, retried, tracingSpan, formattedText, messageToSend, canUseTool, convKey, suppressDelivery, lap,
+      ),
+    );
+  }
+
+  /**
+   * Inner agent turn logic — session run, stream processing, response delivery.
+   * Called by processMessage inside a traceAgentTurn span.
+   */
+  private async _executeAgentTurn(
+    msg: InboundMessage,
+    adapter: ChannelAdapter,
+    retried: boolean,
+    tracingSpan: TracingSpan,
+    formattedText: string,
+    messageToSend: SendMessage,
+    canUseTool: CanUseToolCallback,
+    convKey: string,
+    suppressDelivery: boolean,
+    lap: (label: string) => void,
+  ): Promise<void> {
+    let session: Session | null = null;
     try {
       const run = await this.runSession(messageToSend, { retried, canUseTool, convKey });
       lap('session send');
@@ -1243,7 +1264,9 @@ export class LettaBot implements AgentSession {
             if (lastMsgType !== 'reasoning') {
               console.log(`[Bot] Reasoning...`);
             }
-            reasoningBuffer += streamMsg.content || '';
+            if (isPhoenixEnabled || this.config.display?.showReasoning) {
+              reasoningBuffer += streamMsg.content || '';
+            }
             sawNonAssistantSinceLastUuid = true;
           } else if (streamMsg.type === 'error') {
             // SDK now surfaces error detail that was previously dropped.
@@ -1494,8 +1517,6 @@ export class LettaBot implements AgentSession {
     } finally {
       // Session stays alive for reuse -- only invalidated on errors
     }
-      } // end traceAgentTurn callback
-    ); // end traceAgentTurn call
   }
 
   // =========================================================================
