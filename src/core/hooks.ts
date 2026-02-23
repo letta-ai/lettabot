@@ -6,6 +6,7 @@ import type { HookHandlerConfig, MessageHookContext } from './types.js';
 
 type HookModule = {
   preMessage?: (ctx: MessageHookContext) => Promise<unknown> | unknown;
+  postReasoning?: (ctx: MessageHookContext) => Promise<unknown> | unknown;
   postMessage?: (ctx: MessageHookContext) => Promise<unknown> | unknown;
 };
 
@@ -92,7 +93,7 @@ export class MessageHookRunner {
   }
 
   private async invokeHook(
-    stage: 'preMessage' | 'postMessage',
+    stage: 'preMessage' | 'postReasoning' | 'postMessage',
     config: HookHandlerConfig,
     ctx: MessageHookContext,
   ): Promise<unknown> {
@@ -119,6 +120,16 @@ export class MessageHookRunner {
     }
     const result = await this.invokeHook('preMessage', config, ctx);
     return extractSendMessage(result);
+  }
+
+  async runPostReasoning(config: HookHandlerConfig | undefined, ctx: MessageHookContext): Promise<void> {
+    if (!config) return;
+    const mode = config.mode ?? DEFAULT_HOOK_MODE;
+    if (mode === 'parallel') {
+      void this.invokeHook('postReasoning', config, ctx);
+      return;
+    }
+    await this.invokeHook('postReasoning', config, ctx);
   }
 
   async runPost(config: HookHandlerConfig | undefined, ctx: MessageHookContext): Promise<string | undefined> {

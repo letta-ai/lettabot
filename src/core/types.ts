@@ -55,11 +55,12 @@ export interface HookHandlerConfig {
 
 export interface MessageHooksConfig {
   preMessage?: HookHandlerConfig;
+  postReasoning?: HookHandlerConfig;  // Called after reasoning accumulated, before response
   postMessage?: HookHandlerConfig;
 }
 
 export interface MessageHookContext {
-  stage: 'pre' | 'post';
+  stage: 'pre' | 'postReasoning' | 'post';
   isHeartbeat: boolean;
   suppressDelivery: boolean;
   trigger?: TriggerContext;
@@ -67,6 +68,7 @@ export interface MessageHookContext {
   formattedText?: string;
   message: SendMessage;
   response?: string;
+  reasoning?: string;       // Reasoning content (postReasoning stage only)
   delivered?: boolean;
   error?: string;
   agent?: {
