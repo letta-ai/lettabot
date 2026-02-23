@@ -297,11 +297,17 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     // Cleanup
     this.detachListeners();
+    // Flush pending credential saves before closing
+    if (this.credsSaveQueue) {
+      await this.credsSaveQueue.flush();
+    }
     if (this.sock) {
       try {
-        await this.sock.logout();
+        // Close WebSocket without logging out -- logout() invalidates the session
+        // server-side, which destroys credentials and forces QR re-pair on restart
+        this.sock.ws?.close();
       } catch (error) {
-        console.warn("[WhatsApp] Logout error:", error);
+        console.warn("[WhatsApp] Disconnect error:", error);
       }
       this.sock = null;
     }
