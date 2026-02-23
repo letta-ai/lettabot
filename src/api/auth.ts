@@ -21,7 +21,38 @@ export function generateApiKey(): string {
 }
 
 /**
- * Load API key from file or environment, or generate new one
+ * Load API key from environment or file. Throws if not found.
+ * Use this in CLI tools where generating a new key would be incorrect.
+ */
+export function loadApiKey(): string {
+  // 1. Check environment variable first
+  if (process.env.LETTABOT_API_KEY) {
+    return process.env.LETTABOT_API_KEY;
+  }
+
+  // 2. Try to load from file
+  const filePath = path.resolve(process.cwd(), API_KEY_FILE);
+  if (fs.existsSync(filePath)) {
+    try {
+      const data = fs.readFileSync(filePath, 'utf-8');
+      const store: ApiKeyStore = JSON.parse(data);
+      if (store.apiKey && typeof store.apiKey === 'string') {
+        return store.apiKey;
+      }
+    } catch {
+      // Fall through to error
+    }
+  }
+
+  throw new Error(
+    'API key not found. Start the lettabot server first (it generates lettabot-api.json), ' +
+    'or set LETTABOT_API_KEY environment variable.'
+  );
+}
+
+/**
+ * Load API key from file or environment, or generate new one.
+ * Use this on the server side where generating a key on first run is expected.
  */
 export function loadOrGenerateApiKey(): string {
   // 1. Check environment variable first

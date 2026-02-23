@@ -12,7 +12,7 @@
 
 // Config loaded from lettabot.yaml
 import { loadAppConfigOrExit, applyConfigToEnv } from '../config/index.js';
-import { loadOrGenerateApiKey } from '../api/auth.js';
+import { loadApiKey } from '../api/auth.js';
 const config = loadAppConfigOrExit();
 applyConfigToEnv(config);
 import { existsSync, readFileSync } from 'node:fs';
@@ -151,8 +151,8 @@ async function sendViaApi(
   }
 ): Promise<void> {
   const apiUrl = process.env.LETTABOT_API_URL || 'http://localhost:8080';
-  // Resolve API key: env var > lettabot-api.json file > generate new
-  const apiKey = loadOrGenerateApiKey();
+  // Resolve API key: env var > lettabot-api.json (never generate -- that's the server's job)
+  const apiKey = loadApiKey();
 
   // Check if file exists
   if (options.filePath && !existsSync(options.filePath)) {
