@@ -203,10 +203,12 @@ export async function createWaSocket(options: SocketOptions): Promise<SocketResu
     markOnlineOnConnect: false,
     logger: logger as any,
     printQRInTerminal: false,
-    // getMessage for retry capability - store is populated when we SEND messages, not here
+    // getMessage for retry capability - store is populated on both send and receive
     getMessage: async (key: { id?: string | null }) => {
       if (!key.id) return undefined;
-      return messageStore.get(key.id);
+      const msg = messageStore.get(key.id);
+      // Return just the proto.IMessage content, not the full WAMessage wrapper
+      return msg?.message ?? undefined;
     },
   });
 
@@ -270,7 +272,9 @@ export async function createWaSocket(options: SocketOptions): Promise<SocketResu
       if (update.connection === "close") {
         clearTimeout(timeout);
         sock.ev.off("connection.update", handler);
-        reject(new Error("Connection closed during startup"));
+        const statusCode = (update.lastDisconnect?.error as any)?.output?.statusCode;
+        const reason = update.lastDisconnect?.error?.message || "unknown";
+        reject(new Error(`Connection closed during startup (status: ${statusCode ?? "none"}, reason: ${reason})`));
       }
 
       // Notify callback

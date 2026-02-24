@@ -448,6 +448,35 @@ describe('normalizeAgents', () => {
     expect(agents[1].displayName).toBe('👾 DevOps');
   });
 
+  it('should pass through conversations config in legacy mode', () => {
+    const config: LettaBotConfig = {
+      server: { mode: 'cloud' },
+      agent: { name: 'TestBot' },
+      channels: {},
+      conversations: {
+        mode: 'per-channel',
+        heartbeat: 'dedicated',
+      },
+    };
+
+    const agents = normalizeAgents(config);
+
+    expect(agents[0].conversations?.mode).toBe('per-channel');
+    expect(agents[0].conversations?.heartbeat).toBe('dedicated');
+  });
+
+  it('should pass through conversations as undefined when not set', () => {
+    const config: LettaBotConfig = {
+      server: { mode: 'cloud' },
+      agent: { name: 'TestBot' },
+      channels: {},
+    };
+
+    const agents = normalizeAgents(config);
+
+    expect(agents[0].conversations).toBeUndefined();
+  });
+
   it('should normalize onboarding-generated agents[] config (no legacy agent/channels)', () => {
     // This matches the shape that onboarding now writes: agents[] at top level,
     // with no legacy agent/channels/features fields.

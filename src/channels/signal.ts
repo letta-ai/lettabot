@@ -623,14 +623,12 @@ This code expires in 1 hour.`;
         }
         
         try {
-          const { loadConfig } = await import('../config/index.js');
-          const config = loadConfig();
-          if (!config.transcription?.apiKey && !process.env.OPENAI_API_KEY) {
+          const { isTranscriptionConfigured } = await import('../transcription/index.js');
+          if (!isTranscriptionConfigured()) {
             if (chatId) {
-              const audioInfo = savedAudioPath ? ` Audio saved to: ${savedAudioPath}` : '';
-              await this.sendMessage({ 
-                chatId, 
-                text: `Voice messages require OpenAI API key for transcription.${audioInfo} See: https://github.com/letta-ai/lettabot#voice-messages` 
+              await this.sendMessage({
+                chatId,
+                text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages'
               });
             }
           } else {

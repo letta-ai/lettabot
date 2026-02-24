@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock the Letta client before importing the module under test
 const mockConversationsMessagesList = vi.fn();
 const mockConversationsMessagesCreate = vi.fn();
 const mockRunsRetrieve = vi.fn();
+const mockRunsList = vi.fn();
 const mockAgentsMessagesCancel = vi.fn();
 
 vi.mock('@letta-ai/letta-client', () => {
@@ -15,13 +16,16 @@ vi.mock('@letta-ai/letta-client', () => {
           create: mockConversationsMessagesCreate,
         },
       };
-      runs = { retrieve: mockRunsRetrieve };
+      runs = {
+        retrieve: mockRunsRetrieve,
+        list: mockRunsList,
+      };
       agents = { messages: { cancel: mockAgentsMessagesCancel } };
     },
   };
 });
 
-import { recoverOrphanedConversationApproval } from './letta-api.js';
+import { getLatestRunError, recoverOrphanedConversationApproval } from './letta-api.js';
 
 // Helper to create a mock async iterable from an array (Letta client returns paginated iterators)
 function mockPageIterator<T>(items: T[]) {
@@ -35,6 +39,12 @@ function mockPageIterator<T>(items: T[]) {
 describe('recoverOrphanedConversationApproval', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRunsList.mockReturnValue(mockPageIterator([]));
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('returns false when no messages in conversation', async () => {
@@ -68,14 +78,22 @@ describe('recoverOrphanedConversationApproval', () => {
     ]));
     mockRunsRetrieve.mockResolvedValue({ status: 'failed', stop_reason: 'error' });
     mockConversationsMessagesCreate.mockResolvedValue({});
+    mockRunsList.mockReturnValue(mockPageIterator([{ id: 'run-denial-1' }]));
+    mockAgentsMessagesCancel.mockResolvedValue(undefined);
 
-    const result = await recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    // Recovery has a 3s delay after denial; advance fake timers to resolve it
+    const resultPromise = recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await resultPromise;
 
     expect(result.recovered).toBe(true);
     expect(result.details).toContain('Denied 1 approval(s) from failed run run-1');
     expect(mockConversationsMessagesCreate).toHaveBeenCalledOnce();
-    // Should NOT cancel -- run is already terminated
-    expect(mockAgentsMessagesCancel).not.toHaveBeenCalled();
+    // Should only cancel runs active in this same conversation
+    expect(mockAgentsMessagesCancel).toHaveBeenCalledOnce();
+    expect(mockAgentsMessagesCancel).toHaveBeenCalledWith('agent-1', {
+      run_ids: ['run-denial-1'],
+    });
   });
 
   it('recovers from stuck running+requires_approval and cancels the run', async () => {
@@ -89,12 +107,15 @@ describe('recoverOrphanedConversationApproval', () => {
     ]));
     mockRunsRetrieve.mockResolvedValue({ status: 'running', stop_reason: 'requires_approval' });
     mockConversationsMessagesCreate.mockResolvedValue({});
+    mockRunsList.mockReturnValue(mockPageIterator([{ id: 'run-2' }]));
     mockAgentsMessagesCancel.mockResolvedValue(undefined);
 
-    const result = await recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    const resultPromise = recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await resultPromise;
 
     expect(result.recovered).toBe(true);
-    expect(result.details).toContain('(cancelled)');
+    expect(result.details).toContain('(runs cancelled)');
     // Should send denial
     expect(mockConversationsMessagesCreate).toHaveBeenCalledOnce();
     const createCall = mockConversationsMessagesCreate.mock.calls[0];
@@ -104,6 +125,9 @@ describe('recoverOrphanedConversationApproval', () => {
     expect(approvals[0].tool_call_id).toBe('tc-2');
     // Should cancel the stuck run
     expect(mockAgentsMessagesCancel).toHaveBeenCalledOnce();
+    expect(mockAgentsMessagesCancel).toHaveBeenCalledWith('agent-1', {
+      run_ids: ['run-2'],
+    });
   });
 
   it('skips already-resolved approvals', async () => {
@@ -157,12 +181,58 @@ describe('recoverOrphanedConversationApproval', () => {
     ]));
     mockRunsRetrieve.mockResolvedValue({ status: 'running', stop_reason: 'requires_approval' });
     mockConversationsMessagesCreate.mockResolvedValue({});
+    mockRunsList.mockReturnValue(mockPageIterator([{ id: 'run-5' }]));
     // Cancel fails
     mockAgentsMessagesCancel.mockRejectedValue(new Error('cancel failed'));
 
-    const result = await recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    const resultPromise = recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await resultPromise;
 
     expect(result.recovered).toBe(true);
-    expect(result.details).toContain('(cancel failed)');
+    // Cancel failure is logged but doesn't change the suffix anymore
+    expect(result.details).toContain('Denied 1 approval(s) from running run run-5');
+  });
+});
+
+describe('getLatestRunError', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('scopes latest run lookup to conversation when provided', async () => {
+    mockRunsList.mockReturnValue(mockPageIterator([
+      {
+        id: 'run-err-1',
+        conversation_id: 'conv-1',
+        stop_reason: 'error',
+        metadata: { error: { detail: 'Another request is currently being processed (conflict)' } },
+      },
+    ]));
+
+    const result = await getLatestRunError('agent-1', 'conv-1');
+
+    expect(mockRunsList).toHaveBeenCalledWith({
+      agent_id: 'agent-1',
+      conversation_id: 'conv-1',
+      limit: 1,
+    });
+    expect(result?.message).toContain('conflict');
+    expect(result?.stopReason).toBe('error');
+  });
+
+  it('returns null when response is for a different conversation', async () => {
+    mockRunsList.mockReturnValue(mockPageIterator([
+      {
+        id: 'run-other',
+        conversation_id: 'conv-2',
+        stop_reason: 'error',
+        metadata: { error: { detail: 'waiting for approval' } },
+      },
+    ]));
+
+    const result = await getLatestRunError('agent-1', 'conv-1');
+
+    expect(result).toBeNull();
   });
 });
