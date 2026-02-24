@@ -462,6 +462,25 @@ export async function cancelRuns(
 }
 
 /**
+ * Cancel active runs for a specific conversation.
+ * Scoped to a single conversation -- won't affect other channels/conversations.
+ * Note: Requires Redis on the server for canceling active runs.
+ */
+export async function cancelConversation(
+  conversationId: string
+): Promise<boolean> {
+  try {
+    const client = getClient();
+    await client.conversations.cancel(conversationId);
+    console.log(`[Letta API] Cancelled runs for conversation ${conversationId}`);
+    return true;
+  } catch (e) {
+    console.error(`[Letta API] Failed to cancel conversation ${conversationId}:`, e);
+    return false;
+  }
+}
+
+/**
  * Disable tool approval requirement for a specific tool on an agent.
  * This sets requires_approval: false at the server level.
  */

@@ -10,7 +10,7 @@ import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
-import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
+import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
 import { installSkillsToAgent } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
@@ -820,18 +820,25 @@ export class LettaBot implements AgentSession {
           console.log(`[Command] /cancel - aborted session stream (key=${convKey})`);
         }
 
-        // 2. Cancel server-side run
-        // TODO: cancelRuns() cancels all runs for this agent. In per-channel mode this
-        // could cancel runs from other channels. To scope cancellation per-conversation,
-        // we'd need run IDs from the stream -- SDK only exposes these on error/retry messages.
+        // 2. Cancel server-side run (conversation-scoped so it won't affect other channels)
         let serverCancelled = true;
-        const agentId = this.store.agentId;
-        if (agentId) {
-          serverCancelled = await cancelRuns(agentId);
+        const convId = convKey === 'shared'
+          ? this.store.conversationId
+          : this.store.getConversationId(convKey);
+        if (convId) {
+          serverCancelled = await cancelConversation(convId);
           if (serverCancelled) {
-            console.log(`[Command] /cancel - cancelled server-side runs for agent ${agentId}`);
+            console.log(`[Command] /cancel - cancelled conversation ${convId} (key=${convKey})`);
           } else {
-            console.error(`[Command] /cancel - server-side cancellation failed (agent ${agentId})`);
+            console.error(`[Command] /cancel - conversation cancellation failed (${convId})`);
+          }
+        } else if (this.store.agentId) {
+          // Fallback: no conversation ID yet, cancel at agent level
+          serverCancelled = await cancelRuns(this.store.agentId);
+          if (serverCancelled) {
+            console.log(`[Command] /cancel - cancelled agent-level runs (no conversationId yet)`);
+          } else {
+            console.error(`[Command] /cancel - agent-level cancellation failed`);
           }
         }
 
