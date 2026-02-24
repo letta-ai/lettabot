@@ -12,7 +12,11 @@ import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { HELP_TEXT } from '../core/commands.js';
 import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveReceiveBotMessages, type GroupModeConfig } from './group-mode.js';
+import { basename } from 'node:path';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Discord');
 // Dynamic import to avoid requiring Discord deps if not used
 let Client: typeof import('discord.js').Client;
 let GatewayIntentBits: typeof import('discord.js').GatewayIntentBits;
@@ -150,8 +154,8 @@ Ask the bot owner to approve with:
 
     this.client.once('clientReady', () => {
       const tag = this.client?.user?.tag || '(unknown)';
-      console.log(`[Discord] Bot logged in as ${tag}`);
-      console.log(`[Discord] DM policy: ${this.config.dmPolicy}`);
+      log.info(`Bot logged in as ${tag}`);
+      log.info(`DM policy: ${this.config.dmPolicy}`);
       this.running = true;
     });
 
@@ -180,10 +184,9 @@ Ask the bot owner to approve with:
       const audioAttachment = message.attachments.find(a => a.contentType?.startsWith('audio/'));
       if (audioAttachment?.url) {
         try {
-          const { loadConfig } = await import('../config/index.js');
-          const config = loadConfig();
-          if (!config.transcription?.apiKey && !process.env.OPENAI_API_KEY) {
-            await message.reply('Voice messages require OpenAI API key for transcription. See: https://github.com/letta-ai/lettabot#voice-messages');
+          const { isTranscriptionConfigured } = await import('../transcription/index.js');
+          if (!isTranscriptionConfigured()) {
+            await message.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages');
           } else {
             // Download audio
             const response = await fetch(audioAttachment.url);
@@ -194,15 +197,15 @@ Ask the bot owner to approve with:
             const result = await transcribeAudio(buffer, audioAttachment.name || `audio.${ext}`);
             
             if (result.success && result.text) {
-              console.log(`[Discord] Transcribed audio: "${result.text.slice(0, 50)}..."`);
+              log.info(`Transcribed audio: "${result.text.slice(0, 50)}..."`);
               content = (content ? content + '\n' : '') + `[Voice message]: ${result.text}`;
             } else {
-              console.error(`[Discord] Transcription failed: ${result.error}`);
+              log.error(`Transcription failed: ${result.error}`);
               content = (content ? content + '\n' : '') + `[Voice message - transcription failed: ${result.error}]`;
             }
           }
         } catch (error) {
-          console.error('[Discord] Error transcribing audio:', error);
+          log.error('Error transcribing audio:', error);
           content = (content ? content + '\n' : '') + `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`;
         }
       }
@@ -231,7 +234,7 @@ Ask the bot owner to approve with:
           }
 
           if (created) {
-            console.log(`[Discord] New pairing request from ${userId} (${message.author.username}): ${code}`);
+            log.info(`New pairing request from ${userId} (${message.author.username}): ${code}`);
           }
 
           await this.sendPairingMessage(message, this.formatPairingMsg(code));
@@ -273,7 +276,7 @@ Ask the bot owner to approve with:
           const keys = [chatId];
           if (serverId) keys.push(serverId);
           if (!isGroupAllowed(this.config.groups, keys)) {
-            console.log(`[Discord] Group ${chatId} not in allowlist, ignoring`);
+            log.info(`Group ${chatId} not in allowlist, ignoring`);
             return;
           }
 
@@ -312,7 +315,7 @@ Ask the bot owner to approve with:
     });
 
     this.client.on('error', (err) => {
-      console.error('[Discord] Client error:', err);
+      log.error('Client error:', err);
     });
 
     this.client.on('messageReactionAdd', async (reaction, user) => {
@@ -323,7 +326,7 @@ Ask the bot owner to approve with:
       await this.handleReactionEvent(reaction, user, 'removed');
     });
 
-    console.log('[Discord] Connecting...');
+    log.info('Connecting...');
     await this.client.login(this.config.token);
   }
 
@@ -348,6 +351,23 @@ Ask the bot owner to approve with:
     return { messageId: result.id };
   }
 
+  async sendFile(file: OutboundFile): Promise<{ messageId: string }> {
+    if (!this.client) throw new Error('Discord not started');
+    const channel = await this.client.channels.fetch(file.chatId);
+    if (!channel || !channel.isTextBased() || !('send' in channel)) {
+      throw new Error(`Discord channel not found or not text-based: ${file.chatId}`);
+    }
+
+    const payload = {
+      content: file.caption || undefined,
+      files: [
+        { attachment: file.filePath, name: basename(file.filePath) },
+      ],
+    };
+    const result = await (channel as { send: (options: typeof payload) => Promise<{ id: string }> }).send(payload);
+    return { messageId: result.id };
+  }
+
   async editMessage(chatId: string, messageId: string, text: string): Promise<void> {
     if (!this.client) throw new Error('Discord not started');
     const channel = await this.client.channels.fetch(chatId);
@@ -358,7 +378,7 @@ Ask the bot owner to approve with:
     const message = await channel.messages.fetch(messageId);
     const botUserId = this.client.user?.id;
     if (!botUserId || message.author.id !== botUserId) {
-      console.warn('[Discord] Cannot edit message not sent by bot');
+      log.warn('Cannot edit message not sent by bot');
       return;
     }
     await message.edit(text);
@@ -419,7 +439,7 @@ Ask the bot owner to approve with:
         await reaction.message.fetch();
       }
     } catch (err) {
-      console.warn('[Discord] Failed to fetch reaction/message:', err);
+      log.warn('Failed to fetch reaction/message:', err);
     }
 
     const message = reaction.message;
@@ -465,7 +485,7 @@ Ask the bot owner to approve with:
       },
       formatterHints: this.getFormatterHints(),
     }).catch((err) => {
-      console.error('[Discord] Error handling reaction:', err);
+      log.error('Error handling reaction:', err);
     });
   }
 
@@ -490,7 +510,7 @@ Ask the bot owner to approve with:
           continue;
         }
         if (this.attachmentsMaxBytes && attachment.size && attachment.size > this.attachmentsMaxBytes) {
-          console.warn(`[Discord] Attachment ${name} exceeds size limit, skipping download.`);
+          log.warn(`Attachment ${name} exceeds size limit, skipping download.`);
           results.push(entry);
           continue;
         }
@@ -498,9 +518,9 @@ Ask the bot owner to approve with:
         try {
           await downloadToFile(attachment.url, target);
           entry.localPath = target;
-          console.log(`[Discord] Attachment saved to ${target}`);
+          log.info(`Attachment saved to ${target}`);
         } catch (err) {
-          console.warn('[Discord] Failed to download attachment:', err);
+          log.warn('Failed to download attachment:', err);
         }
       }
       results.push(entry);
@@ -521,6 +541,7 @@ const DISCORD_EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
   tada: '\u{1F389}',
   clap: '\u{1F44F}',
   ok_hand: '\u{1F44C}',
+  white_check_mark: '\u2705',
 };
 
 function resolveDiscordEmoji(input: string): string {

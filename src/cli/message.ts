@@ -12,6 +12,7 @@
 
 // Config loaded from lettabot.yaml
 import { loadAppConfigOrExit, applyConfigToEnv } from '../config/index.js';
+import { loadApiKey } from '../api/auth.js';
 const config = loadAppConfigOrExit();
 applyConfigToEnv(config);
 import { existsSync, readFileSync } from 'node:fs';
@@ -150,11 +151,8 @@ async function sendViaApi(
   }
 ): Promise<void> {
   const apiUrl = process.env.LETTABOT_API_URL || 'http://localhost:8080';
-  const apiKey = process.env.LETTABOT_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('LETTABOT_API_KEY not set. Check bot server logs for the key.');
-  }
+  // Resolve API key: env var > lettabot-api.json (never generate -- that's the server's job)
+  const apiKey = loadApiKey();
 
   // Check if file exists
   if (options.filePath && !existsSync(options.filePath)) {
@@ -254,6 +252,7 @@ async function sendCommand(args: string[]): Promise<void> {
   let kind: 'image' | 'file' | undefined = undefined;
   let channel = '';
   let chatId = '';
+  const fileCapableChannels = new Set(['telegram', 'slack', 'discord', 'whatsapp']);
 
   // Parse args
   for (let i = 0; i < args.length; i++) {
@@ -306,16 +305,16 @@ async function sendCommand(args: string[]): Promise<void> {
   }
 
   try {
-    // Use API for WhatsApp (unified multipart endpoint)
-    if (channel === 'whatsapp') {
+    if (filePath) {
+      if (!fileCapableChannels.has(channel)) {
+        throw new Error(`File sending not supported for ${channel}. Supported: telegram, slack, discord, whatsapp`);
+      }
       await sendViaApi(channel, chatId, { text, filePath, kind });
-    } else if (filePath) {
-      // Other channels with files - not yet implemented via API
-      throw new Error(`File sending for ${channel} requires API (currently only WhatsApp supported via API)`);
-    } else {
-      // Other channels with text only - direct API calls
-      await sendToChannel(channel, chatId, text);
+      return;
     }
+
+    // Text-only: direct platform APIs (WhatsApp uses API internally)
+    await sendToChannel(channel, chatId, text);
   } catch (error) {
     console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
@@ -357,11 +356,12 @@ Environment variables:
   SLACK_BOT_TOKEN         Required for Slack
   DISCORD_BOT_TOKEN       Required for Discord
   SIGNAL_PHONE_NUMBER     Required for Signal (text only, no files)
-  LETTABOT_API_KEY        Required for WhatsApp (text and files)
+  LETTABOT_API_KEY        Override API key (auto-read from lettabot-api.json if not set)
   LETTABOT_API_URL        API server URL (default: http://localhost:8080)
   SIGNAL_CLI_REST_API_URL Signal daemon URL (default: http://127.0.0.1:8090)
 
-Note: WhatsApp uses the API server. Other channels use direct platform APIs.
+Note: File sending uses the API server for supported channels (telegram, slack, discord, whatsapp).
+      Text-only messages use direct platform APIs (WhatsApp uses API).
 `);
 }
 

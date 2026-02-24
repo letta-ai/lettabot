@@ -23,6 +23,9 @@ import { copyFile, stat, access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import type { GroupModeConfig } from './group-mode.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Signal');
 export interface SignalGroupConfig extends GroupModeConfig {}
 
 export interface SignalConfig {
@@ -217,7 +220,7 @@ This code expires in 1 hour.`;
   async start(): Promise<void> {
     if (this.running) return;
     
-    console.log('[Signal] Starting adapter...');
+    log.info('Starting adapter...');
     
     // Spawn signal-cli daemon
     await this.startDaemon();
@@ -229,13 +232,13 @@ This code expires in 1 hour.`;
     this.startEventLoop();
     
     this.running = true;
-    console.log('[Signal] Adapter started successfully');
+    log.info('Adapter started successfully');
   }
   
   async stop(): Promise<void> {
     if (!this.running) return;
     
-    console.log('[Signal] Stopping adapter...');
+    log.info('Stopping adapter...');
     
     // Stop SSE loop
     this.sseAbortController?.abort();
@@ -248,7 +251,7 @@ This code expires in 1 hour.`;
     }
     
     this.running = false;
-    console.log('[Signal] Adapter stopped');
+    log.info('Adapter stopped');
   }
   
   isRunning(): boolean {
@@ -346,7 +349,7 @@ This code expires in 1 hour.`;
       await this.rpcRequest('sendTyping', params);
     } catch (err) {
       // Typing indicators are best-effort
-      console.warn('[Signal] Failed to send typing indicator:', err);
+      log.warn('Failed to send typing indicator:', err);
     }
   }
   
@@ -367,7 +370,7 @@ This code expires in 1 hour.`;
     args.push('--http', `${host}:${port}`);
     args.push('--no-receive-stdout');
     
-    console.log(`[Signal] Spawning: ${cliPath} ${args.join(' ')}`);
+    log.info(`Spawning: ${cliPath} ${args.join(' ')}`);
     
     this.daemonProcess = spawn(cliPath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -376,7 +379,7 @@ This code expires in 1 hour.`;
     this.daemonProcess.stdout?.on('data', (data) => {
       const lines = data.toString().split(/\r?\n/).filter((l: string) => l.trim());
       for (const line of lines) {
-        console.log(`[signal-cli] ${line}`);
+        log.info(`${line}`);
       }
     });
     
@@ -385,19 +388,19 @@ This code expires in 1 hour.`;
       for (const line of lines) {
         // signal-cli writes most logs to stderr
         if (/\b(ERROR|WARN|FAILED|SEVERE)\b/i.test(line)) {
-          console.error(`[signal-cli] ${line}`);
+          log.error(`${line}`);
         } else {
-          console.log(`[signal-cli] ${line}`);
+          log.info(`${line}`);
         }
       }
     });
     
     this.daemonProcess.on('error', (err) => {
-      console.error('[Signal] Daemon spawn error:', err);
+      log.error('Daemon spawn error:', err);
     });
     
     this.daemonProcess.on('exit', (code) => {
-      console.log(`[Signal] Daemon exited with code ${code}`);
+      log.info(`Daemon exited with code ${code}`);
       if (this.running) {
         // Unexpected exit - mark as not running
         this.running = false;
@@ -410,7 +413,7 @@ This code expires in 1 hour.`;
     const startTime = Date.now();
     const pollIntervalMs = 500;
     
-    console.log('[Signal] Waiting for daemon to be ready...');
+    log.info('Waiting for daemon to be ready...');
     
     while (Date.now() - startTime < timeoutMs) {
       const controller = new AbortController();
@@ -425,7 +428,7 @@ This code expires in 1 hour.`;
         clearTimeout(timeout);
         
         if (res.ok) {
-          console.log('[Signal] Daemon is ready');
+          log.info('Daemon is ready');
           return;
         }
       } catch {
@@ -445,7 +448,7 @@ This code expires in 1 hour.`;
     // Run SSE loop in background
     this.runSseLoop().catch((err) => {
       if (!this.sseAbortController?.signal.aborted) {
-        console.error('[Signal] SSE loop error:', err);
+        log.error('SSE loop error:', err);
       }
     });
   }
@@ -456,7 +459,7 @@ This code expires in 1 hour.`;
       url.searchParams.set('account', this.config.phoneNumber);
     }
     
-    console.log('[Signal] Starting SSE event loop:', url.toString());
+    log.info('Starting SSE event loop:', url.toString());
     
     while (!this.sseAbortController?.signal.aborted) {
       // Create a new controller for this connection attempt
@@ -467,7 +470,7 @@ This code expires in 1 hour.`;
       this.sseAbortController?.signal.addEventListener('abort', onMainAbort, { once: true });
       
       try {
-        console.log('[Signal] Connecting to SSE...');
+        log.info('Connecting to SSE...');
         const res = await fetch(url, {
           method: 'GET',
           headers: { Accept: 'text/event-stream' },
@@ -478,7 +481,7 @@ This code expires in 1 hour.`;
           throw new Error(`SSE failed: ${res.status} ${res.statusText}`);
         }
         
-        console.log('[Signal] SSE connected');
+        log.info('SSE connected');
         
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -487,7 +490,7 @@ This code expires in 1 hour.`;
         while (!this.sseAbortController?.signal.aborted) {
           const { value, done } = await reader.read();
           if (done) {
-            console.log('[Signal] SSE stream ended');
+            log.info('SSE stream ended');
             break;
           }
           
@@ -510,14 +513,14 @@ This code expires in 1 hour.`;
             }
             if (data) {
               this.handleSseData(data).catch((err) => {
-                console.error('[Signal] Error handling SSE data:', err);
+                log.error('Error handling SSE data:', err);
               });
             }
           }
         }
         
         // Stream ended normally - wait before reconnecting
-        console.log('[Signal] SSE disconnected, reconnecting in 2s...');
+        log.info('SSE disconnected, reconnecting in 2s...');
         await new Promise((resolve) => setTimeout(resolve, 2000));
         
       } catch (err) {
@@ -525,7 +528,7 @@ This code expires in 1 hour.`;
           return;
         }
         
-        console.error('[Signal] SSE connection error, reconnecting in 5s:', err);
+        log.error('SSE connection error, reconnecting in 5s:', err);
         await new Promise((resolve) => setTimeout(resolve, 5000));
       } finally {
         // Clean up the listener
@@ -543,7 +546,7 @@ This code expires in 1 hour.`;
       
       // Debug: log when we receive any message
       if (envelope.dataMessage || envelope.syncMessage) {
-        console.log('[Signal] Received envelope:', JSON.stringify(envelope, null, 2));
+        log.info('Received envelope:', JSON.stringify(envelope, null, 2));
       }
       
       // Handle incoming data messages (from others)
@@ -600,12 +603,12 @@ This code expires in 1 hour.`;
       // Handle voice message attachments
       // Log all attachments for debugging
       if (attachments?.length) {
-        console.log(`[Signal] Attachments received: ${JSON.stringify(attachments.map(a => ({ type: a.contentType, id: a.id })))}`);
+        log.info(`Attachments received: ${JSON.stringify(attachments.map(a => ({ type: a.contentType, id: a.id })))}`);
       }
       
       const voiceAttachment = attachments?.find(a => a.contentType?.startsWith('audio/'));
       if (voiceAttachment?.id) {
-        console.log(`[Signal] Voice attachment detected: ${voiceAttachment.contentType}, id: ${voiceAttachment.id}`);
+        log.info(`Voice attachment detected: ${voiceAttachment.contentType}, id: ${voiceAttachment.id}`);
         
         // Always persist voice audio to attachments directory
         let savedAudioPath: string | undefined;
@@ -623,22 +626,20 @@ This code expires in 1 hour.`;
             if (voiceFileReady) {
               await copyFile(voiceSourcePath, voiceTargetPath);
               savedAudioPath = voiceTargetPath;
-              console.log(`[Signal] Voice audio saved to ${voiceTargetPath}`);
+              log.info(`Voice audio saved to ${voiceTargetPath}`);
             }
           } catch (err) {
-            console.warn('[Signal] Failed to save voice audio:', err);
+            log.warn('Failed to save voice audio:', err);
           }
         }
         
         try {
-          const { loadConfig } = await import('../config/index.js');
-          const config = loadConfig();
-          if (!config.transcription?.apiKey && !process.env.OPENAI_API_KEY) {
+          const { isTranscriptionConfigured } = await import('../transcription/index.js');
+          if (!isTranscriptionConfigured()) {
             if (chatId) {
-              const audioInfo = savedAudioPath ? ` Audio saved to: ${savedAudioPath}` : '';
-              await this.sendMessage({ 
-                chatId, 
-                text: `Voice messages require OpenAI API key for transcription.${audioInfo} See: https://github.com/letta-ai/lettabot#voice-messages` 
+              await this.sendMessage({
+                chatId,
+                text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages'
               });
             }
           } else {
@@ -649,18 +650,18 @@ This code expires in 1 hour.`;
             const { join: pjoin } = await import('node:path');
             
             const attachmentPath = pjoin(hd(), '.local/share/signal-cli/attachments', voiceAttachment.id);
-            console.log(`[Signal] Waiting for attachment: ${attachmentPath}`);
+            log.info(`Waiting for attachment: ${attachmentPath}`);
             
             // Wait for file to be available (signal-cli may still be downloading)
             const fileReady = await waitForFile(attachmentPath, 5000);
             if (!fileReady) {
-              console.error(`[Signal] Attachment file not found after waiting: ${attachmentPath}`);
+              log.error(`Attachment file not found after waiting: ${attachmentPath}`);
               throw new Error(`Attachment file not found after waiting: ${attachmentPath}`);
             }
-            console.log(`[Signal] Attachment file ready: ${attachmentPath}`);
+            log.info(`Attachment file ready: ${attachmentPath}`);
             
             const buffer = readFileSync(attachmentPath);
-            console.log(`[Signal] Read ${buffer.length} bytes`);
+            log.info(`Read ${buffer.length} bytes`);
             
             const { transcribeAudio } = await import('../transcription/index.js');
             const ext = voiceAttachment.contentType?.split('/')[1] || 'ogg';
@@ -670,26 +671,26 @@ This code expires in 1 hour.`;
             
             if (result.success) {
               if (result.text) {
-                console.log(`[Signal] Transcribed voice message: "${result.text.slice(0, 50)}..."`);
+                log.info(`Transcribed voice message: "${result.text.slice(0, 50)}..."`);
                 messageText = (messageText ? messageText + '\n' : '') + `[Voice message]: ${result.text}`;
               } else {
-                console.warn(`[Signal] Transcription returned empty text`);
+                log.warn(`Transcription returned empty text`);
                 messageText = (messageText ? messageText + '\n' : '') + `[Voice message - transcription returned empty${audioRef}]`;
               }
             } else {
               const errorMsg = result.error || 'Unknown transcription error';
-              console.error(`[Signal] Transcription failed: ${errorMsg}`);
+              log.error(`Transcription failed: ${errorMsg}`);
               messageText = (messageText ? messageText + '\n' : '') + `[Voice message - transcription failed: ${errorMsg}${audioRef}]`;
             }
           }
         } catch (error) {
-          console.error('[Signal] Error transcribing voice message:', error);
+          log.error('Error transcribing voice message:', error);
           const audioRef = savedAudioPath ? ` Audio saved to: ${savedAudioPath}` : '';
           messageText = (messageText ? messageText + '\n' : '') + `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}.${audioRef}]`;
         }
       } else if (attachments?.some(a => a.contentType?.startsWith('audio/'))) {
         // Audio attachment exists but has no ID
-        console.warn(`[Signal] Audio attachment found but missing ID: ${JSON.stringify(voiceAttachment)}`);
+        log.warn(`Audio attachment found but missing ID: ${JSON.stringify(voiceAttachment)}`);
       }
       
       // Collect non-voice attachments (images, files, etc.)
@@ -706,26 +707,26 @@ This code expires in 1 hour.`;
       }
       
       // Handle Note to Self - check selfChatMode
-      console.log(`[Signal] Processing message: chatId=${chatId}, source=${source}, selfChatMode=${this.config.selfChatMode}`);
+      log.info(`Processing message: chatId=${chatId}, source=${source}, selfChatMode=${this.config.selfChatMode}`);
       if (chatId === 'note-to-self') {
         if (!this.config.selfChatMode) {
           // selfChatMode disabled - ignore Note to Self messages
-          console.log('[Signal] Note to Self ignored (selfChatMode disabled)');
+          log.info('Note to Self ignored (selfChatMode disabled)');
           return;
         }
         // selfChatMode enabled - allow the message through
-        console.log('[Signal] Note to Self allowed (selfChatMode enabled)');
+        log.info('Note to Self allowed (selfChatMode enabled)');
       } else if (chatId.startsWith('group:')) {
         // Group messages bypass pairing - anyone in the group can interact
-        console.log('[Signal] Group message - bypassing access control');
+        log.info('Group message - bypassing access control');
       } else {
         // External DM - check access control
-        console.log('[Signal] Checking access for external message');
+        log.info('Checking access for external message');
         const access = await this.checkAccess(source);
-        console.log(`[Signal] Access result: ${access}`);
+        log.info(`Access result: ${access}`);
         
         if (access === 'blocked') {
-          console.log(`[Signal] Blocked message from unauthorized user: ${source}`);
+          log.info(`Blocked message from unauthorized user: ${source}`);
           await this.sendMessage({ chatId: source, text: "Sorry, you're not authorized to use this bot." });
           return;
         }
@@ -746,7 +747,7 @@ This code expires in 1 hour.`;
           
           // Send pairing message on first contact
           if (created) {
-            console.log(`[Signal] New pairing request from ${source}: ${code}`);
+            log.info(`New pairing request from ${source}: ${code}`);
             await this.sendMessage({ chatId: source, text: this.formatPairingMessage(code) });
           }
           
@@ -788,14 +789,14 @@ This code expires in 1 hour.`;
         });
         
         if (!gatingResult.shouldProcess) {
-          console.log(`[Signal] Group message filtered: ${gatingResult.reason}`);
+          log.info(`Group message filtered: ${gatingResult.reason}`);
           return;
         }
         
         wasMentioned = gatingResult.wasMentioned;
         isListeningMode = gatingResult.mode === 'listen' && !wasMentioned;
         if (wasMentioned) {
-          console.log(`[Signal] Bot mentioned via ${gatingResult.method}`);
+          log.info(`Bot mentioned via ${gatingResult.method}`);
         }
       }
       
@@ -814,11 +815,11 @@ This code expires in 1 hour.`;
       };
       
       this.onMessage?.(msg).catch((err) => {
-        console.error('[Signal] Error handling message:', err);
+        log.error('Error handling message:', err);
       });
       
     } catch (err) {
-      console.error('[Signal] Failed to parse SSE event:', err, data);
+      log.error('Failed to parse SSE event:', err, data);
     }
   }
   
@@ -906,7 +907,7 @@ This code expires in 1 hour.`;
         try {
           const stats = await stat(sourcePath);
           if (stats.size > this.config.attachmentsMaxBytes) {
-            console.warn(`[Signal] Attachment ${name} exceeds size limit, skipping download.`);
+            log.warn(`Attachment ${name} exceeds size limit, skipping download.`);
             results.push(entry);
             continue;
           }
@@ -918,7 +919,7 @@ This code expires in 1 hour.`;
       // Wait for file to be available (signal-cli may still be downloading)
       const fileReady = await waitForFile(sourcePath, 5000);
       if (!fileReady) {
-        console.warn(`[Signal] Attachment ${name} not found after waiting, skipping.`);
+        log.warn(`Attachment ${name} not found after waiting, skipping.`);
         results.push(entry);
         continue;
       }
@@ -928,9 +929,9 @@ This code expires in 1 hour.`;
       try {
         await copyFile(sourcePath, target);
         entry.localPath = target;
-        console.log(`[Signal] Attachment saved to ${target}`);
+        log.info(`Attachment saved to ${target}`);
       } catch (err) {
-        console.warn('[Signal] Failed to copy attachment:', err);
+        log.warn('Failed to copy attachment:', err);
       }
       
       results.push(entry);

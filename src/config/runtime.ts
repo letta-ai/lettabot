@@ -1,6 +1,9 @@
 import type { LettaBotConfig } from './types.js';
 import { loadConfigStrict, resolveConfigPath } from './io.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Config');
 export type ExitFn = (code: number) => never;
 
 /**
@@ -12,8 +15,8 @@ export function loadAppConfigOrExit(exitFn: ExitFn = process.exit): LettaBotConf
     return loadConfigStrict();
   } catch (err) {
     const configPath = resolveConfigPath();
-    console.error(`[Config] Failed to load ${configPath}:`, err);
-    console.error(`[Config] Fix the errors above in ${configPath} and restart.`);
+    log.error(`Failed to load ${configPath}:`, err);
+    log.error(`Fix the errors above in ${configPath} and restart.`);
     return exitFn(1);
   }
 }

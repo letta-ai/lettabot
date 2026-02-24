@@ -170,6 +170,9 @@ export interface BotConfig {
 
   // Security
   allowedUsers?: string[];  // Empty = allow all
+  sendFileDir?: string;     // Restrict <send-file> directive to this directory (default: data/outbound)
+  sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
+  sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete files after send (default: false)
 
   // Conversation routing
   conversationMode?: 'shared' | 'per-channel'; // Default: shared
