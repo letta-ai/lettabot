@@ -1182,34 +1182,29 @@ export class LettaBot implements AgentSession {
         return '⏰ Heartbeat triggered (silent mode - check server logs)';
       }
       case 'reset': {
-        const convKey = channelId ? this.resolveConversationKey(channelId) : undefined;
-        if (convKey && convKey !== 'shared') {
-          // Per-channel mode: only clear the conversation for this channel
-          this.store.clearConversation(convKey);
-          this.invalidateSession(convKey);
-          log.info(`/reset - conversation cleared for ${convKey}`);
-          // Eagerly create the new session so we can report the conversation ID
-          try {
-            const session = await this.ensureSessionForKey(convKey);
-            const newConvId = session.conversationId || '(pending)';
-            this.persistSessionState(session, convKey);
-            return `Conversation reset for this channel. New conversation: ${newConvId}\nOther channels are unaffected. (Agent memory is preserved.)`;
-          } catch {
-            return `Conversation reset for this channel. Other channels are unaffected. (Agent memory is preserved.)`;
-          }
-        }
-        // Shared mode or no channel context: clear everything
-        this.store.clearConversation();
+        // Always scope the reset to the caller's conversation key so that
+        // other channels' conversations are never silently destroyed.
+        // resolveConversationKey returns 'shared' for non-override channels,
+        // or the channel id for per-channel / override channels.
+        const convKey = channelId ? this.resolveConversationKey(channelId) : 'shared';
+        this.store.clearConversation(convKey);
         this.store.resetRecoveryAttempts();
-        this.invalidateSession();
-        log.info('/reset - all conversations cleared');
+        this.invalidateSession(convKey);
+        log.info(`/reset - conversation cleared for key="${convKey}"`);
+        // Eagerly create the new session so we can report the conversation ID.
         try {
-          const session = await this.ensureSessionForKey('shared');
+          const session = await this.ensureSessionForKey(convKey);
           const newConvId = session.conversationId || '(pending)';
-          this.persistSessionState(session, 'shared');
-          return `Conversation reset. New conversation: ${newConvId}\n(Agent memory is preserved.)`;
+          this.persistSessionState(session, convKey);
+          if (convKey === 'shared') {
+            return `Conversation reset. New conversation: ${newConvId}\n(Agent memory is preserved.)`;
+          }
+          return `Conversation reset for this channel. New conversation: ${newConvId}\nOther channels are unaffected. (Agent memory is preserved.)`;
         } catch {
-          return 'Conversation reset. Send a message to start a new conversation. (Agent memory is preserved.)';
+          if (convKey === 'shared') {
+            return 'Conversation reset. Send a message to start a new conversation. (Agent memory is preserved.)';
+          }
+          return `Conversation reset for this channel. Other channels are unaffected. (Agent memory is preserved.)`;
         }
       }
       default:
