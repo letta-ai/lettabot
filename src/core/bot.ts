@@ -1841,13 +1841,19 @@ export class LettaBot implements AgentSession {
 
             // Non-retryable errors: billing, auth, not-found -- skip recovery/retry
             // entirely and surface the error to the user immediately.
+            // Check both the top-level message and the nested apiError.message
+            // (the billing/auth string can appear in either location).
             const errMsg = lastErrorDetail?.message?.toLowerCase() || '';
+            const errApiMsg = (typeof lastErrorDetail?.apiError?.message === 'string'
+              ? lastErrorDetail.apiError.message : '').toLowerCase();
+            const errAny = errMsg + ' ' + errApiMsg;
             const isNonRetryableError = isTerminalError && (
-              errMsg.includes('out of credits') || errMsg.includes('usage limit') ||
-              errMsg.includes('401') || errMsg.includes('403') ||
-              errMsg.includes('unauthorized') || errMsg.includes('forbidden') ||
-              errMsg.includes('not found') || errMsg.includes('404') ||
-              errMsg.includes('rate limit') || errMsg.includes('429')
+              errAny.includes('out of credits') || errAny.includes('usage limit') ||
+              errAny.includes('401') || errAny.includes('403') ||
+              errAny.includes('unauthorized') || errAny.includes('forbidden') ||
+              errAny.includes('404') ||
+              ((errAny.includes('agent') || errAny.includes('conversation')) && errAny.includes('not found')) ||
+              errAny.includes('rate limit') || errAny.includes('429')
             );
 
             const shouldRetryForEmptyResult = streamMsg.success && resultText === '' && nothingDelivered;
