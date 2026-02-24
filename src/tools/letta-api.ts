@@ -548,11 +548,20 @@ export async function ensureNoToolApprovals(agentId: string): Promise<void> {
  * Useful for ensuring a headless deployment doesn't get stuck.
  */
 /**
- * Recover from orphaned approval_request_messages by directly inspecting the conversation.
+ * Recover from orphaned approval_request_messages that block the conversation.
  * 
- * Unlike getPendingApprovals() which relies on agent.pending_approval or run stop_reason,
- * this function looks at the actual conversation messages to find unresolved approval requests
- * from terminated (failed/cancelled) runs.
+ * Uses a two-phase approach:
+ * 1. Check agent.pending_approval (authoritative, fast) — if the server knows about
+ *    a pending approval, deny it directly.
+ * 2. Scan recent conversation messages (fallback) — catches cases where the server's
+ *    approval tracking is out of sync with the in-context message history.
+ * 
+ * Bug history: Prior to this fix, the message scan used `limit: 50` without ordering,
+ * which returned the OLDEST 50 messages in a 30K+ message conversation. The orphaned
+ * approval at the end was never found. Additionally, the Letta server can enter a
+ * catch-22 state where in-context messages show a pending approval but the approval
+ * system doesn't recognize it — neither approval nor regular messages are accepted.
+ * In that case, cancelling the run is the best available recovery.
  * 
  * Returns { recovered: true } if orphaned approvals were found and resolved.
  */
@@ -563,8 +572,80 @@ export async function recoverOrphanedConversationApproval(
   try {
     const client = getClient();
     
-    // List recent messages from the conversation to find orphaned approvals
-    const messagesPage = await client.conversations.messages.list(conversationId, { limit: 50 });
+    // Phase 1: Check agent.pending_approval (authoritative source).
+    // This catches the common case where the server knows about the pending approval.
+    try {
+      const agentState = await client.agents.retrieve(agentId, {
+        include: ['agent.pending_approval'],
+      });
+      if ('pending_approval' in agentState && agentState.pending_approval) {
+        const pending = agentState.pending_approval as unknown as Record<string, unknown>;
+        const runId = pending.run_id as string | undefined;
+        console.log(`[Letta API] Phase 1: Found pending_approval on agent, run_id=${runId}`);
+        
+        // Extract tool calls from the pending approval
+        const toolCallIds: string[] = [];
+        const rawToolCalls = pending.tool_calls;
+        if (Array.isArray(rawToolCalls)) {
+          for (const tc of rawToolCalls) {
+            if (tc && typeof tc === 'object' && 'tool_call_id' in tc && tc.tool_call_id) {
+              toolCallIds.push(tc.tool_call_id as string);
+            }
+          }
+        }
+        // Fallback to deprecated singular tool_call
+        if (toolCallIds.length === 0 && pending.tool_call && typeof pending.tool_call === 'object') {
+          const tc = pending.tool_call as Record<string, unknown>;
+          if (tc.tool_call_id) toolCallIds.push(tc.tool_call_id as string);
+        }
+        
+        if (toolCallIds.length > 0) {
+          const approvalResponses = toolCallIds.map(id => ({
+            approve: false as const,
+            tool_call_id: id,
+            type: 'approval' as const,
+            reason: 'Auto-denied: orphaned approval recovery',
+          }));
+          
+          try {
+            await client.conversations.messages.create(conversationId, {
+              messages: [{
+                type: 'approval',
+                approvals: approvalResponses,
+              }],
+              streaming: false,
+            });
+            console.log(`[Letta API] Phase 1: Denied ${toolCallIds.length} pending approval(s)`);
+            if (runId) await cancelRuns(agentId, [runId]).catch(() => {});
+            return { recovered: true, details: `Phase 1: denied ${toolCallIds.length} approval(s) via agent.pending_approval` };
+          } catch (denyError) {
+            // Catch-22: server rejects denial but in-context messages are stuck.
+            // Cancel the run — the server may clean up on next attempt.
+            const errMsg = denyError instanceof Error ? denyError.message : String(denyError);
+            console.warn(`[Letta API] Phase 1: Denial rejected (${errMsg}), trying run cancellation...`);
+            if (runId) {
+              const cancelled = await cancelRuns(agentId, [runId]);
+              if (cancelled) {
+                console.log(`[Letta API] Phase 1: Cancelled stuck run ${runId}`);
+                return { recovered: true, details: `Phase 1: cancelled stuck run ${runId} (denial was rejected)` };
+              }
+            }
+            // Fall through to Phase 2
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Letta API] Phase 1 (agent.pending_approval) failed, falling back to message scan:', e);
+    }
+    
+    // Phase 2: Scan recent conversation messages for unresolved approval requests.
+    // CRITICAL: Use descending order to get the MOST RECENT messages. Without this,
+    // the default ascending order returns the oldest messages first, and in a 30K+
+    // message conversation the orphaned approval at the end is never found.
+    const messagesPage = await client.conversations.messages.list(conversationId, {
+      limit: 50,
+      order: 'desc',
+    });
     const messages: Array<Record<string, unknown>> = [];
     for await (const msg of messagesPage) {
       messages.push(msg as unknown as Record<string, unknown>);
@@ -640,7 +721,7 @@ export async function recoverOrphanedConversationApproval(
         const isStuckApproval = status === 'running' && stopReason === 'requires_approval';
         
         if (isTerminated || isAbandonedApproval || isStuckApproval) {
-          console.log(`[Letta API] Found ${approvals.length} blocking approval(s) from ${status}/${stopReason} run ${runId}`);
+          console.log(`[Letta API] Phase 2: Found ${approvals.length} blocking approval(s) from ${status}/${stopReason} run ${runId}`);
           
           // Send denial for each unresolved tool call
           const approvalResponses = approvals.map(a => ({
@@ -650,13 +731,24 @@ export async function recoverOrphanedConversationApproval(
             reason: `Auto-denied: originating run was ${status}/${stopReason}`,
           }));
           
-          await client.conversations.messages.create(conversationId, {
-            messages: [{
-              type: 'approval',
-              approvals: approvalResponses,
-            }],
-            streaming: false,
-          });
+          try {
+            await client.conversations.messages.create(conversationId, {
+              messages: [{
+                type: 'approval',
+                approvals: approvalResponses,
+              }],
+              streaming: false,
+            });
+          } catch (denyError) {
+            // Catch-22: server rejects denial but in-context messages are stuck.
+            // Cancel the run — the server may clean up on next attempt.
+            const errMsg = denyError instanceof Error ? denyError.message : String(denyError);
+            console.warn(`[Letta API] Phase 2: Denial rejected for run ${runId} (${errMsg}), cancelling run...`);
+            await cancelRuns(agentId, [runId]).catch(() => {});
+            recoveredCount += approvals.length;
+            details.push(`Cancelled run ${runId} (denial rejected by server — catch-22 state)`);
+            continue;
+          }
           
           // Cancel active stuck runs after rejecting their approvals
           let cancelled = false;
