@@ -22,6 +22,9 @@ import { isUserAllowed, upsertPairingRequest, approvePairingCode } from '../pair
 import { markdownToTdlib } from './telegram-mtproto-format.js';
 import * as readline from 'node:readline';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Telegram-mtproto');
 // TDLib imports - configured at runtime
 let tdlModule: typeof import('tdl');
 let getTdjson: () => string;
@@ -147,7 +150,7 @@ Reply **approve** or **deny** to this message.`;
         firstName: user.first_name || null,
       };
     } catch (err) {
-      console.warn(`[Telegram MTProto] Could not get user info for ${userId}:`, err);
+      log.warn(`Could not get user info for ${userId}:`, err);
       return { username: null, firstName: null };
     }
   }
@@ -162,7 +165,7 @@ Reply **approve** or **deny** to this message.`;
       const chat = await this.client.invoke({ _: 'createPrivateChat', user_id: userId, force: false });
       return chat.id;
     } catch (err) {
-      console.warn(`[Telegram MTProto] Could not get private chat for user ${userId}:`, err);
+      log.warn(`Could not get private chat for user ${userId}:`, err);
       return null;
     }
   }
@@ -220,7 +223,7 @@ Reply **approve** or **deny** to this message.`;
 
     // CRITICAL: Always attach error handler
     this.client.on('error', (err) => {
-      console.error('[Telegram MTProto] Client error:', err);
+      log.error('Client error:', err);
     });
   }
 
@@ -233,11 +236,11 @@ Reply **approve** or **deny** to this message.`;
       throw new Error('Client not initialized');
     }
 
-    console.log('[Telegram MTProto] Starting update loop...');
+    log.info('Starting update loop...');
 
     for await (const update of this.client.iterUpdates()) {
       if (this.stopRequested) {
-        console.log('[Telegram MTProto] Stop requested, exiting update loop');
+        log.info('Stop requested, exiting update loop');
         if (this.authReject) {
           this.authReject(new Error('Stop requested'));
         }
@@ -254,7 +257,7 @@ Reply **approve** or **deny** to this message.`;
         }
         // Ignore non-auth updates before we're ready
       } catch (err) {
-        console.error('[Telegram MTProto] Error handling update:', err);
+        log.error('Error handling update:', err);
         // If auth fails, reject the auth promise
         if (this.authState !== 'ready' && this.authReject) {
           this.authReject(err as Error);
@@ -278,7 +281,7 @@ Reply **approve** or **deny** to this message.`;
 
       case 'authorizationStateWaitPhoneNumber':
         this.authState = 'waiting_phone';
-        console.log('[Telegram MTProto] Sending phone number...');
+        log.info('Sending phone number...');
         await this.client!.invoke({
           _: 'setAuthenticationPhoneNumber',
           phone_number: this.config.phoneNumber,
@@ -287,7 +290,7 @@ Reply **approve** or **deny** to this message.`;
 
       case 'authorizationStateWaitCode':
         this.authState = 'waiting_code';
-        console.log('[Telegram MTProto] Verification code sent to your Telegram app');
+        log.info('Verification code sent to your Telegram app');
         const code = await this.promptForInput('code');
         if (this.stopRequested) throw new Error('Stop requested');
         await this.client!.invoke({
@@ -298,7 +301,7 @@ Reply **approve** or **deny** to this message.`;
 
       case 'authorizationStateWaitPassword':
         this.authState = 'waiting_password';
-        console.log('[Telegram MTProto] 2FA password required');
+        log.info('2FA password required');
         const password = await this.promptForInput('password');
         if (this.stopRequested) throw new Error('Stop requested');
         await this.client!.invoke({
@@ -309,16 +312,16 @@ Reply **approve** or **deny** to this message.`;
 
       case 'authorizationStateReady':
         this.authState = 'ready';
-        console.log('[Telegram MTProto] Authenticated successfully!');
-        console.log(`[Telegram MTProto] Session saved to ${this.config.databaseDirectory}/`);
+        log.info('Authenticated successfully!');
+        log.info(`Session saved to ${this.config.databaseDirectory}/`);
         // Get our own user info for mention/reply detection
         try {
           const me = await this.client!.invoke({ _: 'getMe' });
           this.myUserId = me.id;
           this.myUsername = me.usernames?.editable_username || me.username || null;
-          console.log(`[Telegram MTProto] Logged in as: ${this.myUsername || this.myUserId}`);
+          log.info(`Logged in as: ${this.myUsername || this.myUserId}`);
         } catch (err) {
-          console.warn('[Telegram MTProto] Could not fetch user info:', err);
+          log.warn('Could not fetch user info:', err);
         }
         // Signal that auth is complete
         if (this.authResolve) {
@@ -419,7 +422,7 @@ Reply **approve** or **deny** to this message.`;
     const access = await this.checkAccess(userId);
 
     if (access === 'blocked') {
-      console.log(`[Telegram MTProto] Blocked message from user ${userId}`);
+      log.info(`Blocked message from user ${userId}`);
       return;
     }
 
@@ -471,16 +474,16 @@ Reply **approve** or **deny** to this message.`;
             }
           }
         } catch (err) {
-          console.error(`[Telegram MTProto] Failed to send admin notification:`, err);
+          log.error(`Failed to send admin notification:`, err);
           // Fall back to console
-          console.log(`[Telegram MTProto] Pairing request from ${userInfo.username || userId}: ${code}`);
-          console.log(`[Telegram MTProto] To approve: lettabot pairing approve telegram-mtproto ${code}`);
+          log.info(`Pairing request from ${userInfo.username || userId}: ${code}`);
+          log.info(`To approve: lettabot pairing approve telegram-mtproto ${code}`);
         }
       } else {
         // No admin chat configured, log to console
         const userInfo = await this.getUserInfo(userId);
-        console.log(`[Telegram MTProto] Pairing request from ${userInfo.username || userId}: ${code}`);
-        console.log(`[Telegram MTProto] To approve: lettabot pairing approve telegram-mtproto ${code}`);
+        log.info(`Pairing request from ${userInfo.username || userId}: ${code}`);
+        log.info(`To approve: lettabot pairing approve telegram-mtproto ${code}`);
       }
       return;
     }
@@ -529,7 +532,7 @@ Reply **approve** or **deny** to this message.`;
           });
         }
 
-        console.log(`[Telegram MTProto] Approved pairing for ${pending.username} (${pending.userId})`);
+        log.info(`Approved pairing for ${pending.username} (${pending.userId})`);
       } else {
         await this.sendMessage({
           chatId: String(chatId),
@@ -548,7 +551,7 @@ Reply **approve** or **deny** to this message.`;
         text: `❌ Denied. ${pending.username} will not be able to chat.`,
       });
 
-      console.log(`[Telegram MTProto] Denied pairing for ${pending.username} (${pending.userId})`);
+      log.info(`Denied pairing for ${pending.username} (${pending.userId})`);
 
       // Remove from pending
       this.pendingPairingApprovals.delete(replyToId);
@@ -562,16 +565,16 @@ Reply **approve** or **deny** to this message.`;
   private handleConnectionState(state: any): void {
     switch (state._) {
       case 'connectionStateReady':
-        console.log('[Telegram MTProto] Connected');
+        log.info('Connected');
         break;
       case 'connectionStateConnecting':
-        console.log('[Telegram MTProto] Connecting...');
+        log.info('Connecting...');
         break;
       case 'connectionStateUpdating':
-        console.log('[Telegram MTProto] Updating...');
+        log.info('Updating...');
         break;
       case 'connectionStateWaitingForNetwork':
-        console.log('[Telegram MTProto] Waiting for network...');
+        log.info('Waiting for network...');
         break;
     }
   }
@@ -589,7 +592,7 @@ Reply **approve** or **deny** to this message.`;
       const chatType = chat.type?._;
       return chatType === 'chatTypeBasicGroup' || chatType === 'chatTypeSupergroup';
     } catch (err) {
-      console.warn('[Telegram MTProto] Could not determine chat type:', err);
+      log.warn('Could not determine chat type:', err);
       return false;
     }
   }
@@ -643,7 +646,7 @@ Reply **approve** or **deny** to this message.`;
 
     // 'off' means never respond in groups
     if (policy === 'off') {
-      console.log('[Telegram MTProto] Group policy is off, ignoring group message');
+      log.info('Group policy is off, ignoring group message');
       return false;
     }
 
@@ -653,14 +656,14 @@ Reply **approve** or **deny** to this message.`;
     switch (policy) {
       case 'mention':
         if (!mentioned) {
-          console.log('[Telegram MTProto] Not mentioned in group, ignoring');
+          log.info('Not mentioned in group, ignoring');
           return false;
         }
         return true;
 
       case 'reply':
         if (!isReply) {
-          console.log('[Telegram MTProto] Not a reply to us in group, ignoring');
+          log.info('Not a reply to us in group, ignoring');
           return false;
         }
         return true;
@@ -680,7 +683,7 @@ Reply **approve** or **deny** to this message.`;
   async start(): Promise<void> {
     if (this.running) return;
 
-    console.log('[Telegram MTProto] Starting adapter...');
+    log.info('Starting adapter...');
     this.stopRequested = false;
     this.authState = 'initializing';
 
@@ -697,7 +700,7 @@ Reply **approve** or **deny** to this message.`;
       // Start single update loop in background (handles both auth and runtime)
       this.updateLoopPromise = this.runUpdateLoop().catch((err) => {
         if (this.running && !this.stopRequested) {
-          console.error('[Telegram MTProto] Update loop error:', err);
+          log.error('Update loop error:', err);
           this.running = false;
         }
       });
@@ -706,16 +709,16 @@ Reply **approve** or **deny** to this message.`;
       await authPromise;
 
       this.running = true;
-      console.log('[Telegram MTProto] Adapter started');
+      log.info('Adapter started');
     } catch (err) {
-      console.error('[Telegram MTProto] Failed to start:', err);
+      log.error('Failed to start:', err);
       throw err;
     }
   }
 
   async stop(): Promise<void> {
     // Always allow stop, even during auth (handles ctrl+c during code/password prompt)
-    console.log('[Telegram MTProto] Stopping adapter...');
+    log.info('Stopping adapter...');
     this.stopRequested = true;
     this.running = false;
 
@@ -725,13 +728,13 @@ Reply **approve** or **deny** to this message.`;
       } catch (err) {
         // Ignore errors during shutdown (client may already be closing)
         if (!String(err).includes('closed')) {
-          console.error('[Telegram MTProto] Error closing client:', err);
+          log.error('Error closing client:', err);
         }
       }
       this.client = null;
     }
 
-    console.log('[Telegram MTProto] Adapter stopped');
+    log.info('Adapter stopped');
   }
 
   isRunning(): boolean {
@@ -813,7 +816,7 @@ Reply **approve** or **deny** to this message.`;
       });
     } catch (err) {
       // Typing indicators are best-effort, don't throw
-      console.warn('[Telegram MTProto] Failed to send typing indicator:', err);
+      log.warn('Failed to send typing indicator:', err);
     }
   }
 
@@ -859,7 +862,7 @@ Reply **approve** or **deny** to this message.`;
         lastName: user.last_name || null,
       };
     } catch (err) {
-      console.warn(`[Telegram MTProto] Could not get user info for ${userId}:`, err);
+      log.warn(`Could not get user info for ${userId}:`, err);
       throw err;
     }
   }
@@ -922,7 +925,7 @@ Reply **approve** or **deny** to this message.`;
       }
       return null;
     } catch (err) {
-      console.warn(`[Telegram MTProto] Could not find user @${username}:`, err);
+      log.warn(`Could not find user @${username}:`, err);
       return null;
     }
   }

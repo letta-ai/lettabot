@@ -1,4 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// Mock the logger so log.warn/error route through console (tests spy on console)
+vi.mock('../logger.js', () => ({
+  createLogger: () => ({
+    fatal: (...args: unknown[]) => console.error(...args),
+    error: (...args: unknown[]) => console.error(...args),
+    warn: (...args: unknown[]) => console.warn(...args),
+    info: (...args: unknown[]) => console.log(...args),
+    debug: (...args: unknown[]) => console.log(...args),
+    trace: (...args: unknown[]) => console.log(...args),
+    pino: {},
+  }),
+}));
+
 import {
   normalizeAgents,
   canonicalizeServerMode,

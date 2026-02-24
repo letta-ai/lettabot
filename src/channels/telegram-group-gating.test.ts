@@ -40,13 +40,13 @@ describe('applyTelegramGroupGating', () => {
       expect(result.reason).toBe('group-not-in-allowlist');
     });
 
-    it('allows all groups when no groupsConfig provided', () => {
-      // No config = no allowlist filtering (open mode)
+    it('rejects all groups when no groupsConfig provided', () => {
+      // No config = no group participation
       const result = applyTelegramGroupGating(createParams({
         text: '@mybot hello',
         groupsConfig: undefined,
       }));
-      expect(result.shouldProcess).toBe(true);
+      expect(result.shouldProcess).toBe(false);
     });
   });
 
@@ -262,21 +262,19 @@ describe('applyTelegramGroupGating', () => {
     });
   });
 
-  describe('no groupsConfig (open mode)', () => {
-    it('processes messages with mention when no config', () => {
+  describe('no groupsConfig (disabled)', () => {
+    it('rejects messages with mention when no config', () => {
       const result = applyTelegramGroupGating(createParams({
         text: '@mybot hello',
       }));
-      expect(result.shouldProcess).toBe(true);
-      expect(result.wasMentioned).toBe(true);
+      expect(result.shouldProcess).toBe(false);
     });
 
-    it('processes messages without mention when no config', () => {
+    it('rejects messages without mention when no config', () => {
       const result = applyTelegramGroupGating(createParams({
         text: 'hello everyone',
       }));
-      expect(result.shouldProcess).toBe(true);
-      expect(result.mode).toBe('open');
+      expect(result.shouldProcess).toBe(false);
     });
   });
 });
