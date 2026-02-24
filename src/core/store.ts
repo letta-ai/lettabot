@@ -356,12 +356,17 @@ export class Store {
   }
 
   /**
-   * Clear conversation(s). If key is provided, clears only that key.
-   * If key is undefined, clears the legacy conversationId AND all per-key conversations.
+   * Clear conversation(s).
+   * - key === 'shared': clears only the legacy shared conversationId (per-channel conversations are untouched).
+   * - key is a channel name: clears only that channel's per-key conversation entry.
+   * - key is undefined: clears the legacy conversationId AND all per-key conversations (full wipe).
    */
   clearConversation(key?: string): void {
     const agent = this.agentData();
-    if (key) {
+    if (key === 'shared') {
+      // Only wipe the legacy shared conversation; leave per-channel overrides intact.
+      agent.conversationId = null;
+    } else if (key) {
       if (agent.conversations) {
         delete agent.conversations[key];
       }
