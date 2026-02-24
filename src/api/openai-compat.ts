@@ -164,7 +164,7 @@ export function generateCompletionId(): string {
  */
 export function extractLastUserMessage(messages: OpenAIChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'user' && messages[i].content) {
+    if (messages[i].role === 'user' && typeof messages[i].content === 'string' && messages[i].content) {
       return messages[i].content as string;
     }
   }
@@ -301,7 +301,7 @@ export function validateChatRequest(body: unknown): { status: number; body: Open
     return buildErrorResponse('messages is required and must be a non-empty array', 'invalid_request_error', 400);
   }
 
-  // Validate each message has role and content
+  // Validate each message has role and valid content
   for (const msg of req.messages) {
     if (!msg || typeof msg !== 'object') {
       return buildErrorResponse('Each message must be an object', 'invalid_request_error', 400);
@@ -309,6 +309,10 @@ export function validateChatRequest(body: unknown): { status: number; body: Open
     const m = msg as Record<string, unknown>;
     if (!m.role || typeof m.role !== 'string') {
       return buildErrorResponse('Each message must have a role', 'invalid_request_error', 400);
+    }
+    // content must be string, null, or absent -- reject numbers, arrays, objects
+    if (m.content !== undefined && m.content !== null && typeof m.content !== 'string') {
+      return buildErrorResponse('Message content must be a string or null', 'invalid_request_error', 400);
     }
   }
 

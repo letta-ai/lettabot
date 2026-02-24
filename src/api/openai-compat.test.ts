@@ -123,6 +123,23 @@ describe('openai-compat utilities', () => {
       expect(extractLastUserMessage([])).toBeNull();
     });
 
+    it('skips non-string content (number, object, array)', () => {
+      const messages = [
+        { role: 'user', content: 42 },
+        { role: 'user', content: { text: 'hi' } },
+        { role: 'user', content: ['hi'] },
+      ] as unknown as OpenAIChatMessage[];
+      expect(extractLastUserMessage(messages)).toBeNull();
+    });
+
+    it('finds string content after non-string content', () => {
+      const messages = [
+        { role: 'user', content: 'valid' },
+        { role: 'user', content: 42 },
+      ] as unknown as OpenAIChatMessage[];
+      expect(extractLastUserMessage(messages)).toBe('valid');
+    });
+
     it('handles only one user message', () => {
       const messages: OpenAIChatMessage[] = [{ role: 'user', content: 'Only message' }];
       expect(extractLastUserMessage(messages)).toBe('Only message');
@@ -325,6 +342,37 @@ describe('openai-compat utilities', () => {
           { role: 'assistant', content: 'Hi!' },
           { role: 'user', content: 'How are you?' },
         ],
+      });
+      expect(result).toBeNull();
+    });
+
+    it('returns 400 for non-string content (number)', () => {
+      const err = validateChatRequest({
+        messages: [{ role: 'user', content: 42 }],
+      });
+      expect(err).not.toBeNull();
+      expect(err!.status).toBe(400);
+      expect(err!.body.error.message).toContain('string or null');
+    });
+
+    it('returns 400 for object content', () => {
+      const err = validateChatRequest({
+        messages: [{ role: 'user', content: { text: 'hi' } }],
+      });
+      expect(err).not.toBeNull();
+      expect(err!.status).toBe(400);
+    });
+
+    it('accepts null content', () => {
+      const result = validateChatRequest({
+        messages: [{ role: 'assistant', content: null }],
+      });
+      expect(result).toBeNull();
+    });
+
+    it('accepts undefined content (absent)', () => {
+      const result = validateChatRequest({
+        messages: [{ role: 'user' }],
       });
       expect(result).toBeNull();
     });
@@ -830,5 +878,38 @@ describe('POST /v1/chat/completions', () => {
     expect(toolChunks).toHaveLength(2);
     expect(toolChunks[0].choices[0].delta.tool_calls[0].function.name).toBe('tool1');
     expect(toolChunks[1].choices[0].delta.tool_calls[0].function.name).toBe('tool2');
+  });
+
+  it('emits error content when stream result indicates failure', async () => {
+    (router as any).streamToAgent = vi.fn().mockReturnValue(
+      (async function* () {
+        yield { type: 'assistant', content: 'Partial' };
+        yield { type: 'result', success: false, error: 'Rate limited' };
+      })(),
+    );
+
+    const body = JSON.stringify({
+      model: 'LettaBot',
+      messages: [{ role: 'user', content: 'Test' }],
+      stream: true,
+    });
+    const res = await request(port, 'POST', '/v1/chat/completions', body, {
+      'content-type': 'application/json',
+      'x-api-key': TEST_API_KEY,
+    });
+
+    expect(res.status).toBe(200);
+    const events = res.body
+      .split('\n\n')
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => line.replace('data: ', ''))
+      .filter((line) => line !== '[DONE]')
+      .map((line) => JSON.parse(line));
+
+    // Should have: role chunk, 'Partial' chunk, error chunk, stop chunk
+    const contentChunks = events.filter((e: any) => e.choices[0].delta.content);
+    const contents = contentChunks.map((e: any) => e.choices[0].delta.content).join('');
+    expect(contents).toContain('Partial');
+    expect(contents).toContain('[Error: Rate limited]');
   });
 });

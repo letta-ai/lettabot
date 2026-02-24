@@ -326,7 +326,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(models));
       } catch (error: any) {
-        console.error('[API] Models error:', error);
+        log.error('Models error:', error);
         const err = buildErrorResponse(error.message || 'Internal server error', 'server_error', 500);
         res.writeHead(err.status, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(err.body));
@@ -409,7 +409,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         const completionId = generateCompletionId();
         const context = { type: 'webhook' as const, outputMode: 'silent' as const };
 
-        console.log(`[API] OpenAI chat: model="${modelName}", stream=${!!chatReq.stream}, msg="${userMessage.slice(0, 100)}..."`);
+        log.info(`OpenAI chat: model="${modelName}", stream=${!!chatReq.stream}, msg="${userMessage.slice(0, 100)}..."`);
 
         if (chatReq.stream) {
           // ---- Streaming response ----
@@ -443,7 +443,12 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
                   completionId, modelName, toolIndex++, toolCallId, toolName, args,
                 )));
               } else if (msg.type === 'result') {
-                // Final chunk
+                if (!(msg as any).success) {
+                  const errMsg = (msg as any).error || 'Agent run failed';
+                  res.write(formatSSE(buildChunk(completionId, modelName, {
+                    content: `\n\n[Error: ${errMsg}]`,
+                  })));
+                }
                 break;
               }
               // Skip 'reasoning', 'tool_result', and other internal types
@@ -471,7 +476,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           res.end(JSON.stringify(completion));
         }
       } catch (error: any) {
-        console.error('[API] OpenAI chat error:', error);
+        log.error('OpenAI chat error:', error);
         const err = buildErrorResponse(error.message || 'Internal server error', 'server_error', 500);
         res.writeHead(err.status, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(err.body));
