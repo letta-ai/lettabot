@@ -1362,10 +1362,12 @@ export class LettaBot implements AgentSession {
           if (streamMsg.type === 'result') {
             // Discard cancelled run results -- server may flush accumulated reasoning
             // from a previously cancelled run as the result for the next message.
+            // The real response follows in the same stream, so continue (don't break).
             if (streamMsg.stopReason === 'cancelled') {
               console.log(`[Bot] Discarding cancelled run result (stopReason=cancelled, len=${typeof streamMsg.result === 'string' ? streamMsg.result.length : 0})`);
               response = '';
-              break;
+              lastMsgType = streamMsg.type;
+              continue;
             }
 
             const resultText = typeof streamMsg.result === 'string' ? streamMsg.result : '';
