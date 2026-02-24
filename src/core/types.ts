@@ -82,8 +82,6 @@ export interface FormatterHints {
   /** Whether this channel supports file/image sending */
   supportsFiles?: boolean;
 
-  // Bluesky-specific fields (used by the Bluesky adapter)
-
   /** Whether the channel is read-only (text response won't be posted, agent must use CLI) */
   isReadOnly?: boolean;
 
