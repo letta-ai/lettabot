@@ -408,10 +408,12 @@ export class LettaBot implements AgentSession {
 
   /**
    * Format reasoning text for channel display, respecting truncation config.
-   * Uses blockquotes on channels that support them (Telegram, Discord, Slack)
-   * and falls back to italic on Signal (which only supports bold/italic/code).
+   * Returns { text, parseMode? } -- Telegram gets HTML with <blockquote> to
+   * bypass telegramify-markdown (which adds unwanted spaces to blockquotes).
+   * Signal falls back to italic (no blockquote support).
+   * Discord/Slack use markdown blockquotes.
    */
-  private formatReasoningDisplay(text: string, channelId?: string): string {
+  private formatReasoningDisplay(text: string, channelId?: string): { text: string; parseMode?: string } {
     const maxChars = this.config.display?.reasoningMaxChars ?? 0;
     // Trim leading whitespace from each line -- the API often includes leading
     // spaces in reasoning chunks that look wrong in channel output.
@@ -422,12 +424,23 @@ export class LettaBot implements AgentSession {
 
     if (channelId === 'signal') {
       // Signal: no blockquote support, use italic
-      return `**Thinking**\n_${truncated}_`;
+      return { text: `**Thinking**\n_${truncated}_` };
     }
-    // Telegram, Discord, Slack, etc: use blockquote
+    if (channelId === 'telegram' || channelId === 'telegram-mtproto') {
+      // Telegram: use HTML blockquote to bypass telegramify-markdown spacing
+      const escaped = truncated
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      return {
+        text: `<blockquote expandable><b>Thinking</b>\n${escaped}</blockquote>`,
+        parseMode: 'HTML',
+      };
+    }
+    // Discord, Slack, etc: markdown blockquote
     const lines = truncated.split('\n');
     const quoted = lines.map(line => `> ${line}`).join('\n');
-    return `> **Thinking**\n${quoted}`;
+    return { text: `> **Thinking**\n${quoted}` };
   }
 
   // =========================================================================
@@ -1361,8 +1374,8 @@ export class LettaBot implements AgentSession {
           if (isSemanticType && lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
             if (this.config.display?.showReasoning && !suppressDelivery) {
               try {
-                const text = this.formatReasoningDisplay(reasoningBuffer, adapter.id);
-                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+                const reasoning = this.formatReasoningDisplay(reasoningBuffer, adapter.id);
+                await adapter.sendMessage({ chatId: msg.chatId, text: reasoning.text, threadId: msg.threadId, parseMode: reasoning.parseMode });
                 // Note: display messages don't set sentAnyMessage -- they're informational,
                 // not a substitute for an assistant response. Error handling and retry must
                 // still fire even if reasoning was displayed.
