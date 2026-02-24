@@ -753,6 +753,7 @@ Reply **approve** or **deny** to this message.`;
   getFormatterHints() {
     return {
       supportsReactions: false,
+      supportsFiles: false,
       formatHint: 'MarkdownV2: *bold* _italic_ `code` [link](url) — NO: headers, tables',
     };
   }

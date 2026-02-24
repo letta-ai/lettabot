@@ -415,7 +415,7 @@ Ask the bot owner to approve with:
   getFormatterHints() {
     return {
       supportsReactions: true,
-      supportsFiles: false,
+      supportsFiles: true,
       formatHint: 'Discord markdown: **bold** *italic* `code` — supports headers, code blocks',
     };
   }

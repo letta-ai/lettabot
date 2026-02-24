@@ -45,14 +45,6 @@ export interface TriggerContext {
 
 export type ChannelId = 'telegram' | 'telegram-mtproto' | 'slack' | 'whatsapp' | 'signal' | 'discord' | 'mock';
 
-/**
- * Message type indicating the context of the message.
- * - 'dm': Direct message (private 1:1 conversation)
- * - 'group': Group chat (multiple participants)
- * - 'public': Public post (e.g., Bluesky feed, visible to anyone)
- */
-export type MessageType = 'dm' | 'group' | 'public';
-
 export interface InboundAttachment {
   id?: string;
   name?: string;
@@ -96,8 +88,7 @@ export interface InboundMessage {
   text: string;
   timestamp: Date;
   threadId?: string;      // Slack thread_ts
-  messageType?: MessageType; // 'dm', 'group', or 'public' (defaults to 'dm')
-  isGroup?: boolean;      // DEPRECATED: Use messageType instead. True if messageType === 'group'
+  isGroup?: boolean;      // True if group chat
   groupName?: string;     // Group/channel name if applicable
   serverId?: string;      // Server/guild ID (Discord only)
   wasMentioned?: boolean; // Was bot explicitly mentioned? (groups only)
@@ -107,7 +98,6 @@ export interface InboundMessage {
   isBatch?: boolean;                  // Is this a batched group message?
   batchedMessages?: InboundMessage[]; // Original individual messages (for batch formatting)
   isListeningMode?: boolean;          // Listening mode: agent processes for memory but response is suppressed
-  extraContext?: Record<string, string>; // Extra key/value pairs rendered in Chat Context header
   formatterHints?: FormatterHints;   // Channel-specific formatting hints
 }
 

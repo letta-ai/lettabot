@@ -313,7 +313,7 @@ This code expires in 1 hour.`;
     return {
       supportsReactions: false,
       supportsFiles: false,
-      formatHint: 'Plain text only — NO markdown',
+      formatHint: 'ONLY: *bold* _italic_ `code` — NO: headers, code fences, links, quotes, tables',
     };
   }
 
