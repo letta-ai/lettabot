@@ -1178,6 +1178,7 @@ export class LettaBot implements AgentSession {
       let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | null = null;
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
+      let discardedCancelledResult = false;
       const msgTypeCounts: Record<string, number> = {};
       
       const finalizeMessage = async () => {
@@ -1360,12 +1361,14 @@ export class LettaBot implements AgentSession {
           }
           
           if (streamMsg.type === 'result') {
-            // Discard cancelled run results -- server may flush accumulated reasoning
+            // Discard cancelled run results -- server flushes accumulated content
             // from a previously cancelled run as the result for the next message.
-            // The real response follows in the same stream, so continue (don't break).
+            // The stream may or may not have a real response after this. If it ends
+            // with nothing delivered, we retry below.
             if (streamMsg.stopReason === 'cancelled') {
               console.log(`[Bot] Discarding cancelled run result (stopReason=cancelled, len=${typeof streamMsg.result === 'string' ? streamMsg.result.length : 0})`);
               response = '';
+              discardedCancelledResult = true;
               lastMsgType = streamMsg.type;
               continue;
             }
@@ -1463,6 +1466,15 @@ export class LettaBot implements AgentSession {
         }
         console.log(`[Bot] Skipping post-stream delivery -- cancelled (key=${convKey})`);
         return;
+      }
+
+      // If the stream only produced a discarded cancelled result with no real response,
+      // retry the message so it actually gets processed by the agent.
+      if (discardedCancelledResult && !sentAnyMessage && !response.trim() && !retried) {
+        console.log('[Bot] Stream ended after cancelled result with no real response -- retrying message');
+        this.invalidateSession(convKey);
+        session = null;
+        return this.processMessage(msg, adapter, true);
       }
 
       // Parse and execute XML directives (e.g. <actions><react emoji="eyes" /></actions>)
