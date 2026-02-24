@@ -128,6 +128,11 @@ export interface BotConfig {
 
   // Display
   displayName?: string; // Prefix outbound messages (e.g. "💜 Signo")
+  display?: {
+    showToolCalls?: boolean;      // Show tool invocations in channel output
+    showReasoning?: boolean;      // Show agent reasoning/thinking in channel output
+    reasoningMaxChars?: number;   // Truncate reasoning to N chars (default: 0 = no limit)
+  };
 
   // Skills
   skills?: SkillsConfig;
@@ -135,8 +140,14 @@ export interface BotConfig {
   // Safety
   maxToolCalls?: number; // Abort if agent calls this many tools in one turn (default: 100)
 
+  // Memory filesystem (context repository)
+  memfs?: boolean; // true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
+
   // Security
   allowedUsers?: string[];  // Empty = allow all
+  sendFileDir?: string;     // Restrict <send-file> directive to this directory (default: data/outbound)
+  sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
+  sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete files after send (default: false)
 
   // Conversation routing
   conversationMode?: 'shared' | 'per-channel'; // Default: shared

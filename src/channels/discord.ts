@@ -12,6 +12,7 @@ import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { HELP_TEXT } from '../core/commands.js';
 import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveReceiveBotMessages, type GroupModeConfig } from './group-mode.js';
+import { basename } from 'node:path';
 
 import { createLogger } from '../logger.js';
 
@@ -183,10 +184,9 @@ Ask the bot owner to approve with:
       const audioAttachment = message.attachments.find(a => a.contentType?.startsWith('audio/'));
       if (audioAttachment?.url) {
         try {
-          const { loadConfig } = await import('../config/index.js');
-          const config = loadConfig();
-          if (!config.transcription?.apiKey && !process.env.OPENAI_API_KEY) {
-            await message.reply('Voice messages require OpenAI API key for transcription. See: https://github.com/letta-ai/lettabot#voice-messages');
+          const { isTranscriptionConfigured } = await import('../transcription/index.js');
+          if (!isTranscriptionConfigured()) {
+            await message.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages');
           } else {
             // Download audio
             const response = await fetch(audioAttachment.url);
@@ -347,6 +347,23 @@ Ask the bot owner to approve with:
     }
 
     const result = await (channel as { send: (content: string) => Promise<{ id: string }> }).send(msg.text);
+    return { messageId: result.id };
+  }
+
+  async sendFile(file: OutboundFile): Promise<{ messageId: string }> {
+    if (!this.client) throw new Error('Discord not started');
+    const channel = await this.client.channels.fetch(file.chatId);
+    if (!channel || !channel.isTextBased() || !('send' in channel)) {
+      throw new Error(`Discord channel not found or not text-based: ${file.chatId}`);
+    }
+
+    const payload = {
+      content: file.caption || undefined,
+      files: [
+        { attachment: file.filePath, name: basename(file.filePath) },
+      ],
+    };
+    const result = await (channel as { send: (options: typeof payload) => Promise<{ id: string }> }).send(payload);
     return { messageId: result.id };
   }
 
@@ -514,6 +531,7 @@ const DISCORD_EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
   tada: '\u{1F389}',
   clap: '\u{1F44F}',
   ok_hand: '\u{1F44C}',
+  white_check_mark: '\u2705',
 };
 
 function resolveDiscordEmoji(input: string): string {

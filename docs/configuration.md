@@ -36,6 +36,11 @@ agent:
   # Note: model is configured on the Letta agent server-side.
   # Use `lettabot model set <handle>` to change it.
 
+# Conversation routing (optional)
+conversations:
+  mode: shared                   # "shared" (default) or "per-channel"
+  heartbeat: last-active         # "dedicated" | "last-active" | "<channel>"
+
 # Channel configurations
 channels:
   telegram:
@@ -185,6 +190,9 @@ agents:
     # displayName: "🔧 Work"    # Optional: prefix outbound messages
     model: claude-sonnet-4
     # id: agent-abc123           # Optional: use existing agent
+    conversations:
+      mode: shared
+      heartbeat: last-active
     channels:
       telegram:
         token: ${WORK_TELEGRAM_TOKEN}
@@ -200,6 +208,9 @@ agents:
 
   - name: personal-assistant
     model: claude-sonnet-4
+    conversations:
+      mode: per-channel
+      heartbeat: dedicated
     channels:
       signal:
         phone: "+1234567890"
@@ -223,8 +234,9 @@ Each entry in `agents:` accepts:
 | `id` | string | No | Use existing agent ID (skips creation) |
 | `displayName` | string | No | Prefix outbound messages (e.g. `"💜 Signo"`) |
 | `model` | string | No | Model for agent creation |
+| `conversations` | object | No | Conversation routing config (shared vs per-channel) |
 | `channels` | object | No | Channel configs (same schema as top-level `channels:`). At least one agent must have channels. |
-| `features` | object | No | Per-agent features (cron, heartbeat, maxToolCalls) |
+| `features` | object | No | Per-agent features (cron, heartbeat, memfs, maxToolCalls) |
 | `polling` | object | No | Per-agent polling config (Gmail, etc.) |
 | `integrations` | object | No | Per-agent integrations (Google, etc.) |
 
@@ -279,7 +291,9 @@ All channels share these common options:
 | `dmPolicy` | `'pairing'` \| `'allowlist'` \| `'open'` | Access control mode |
 | `allowedUsers` | string[] | User IDs/numbers for allowlist mode |
 | `groupDebounceSec` | number | Debounce for group messages in seconds (default: 5, 0 = immediate) |
-| `instantGroups` | string[] | Group/channel IDs that bypass debounce entirely |
+| `instantGroups` | string[] | Group/channel IDs that bypass debounce entirely (legacy) |
+| `groups` | object | Per-group configuration map (use `*` as default) |
+| `mentionPatterns` | string[] | Extra regex patterns for mention detection (Telegram/WhatsApp/Signal) |
 
 ### Group Message Debouncing
 
@@ -299,6 +313,31 @@ channels:
 - **`instantGroups`** -- listed groups bypass debounce entirely
 
 The deprecated `groupPollIntervalMin` (minutes) still works for backward compatibility but `groupDebounceSec` takes priority.
+
+### Conversation Routing
+
+By default, all channels share a single conversation. You can split conversations per channel adapter.
+
+**Single-agent config:**
+```yaml
+conversations:
+  mode: shared        # "shared" (default) or "per-channel"
+  heartbeat: last-active  # "dedicated" | "last-active" | "<channel>"
+```
+
+**Multi-agent config:**
+```yaml
+agents:
+  - name: work-assistant
+    conversations:
+      mode: per-channel
+      heartbeat: dedicated
+```
+
+Notes:
+- `per-channel` means one conversation per **channel adapter** (telegram/slack/discord/etc), not per chat/user.
+- Agent memory remains shared across channels; only the conversation history is separated.
+- `heartbeat` controls which conversation background triggers use: a dedicated stream, the last active channel, or an explicit channel name.
 
 ### Group Modes
 
@@ -452,6 +491,21 @@ Precedence: `prompt` (inline YAML) > `HEARTBEAT_PROMPT` (env var) > `promptFile`
 | `features.heartbeat.prompt` | string | _(none)_ | Custom heartbeat prompt text |
 | `features.heartbeat.promptFile` | string | _(none)_ | Path to prompt file (relative to working dir) |
 
+### Send-File Directory
+
+The `<send-file>` [response directive](./directives.md) allows the agent to send files to channels. For security, file paths are restricted to a configurable directory:
+
+```yaml
+features:
+  sendFileDir: ./data/outbound   # Default: agent working directory
+```
+
+Only files inside this directory (and its subdirectories) can be sent. Paths that resolve outside it are blocked. This prevents prompt injection attacks from exfiltrating sensitive files.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.sendFileDir` | string | _(workingDir)_ | Directory that `<send-file>` paths must be inside |
+
 ### Cron Jobs
 
 ```yaml
@@ -460,6 +514,72 @@ features:
 ```
 
 Enable scheduled tasks. See [Cron Setup](./cron-setup.md).
+
+### Memory Filesystem (memfs)
+
+Memory filesystem (also known as **Context Repositories**) syncs your agent's memory blocks to local files in a git-backed directory. This enables:
+
+- **Persistent local memory**: Memory blocks are synced to `~/.letta/agents/<agent-id>/memory/` as Markdown files
+- **Git versioning**: Every change to memory is automatically versioned with informative commit messages
+- **Direct editing**: Memory files can be edited with standard tools and synced back to the agent
+- **Multi-agent collaboration**: Subagents can work in git worktrees and merge changes back
+
+```yaml
+features:
+  memfs: true
+```
+
+When `memfs` is enabled, the SDK passes `--memfs` to the Letta Code CLI on each session. When set to `false`, `--no-memfs` is passed to explicitly disable it. When omitted (default), the agent's existing memfs setting is left unchanged.
+
+You can also enable memfs via environment variable (only `true` and `false` are recognized):
+
+```bash
+LETTABOT_MEMFS=true npm start
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.memfs` | boolean | _(undefined)_ | Enable/disable memory filesystem. `true` enables, `false` disables, omit to leave unchanged. |
+
+#### Known Limitations
+
+- **Headless conflict resolution** ([letta-ai/letta-code#808](https://github.com/letta-ai/letta-code/issues/808)): If memory filesystem sync conflicts exist, the CLI exits with code 1 in headless mode (which is how lettabot runs). There is currently no way to resolve conflicts programmatically. **Workaround**: Run the agent interactively first (`letta --agent <agent-id>`) to resolve conflicts, then restart lettabot.
+- **Windows paths** ([letta-ai/letta-code#914](https://github.com/letta-ai/letta-code/issues/914)): Path separator issues on Windows have been fixed in Letta Code, but ensure you're on the latest version.
+
+For more details, see the [Letta Code memory documentation](https://docs.letta.com/letta-code/memory/) and the [Context Repositories blog post](https://www.letta.com/blog/context-repositories).
+
+### Display Tool Calls and Reasoning
+
+Show optional "what the agent is doing" messages directly in channel output.
+
+```yaml
+features:
+  display:
+    showToolCalls: true
+    showReasoning: false
+    reasoningMaxChars: 1200
+```
+
+In multi-agent configs, set this per agent:
+
+```yaml
+agents:
+  - name: work-assistant
+    features:
+      display:
+        showToolCalls: true
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.display.showToolCalls` | boolean | `false` | Show tool invocation summaries in chat output |
+| `features.display.showReasoning` | boolean | `false` | Show model reasoning/thinking text in chat output |
+| `features.display.reasoningMaxChars` | number | `0` | Truncate reasoning to N chars (`0` = no limit) |
+
+Notes:
+- Tool call display filters out empty/null input fields and shows the final args for the tool call.
+- Reasoning display uses plain bold/italic markdown for better cross-channel compatibility (including Signal).
+- Display messages are informational; they do not replace the assistant response. Normal retry/error handling still applies if no assistant reply is produced.
 
 ### No-Reply (Opt-Out)
 

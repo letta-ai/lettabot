@@ -206,6 +206,60 @@ function parseHeartbeatTarget(raw?: string): { channel: string; chatId: string }
 const DEFAULT_ATTACHMENTS_MAX_MB = 20;
 const DEFAULT_ATTACHMENTS_MAX_AGE_DAYS = 14;
 const ATTACHMENTS_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const DISCOVERY_LOCK_TIMEOUT_MS = 15_000;
+const DISCOVERY_LOCK_STALE_MS = 60_000;
+const DISCOVERY_LOCK_RETRY_MS = 100;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getDiscoveryLockPath(agentName: string): string {
+  const safe = agentName
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'agent';
+  return `${STORE_PATH}.${safe}.discover.lock`;
+}
+
+async function withDiscoveryLock<T>(agentName: string, fn: () => Promise<T>): Promise<T> {
+  const lockPath = getDiscoveryLockPath(agentName);
+  const start = Date.now();
+
+  while (true) {
+    try {
+      const handle = await fs.open(lockPath, 'wx');
+      try {
+        await handle.writeFile(`${process.pid}\n`, { encoding: 'utf-8' });
+        return await fn();
+      } finally {
+        await handle.close().catch(() => {});
+        await fs.rm(lockPath, { force: true }).catch(() => {});
+      }
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code !== 'EEXIST') {
+        throw error;
+      }
+
+      try {
+        const stats = await fs.stat(lockPath);
+        if (Date.now() - stats.mtimeMs > DISCOVERY_LOCK_STALE_MS) {
+          await fs.rm(lockPath, { force: true });
+          continue;
+        }
+      } catch {
+        // Best-effort stale lock cleanup.
+      }
+
+      if (Date.now() - start >= DISCOVERY_LOCK_TIMEOUT_MS) {
+        throw new Error(`Timed out waiting for startup discovery lock: ${lockPath}`);
+      }
+      await sleep(DISCOVERY_LOCK_RETRY_MS);
+    }
+  }
+}
 
 function resolveAttachmentsMaxBytes(): number {
   const rawBytes = Number(process.env.ATTACHMENTS_MAX_BYTES);
@@ -528,6 +582,11 @@ async function main() {
   for (const agentConfig of agents) {
     log.info(`Configuring agent: ${agentConfig.name}`);
     
+    // Resolve memfs: YAML config takes precedence, then env var, then default false.
+    // Default false prevents the SDK from auto-enabling memfs, which crashes on
+    // self-hosted Letta servers that don't have the git endpoint.
+    const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : false);
+
     // Create LettaBot for this agent
     const bot = new LettaBot({
       workingDir: globalConfig.workingDir,
@@ -536,6 +595,11 @@ async function main() {
       disallowedTools: globalConfig.disallowedTools,
       displayName: agentConfig.displayName,
       maxToolCalls: agentConfig.features?.maxToolCalls,
+      sendFileDir: agentConfig.features?.sendFileDir,
+      sendFileMaxSize: agentConfig.features?.sendFileMaxSize,
+      sendFileCleanup: agentConfig.features?.sendFileCleanup,
+      memfs: resolvedMemfs,
+      display: agentConfig.features?.display,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
       skills: {
@@ -544,6 +608,12 @@ async function main() {
       },
     });
     
+    // Log memfs config (from either YAML or env var)
+    if (resolvedMemfs !== undefined) {
+      const source = agentConfig.features?.memfs !== undefined ? '' : ' (from LETTABOT_MEMFS env)';
+      console.log(`[Agent:${agentConfig.name}] memfs: ${resolvedMemfs ? 'enabled' : 'disabled'}${source}`);
+    }
+
     // Apply explicit agent ID from config (before store verification)
     let initialStatus = bot.getStatus();
     if (agentConfig.id && !initialStatus.agentId) {
@@ -562,13 +632,26 @@ async function main() {
       }
     }
 
-    // Container deploy: discover by name
+    // Container deploy: discover by name under an inter-process lock to avoid startup races.
     if (!initialStatus.agentId && isContainerDeploy) {
-      const found = await findAgentByName(agentConfig.name);
-      if (found) {
-        log.info(`Found existing agent: ${found.id}`);
-        bot.setAgentId(found.id);
-        initialStatus = bot.getStatus();
+      try {
+        await withDiscoveryLock(agentConfig.name, async () => {
+          // Re-read status after lock acquisition in case another instance already set it.
+          initialStatus = bot.getStatus();
+          if (initialStatus.agentId) return;
+
+          const found = await findAgentByName(agentConfig.name);
+          if (found) {
+            log.info(`Found existing agent: ${found.id}`);
+            bot.setAgentId(found.id);
+            initialStatus = bot.getStatus();
+          }
+        });
+      } catch (error) {
+        log.warn(
+          `Discovery lock failed for ${agentConfig.name}:`,
+          error instanceof Error ? error.message : error
+        );
       }
     }
 

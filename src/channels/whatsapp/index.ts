@@ -74,7 +74,7 @@ import { normalizePhoneForStorage } from "../../utils/phone.js";
 import { parseCommand, HELP_TEXT } from "../../core/commands.js";
 
 // Node imports
-import { rmSync } from "node:fs";
+
 
 import { createLogger } from '../../logger.js';
 
@@ -90,7 +90,7 @@ const WATCHDOG_INTERVAL_MS = 60 * 1000;
 const WATCHDOG_TIMEOUT_MS = 30 * 60 * 1000;
 
 /** Session corruption threshold - clear session after N failures without QR */
-const SESSION_CORRUPTION_THRESHOLD = 3;
+const SESSION_CORRUPTION_THRESHOLD = 8;
 
 /** Message deduplication TTL (20 minutes) */
 const DEDUPE_TTL_MS = 20 * 60 * 1000;
@@ -138,7 +138,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
   // Group metadata cache
   private groupMetaCache: GroupMetaCache;
 
-  // Message store for getMessage callback (populated when we SEND, not receive)
+  // Message store for getMessage callback (populated on both send and receive for retry capability)
   private messageStore: Map<string, any> = new Map();
 
   // Attachment configuration
@@ -172,6 +172,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
   // Consecutive failures without QR (session corruption indicator)
   private consecutiveNoQrFailures = 0;
+
+  // One-time hint for missing groups config
+  private loggedNoGroupsHint = false;
 
   // Credential save queue
   private credsSaveQueue: CredsSaveQueue | null = null;
@@ -293,11 +296,17 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     // Cleanup
     this.detachListeners();
+    // Flush pending credential saves before closing
+    if (this.credsSaveQueue) {
+      await this.credsSaveQueue.flush();
+    }
     if (this.sock) {
       try {
-        await this.sock.logout();
+        // Close WebSocket without logging out -- logout() invalidates the session
+        // server-side, which destroys credentials and forces QR re-pair on restart
+        this.sock.ws?.close();
       } catch (error) {
-        log.warn("Logout error:", error);
+        log.warn("Disconnect error:", error);
       }
       this.sock = null;
     }
@@ -350,7 +359,12 @@ export class WhatsAppAdapter implements ChannelAdapter {
           this.reconnectState.attempts = 0;
         }
       } catch (error) {
-        log.error("Socket error:", error);
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.includes("Connection closed during startup")) {
+          log.warn(msg);
+        } else {
+          log.error("Socket error:", msg);
+        }
         // Resolve the disconnect promise if it's still pending
         disconnectResolve!();
       }
@@ -364,19 +378,13 @@ export class WhatsAppAdapter implements ChannelAdapter {
       // Check if logged out
       if (!this.running) break;
 
-      // Check for session corruption (repeated failures without QR)
-      if (this.consecutiveNoQrFailures >= 3) {
+      // Check for persistent session failures (only warn after many attempts -- 
+      // 1-3 failures on startup is normal WhatsApp reconnection cooldown)
+      if (this.consecutiveNoQrFailures >= SESSION_CORRUPTION_THRESHOLD) {
         log.warn(
-          "[WhatsApp] Session appears corrupted (3 failures without QR), clearing session..."
+          `${SESSION_CORRUPTION_THRESHOLD} consecutive connection failures without QR. Session may need re-pairing -- use /reset whatsapp if this persists.`
         );
-        try {
-          rmSync(this.sessionPath, { recursive: true, force: true });
-          log.info("Session cleared, will show QR on next attempt");
-        } catch (err) {
-          log.error("Failed to clear session:", err);
-        }
         this.consecutiveNoQrFailures = 0;
-        this.reconnectState.attempts = 0; // Reset attempts after clearing
       }
 
       // Increment and check retry limit
@@ -390,7 +398,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
       // Exponential backoff
       const delay = computeBackoff(policy, this.reconnectState.attempts);
       log.info(
-        `[WhatsApp] Reconnecting in ${delay}ms (attempt ${this.reconnectState.attempts}/${policy.maxAttempts})`
+        `Reconnecting in ${delay}ms (attempt ${this.reconnectState.attempts}/${policy.maxAttempts})`
       );
 
       try {
@@ -464,12 +472,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
         qrWasShown = true;
       },
       onConnectionUpdate: (update) => {
-        // Track connection close during initial connection
+        // Track connection close during initial connection (silent -- logged at session clear)
         if (update.connection === "close" && !qrWasShown) {
           this.consecutiveNoQrFailures++;
-          log.warn(
-            `[WhatsApp] Connection closed without QR (failure ${this.consecutiveNoQrFailures}/3)`
-          );
+
         }
       },
     });
@@ -599,6 +605,17 @@ export class WhatsAppAdapter implements ChannelAdapter {
         log.debug(`Skipped own sent message: ${messageId}`);
         this.sentMessageIds.delete(messageId);
         continue;
+      }
+
+      // Store received message for getMessage retry capability (enables "Waiting for this message" fix)
+      // Must happen early so even messages we skip are available for protocol-level retries
+      if (m.key?.id && m.message) {
+        this.messageStore.set(m.key.id, m);
+        // Auto-cleanup after 24 hours
+        const storedId = m.key.id;
+        setTimeout(() => {
+          this.messageStore.delete(storedId);
+        }, 24 * 60 * 60 * 1000);
       }
 
       // Build dedupe key (but don't check yet - wait until after extraction succeeds)
@@ -762,7 +779,12 @@ export class WhatsAppAdapter implements ChannelAdapter {
         });
 
         if (!gatingResult.shouldProcess) {
-          log.info(`Group message skipped: ${gatingResult.reason}`);
+          if (gatingResult.reason === 'no-groups-config' && !this.loggedNoGroupsHint) {
+            log.info(`Group messages ignored (no groups config). Add a "groups" section to your agent config to enable.`);
+            this.loggedNoGroupsHint = true;
+          } else if (gatingResult.reason !== 'no-groups-config') {
+            log.info(`Group message skipped: ${gatingResult.reason}`);
+          }
           continue;
         }
 

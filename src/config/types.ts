@@ -29,6 +29,18 @@ export function serverModeLabel(mode?: ServerMode): string {
 }
 
 /**
+ * Display configuration for tool calls and reasoning in channel output.
+ */
+export interface DisplayConfig {
+  /** Show tool invocations in channel output (default: false) */
+  showToolCalls?: boolean;
+  /** Show agent reasoning/thinking in channel output (default: false) */
+  showReasoning?: boolean;
+  /** Truncate reasoning to N characters (default: 0 = no limit) */
+  reasoningMaxChars?: number;
+}
+
+/**
  * Configuration for a single agent in multi-agent mode.
  * Each agent has its own name, channels, and features.
  */
@@ -66,7 +78,12 @@ export interface AgentConfig {
       promptFile?: string;   // Path to prompt file (re-read each tick for live editing)
       target?: string;       // Delivery target ("telegram:123", "slack:C123", etc.)
     };
+    memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
     maxToolCalls?: number;
+    sendFileDir?: string;    // Restrict <send-file> directive to this directory (default: data/outbound)
+    sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
+    sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete after send (default: false)
+    display?: DisplayConfig;
   };
   /** Polling config */
   polling?: PollingYamlConfig;
@@ -140,7 +157,12 @@ export interface LettaBotConfig {
       target?: string;       // Delivery target ("telegram:123", "slack:C123", etc.)
     };
     inlineImages?: boolean;   // Send images directly to the LLM (default: true). Set false to only send file paths.
+    memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
     maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)
+    sendFileDir?: string;   // Restrict <send-file> directive to this directory (default: data/outbound)
+    sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
+    sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete after send (default: false)
+    display?: DisplayConfig;  // Show tool calls / reasoning in channel output
   };
 
   // Polling - system-level background checks (Gmail, etc.)
@@ -172,9 +194,9 @@ export interface LettaBotConfig {
 }
 
 export interface TranscriptionConfig {
-  provider: 'openai';  // Only OpenAI supported currently
-  apiKey?: string;     // Falls back to OPENAI_API_KEY env var
-  model?: string;      // Defaults to 'whisper-1'
+  provider: 'openai' | 'mistral';
+  apiKey?: string;     // Falls back to OPENAI_API_KEY or MISTRAL_API_KEY env var
+  model?: string;      // Defaults to 'whisper-1' (OpenAI) or 'voxtral-mini-latest' (Mistral)
 }
 
 export interface PollingYamlConfig {
@@ -554,6 +576,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     displayName: config.agent?.displayName,
     model,
     channels,
+    conversations: config.conversations,
     features: config.features,
     polling: config.polling,
     integrations: config.integrations,
