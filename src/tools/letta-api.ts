@@ -475,6 +475,12 @@ export async function cancelConversation(
     console.log(`[Letta API] Cancelled runs for conversation ${conversationId}`);
     return true;
   } catch (e) {
+    // 409 "No active runs to cancel" is expected when cancel fires before the run starts
+    const err = e as { status?: number };
+    if (err?.status === 409) {
+      console.log(`[Letta API] No active runs to cancel for conversation ${conversationId} (409 -- expected)`);
+      return true;
+    }
     console.error(`[Letta API] Failed to cancel conversation ${conversationId}:`, e);
     return false;
   }
