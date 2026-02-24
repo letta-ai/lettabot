@@ -216,18 +216,128 @@ export class LettaBot implements AgentSession {
     return `${this.config.displayName}: ${text}`;
   }
 
+  // ---- Tool call display ----
+
+  /**
+   * Pretty display config for known tools.
+   * `header`: bold verb shown to the user (e.g., "Searching")
+   * `argKeys`: ordered preference list of fields to extract from toolInput
+   *            or tool_result JSON as the detail line
+   * `format`: optional -- 'code' wraps the detail in backticks
+   */
+  private static readonly TOOL_DISPLAY_MAP: Record<string, {
+    header: string;
+    argKeys: string[];
+    format?: 'code';
+    /** For 'code' format: if the first argKey value exceeds this length,
+     *  fall back to the next argKey shown as plain text instead. */
+    adaptiveCodeThreshold?: number;
+  }> = {
+    web_search:          { header: 'Searching',      argKeys: ['query'] },
+    fetch_webpage:       { header: 'Reading',         argKeys: ['url'] },
+    Bash:                { header: 'Running',          argKeys: ['command', 'description'], format: 'code', adaptiveCodeThreshold: 80 },
+    Read:                { header: 'Reading',          argKeys: ['file_path'] },
+    Edit:                { header: 'Editing',          argKeys: ['file_path'] },
+    Write:               { header: 'Writing',          argKeys: ['file_path'] },
+    Glob:                { header: 'Finding files',    argKeys: ['pattern'] },
+    Grep:                { header: 'Searching code',   argKeys: ['pattern'] },
+    Task:                { header: 'Delegating',       argKeys: ['description'] },
+    conversation_search: { header: 'Searching conversation history', argKeys: ['query'] },
+    archival_memory_search: { header: 'Searching archival memory', argKeys: ['query'] },
+    run_code:            { header: 'Running code',     argKeys: ['code'], format: 'code' },
+    note:                { header: 'Taking note',      argKeys: ['title', 'content'] },
+    manage_todo:         { header: 'Updating todos',   argKeys: [] },
+    TodoWrite:           { header: 'Updating todos',   argKeys: [] },
+  };
+
   /**
    * Format a tool call for channel display.
-   * Shows tool name + abbreviated key parameters.
+   *
+   * Known tools get a pretty verb-based header (e.g., **Searching**).
+   * Unknown tools fall back to **Tool**\n<name> (<args>).
+   *
+   * When toolInput is empty (SDK streaming limitation -- the CLI only
+   * forwards the first chunk before args are accumulated), we fall back
+   * to extracting the detail from the tool_result content.
    */
-  private formatToolCallDisplay(streamMsg: StreamMsg): string {
+  private formatToolCallDisplay(streamMsg: StreamMsg, toolResult?: StreamMsg): string {
     const name = streamMsg.toolName || 'unknown';
-    const params = this.abbreviateToolInput(streamMsg);
-    return params ? `**Tool:** ${name} (${params})` : `**Tool:** ${name}`;
+    const display = LettaBot.TOOL_DISPLAY_MAP[name];
+
+    if (display) {
+      // --- Custom display path ---
+      const detail = this.extractToolDetail(display.argKeys, streamMsg, toolResult);
+      if (detail) {
+        let formatted: string;
+        if (display.format === 'code' && display.adaptiveCodeThreshold) {
+          // Adaptive: short values get code format, long values fall back to
+          // the next argKey as plain text (e.g., Bash shows `command` for short
+          // commands, but the human-readable `description` for long ones).
+          if (detail.length <= display.adaptiveCodeThreshold) {
+            formatted = `\`${detail}\``;
+          } else {
+            const fallback = this.extractToolDetail(display.argKeys.slice(1), streamMsg, toolResult);
+            formatted = fallback || detail.slice(0, display.adaptiveCodeThreshold) + '...';
+          }
+        } else {
+          formatted = display.format === 'code' ? `\`${detail}\`` : detail;
+        }
+        return `**${display.header}**\n${formatted}`;
+      }
+      return `**${display.header}**`;
+    }
+
+    // --- Generic fallback for unknown tools ---
+    let params = this.abbreviateToolInput(streamMsg);
+    if (!params && toolResult?.content) {
+      params = this.extractInputFromToolResult(toolResult.content);
+    }
+    return params ? `**Tool**\n${name} (${params})` : `**Tool**\n${name}`;
+  }
+
+  /**
+   * Extract the first matching detail string from a tool call's input or
+   * the subsequent tool_result content (fallback for empty toolInput).
+   */
+  private extractToolDetail(
+    argKeys: string[],
+    streamMsg: StreamMsg,
+    toolResult?: StreamMsg,
+  ): string {
+    if (argKeys.length === 0) return '';
+
+    // 1. Try toolInput (primary -- when SDK provides args)
+    const input = streamMsg.toolInput as Record<string, unknown> | undefined;
+    if (input && typeof input === 'object') {
+      for (const key of argKeys) {
+        const val = input[key];
+        if (typeof val === 'string' && val.length > 0) {
+          return val.length > 120 ? val.slice(0, 117) + '...' : val;
+        }
+      }
+    }
+
+    // 2. Try tool_result content (fallback for empty toolInput)
+    if (toolResult?.content) {
+      try {
+        const parsed = JSON.parse(toolResult.content);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          for (const key of argKeys) {
+            const val = (parsed as Record<string, unknown>)[key];
+            if (typeof val === 'string' && val.length > 0) {
+              return val.length > 120 ? val.slice(0, 117) + '...' : val;
+            }
+          }
+        }
+      } catch { /* non-JSON result -- skip */ }
+    }
+
+    return '';
   }
 
   /**
    * Extract a brief parameter summary from a tool call's input.
+   * Used only by the generic fallback display path.
    */
   private abbreviateToolInput(streamMsg: StreamMsg): string {
     const input = streamMsg.toolInput as Record<string, unknown> | undefined;
@@ -246,6 +356,34 @@ export class LettaBot implements AgentSession {
         return `${k}: ${truncated}`;
       })
       .join(', ');
+  }
+
+  /**
+   * Fallback: extract input parameters from a tool_result's content.
+   * Some tools echo their input in the result (e.g., web_search includes
+   * `query`). Used only by the generic fallback display path.
+   */
+  private extractInputFromToolResult(content: string): string {
+    try {
+      const parsed = JSON.parse(content);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return '';
+
+      const inputKeys = ['query', 'input', 'prompt', 'url', 'search_query', 'text'];
+      const parts: string[] = [];
+
+      for (const key of inputKeys) {
+        const val = (parsed as Record<string, unknown>)[key];
+        if (typeof val === 'string' && val.length > 0) {
+          const truncated = val.length > 80 ? val.slice(0, 77) + '...' : val;
+          parts.push(`${key}: ${truncated}`);
+          if (parts.length >= 2) break;
+        }
+      }
+
+      return parts.join(', ');
+    } catch {
+      return '';
+    }
   }
 
   /**
@@ -1123,9 +1261,11 @@ export class LettaBot implements AgentSession {
       let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | null = null;
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
-      // Buffer the latest tool_call by ID so we display it once with full args
-      // (the SDK streams multiple tool_call messages per call -- first has empty input).
-      let pendingToolDisplay: { toolCallId: string; msg: any } | null = null;
+      // Queue of tool_call displays waiting to be flushed.
+      // Parallel tool calls arrive as consecutive tool_call messages -- we
+      // buffer each and flush them when we see a non-tool_call type or when
+      // we get a tool_result that matches a queued call (so we can extract args).
+      const pendingToolDisplays: Array<{ toolCallId: string; msg: any }> = [];
       const msgTypeCounts: Record<string, number> = {};
       
       const finalizeMessage = async () => {
@@ -1206,20 +1346,40 @@ export class LettaBot implements AgentSession {
             reasoningBuffer = '';
           }
 
-          // Flush pending tool call display when type changes away from tool_call.
-          // The SDK streams multiple tool_call messages per call (first has empty args),
-          // so we buffer and display the last one which has the complete input.
-          if (isSemanticType && pendingToolDisplay && streamMsg.type !== 'tool_call') {
+          // Flush pending tool call displays.
+          // When a tool_result arrives, flush the matching queued call (with the
+          // result content for arg extraction). When any other non-tool_call type
+          // arrives, flush ALL remaining queued calls (without result fallback).
+          if (isSemanticType && pendingToolDisplays.length > 0 && streamMsg.type !== 'tool_call') {
             if (this.config.display?.showToolCalls && !suppressDelivery) {
-              try {
-                const text = this.formatToolCallDisplay(pendingToolDisplay.msg);
-                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
-                // Display messages don't set sentAnyMessage (see reasoning display comment).
-              } catch (err) {
-                console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
+              if (streamMsg.type === 'tool_result' && streamMsg.toolCallId) {
+                // Flush just the matching tool call with its result for arg extraction
+                const idx = pendingToolDisplays.findIndex(p => p.toolCallId === streamMsg.toolCallId);
+                if (idx !== -1) {
+                  try {
+                    const text = this.formatToolCallDisplay(pendingToolDisplays[idx].msg, streamMsg);
+                    await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+                  } catch (err) {
+                    console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
+                  }
+                  pendingToolDisplays.splice(idx, 1);
+                }
+              } else {
+                // Non-tool_call, non-tool_result: flush all remaining without result fallback
+                for (const pending of pendingToolDisplays) {
+                  try {
+                    const text = this.formatToolCallDisplay(pending.msg);
+                    await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+                  } catch (err) {
+                    console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
+                  }
+                }
+                pendingToolDisplays.length = 0;
               }
+            } else {
+              // Display disabled or suppressed -- just clear the queue
+              pendingToolDisplays.length = 0;
             }
-            pendingToolDisplay = null;
           }
           
           // Tool loop detection
@@ -1238,9 +1398,17 @@ export class LettaBot implements AgentSession {
             const tcId = streamMsg.toolCallId?.slice(0, 12) || '?';
             console.log(`[Stream] >>> TOOL CALL: ${tcName} (id: ${tcId})`);
             sawNonAssistantSinceLastUuid = true;
-            // Buffer the tool call -- the SDK streams multiple chunks per call
-            // (first has empty args). We display the last chunk when type changes.
-            pendingToolDisplay = { toolCallId: streamMsg.toolCallId || '', msg: streamMsg };
+            // Buffer the tool call for display.
+            // For parallel calls, each gets its own queue entry.
+            // For chunked calls (same ID), replace the existing entry so the
+            // last chunk (with the most complete args) wins.
+            const tcIdForDisplay = streamMsg.toolCallId || '';
+            const existingIdx = pendingToolDisplays.findIndex(p => p.toolCallId === tcIdForDisplay);
+            if (existingIdx !== -1) {
+              pendingToolDisplays[existingIdx] = { toolCallId: tcIdForDisplay, msg: streamMsg };
+            } else {
+              pendingToolDisplays.push({ toolCallId: tcIdForDisplay, msg: streamMsg });
+            }
           } else if (streamMsg.type === 'tool_result') {
             console.log(`[Stream] <<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
             sawNonAssistantSinceLastUuid = true;
