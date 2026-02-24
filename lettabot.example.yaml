@@ -24,6 +24,7 @@ agents:
     conversations:
       mode: shared        # "shared" (default) or "per-channel"
       heartbeat: last-active  # "dedicated" | "last-active" | "<channel>"
+      # perChannel: ["slack"]  # Keep these channels isolated while others share a conversation
 
     channels:
       telegram:
@@ -54,11 +55,6 @@ agents:
       # whatsapp:
       #   enabled: true
       #   selfChat: false
-
-conversations:
-  mode: shared        # shared (single conversation) or per-channel
-  heartbeat: last-active
-  # perChannel: ["slack"]  # Keep these channels isolated while others share a conversation
 
 # BYOK Providers (optional, api mode only)
 # These will be synced to Letta API on startup
