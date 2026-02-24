@@ -5,7 +5,8 @@ LettaBot exposes an [OpenAI-compatible API](./configuration.md#api-server-config
 ## Prerequisites
 
 - **Docker** installed and running
-- **LettaBot running in API mode** (`server.mode: api` in `lettabot.yaml`)
+- **LettaBot running with API server enabled** (`server.api.port` defaults to `8080`)
+- **API server reachable from Docker** (`server.api.host: 0.0.0.0` is recommended when Open WebUI runs in Docker)
 - **API key** from `lettabot-api.json` (auto-generated on first run)
 
 ## Step 1: Start Open WebUI
@@ -63,7 +64,7 @@ Then re-run the `docker run` command from Step 1.
 
 ### Connection refused from Open WebUI
 
-Make sure LettaBot is running and the `--add-host=host.docker.internal:host-gateway` flag is included. This allows the container to reach services on your host machine. On Linux, you may also need `--network=host` instead.
+Make sure LettaBot is running, `server.api.host` is set to `0.0.0.0`, and the `--add-host=host.docker.internal:host-gateway` flag is included. This allows the container to reach services on your host machine. On Linux, you may also need `--network=host` instead.
 
 ## Cleanup
 
