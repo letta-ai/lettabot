@@ -279,7 +279,9 @@ export class LettaBot implements AgentSession {
   private sessions: Map<string, Session> = new Map();
   // Coalesces concurrent ensureSessionForKey calls for the same key so the
   // second caller waits for the first instead of creating a duplicate session.
-  private sessionCreationLocks: Map<string, Promise<Session>> = new Map();
+  // generation prevents stale in-flight creations from being reused after reset.
+  private sessionCreationLocks: Map<string, { promise: Promise<Session>; generation: number }> = new Map();
+  private sessionGenerations: Map<string, number> = new Map();
   private currentCanUseTool: CanUseToolCallback | undefined;
   private conversationOverrides: Set<string> = new Set();
   // Stable callback wrapper so the Session options never change, but we can
@@ -814,6 +816,8 @@ export class LettaBot implements AgentSession {
    * the session -- preventing the first send() from hitting a 409 CONFLICT.
    */
   private async ensureSessionForKey(key: string, bootstrapRetried = false): Promise<Session> {
+    const generation = this.sessionGenerations.get(key) ?? 0;
+
     // Fast path: session already exists
     const existing = this.sessions.get(key);
     if (existing) return existing;
@@ -822,19 +826,31 @@ export class LettaBot implements AgentSession {
     // key (e.g. warmSession running while first message arrives), wait for
     // it instead of creating a duplicate session.
     const pending = this.sessionCreationLocks.get(key);
-    if (pending) return pending;
+    if (pending && pending.generation === generation) return pending.promise;
 
-    const promise = this._createSessionForKey(key, bootstrapRetried);
-    this.sessionCreationLocks.set(key, promise);
+    const promise = this._createSessionForKey(key, bootstrapRetried, generation);
+    this.sessionCreationLocks.set(key, { promise, generation });
     try {
       return await promise;
     } finally {
-      this.sessionCreationLocks.delete(key);
+      const current = this.sessionCreationLocks.get(key);
+      if (current?.promise === promise) {
+        this.sessionCreationLocks.delete(key);
+      }
     }
   }
 
   /** Internal session creation -- called via ensureSessionForKey's lock. */
-  private async _createSessionForKey(key: string, bootstrapRetried: boolean): Promise<Session> {
+  private async _createSessionForKey(
+    key: string,
+    bootstrapRetried: boolean,
+    generation: number,
+  ): Promise<Session> {
+    // Session was invalidated while this creation path was queued.
+    if ((this.sessionGenerations.get(key) ?? 0) !== generation) {
+      return this.ensureSessionForKey(key, bootstrapRetried);
+    }
+
     // Re-read the store file from disk so we pick up agent/conversation ID
     // changes made by other processes (e.g. after a restart or container deploy).
     // This costs one synchronous disk read per incoming message, which is fine
@@ -888,6 +904,13 @@ export class LettaBot implements AgentSession {
       throw error;
     }
 
+    // reset/invalidate can happen while initialize() is in-flight.
+    if ((this.sessionGenerations.get(key) ?? 0) !== generation) {
+      log.info(`Discarding stale initialized session (key=${key})`);
+      session.close();
+      return this.ensureSessionForKey(key, bootstrapRetried);
+    }
+
     // Proactive approval detection via bootstrapState().
     // Single CLI round-trip that returns hasPendingApproval flag alongside
     // session metadata. If an orphaned approval is stuck, recover now so the
@@ -917,13 +940,19 @@ export class LettaBot implements AgentSession {
           // Recreate session after recovery (conversation state changed).
           // Call _createSessionForKey directly (not ensureSessionForKey) since
           // we're already inside the creation lock for this key.
-          return this._createSessionForKey(key, true);
+          return this._createSessionForKey(key, true, generation);
         }
       } catch (err) {
         // bootstrapState failure is non-fatal -- the session is still usable.
         // The reactive 409 handler in runSession() will catch stuck approvals.
         log.warn(`bootstrapState check failed (key=${key}), continuing:`, err instanceof Error ? err.message : err);
       }
+    }
+
+    if ((this.sessionGenerations.get(key) ?? 0) !== generation) {
+      log.info(`Discarding stale session after bootstrapState (key=${key})`);
+      session.close();
+      return this.ensureSessionForKey(key, bootstrapRetried);
     }
 
     this.sessions.set(key, session);
@@ -941,6 +970,12 @@ export class LettaBot implements AgentSession {
    */
   private invalidateSession(key?: string): void {
     if (key) {
+      // Invalidate any in-flight creation for this key so reset can force
+      // a fresh conversation/session immediately.
+      const nextGeneration = (this.sessionGenerations.get(key) ?? 0) + 1;
+      this.sessionGenerations.set(key, nextGeneration);
+      this.sessionCreationLocks.delete(key);
+
       const session = this.sessions.get(key);
       if (session) {
         log.info(`Invalidating session (key=${key})`);
@@ -948,11 +983,21 @@ export class LettaBot implements AgentSession {
         this.sessions.delete(key);
       }
     } else {
+      const keys = new Set<string>([
+        ...this.sessions.keys(),
+        ...this.sessionCreationLocks.keys(),
+      ]);
+      for (const k of keys) {
+        const nextGeneration = (this.sessionGenerations.get(k) ?? 0) + 1;
+        this.sessionGenerations.set(k, nextGeneration);
+      }
+
       for (const [k, session] of this.sessions) {
         log.info(`Invalidating session (key=${k})`);
         session.close();
       }
       this.sessions.clear();
+      this.sessionCreationLocks.clear();
     }
   }
 

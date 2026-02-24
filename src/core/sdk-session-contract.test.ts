@@ -14,6 +14,16 @@ vi.mock('@letta-ai/letta-code-sdk', () => ({
 import { createSession, resumeSession } from '@letta-ai/letta-code-sdk';
 import { LettaBot } from './bot.js';
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('SDK session contract', () => {
   let dataDir: string;
   let originalDataDir: string | undefined;
@@ -163,6 +173,68 @@ describe('SDK session contract', () => {
     expect(firstSession.close).toHaveBeenCalledTimes(1);
     expect(secondSession.close).toHaveBeenCalledTimes(1);
     expect(vi.mocked(createSession)).toHaveBeenCalledTimes(2);
+  });
+
+  it('reset ignores stale in-flight warm session and creates a fresh one', async () => {
+    const init = deferred<void>();
+
+    const warmSession = {
+      initialize: vi.fn(() => init.promise),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: false, conversationId: 'conv-old' })),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-old',
+    };
+
+    const resetSession = {
+      initialize: vi.fn(async () => undefined),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: false, conversationId: 'conv-new' })),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-new',
+    };
+
+    vi.mocked(resumeSession).mockReturnValue(warmSession as never);
+    vi.mocked(createSession).mockReturnValue(resetSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    // Simulate an existing shared conversation being pre-warmed.
+    bot.setAgentId('agent-contract-test');
+    const botInternal = bot as unknown as {
+      store: { conversationId: string | null };
+      handleCommand: (command: string, channelId?: string) => Promise<string | null>;
+    };
+    botInternal.store.conversationId = 'conv-old';
+
+    const warmPromise = bot.warmSession();
+    await Promise.resolve();
+
+    const resetPromise = botInternal.handleCommand('reset');
+
+    init.resolve();
+    await warmPromise;
+    const resetMessage = await resetPromise;
+
+    expect(resetMessage).toContain('New conversation: conv-new');
+    expect(warmSession.close).toHaveBeenCalledTimes(1);
+    expect(resetSession.initialize).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createSession)).toHaveBeenCalledTimes(1);
   });
 
   it('passes memfs: true to createSession when config sets memfs true', async () => {
