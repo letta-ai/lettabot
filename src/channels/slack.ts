@@ -13,6 +13,9 @@ import { parseCommand, HELP_TEXT } from '../core/commands.js';
 import { markdownToSlackMrkdwn } from './slack-format.js';
 import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, type GroupMode, type GroupModeConfig } from './group-mode.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Slack');
 // Dynamic import to avoid requiring Slack deps if not used
 let App: typeof import('@slack/bolt').App;
 
@@ -90,15 +93,15 @@ export class SlackAdapter implements ChannelAdapter {
             const result = await transcribeAudio(buffer, audioFile.name || `audio.${ext}`);
             
             if (result.success && result.text) {
-              console.log(`[Slack] Transcribed audio: "${result.text.slice(0, 50)}..."`);
+              log.info(`Transcribed audio: "${result.text.slice(0, 50)}..."`);
               text = (text ? text + '\n' : '') + `[Voice message]: ${result.text}`;
             } else {
-              console.error(`[Slack] Transcription failed: ${result.error}`);
+              log.error(`Transcription failed: ${result.error}`);
               text = (text ? text + '\n' : '') + `[Voice message - transcription failed: ${result.error}]`;
             }
           }
         } catch (error) {
-          console.error('[Slack] Error transcribing audio:', error);
+          log.error('Error transcribing audio:', error);
           text = (text ? text + '\n' : '') + `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`;
         }
       }
@@ -240,9 +243,9 @@ export class SlackAdapter implements ChannelAdapter {
       await this.handleReactionEvent(event as SlackReactionEvent, 'removed');
     });
     
-    console.log('[Slack] Connecting via Socket Mode...');
+    log.info('Connecting via Socket Mode...');
     await this.app.start();
-    console.log('[Slack] Bot started in Socket Mode');
+    log.info('Bot started in Socket Mode');
     this.running = true;
   }
   
@@ -433,7 +436,7 @@ async function maybeDownloadSlackFile(
     return attachment;
   }
   if (attachmentsMaxBytes && file.size && file.size > attachmentsMaxBytes) {
-    console.warn(`[Slack] Attachment ${name} exceeds size limit, skipping download.`);
+    log.warn(`Attachment ${name} exceeds size limit, skipping download.`);
     return attachment;
   }
   if (!url) {
@@ -443,9 +446,9 @@ async function maybeDownloadSlackFile(
   try {
     await downloadToFile(url, target, { Authorization: `Bearer ${token}` });
     attachment.localPath = target;
-    console.log(`[Slack] Attachment saved to ${target}`);
+    log.info(`Attachment saved to ${target}`);
   } catch (err) {
-    console.warn('[Slack] Failed to download attachment:', err);
+    log.warn('Failed to download attachment:', err);
   }
   return attachment;
 }

@@ -12,6 +12,9 @@ import type { CronJob, CronJobCreate, CronSchedule, CronConfig, HeartbeatConfig 
 import { DEFAULT_HEARTBEAT_MESSAGES } from './types.js';
 import { getCronDataDir, getCronLogPath, getCronStorePath, getLegacyCronStorePath } from '../utils/paths.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Cron');
 // Log file for cron events
 const LOG_PATH = getCronLogPath();
 
@@ -29,7 +32,7 @@ function logEvent(event: string, data: Record<string, unknown>): void {
     // Ignore log errors
   }
   
-  console.log(`[Cron] ${event}:`, JSON.stringify(data));
+  log.info(`${event}:`, JSON.stringify(data));
 }
 
 // Dynamic import for node-schedule
@@ -80,7 +83,7 @@ export class CronService {
       copyFileSync(legacyPath, this.storePath);
       logEvent('store_migrated', { from: legacyPath, to: this.storePath });
     } catch (e) {
-      console.error('[Cron] Failed to migrate legacy store:', e);
+      log.error('Failed to migrate legacy store:', e);
     }
   }
   
@@ -98,10 +101,10 @@ export class CronService {
           }
           this.jobs.set(job.id, job);
         }
-        console.log(`[Cron] Loaded ${this.jobs.size} jobs`);
+        log.info(`Loaded ${this.jobs.size} jobs`);
       }
     } catch (e) {
-      console.error('[Cron] Failed to load jobs:', e);
+      log.error('Failed to load jobs:', e);
     }
   }
   
@@ -115,7 +118,7 @@ export class CronService {
       mkdirSync(dirname(this.storePath), { recursive: true });
       writeFileSync(this.storePath, JSON.stringify(data, null, 2));
     } catch (e) {
-      console.error('[Cron] Failed to save jobs:', e);
+      log.error('Failed to save jobs:', e);
     }
   }
   
@@ -147,7 +150,7 @@ export class CronService {
     
     this.started = true;
     const enabledCount = Array.from(this.jobs.values()).filter(j => j.enabled).length;
-    console.log(`[Cron] Service started (${enabledCount} jobs, heartbeat: ${heartbeat.enabled ? 'on' : 'off'}, watching for changes)`);
+    log.info(`Service started (${enabledCount} jobs, heartbeat: ${heartbeat.enabled ? 'on' : 'off'}, watching for changes)`);
   }
   
   stop(): void {
@@ -170,7 +173,7 @@ export class CronService {
     }
     
     this.started = false;
-    console.log('[Cron] Service stopped');
+    log.info('Service stopped');
   }
   
   /**
@@ -223,7 +226,7 @@ export class CronService {
       // Reload jobs
       this.reloadJobs();
     } catch (e) {
-      console.error('[Cron] Error handling file change:', e);
+      log.error('Error handling file change:', e);
     }
   }
   
@@ -264,11 +267,11 @@ export class CronService {
         // Agent must use `lettabot-message` CLI to send messages
         const response = await this.bot.sendToAgent(config.message);
         
-        console.log(`[Cron] Heartbeat finished (SILENT MODE)`);
-        console.log(`  - Response: ${response?.slice(0, 100)}${(response?.length || 0) > 100 ? '...' : ''}`);
-        console.log(`  - (Response NOT auto-delivered - agent uses lettabot-message CLI)`);
+        log.info(`Heartbeat finished (SILENT MODE)`);
+        log.info(`  - Response: ${response?.slice(0, 100)}${(response?.length || 0) > 100 ? '...' : ''}`);
+        log.info(`  - (Response NOT auto-delivered - agent uses lettabot-message CLI)`);
       } catch (error) {
-        console.error('[Cron] Heartbeat failed:', error);
+        log.error('Heartbeat failed:', error);
       }
     });
     
@@ -309,7 +312,7 @@ export class CronService {
   private scheduleJob(job: CronJob): void {
     const rule = this.parseSchedule(job.schedule);
     if (!rule) {
-      console.warn(`[Cron] Invalid schedule for job ${job.name}`);
+      log.warn(`Invalid schedule for job ${job.name}`);
       return;
     }
     
@@ -326,7 +329,7 @@ export class CronService {
         job.state.nextRunAt = new Date(nextInvocation.getTime());
         this.saveJobs();
         
-        console.log(`[Cron] 📅 Scheduled "${job.name}" - next run: ${job.state.nextRunAt.toLocaleString()}`);
+        log.info(`📅 Scheduled "${job.name}" - next run: ${job.state.nextRunAt.toLocaleString()}`);
         
         logEvent('job_scheduled', {
           id: job.id,
@@ -366,17 +369,17 @@ export class CronService {
     const job = this.jobs.get(jobId);
     if (!job) return;
     
-    console.log(`\n${'='.repeat(50)}`);
+    log.info(`${'='.repeat(50)}`);
     const isEmailCheck = job.name.toLowerCase().includes('email') || job.message.includes('gog gmail');
     const icon = isEmailCheck ? '📧' : '⏰';
-    console.log(`[Cron] ${icon} RUNNING JOB: ${job.name}`);
-    console.log(`       ID: ${job.id}`);
+    log.info(`${icon} RUNNING JOB: ${job.name}`);
+    log.info(`       ID: ${job.id}`);
     if (isEmailCheck) {
-      console.log(`       Checking Gmail for new messages...`);
+      log.info(`       Checking Gmail for new messages...`);
     } else {
-      console.log(`       Message: ${job.message.slice(0, 100)}${job.message.length > 100 ? '...' : ''}`);
+      log.info(`       Message: ${job.message.slice(0, 100)}${job.message.length > 100 ? '...' : ''}`);
     }
-    console.log(`${'='.repeat(50)}\n`);
+    log.info(`${'='.repeat(50)}`);
     
     logEvent('job_running', { id: job.id, name: job.name });
     
@@ -398,9 +401,9 @@ export class CronService {
       if (job.deliver && response) {
         try {
           await this.bot.deliverToChannel(job.deliver.channel, job.deliver.chatId, { text: response });
-          console.log(`[Cron] 📬 Delivered response to ${job.deliver.channel}:${job.deliver.chatId}`);
+          log.info(`📬 Delivered response to ${job.deliver.channel}:${job.deliver.chatId}`);
         } catch (deliverError) {
-          console.error(`[Cron] Failed to deliver response to ${job.deliver.channel}:${job.deliver.chatId}:`, deliverError);
+          log.error(`Failed to deliver response to ${job.deliver.channel}:${job.deliver.chatId}:`, deliverError);
           logEvent('job_deliver_failed', {
             id: job.id,
             name: job.name,
@@ -426,15 +429,15 @@ export class CronService {
         }
       }
       
-      console.log(`\n${'='.repeat(50)}`);
-      console.log(`[Cron] ✅ JOB COMPLETED: ${job.name} [${deliverMode.toUpperCase()} MODE]`);
-      console.log(`       Response: ${response?.slice(0, 200)}${(response?.length || 0) > 200 ? '...' : ''}`);
+      log.info(`${'='.repeat(50)}`);
+      log.info(`✅ JOB COMPLETED: ${job.name} [${deliverMode.toUpperCase()} MODE]`);
+      log.info(`       Response: ${response?.slice(0, 200)}${(response?.length || 0) > 200 ? '...' : ''}`);
       if (deliverMode === 'silent') {
-        console.log(`       (Response NOT auto-delivered - agent uses lettabot-message CLI)`);
+        log.info(`       (Response NOT auto-delivered - agent uses lettabot-message CLI)`);
       } else {
-        console.log(`       (Response delivered to ${job.deliver!.channel}:${job.deliver!.chatId})`);
+        log.info(`       (Response delivered to ${job.deliver!.channel}:${job.deliver!.chatId})`);
       }
-      console.log(`${'='.repeat(50)}\n`);
+      log.info(`${'='.repeat(50)}`);
       
       logEvent('job_completed', {
         id: job.id,
@@ -482,7 +485,7 @@ export class CronService {
       this.scheduleJob(job);
     }
     
-    console.log(`[Cron] Added job: ${job.name}`);
+    log.info(`Added job: ${job.name}`);
     return job;
   }
   
@@ -496,7 +499,7 @@ export class CronService {
     const deleted = this.jobs.delete(jobId);
     if (deleted) {
       this.saveJobs();
-      console.log(`[Cron] Removed job: ${jobId}`);
+      log.info(`Removed job: ${jobId}`);
     }
     return deleted;
   }

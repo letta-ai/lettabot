@@ -12,6 +12,9 @@ import type { LettaBotConfig, ProviderConfig } from './types.js';
 import { DEFAULT_CONFIG, canonicalizeServerMode, isApiServerMode, isDockerServerMode } from './types.js';
 import { LETTA_API_URL } from '../auth/oauth.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Config');
 // Config file locations (checked in order)
 const CONFIG_PATHS = [
   resolve(process.cwd(), 'lettabot.yaml'),           // Project-local
@@ -92,7 +95,7 @@ function parseAndNormalizeConfig(content: string): LettaBotConfig {
 
   // Deprecation warning: top-level api should be moved under server
   if (config.api && !config.server.api) {
-    console.warn('[Config] WARNING: Top-level `api:` is deprecated. Move it under `server:`.');
+    log.warn('WARNING: Top-level `api:` is deprecated. Move it under `server:`.');
   }
 
   return config;
@@ -114,8 +117,8 @@ export function loadConfig(): LettaBotConfig {
     return parseAndNormalizeConfig(content);
   } catch (err) {
     _lastLoadFailed = true;
-    console.error(`[Config] Failed to load ${configPath}:`, err);
-    console.warn('[Config] Using default configuration. Check your YAML syntax and field locations.');
+    log.error(`Failed to load ${configPath}:`, err);
+    log.warn('Using default configuration. Check your YAML syntax and field locations.');
     return { ...DEFAULT_CONFIG };
   }
 }
@@ -160,7 +163,7 @@ export function saveConfig(config: Partial<LettaBotConfig> & Pick<LettaBotConfig
   });
   
   writeFileSync(configPath, content, 'utf-8');
-  console.log(`[Config] Saved to ${configPath}`);
+  log.info(`Saved to ${configPath}`);
 }
 
 /**
@@ -417,7 +420,7 @@ export async function syncProviders(config: Partial<LettaBotConfig> & Pick<Letta
           },
           body: JSON.stringify({ api_key: provider.apiKey }),
         });
-        console.log(`[Config] Updated provider: ${provider.name}`);
+        log.info(`Updated provider: ${provider.name}`);
       } else {
         // Create new
         await fetch(`${baseUrl}/v1/providers`, {
@@ -432,10 +435,10 @@ export async function syncProviders(config: Partial<LettaBotConfig> & Pick<Letta
             api_key: provider.apiKey,
           }),
         });
-        console.log(`[Config] Created provider: ${provider.name}`);
+        log.info(`Created provider: ${provider.name}`);
       }
     } catch (err) {
-      console.error(`[Config] Failed to sync provider ${provider.name}:`, err);
+      log.error(`Failed to sync provider ${provider.name}:`, err);
     }
   }
 }

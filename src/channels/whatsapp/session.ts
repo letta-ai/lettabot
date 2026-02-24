@@ -15,6 +15,9 @@ import {
 } from "../../utils/creds-queue.js";
 import type { ConnectionUpdate } from "./types.js";
 
+import { createLogger } from '../../logger.js';
+
+const log = createLogger('WhatsApp');
 // Constants
 const INITIAL_CONNECT_TIMEOUT_MS = 30000; // 30 seconds
 const QR_SCAN_TIMEOUT_MS = 120000; // 2 minutes
@@ -160,13 +163,13 @@ export async function createWaSocket(options: SocketOptions): Promise<SocketResu
   // Restore credentials from backup if main file is corrupted
   const restored = maybeRestoreCredsFromBackup(authDir, {
     logger: {
-      log: (msg) => console.log(`[WhatsApp] ${msg}`),
-      warn: (msg, err) => console.warn(`[WhatsApp] ${msg}:`, err),
+      log: (msg) => log.info(msg),
+      warn: (msg, err) => log.warn(msg, err),
     },
   });
 
   if (restored) {
-    console.log("[WhatsApp] Session recovered from backup");
+    log.info("Session recovered from backup");
   }
 
   // Dynamic import Baileys
@@ -183,7 +186,7 @@ export async function createWaSocket(options: SocketOptions): Promise<SocketResu
 
   // Get latest WhatsApp Web version
   const { version } = await fetchLatestBaileysVersion();
-  console.log("[WhatsApp] Using WA Web version:", version.join("."));
+  log.info("Using WA Web version:", version.join("."));
 
   // Create silent logger (suppress Baileys noise)
   const logger = createSilentLogger();
@@ -213,7 +216,7 @@ export async function createWaSocket(options: SocketOptions): Promise<SocketResu
   // Handle WebSocket-level errors to prevent crashes
   if (sock.ws && typeof sock.ws.on === "function") {
     sock.ws.on("error", (err: Error) => {
-      console.error("[WhatsApp] WebSocket error:", err.message);
+      log.error("WebSocket error:", err.message);
     });
   }
 
@@ -221,7 +224,7 @@ export async function createWaSocket(options: SocketOptions): Promise<SocketResu
   const credsQueue = createCredsSaveQueue({
     authDir,
     logger: {
-      warn: (msg, err) => console.warn(`[WhatsApp] ${msg}:`, err),
+      warn: (msg, err) => log.warn(msg, err),
     },
   });
 
@@ -251,7 +254,7 @@ export async function createWaSocket(options: SocketOptions): Promise<SocketResu
 
         // Print QR to terminal
         if (printQr) {
-          console.log("[WhatsApp] Scan this QR code in WhatsApp -> Linked Devices:");
+          log.info("Scan this QR code in WhatsApp -> Linked Devices:");
           qrcode.generate(update.qr, { small: true });
         }
 
@@ -292,9 +295,9 @@ export async function createWaSocket(options: SocketOptions): Promise<SocketResu
   const myLid = sock.user?.lid || "";  // Linked Device ID (for Business/multi-device)
   const myNumber = myJid.replace(/@.*/, "").replace(/:\d+/, "");
 
-  console.log(`[WhatsApp] Connected as ${myNumber}`);
+  log.info(`Connected as ${myNumber}`);
   if (myLid) {
-    console.log(`[WhatsApp] Has LID for group mentions`);
+    log.info(`Has LID for group mentions`);
   }
 
   return {

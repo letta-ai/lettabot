@@ -100,6 +100,42 @@ attachments:
 | `server.mode` | `'api'` \| `'docker'` | Connection mode (legacy aliases: `'cloud'`, `'selfhosted'`) |
 | `server.apiKey` | string | API key for Letta API |
 | `server.baseUrl` | string | URL for Docker/custom server (e.g., `http://localhost:8283`) |
+| `server.logLevel` | `'fatal'` \| `'error'` \| `'warn'` \| `'info'` \| `'debug'` \| `'trace'` | Log verbosity. Default: `info`. Env vars `LOG_LEVEL` / `LETTABOT_LOG_LEVEL` override. |
+
+### Logging
+
+LettaBot uses structured logging via [pino](https://getpino.io). In local dev, output is human-readable with colored timestamps and `[Module]` prefixes. In production (Railway/Docker), set `LOG_FORMAT=json` for structured JSON output that works with log aggregation tools.
+
+**Log levels** -- set in config or via environment variable (env takes precedence):
+
+```yaml
+server:
+  logLevel: info    # fatal | error | warn | info | debug | trace
+```
+
+```bash
+LOG_LEVEL=debug npm run dev       # verbose output for debugging
+LOG_FORMAT=json npm start         # structured JSON for production
+```
+
+**Debug logging** -- to enable verbose per-channel debug output (replaces the old `DEBUG_WHATSAPP=1` flag):
+
+```bash
+LOG_LEVEL=debug npm run dev
+```
+
+**Output formats:**
+
+Local dev (default) -- single-line colored output:
+```
+[23:22:37] INFO: [Bot] Session subprocess ready
+[23:22:37] WARN: [WhatsApp] Socket not available for access control
+```
+
+Production (`LOG_FORMAT=json`) -- structured JSON:
+```json
+{"level":30,"time":1234567890,"module":"Bot","msg":"Session subprocess ready"}
+```
 
 ### Docker Server Mode
 
@@ -627,5 +663,8 @@ Environment variables override config file values:
 | `OPENAI_API_KEY` | `transcription.apiKey` |
 | `GMAIL_ACCOUNT` | `polling.gmail.account` (comma-separated list allowed) |
 | `POLLING_INTERVAL_MS` | `polling.intervalMs` |
+| `LOG_LEVEL` | `server.logLevel` (fatal/error/warn/info/debug/trace). Overrides config. |
+| `LETTABOT_LOG_LEVEL` | Alias for `LOG_LEVEL` |
+| `LOG_FORMAT` | Set to `json` for structured JSON output (recommended for Railway/Docker) |
 
 See [SKILL.md](../SKILL.md) for complete environment variable reference.

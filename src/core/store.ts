@@ -10,6 +10,9 @@ import { resolve, dirname } from 'node:path';
 import type { AgentStore, LastMessageTarget } from './types.js';
 import { getDataDir } from '../utils/paths.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Store');
 const DEFAULT_STORE_PATH = 'lettabot-agent.json';
 
 interface StoreV2 {
@@ -51,7 +54,7 @@ export class Store {
         }
       }
     } catch (e) {
-      console.error('Failed to load agent store:', e);
+      log.error('Failed to load agent store:', e);
     }
     
     // Return empty V2 structure
@@ -64,7 +67,7 @@ export class Store {
       mkdirSync(dirname(this.storePath), { recursive: true });
       writeFileSync(this.storePath, JSON.stringify(data, null, 2));
     } catch (e) {
-      console.error('Failed to save agent store:', e);
+      log.error('Failed to save agent store:', e);
     }
   }
   

@@ -7,6 +7,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { IncomingHttpHeaders } from 'http';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('API');
 const API_KEY_FILE = 'lettabot-api.json';
 
 interface ApiKeyStore {
@@ -39,7 +42,7 @@ export function loadOrGenerateApiKey(): string {
         return store.apiKey;
       }
     } catch (error) {
-      console.warn(`[API] Failed to load API key from ${API_KEY_FILE}:`, error);
+      log.warn(`Failed to load API key from ${API_KEY_FILE}:`, error);
     }
   }
 
@@ -58,9 +61,9 @@ export function saveApiKey(key: string): void {
 
   try {
     fs.writeFileSync(filePath, JSON.stringify(store, null, 2), 'utf-8');
-    console.log(`[API] Key saved to ${API_KEY_FILE}`);
+    log.info(`Key saved to ${API_KEY_FILE}`);
   } catch (error) {
-    console.error(`[API] Failed to save API key to ${API_KEY_FILE}:`, error);
+    log.error(`Failed to save API key to ${API_KEY_FILE}:`, error);
   }
 }
 

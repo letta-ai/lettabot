@@ -6,6 +6,9 @@
  * 2. Letta API: Uses apiKey, optional BYOK providers
  */
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Config');
 export type ServerMode = 'api' | 'docker' | 'cloud' | 'selfhosted';
 export type CanonicalServerMode = 'api' | 'docker';
 
@@ -83,6 +86,8 @@ export interface LettaBotConfig {
     baseUrl?: string;
     // Only for api mode
     apiKey?: string;
+    // Log level (fatal|error|warn|info|debug|trace). Env vars LOG_LEVEL / LETTABOT_LOG_LEVEL override.
+    logLevel?: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace';
     // API server config (port, host, CORS) — canonical location
     api?: {
       port?: number;       // Default: 8080 (or PORT env var)
@@ -342,7 +347,7 @@ function warnGroupConfigDeprecation(path: string, detail: string): void {
   const key = `${path}:${detail}`;
   if (warnedGroupConfigDeprecations.has(key)) return;
   warnedGroupConfigDeprecations.add(key);
-  console.warn(`[Config] WARNING: ${path} ${detail}`);
+  log.warn(`WARNING: ${path} ${detail}`);
 }
 
 function normalizeLegacyGroupFields(

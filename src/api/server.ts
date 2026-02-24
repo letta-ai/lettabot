@@ -12,6 +12,9 @@ import { parseMultipart } from './multipart.js';
 import type { AgentRouter } from '../core/interfaces.js';
 import type { ChannelId } from '../core/types.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('API');
 const VALID_CHANNELS: ChannelId[] = ['telegram', 'slack', 'discord', 'whatsapp', 'signal'];
 const MAX_BODY_SIZE = 10 * 1024; // 10KB
 const MAX_TEXT_LENGTH = 10000; // 10k chars
@@ -104,7 +107,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           try {
             fs.unlinkSync(file.tempPath);
           } catch (err) {
-            console.warn('[API] Failed to cleanup temp file:', err);
+            log.warn('Failed to cleanup temp file:', err);
           }
         }
 
@@ -116,7 +119,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(response));
       } catch (error: any) {
-        console.error('[API] Error handling request:', error);
+        log.error('Error handling request:', error);
         sendError(res, 500, error.message || 'Internal server error');
       }
       return;
@@ -165,7 +168,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           return;
         }
 
-        console.log(`[API] Chat request for agent "${resolvedName}": ${chatReq.message.slice(0, 100)}...`);
+        log.info(`Chat request for agent "${resolvedName}": ${chatReq.message.slice(0, 100)}...`);
 
         const context = { type: 'webhook' as const, outputMode: 'silent' as const };
         const wantsStream = (req.headers.accept || '').includes('text/event-stream');
@@ -206,7 +209,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           res.end(JSON.stringify(chatRes));
         }
       } catch (error: any) {
-        console.error('[API] Chat error:', error);
+        log.error('Chat error:', error);
         const chatRes: ChatResponse = {
           success: false,
           error: error.message || 'Internal server error',
@@ -237,7 +240,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(response));
       } catch (error: any) {
-        console.error('[API] Pairing list error:', error);
+        log.error('Pairing list error:', error);
         sendError(res, 500, error.message || 'Internal server error');
       }
       return;
@@ -289,7 +292,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           return;
         }
 
-        console.log(`[API] Pairing approved: ${channel} user ${result.userId}`);
+        log.info(`Pairing approved: ${channel} user ${result.userId}`);
         const response: PairingApproveResponse = {
           success: true,
           userId: result.userId,
@@ -297,7 +300,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(response));
       } catch (error: any) {
-        console.error('[API] Pairing approve error:', error);
+        log.error('Pairing approve error:', error);
         sendError(res, 500, error.message || 'Internal server error');
       }
       return;
@@ -311,7 +314,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
   // Use API_HOST=0.0.0.0 in Docker to expose on all interfaces
   const host = options.host || '127.0.0.1';
   server.listen(options.port, host, () => {
-    console.log(`[API] Server listening on ${host}:${options.port}`);
+    log.info(`Server listening on ${host}:${options.port}`);
   });
 
   return server;

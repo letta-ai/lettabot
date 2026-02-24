@@ -8,6 +8,9 @@
 import type { InboundAttachment } from "../../../core/types.js";
 import { buildAttachmentPath, writeStreamToFile } from "../../attachments.js";
 
+import { createLogger } from '../../../logger.js';
+
+const log = createLogger('WhatsApp');
 /**
  * Unwrap ephemeral and viewOnce message containers.
  * WhatsApp wraps certain messages in these containers which need to be unwrapped
@@ -133,7 +136,7 @@ export async function collectAttachments(params: {
 
     // Size limit enforcement
     if (attachmentsMaxBytes && size && size > attachmentsMaxBytes) {
-      console.warn(`[WhatsApp] Attachment ${name} (${size} bytes) exceeds size limit, skipping download.`);
+      log.warn(`Attachment ${name} (${size} bytes) exceeds size limit, skipping download.`);
       attachments.push(attachment);
       const caption = mediaMessage.caption as string | undefined;
       return { attachments, caption };
@@ -145,9 +148,9 @@ export async function collectAttachments(params: {
       const stream = await downloadContentFromMessage(mediaMessage, mediaType);
       await writeStreamToFile(stream, target);
       attachment.localPath = target;
-      console.log(`[WhatsApp] Attachment saved to ${target}`);
+      log.info(`Attachment saved to ${target}`);
     } catch (err) {
-      console.warn('[WhatsApp] Failed to download attachment:', err);
+      log.warn('Failed to download attachment:', err);
     }
   }
 
