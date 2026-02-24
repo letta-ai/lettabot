@@ -413,9 +413,12 @@ export class LettaBot implements AgentSession {
    */
   private formatReasoningDisplay(text: string, channelId?: string): string {
     const maxChars = this.config.display?.reasoningMaxChars ?? 0;
-    const truncated = maxChars > 0 && text.length > maxChars
-      ? text.slice(0, maxChars) + '...'
-      : text;
+    // Trim leading whitespace from each line -- the API often includes leading
+    // spaces in reasoning chunks that look wrong in channel output.
+    const cleaned = text.split('\n').map(line => line.trimStart()).join('\n').trim();
+    const truncated = maxChars > 0 && cleaned.length > maxChars
+      ? cleaned.slice(0, maxChars) + '...'
+      : cleaned;
 
     if (channelId === 'signal') {
       // Signal: no blockquote support, use italic
