@@ -174,6 +174,7 @@ export class LettaBot implements AgentSession {
   private processing = false; // Global lock for shared mode
   private processingKeys: Set<string> = new Set(); // Per-key locks for per-channel mode
   private activeRunKeys: Set<string> = new Set(); // Tracks which conversation keys have an active agent run
+  private cancelledKeys: Set<string> = new Set(); // Tracks keys where /cancel was requested (checked by stream loop)
 
   // AskUserQuestion support: resolves when the next user message arrives
   private pendingQuestionResolver: ((text: string) => void) | null = null;
@@ -806,8 +807,11 @@ export class LettaBot implements AgentSession {
       case 'cancel': {
         const convKey = channelId ? this.resolveConversationKey(channelId) : 'shared';
         if (!this.activeRunKeys.has(convKey)) {
-          return 'Nothing to cancel -- no active run.';
+          return '(Nothing to cancel -- no active run.)';
         }
+
+        // Signal cancellation so the stream loop breaks out
+        this.cancelledKeys.add(convKey);
 
         // 1. Abort client-side stream
         const session = this.sessions.get(convKey);
@@ -835,9 +839,9 @@ export class LettaBot implements AgentSession {
         this.activeRunKeys.delete(convKey);
         console.log(`[Command] /cancel - run cancelled (key=${convKey})`);
         if (!serverCancelled) {
-          return 'Run cancelled locally, but server-side cancellation failed -- the run may still complete on the server.';
+          return '(Run cancelled locally, but server-side cancellation failed -- the run may still complete on the server.)';
         }
-        return 'Run cancelled.';
+        return '(Run cancelled.)';
       }
       default:
         return null;
@@ -1139,9 +1143,21 @@ export class LettaBot implements AgentSession {
     const convKey = this.resolveConversationKey(msg.channel);
     this.activeRunKeys.add(convKey); // Mark active before starting so /cancel works during runSession()
     try {
+      // Check if /cancel was already requested before we even start
+      if (this.cancelledKeys.has(convKey)) {
+        console.log(`[Bot] Skipping runSession -- cancelled before start (key=${convKey})`);
+        return;
+      }
+
       const run = await this.runSession(messageToSend, { retried, canUseTool, convKey });
       lap('session send');
       session = run.session;
+
+      // Check again after runSession() -- /cancel may have fired during the API call
+      if (this.cancelledKeys.has(convKey)) {
+        console.log(`[Bot] Skipping stream -- cancelled during runSession (key=${convKey})`);
+        return;
+      }
 
       // Stream response with delivery
       let response = '';
@@ -1202,6 +1218,11 @@ export class LettaBot implements AgentSession {
       try {
         let firstChunkLogged = false;
         for await (const streamMsg of run.stream()) {
+          // Check for /cancel signal before processing each chunk
+          if (this.cancelledKeys.has(convKey)) {
+            console.log(`[Bot] Stream loop cancelled by /cancel (key=${convKey})`);
+            break;
+          }
           if (!firstChunkLogged) { lap('first stream chunk'); firstChunkLogged = true; }
           receivedAnyData = true;
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
@@ -1503,6 +1524,7 @@ export class LettaBot implements AgentSession {
     } finally {
       // Session stays alive for reuse -- only invalidated on errors
       this.activeRunKeys.delete(convKey);
+      this.cancelledKeys.delete(convKey);
     }
   }
 
