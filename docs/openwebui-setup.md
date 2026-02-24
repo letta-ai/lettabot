@@ -34,7 +34,7 @@ Open http://localhost:3000 in your browser. The first account you create becomes
 
 ## Step 3: Select Model and Chat
 
-In the chat interface, select **LettaBot** from the model dropdown (top of the chat area). This maps to the agent name in your `lettabot.yaml`. Type a message and you should see your agent respond with full streaming support.
+In the chat interface, open the model dropdown (top of the chat area) and select your agent's name. The model list is built from the `name` field of each agent in your `lettabot.yaml` -- e.g., if your agent is named `LettaBot`, that's what appears. Type a message and you should see your agent respond with full streaming support.
 
 ## Troubleshooting
 
