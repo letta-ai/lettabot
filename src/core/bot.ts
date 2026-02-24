@@ -573,8 +573,12 @@ export class LettaBot implements AgentSession {
   /**
    * Return the persistent session for the given conversation key,
    * creating and initializing it if needed.
+   *
+   * After initialization, calls bootstrapState() to detect pending approvals.
+   * If an orphaned approval is found, recovers proactively before returning
+   * the session -- preventing the first send() from hitting a 409 CONFLICT.
    */
-  private async ensureSessionForKey(key: string): Promise<Session> {
+  private async ensureSessionForKey(key: string, bootstrapRetried = false): Promise<Session> {
     // Re-read the store file from disk so we pick up agent/conversation ID
     // changes made by other processes (e.g. after a restart or container deploy).
     // This costs one synchronous disk read per incoming message, which is fine
@@ -625,13 +629,51 @@ export class LettaBot implements AgentSession {
     try {
       await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
       log.info(`Session subprocess ready (key=${key})`);
-      this.sessions.set(key, session);
-      return session;
     } catch (error) {
       // Close immediately so failed initialization cannot leak a subprocess.
       session.close();
       throw error;
     }
+
+    // Proactive approval detection via bootstrapState().
+    // Single CLI round-trip that returns hasPendingApproval flag alongside
+    // session metadata. If an orphaned approval is stuck, recover now so the
+    // first send() doesn't hit a 409 CONFLICT.
+    if (!bootstrapRetried && this.store.agentId) {
+      try {
+        const bootstrap = await this.withSessionTimeout(
+          session.bootstrapState(),
+          `Session bootstrapState (key=${key})`,
+        );
+        if (bootstrap.hasPendingApproval) {
+          const convId = bootstrap.conversationId || session.conversationId;
+          log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
+          session.close();
+          if (convId) {
+            const result = await recoverOrphanedConversationApproval(
+              this.store.agentId,
+              convId,
+              true, /* deepScan */
+            );
+            if (result.recovered) {
+              log.info(`Proactive approval recovery succeeded: ${result.details}`);
+            } else {
+              log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
+            }
+          }
+          // Recreate session after recovery (conversation state changed).
+          // Pass bootstrapRetried=true to prevent infinite recursion.
+          return this.ensureSessionForKey(key, true);
+        }
+      } catch (err) {
+        // bootstrapState failure is non-fatal -- the session is still usable.
+        // The reactive 409 handler in runSession() will catch stuck approvals.
+        log.warn(`bootstrapState check failed (key=${key}), continuing:`, err instanceof Error ? err.message : err);
+      }
+    }
+
+    this.sessions.set(key, session);
+    return session;
   }
 
   /** Legacy convenience: resolve key from shared/per-channel mode and delegate. */
@@ -1143,10 +1185,10 @@ export class LettaBot implements AgentSession {
     }
     lap('typing indicator');
 
-    // Pre-send approval recovery
-    // Only run proactive recovery when previous failures were detected.
-    // Clean-path messages skip straight to session creation (the 409 retry
-    // in runSession() still catches stuck states reactively).
+    // Pre-send approval recovery (secondary defense).
+    // Primary detection is now in ensureSessionForKey() via bootstrapState().
+    // This fallback only fires when previous failures incremented recoveryAttempts,
+    // covering edge cases where a cached session encounters a new stuck approval.
     const recovery = this.store.recoveryAttempts > 0
       ? await this.attemptRecovery()
       : { recovered: false, shouldReset: false };
