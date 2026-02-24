@@ -477,9 +477,11 @@ export class LettaBot implements AgentSession {
           continue;
         }
 
-        // Path sandboxing: restrict to configured directory (default: data/outbound under workingDir)
-        const allowedDir = this.config.sendFileDir || join(this.config.workingDir, 'data', 'outbound');
-        const resolvedPath = resolve(directive.path);
+        // Path sandboxing: resolve both config and directive paths relative to workingDir.
+        // This keeps behavior consistent when process.cwd differs from agent workingDir.
+        const allowedDirConfig = this.config.sendFileDir || join('data', 'outbound');
+        const allowedDir = resolve(this.config.workingDir, allowedDirConfig);
+        const resolvedPath = resolve(this.config.workingDir, directive.path);
         if (!await isPathAllowed(resolvedPath, allowedDir)) {
           console.warn(`[Bot] Directive send-file blocked: ${directive.path} is outside allowed directory ${allowedDir}`);
           continue;
@@ -1233,16 +1235,26 @@ export class LettaBot implements AgentSession {
       // (the SDK streams multiple tool_call messages per call -- first has empty input).
       let pendingToolDisplay: { toolCallId: string; msg: any } | null = null;
       const msgTypeCounts: Record<string, number> = {};
+
+      const parseAndHandleDirectives = async () => {
+        if (!response.trim()) return;
+        const { cleanText, directives } = parseDirectives(response);
+        response = cleanText;
+        if (directives.length === 0) return;
+
+        if (suppressDelivery) {
+          console.log(`[Bot] Listening mode: skipped ${directives.length} directive(s)`);
+          return;
+        }
+
+        if (await this.executeDirectives(directives, adapter, msg.chatId, msg.messageId, msg.threadId)) {
+          sentAnyMessage = true;
+        }
+      };
       
       const finalizeMessage = async () => {
         // Parse and execute XML directives before sending
-        if (response.trim()) {
-          const { cleanText, directives } = parseDirectives(response);
-          response = cleanText;
-          if (await this.executeDirectives(directives, adapter, msg.chatId, msg.messageId, msg.threadId)) {
-            sentAnyMessage = true;
-          }
-        }
+        await parseAndHandleDirectives();
 
         // Check for no-reply AFTER directive parsing
         if (response.trim() === '<no-reply/>') {
@@ -1553,13 +1565,7 @@ export class LettaBot implements AgentSession {
       lap('stream complete');
 
       // Parse and execute XML directives (e.g. <actions><react emoji="eyes" /></actions>)
-      if (response.trim()) {
-        const { cleanText, directives } = parseDirectives(response);
-        response = cleanText;
-        if (await this.executeDirectives(directives, adapter, msg.chatId, msg.messageId, msg.threadId)) {
-          sentAnyMessage = true;
-        }
-      }
+      await parseAndHandleDirectives();
 
       // Handle no-reply marker AFTER directive parsing
       if (response.trim() === '<no-reply/>') {

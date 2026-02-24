@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { inferFileKind, isPathAllowed } from './bot.js';
-import { mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { inferFileKind, isPathAllowed, LettaBot } from './bot.js';
+import { mkdirSync, writeFileSync, symlinkSync, rmSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -94,5 +94,84 @@ describe('isPathAllowed', () => {
       writeFileSync(realFile, 'safe content');
       expect(await isPathAllowed(realFile, allowedDir)).toBe(true);
     });
+  });
+});
+
+describe('send-file directive execution', () => {
+  let workDir: string;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), 'lettabot-sendfile-workdir-'));
+  });
+
+  afterEach(() => {
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  function createAdapter() {
+    return {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async () => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+  }
+
+  it('resolves relative directive paths from workingDir (not process cwd)', async () => {
+    const outboundDir = join(workDir, 'data', 'outbound');
+    const filePath = join(outboundDir, 'report.txt');
+    mkdirSync(outboundDir, { recursive: true });
+    writeFileSync(filePath, 'ok');
+
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+    });
+    const adapter = createAdapter();
+
+    const acted = await (bot as any).executeDirectives(
+      [{ type: 'send-file', path: 'data/outbound/report.txt' }],
+      adapter,
+      'chat-1',
+    );
+
+    expect(acted).toBe(true);
+    expect(adapter.sendFile).toHaveBeenCalledTimes(1);
+    expect(adapter.sendFile).toHaveBeenCalledWith(expect.objectContaining({
+      filePath,
+      kind: 'file',
+    }));
+  });
+
+  it('resolves relative sendFileDir config from workingDir', async () => {
+    const exportsDir = join(workDir, 'exports');
+    const filePath = join(exportsDir, 'report.csv');
+    mkdirSync(exportsDir, { recursive: true });
+    writeFileSync(filePath, 'id,name\n1,test');
+
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+      sendFileDir: './exports',
+    });
+    const adapter = createAdapter();
+
+    const acted = await (bot as any).executeDirectives(
+      [{ type: 'send-file', path: 'exports/report.csv' }],
+      adapter,
+      'chat-1',
+    );
+
+    expect(acted).toBe(true);
+    expect(adapter.sendFile).toHaveBeenCalledTimes(1);
+    expect(adapter.sendFile).toHaveBeenCalledWith(expect.objectContaining({
+      filePath,
+      kind: 'file',
+    }));
   });
 });
