@@ -11,6 +11,9 @@ type HookModule = {
 };
 
 const DEFAULT_HOOK_MODE: HookHandlerConfig['mode'] = 'await';
+// Default timeout for await-mode hooks. Prevents a hanging hook from blocking
+// the message pipeline indefinitely. Set timeoutMs: 0 in config to disable.
+const DEFAULT_AWAIT_TIMEOUT_MS = 5000;
 
 function isSendMessage(value: unknown): value is SendMessage {
   return typeof value === 'string' || Array.isArray(value);
@@ -96,6 +99,7 @@ export class MessageHookRunner {
     stage: 'preMessage' | 'postReasoning' | 'postMessage',
     config: HookHandlerConfig,
     ctx: MessageHookContext,
+    effectiveTimeoutMs?: number,
   ): Promise<unknown> {
     const module = await this.loadModule(config.file);
     if (!module || typeof module[stage] !== 'function') {
@@ -103,7 +107,7 @@ export class MessageHookRunner {
     }
 
     try {
-      return await this.invokeWithTimeout(module[stage]!(ctx), config.timeoutMs);
+      return await this.invokeWithTimeout(module[stage]!(ctx), effectiveTimeoutMs);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       console.warn(`[Hooks] ${stage} failed: ${detail}`);
@@ -118,7 +122,9 @@ export class MessageHookRunner {
       void this.invokeHook('preMessage', config, ctx);
       return undefined;
     }
-    const result = await this.invokeHook('preMessage', config, ctx);
+    // Apply default timeout for await mode to prevent pipeline stalls
+    const timeoutMs = config.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
+    const result = await this.invokeHook('preMessage', config, ctx, timeoutMs);
     return extractSendMessage(result);
   }
 
@@ -129,7 +135,8 @@ export class MessageHookRunner {
       void this.invokeHook('postReasoning', config, ctx);
       return;
     }
-    await this.invokeHook('postReasoning', config, ctx);
+    const timeoutMs = config.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
+    await this.invokeHook('postReasoning', config, ctx, timeoutMs);
   }
 
   async runPost(config: HookHandlerConfig | undefined, ctx: MessageHookContext): Promise<string | undefined> {
@@ -139,7 +146,8 @@ export class MessageHookRunner {
       void this.invokeHook('postMessage', config, ctx);
       return undefined;
     }
-    const result = await this.invokeHook('postMessage', config, ctx);
+    const timeoutMs = config.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
+    const result = await this.invokeHook('postMessage', config, ctx, timeoutMs);
     return extractResponseText(result);
   }
 }

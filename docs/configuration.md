@@ -83,6 +83,9 @@ hooks:
     file: ./hooks/message-hooks.mjs
     mode: await
     timeoutMs: 2000
+  postReasoning:
+    file: ./hooks/message-hooks.mjs
+    mode: await
   postMessage:
     file: ./hooks/message-hooks.mjs
     mode: parallel
@@ -211,7 +214,7 @@ Each entry in `agents:` accepts:
 | `conversations` | object | No | Conversation routing config (shared vs per-channel) |
 | `channels` | object | No | Channel configs (same schema as top-level `channels:`). At least one agent must have channels. |
 | `features` | object | No | Per-agent features (cron, heartbeat, memfs, maxToolCalls) |
-| `hooks` | object | No | Message hooks for this agent (preMessage/postMessage) |
+| `hooks` | object | No | Message hooks for this agent (preMessage/postReasoning/postMessage) |
 | `polling` | object | No | Per-agent polling config (Gmail, etc.) |
 | `integrations` | object | No | Per-agent integrations (Google, etc.) |
 
@@ -535,20 +538,26 @@ hooks:
     file: ./hooks/message-hooks.mjs
     mode: await       # 'await' (default) or 'parallel'
     timeoutMs: 2000
+  postReasoning:
+    file: ./hooks/message-hooks.mjs
+    mode: await
   postMessage:
     file: ./hooks/message-hooks.mjs
     mode: parallel
 ```
 
 - `preMessage`: Runs before the agent call. If it returns a string or message array, that replaces the outgoing message.
+- `postReasoning`: Runs after reasoning is accumulated but before the response is delivered. `ctx.reasoning` contains the full reasoning text. Cannot modify the response.
 - `postMessage`: Runs after the agent run completes (success or error). If it returns a string (or `{ response: string }`) and `mode: await`, that becomes the final response delivered/returned.
 - `mode: parallel` runs fire-and-forget (cannot modify the outgoing message).
+- `mode: await` hooks have a default timeout of 5 seconds to prevent pipeline stalls. Set `timeoutMs: 0` to disable.
 - Paths are resolved relative to the config file directory (or you can use absolute paths).
 - In multi-agent configs, you can set `hooks` at the top level (default for all agents) or per agent in `agents:`.
 - `lettabot-message` also runs `postMessage` hooks on outgoing text/captions.
 - In multi-agent configs, pass `--agent/--agent-id` (or set `LETTABOT_AGENT_NAME/LETTABOT_AGENT_ID`) so `ctx.agent` is populated correctly.
 - `ctx.trigger` is set for CLI sends when you pass `--trigger` (or set `LETTABOT_TRIGGER_TYPE`).
 - If you pass `--output-mode` or `--job-*` without `--trigger`, the CLI defaults `ctx.trigger.type` to `webhook`.
+- **Note**: Hook modules are cached for the process lifetime. Restart the bot after editing a hook file.
 
 Example hook module (ESM):
 
@@ -560,6 +569,11 @@ export async function preMessage(ctx) {
   }
 }
 
+export async function postReasoning(ctx) {
+  // ctx.reasoning contains the accumulated reasoning text
+  console.log('reasoning length:', ctx.reasoning?.length || 0);
+}
+
 export async function postMessage(ctx) {
   console.log('response chars:', ctx.response?.length || 0, 'error:', ctx.error);
 }
@@ -567,7 +581,7 @@ export async function postMessage(ctx) {
 
 Hook context highlights:
 - `ctx.isHeartbeat` is `true` when the trigger is a heartbeat.
-- `ctx.suppressDelivery` is `true` when the response is intentionally suppressed (e.g., listening mode).
+- `ctx.suppressDelivery` is `true` when the response is intentionally suppressed (e.g., listening mode). In this case, `postMessage` always runs fire-and-forget regardless of the configured `mode`.
 - `ctx.trigger` includes `type` (`user_message`, `heartbeat`, `cron`, `webhook`, `feed`) and `outputMode` (`silent` or `responsive`). For background triggers, `sourceChannel/sourceChatId` may be set (e.g., Gmail polling uses `sourceChannel: "gmail"`).
 
 ## Polling Configuration

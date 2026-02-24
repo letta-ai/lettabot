@@ -199,7 +199,7 @@ export class LettaBot implements AgentSession {
     mkdirSync(config.workingDir, { recursive: true });
     this.store = new Store('lettabot-agent.json', config.agentName);
     this.hooksConfig = config.hooks;
-    if (this.hooksConfig?.preMessage || this.hooksConfig?.postMessage) {
+    if (this.hooksConfig?.preMessage || this.hooksConfig?.postReasoning || this.hooksConfig?.postMessage) {
       const baseDir = config.hooksDir || process.cwd();
       this.hookRunner = new MessageHookRunner(baseDir);
       console.log(`[Bot] Message hooks enabled (baseDir=${baseDir})`);
@@ -1597,28 +1597,17 @@ export class LettaBot implements AgentSession {
     } finally {
       // Session stays alive for reuse -- only invalidated on errors
       if (!postHookRan && hookMessage && hookContextBase) {
-        if (hookContextBase.suppressDelivery) {
-          void this.runPostMessageHook({
-            stage: 'post',
-            message: hookMessage,
-            response: hookResponse,
-            delivered: hookDelivered,
-            error: hookError,
-            ...hookContextBase,
-          });
-        } else {
-          const override = await this.runPostMessageHook({
-            stage: 'post',
-            message: hookMessage,
-            response: hookResponse,
-            delivered: hookDelivered,
-            error: hookError,
-            ...hookContextBase,
-          });
-          if (override !== undefined) {
-            hookResponse = override;
-          }
-        }
+        // In the finally path, delivery has already occurred (or errored).
+        // Any override returned by the hook cannot be used, so we always
+        // fire-and-forget regardless of configured mode.
+        void this.runPostMessageHook({
+          stage: 'post',
+          message: hookMessage,
+          response: hookResponse,
+          delivered: hookDelivered,
+          error: hookError,
+          ...hookContextBase,
+        });
       }
     }
   }

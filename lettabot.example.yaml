@@ -85,6 +85,9 @@ features:
 #     file: ./hooks/message-hooks.mjs
 #     mode: await       # 'await' (default) or 'parallel'
 #     timeoutMs: 2000
+#   postReasoning:               # Fires after reasoning accumulates, before response delivery
+#     file: ./hooks/message-hooks.mjs
+#     mode: await
 #   postMessage:
 #     file: ./hooks/message-hooks.mjs
 #     mode: parallel

@@ -9,22 +9,9 @@
 export type ServerMode = 'api' | 'docker' | 'cloud' | 'selfhosted';
 export type CanonicalServerMode = 'api' | 'docker';
 
-// =============================================================================
-// Message Hooks
-// =============================================================================
-
-export type HookMode = 'await' | 'parallel';
-
-export interface HookHandlerConfig {
-  file: string;          // Path to ESM module exporting preMessage/postMessage
-  mode?: HookMode;       // 'await' (default) or 'parallel'
-  timeoutMs?: number;    // Optional timeout (ms)
-}
-
-export interface MessageHooksConfig {
-  preMessage?: HookHandlerConfig;
-  postMessage?: HookHandlerConfig;
-}
+// Hook types live in core/types; re-export here for config consumers
+import type { HookMode, HookHandlerConfig, MessageHooksConfig } from '../core/types.js';
+export type { HookMode, HookHandlerConfig, MessageHooksConfig };
 
 export function canonicalizeServerMode(mode?: ServerMode): CanonicalServerMode {
   return mode === 'docker' || mode === 'selfhosted' ? 'docker' : 'api';
