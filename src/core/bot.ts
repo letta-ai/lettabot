@@ -1004,23 +1004,68 @@ export class LettaBot implements AgentSession {
     // Persist conversation ID immediately after successful send, before streaming.
     this.persistSessionState(session, convKey);
 
-    // Return session and a deduplicated stream generator
-    const seenToolCallIds = new Set<string>();
+    // Return session and a stream generator that buffers tool_call chunks and
+    // flushes them with fully accumulated arguments on the next type boundary.
+    // This ensures display messages always have complete args (channels can't
+    // edit messages after sending).
+    const pendingToolCalls = new Map<string, { msg: StreamMsg; accumulatedArgs: string }>();
     const self = this;
     const capturedConvKey = convKey; // Capture for closure
+
+    /** Merge tool argument strings, handling both delta and cumulative chunking. */
+    function mergeToolArgs(existing: string, incoming: string): string {
+      if (!incoming) return existing;
+      if (!existing) return incoming;
+      if (incoming === existing) return existing;
+      // Cumulative: latest chunk includes all prior text
+      if (incoming.startsWith(existing)) return incoming;
+      if (existing.endsWith(incoming)) return existing;
+      // Delta: each chunk is an append
+      return `${existing}${incoming}`;
+    }
+
+    function* flushPending(): Generator<StreamMsg> {
+      for (const [, pending] of pendingToolCalls) {
+        if (!pending.accumulatedArgs) {
+          // No rawArguments accumulated (old SDK or single complete chunk) --
+          // preserve the original toolInput from the first chunk as-is.
+          yield pending.msg;
+          continue;
+        }
+        let toolInput: Record<string, unknown> = {};
+        try { toolInput = JSON.parse(pending.accumulatedArgs); }
+        catch { toolInput = { raw: pending.accumulatedArgs }; }
+        yield { ...pending.msg, toolInput };
+      }
+      pendingToolCalls.clear();
+    }
 
     async function* dedupedStream(): AsyncGenerator<StreamMsg> {
       for await (const raw of session.stream()) {
         const msg = raw as StreamMsg;
 
-        // Deduplicate tool_call chunks (server streams token-by-token)
         if (msg.type === 'tool_call') {
           const id = msg.toolCallId;
-          if (id && seenToolCallIds.has(id)) continue;
-          if (id) seenToolCallIds.add(id);
+          if (!id) { yield msg; continue; }
+
+          const incoming = (msg as StreamMsg & { rawArguments?: string }).rawArguments || '';
+          const existing = pendingToolCalls.get(id);
+          if (existing) {
+            existing.accumulatedArgs = mergeToolArgs(existing.accumulatedArgs, incoming);
+          } else {
+            pendingToolCalls.set(id, { msg, accumulatedArgs: incoming });
+          }
+          continue; // buffer, don't yield yet
+        }
+
+        // Flush pending tool calls on semantic type boundary (not stream_event)
+        if (pendingToolCalls.size > 0 && msg.type !== 'stream_event') {
+          yield* flushPending();
         }
 
         if (msg.type === 'result') {
+          // Flush any remaining before result
+          yield* flushPending();
           self.persistSessionState(session, capturedConvKey);
         }
 
@@ -1030,6 +1075,9 @@ export class LettaBot implements AgentSession {
           break;
         }
       }
+
+      // Flush remaining at generator end (shouldn't normally happen)
+      yield* flushPending();
     }
 
     return { session, stream: dedupedStream };
@@ -1457,7 +1505,6 @@ export class LettaBot implements AgentSession {
       let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | null = null;
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
-      // Tool call displays fire immediately on arrival (SDK now accumulates args).
       const msgTypeCounts: Record<string, number> = {};
 
       const parseAndHandleDirectives = async () => {
@@ -1566,7 +1613,7 @@ export class LettaBot implements AgentSession {
             const tcId = streamMsg.toolCallId?.slice(0, 12) || '?';
             log.info(`>>> TOOL CALL: ${tcName} (id: ${tcId})`);
             sawNonAssistantSinceLastUuid = true;
-            // Display tool call immediately (args are now populated by SDK accumulation fix)
+            // Display tool call (args are fully accumulated by dedupedStream buffer-and-flush)
             if (this.config.display?.showToolCalls && !suppressDelivery) {
               try {
                 const text = this.formatToolCallDisplay(streamMsg);
