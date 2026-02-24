@@ -67,6 +67,11 @@ function formatApiErrorForUser(error: { message: string; stopReason: string; api
   const apiMsg = (typeof apiError.message === 'string' ? apiError.message : '').toLowerCase();
   const reasons: string[] = Array.isArray(apiError.reasons) ? apiError.reasons : [];
 
+  // Billing / credits exhausted
+  if (msg.includes('out of credits') || apiMsg.includes('out of credits')) {
+    return '(Out of credits for hosted inference. Add credits or enable auto-recharge at app.letta.com/settings/organization/usage.)';
+  }
+
   // Rate limiting / usage exceeded (429)
   if (msg.includes('rate limit') || msg.includes('429') || msg.includes('usage limit')
     || apiMsg.includes('rate limit') || apiMsg.includes('usage limit')) {
@@ -1682,8 +1687,19 @@ export class LettaBot implements AgentSession {
               }
             }
 
+            // Non-retryable errors: billing, auth, not-found -- skip recovery/retry
+            // entirely and surface the error to the user immediately.
+            const errMsg = lastErrorDetail?.message?.toLowerCase() || '';
+            const isNonRetryableError = isTerminalError && (
+              errMsg.includes('out of credits') || errMsg.includes('usage limit') ||
+              errMsg.includes('401') || errMsg.includes('403') ||
+              errMsg.includes('unauthorized') || errMsg.includes('forbidden') ||
+              errMsg.includes('not found') || errMsg.includes('404') ||
+              errMsg.includes('rate limit') || errMsg.includes('429')
+            );
+
             const shouldRetryForEmptyResult = streamMsg.success && resultText === '' && nothingDelivered;
-            const shouldRetryForErrorResult = isTerminalError && nothingDelivered && !isConflictError;
+            const shouldRetryForErrorResult = isTerminalError && nothingDelivered && !isConflictError && !isNonRetryableError;
             if (shouldRetryForEmptyResult || shouldRetryForErrorResult) {
               if (shouldRetryForEmptyResult) {
                 log.error(`Warning: Agent returned empty result with no response. stopReason=${streamMsg.stopReason || 'N/A'}, conv=${streamMsg.conversationId || 'N/A'}`);
