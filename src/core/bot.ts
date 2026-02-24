@@ -229,6 +229,9 @@ export class LettaBot implements AgentSession {
   // In shared mode, only the "shared" key is used. In per-channel mode, each
   // channel (and optionally heartbeat) gets its own subprocess.
   private sessions: Map<string, Session> = new Map();
+  // Coalesces concurrent ensureSessionForKey calls for the same key so the
+  // second caller waits for the first instead of creating a duplicate session.
+  private sessionCreationLocks: Map<string, Promise<Session>> = new Map();
   private currentCanUseTool: CanUseToolCallback | undefined;
   // Stable callback wrapper so the Session options never change, but we can
   // swap out the per-message handler before each send().
@@ -579,15 +582,33 @@ export class LettaBot implements AgentSession {
    * the session -- preventing the first send() from hitting a 409 CONFLICT.
    */
   private async ensureSessionForKey(key: string, bootstrapRetried = false): Promise<Session> {
+    // Fast path: session already exists
+    const existing = this.sessions.get(key);
+    if (existing) return existing;
+
+    // Coalesce concurrent callers: if another call is already creating this
+    // key (e.g. warmSession running while first message arrives), wait for
+    // it instead of creating a duplicate session.
+    const pending = this.sessionCreationLocks.get(key);
+    if (pending) return pending;
+
+    const promise = this._createSessionForKey(key, bootstrapRetried);
+    this.sessionCreationLocks.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      this.sessionCreationLocks.delete(key);
+    }
+  }
+
+  /** Internal session creation -- called via ensureSessionForKey's lock. */
+  private async _createSessionForKey(key: string, bootstrapRetried: boolean): Promise<Session> {
     // Re-read the store file from disk so we pick up agent/conversation ID
     // changes made by other processes (e.g. after a restart or container deploy).
     // This costs one synchronous disk read per incoming message, which is fine
     // at chat-bot throughput. If this ever becomes a bottleneck, throttle to
     // refresh at most once per second.
     this.store.refresh();
-
-    const existing = this.sessions.get(key);
-    if (existing) return existing;
 
     const opts = this.baseSessionOptions(this.sessionCanUseTool);
     let session: Session;
@@ -662,8 +683,9 @@ export class LettaBot implements AgentSession {
             }
           }
           // Recreate session after recovery (conversation state changed).
-          // Pass bootstrapRetried=true to prevent infinite recursion.
-          return this.ensureSessionForKey(key, true);
+          // Call _createSessionForKey directly (not ensureSessionForKey) since
+          // we're already inside the creation lock for this key.
+          return this._createSessionForKey(key, true);
         }
       } catch (err) {
         // bootstrapState failure is non-fatal -- the session is still usable.
