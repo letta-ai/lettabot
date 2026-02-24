@@ -247,7 +247,7 @@ Conversation routing controls which incoming messages share a Letta conversation
 ```yaml
 conversations:
   mode: shared            # shared (default) or per-channel
-  heartbeat: last-active  # only used in per-channel mode
+  heartbeat: last-active  # per-channel mode, or shared mode with perChannel overrides
   perChannel:
     - bluesky             # always separate, even in shared mode
 ```
@@ -255,7 +255,7 @@ conversations:
 - **mode: shared** (default) keeps one shared conversation across all channels.
 - **mode: per-channel** creates an independent conversation per channel.
 - **perChannel** lets you keep most channels shared while carving out specific channels to run independently.
-- **heartbeat** (per-channel mode only): `dedicated`, `last-active`, or a specific channel name.
+- **heartbeat**: `dedicated`, `last-active`, or a specific channel name. Applies in per-channel mode and in shared mode with perChannel overrides.
 
 ### How it works
 
