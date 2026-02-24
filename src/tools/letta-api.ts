@@ -668,17 +668,22 @@ export async function recoverOrphanedConversationApproval(
       runId: string;
     }
     const unresolvedByRun = new Map<string, UnresolvedApproval[]>();
-    
+    // Deduplicate tool_call_ids globally — duplicate messages can produce
+    // multiple identical approval requests for the same tool_call_id.
+    const seenToolCallIds = new Set<string>();
+
     for (const msg of messages) {
       if (msg.message_type !== 'approval_request_message') continue;
-      
-      const toolCalls = (msg.tool_calls as Array<{ tool_call_id: string; name: string }>) 
+
+      const toolCalls = (msg.tool_calls as Array<{ tool_call_id: string; name: string }>)
         || (msg.tool_call ? [msg.tool_call as { tool_call_id: string; name: string }] : []);
       const runId = msg.run_id as string | undefined;
-      
+
       for (const tc of toolCalls) {
         if (!tc.tool_call_id || resolvedToolCalls.has(tc.tool_call_id)) continue;
-        
+        if (seenToolCallIds.has(tc.tool_call_id)) continue;
+        seenToolCallIds.add(tc.tool_call_id);
+
         const key = runId || 'unknown';
         if (!unresolvedByRun.has(key)) unresolvedByRun.set(key, []);
         unresolvedByRun.get(key)!.push({
@@ -726,14 +731,51 @@ export async function recoverOrphanedConversationApproval(
             reason: `Auto-denied: originating run was ${status}/${stopReason}`,
           }));
           
-          await client.conversations.messages.create(conversationId, {
-            messages: [{
-              type: 'approval',
-              approvals: approvalResponses,
-            }],
-            streaming: false,
-          });
-          
+          let submitSucceeded = false;
+          try {
+            await client.conversations.messages.create(conversationId, {
+              messages: [{
+                type: 'approval',
+                approvals: approvalResponses,
+              }],
+              streaming: false,
+            });
+            submitSucceeded = true;
+          } catch (submitErr) {
+            // The server's active approval may have a different tool_call_id than
+            // what's in the conversation messages (e.g. stale history mismatch).
+            // If the error tells us the correct ID, retry once with it.
+            const errMsg = submitErr instanceof Error ? submitErr.message : String(submitErr);
+            const expectedMatch = errMsg.match(/Expected '\['([^']+)'\]/);
+            if (expectedMatch) {
+              const correctToolCallId = expectedMatch[1];
+              log.info(`Retrying denial for run ${runId} with corrected tool_call_id ${correctToolCallId}`);
+              try {
+                await client.conversations.messages.create(conversationId, {
+                  messages: [{
+                    type: 'approval',
+                    approvals: [{
+                      approve: false as const,
+                      tool_call_id: correctToolCallId,
+                      type: 'approval' as const,
+                      reason: `Auto-denied: originating run was ${status}/${stopReason}`,
+                    }],
+                  }],
+                  streaming: false,
+                });
+                submitSucceeded = true;
+              } catch (retryErr) {
+                const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+                log.warn(`Retry also failed for run ${runId}: ${retryMsg}`);
+                details.push(`Failed to deny approval(s) for run ${runId}: ${retryMsg}`);
+              }
+            } else {
+              log.warn(`Could not submit ${approvalResponses.length} denial(s) for run ${runId}: ${errMsg}`);
+              details.push(`Failed to deny approval(s) for run ${runId}: ${errMsg}`);
+            }
+          }
+          if (!submitSucceeded) continue;
+
           // The denial triggers a new agent run server-side. Wait for it to
           // settle before returning, otherwise the caller retries immediately
           // and hits a 409 because the denial's run is still processing.
