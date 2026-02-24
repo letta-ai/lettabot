@@ -105,7 +105,7 @@ This sends "Great idea!" and reacts with thumbsup.
 
 - \`<react emoji="eyes" />\` -- react to the message you are responding to. Emoji names (eyes, thumbsup, heart, fire, tada, clap) or unicode.
 - \`<react emoji="fire" message="123" />\` -- react to a specific message by ID.
-- \`<send-file path="/path/to/file.png" kind="image" caption="..." />\` -- send a file or image to the same channel/chat.
+- \`<send-file path="/path/to/file.png" kind="image" caption="..." />\` -- send a file or image to the same channel/chat. File paths are restricted to the configured send-file directory (default: \`data/outbound/\` in the working directory). Paths outside this directory are blocked.
 
 ### Actions-only response
 

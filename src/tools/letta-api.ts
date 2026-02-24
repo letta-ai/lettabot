@@ -6,6 +6,9 @@
 
 import { Letta } from '@letta-ai/letta-client';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Letta-api');
 const LETTA_BASE_URL = process.env.LETTA_BASE_URL || 'https://api.letta.com';
 
 function getClient(): Letta {
@@ -110,7 +113,7 @@ export async function getAgentModel(agentId: string): Promise<string | null> {
     const agent = await client.agents.retrieve(agentId);
     return agent.model ?? null;
   } catch (e) {
-    console.error('[Letta API] Failed to get agent model:', e);
+    log.error('Failed to get agent model:', e);
     return null;
   }
 }
@@ -124,7 +127,7 @@ export async function updateAgentModel(agentId: string, model: string): Promise<
     await client.agents.update(agentId, { model });
     return true;
   } catch (e) {
-    console.error('[Letta API] Failed to update agent model:', e);
+    log.error('Failed to update agent model:', e);
     return false;
   }
 }
@@ -138,7 +141,7 @@ export async function updateAgentName(agentId: string, name: string): Promise<bo
     await client.agents.update(agentId, { name });
     return true;
   } catch (e) {
-    console.error('[Letta API] Failed to update agent name:', e);
+    log.error('Failed to update agent name:', e);
     return false;
   }
 }
@@ -166,7 +169,7 @@ export async function listModels(options?: { providerName?: string; providerCate
     }
     return models;
   } catch (e) {
-    console.error('[Letta API] Failed to list models:', e);
+    log.error('Failed to list models:', e);
     return [];
   }
 }
@@ -185,7 +188,7 @@ export async function getLastRunTime(agentId: string): Promise<Date | null> {
     }
     return null;
   } catch (e) {
-    console.error('[Letta API] Failed to get last run time:', e);
+    log.error('Failed to get last run time:', e);
     return null;
   }
 }
@@ -208,7 +211,7 @@ export async function listAgents(query?: string): Promise<Array<{ id: string; na
     }
     return agents;
   } catch (e) {
-    console.error('[Letta API] Failed to list agents:', e);
+    log.error('Failed to list agents:', e);
     return [];
   }
 }
@@ -235,7 +238,7 @@ export async function findAgentByName(name: string): Promise<{ id: string; name:
     
     return bestMatch ? { id: bestMatch.id, name: bestMatch.name } : null;
   } catch (e) {
-    console.error('[Letta API] Failed to find agent by name:', e);
+    log.error('Failed to find agent by name:', e);
     return null;
   }
 }
@@ -271,10 +274,10 @@ export async function getPendingApprovals(
       if ('pending_approval' in agentState) {
         const pending = agentState.pending_approval;
         if (!pending) {
-          console.log('[Letta API] No pending approvals on agent');
+          log.info('No pending approvals on agent');
           return [];
         }
-        console.log(`[Letta API] Found pending approval: ${pending.id}, run_id=${pending.run_id}`);
+        log.info(`Found pending approval: ${pending.id}, run_id=${pending.run_id}`);
         
         // Extract tool calls - handle both Array<ToolCall> and ToolCallDelta formats
         const rawToolCalls = pending.tool_calls;
@@ -311,11 +314,11 @@ export async function getPendingApprovals(
             messageId: pending.id,
           });
         }
-        console.log(`[Letta API] Extracted ${approvals.length} pending approval(s): ${approvals.map(a => a.toolName).join(', ')}`);
+        log.info(`Extracted ${approvals.length} pending approval(s): ${approvals.map(a => a.toolName).join(', ')}`);
         return approvals;
       }
     } catch (e) {
-      console.warn('[Letta API] Failed to retrieve agent pending_approval, falling back to run scan:', e);
+      log.warn('Failed to retrieve agent pending_approval, falling back to run scan:', e);
     }
     
     // First, check for runs with 'requires_approval' stop reason
@@ -391,7 +394,7 @@ export async function getPendingApprovals(
     
     return pendingApprovals;
   } catch (e) {
-    console.error('[Letta API] Failed to get pending approvals:', e);
+    log.error('Failed to get pending approvals:', e);
     return [];
   }
 }
@@ -425,16 +428,16 @@ export async function rejectApproval(
       streaming: false,
     });
     
-    console.log(`[Letta API] Rejected approval for tool call ${approval.toolCallId}`);
+    log.info(`Rejected approval for tool call ${approval.toolCallId}`);
     return true;
   } catch (e) {
     const err = e as { status?: number; error?: { detail?: string } };
     const detail = err?.error?.detail || '';
     if (err?.status === 400 && detail.includes('No tool call is currently awaiting approval')) {
-      console.warn(`[Letta API] Approval already resolved for tool call ${approval.toolCallId}`);
+      log.warn(`Approval already resolved for tool call ${approval.toolCallId}`);
       return true;
     }
-    console.error('[Letta API] Failed to reject approval:', e);
+    log.error('Failed to reject approval:', e);
     return false;
   }
 }
@@ -453,11 +456,90 @@ export async function cancelRuns(
     await client.agents.messages.cancel(agentId, {
       run_ids: runIds,
     });
-    console.log(`[Letta API] Cancelled runs for agent ${agentId}${runIds ? ` (${runIds.join(', ')})` : ''}`);
+    log.info(`Cancelled runs for agent ${agentId}${runIds ? ` (${runIds.join(', ')})` : ''}`);
     return true;
   } catch (e) {
-    console.error('[Letta API] Failed to cancel runs:', e);
+    log.error('Failed to cancel runs:', e);
     return false;
+  }
+}
+
+/**
+ * Fetch the error detail from the latest failed run on an agent.
+ * Returns the actual error detail from run metadata (which is more
+ * descriptive than the opaque `stop_reason=error` wire message).
+ * Single API call -- fast enough to use on every error.
+ */
+export async function getLatestRunError(
+  agentId: string,
+  conversationId?: string
+): Promise<{ message: string; stopReason: string; isApprovalError: boolean } | null> {
+  try {
+    const client = getClient();
+    const runs = await client.runs.list({
+      agent_id: agentId,
+      conversation_id: conversationId,
+      limit: 1,
+    });
+    const runsArray: Array<Record<string, unknown>> = [];
+    for await (const run of runs) {
+      runsArray.push(run as unknown as Record<string, unknown>);
+      break; // Only need the first one
+    }
+    const run = runsArray[0];
+    if (!run) return null;
+
+    if (conversationId
+      && typeof run.conversation_id === 'string'
+      && run.conversation_id !== conversationId) {
+      console.warn('[Letta API] Latest run lookup returned a different conversation, skipping enrichment');
+      return null;
+    }
+
+    const meta = run.metadata as Record<string, unknown> | undefined;
+    const err = meta?.error as Record<string, unknown> | undefined;
+    const detail = typeof err?.detail === 'string' ? err.detail : '';
+    const stopReason = typeof run.stop_reason === 'string' ? run.stop_reason : 'error';
+
+    if (!detail) return null;
+
+    const isApprovalError = detail.toLowerCase().includes('waiting for approval')
+      || detail.toLowerCase().includes('approve or deny');
+
+    console.log(`[Letta API] Latest run error: ${detail.slice(0, 150)}${isApprovalError ? ' [approval]' : ''}`);
+    return { message: detail, stopReason, isApprovalError };
+  } catch (e) {
+    console.warn('[Letta API] Failed to fetch latest run error:', e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+async function listActiveConversationRunIds(
+  agentId: string,
+  conversationId: string,
+  limit = 25
+): Promise<string[]> {
+  try {
+    const client = getClient();
+    const runs = await client.runs.list({
+      agent_id: agentId,
+      conversation_id: conversationId,
+      active: true,
+      limit,
+    });
+
+    const runIds: string[] = [];
+    for await (const run of runs) {
+      const id = (run as { id?: unknown }).id;
+      if (typeof id === 'string' && id.length > 0) {
+        runIds.push(id);
+      }
+      if (runIds.length >= limit) break;
+    }
+    return runIds;
+  } catch (e) {
+    console.warn('[Letta API] Failed to list active conversation runs:', e instanceof Error ? e.message : e);
+    return [];
   }
 }
 
@@ -477,10 +559,10 @@ export async function disableToolApproval(
       agent_id: agentId,
       requires_approval: false,
     } as unknown as Parameters<typeof client.agents.tools.updateApproval>[1]);
-    console.log(`[Letta API] Disabled approval requirement for tool ${toolName} on agent ${agentId}`);
+    log.info(`Disabled approval requirement for tool ${toolName} on agent ${agentId}`);
     return true;
   } catch (e) {
-    console.error(`[Letta API] Failed to disable tool approval for ${toolName}:`, e);
+    log.error(`Failed to disable tool approval for ${toolName}:`, e);
     return false;
   }
 }
@@ -510,7 +592,7 @@ export async function getAgentTools(agentId: string): Promise<Array<{
     
     return tools;
   } catch (e) {
-    console.error('[Letta API] Failed to get agent tools:', e);
+    log.error('Failed to get agent tools:', e);
     return [];
   }
 }
@@ -524,12 +606,12 @@ export async function ensureNoToolApprovals(agentId: string): Promise<void> {
     const tools = await getAgentTools(agentId);
     const approvalTools = tools.filter(t => t.requiresApproval);
     if (approvalTools.length > 0) {
-      console.log(`[Letta API] Found ${approvalTools.length} tool(s) requiring approval: ${approvalTools.map(t => t.name).join(', ')}`);
-      console.log('[Letta API] Disabling tool approvals for headless operation...');
+      log.info(`Found ${approvalTools.length} tool(s) requiring approval: ${approvalTools.map(t => t.name).join(', ')}`);
+      log.info('Disabling tool approvals for headless operation...');
       await disableAllToolApprovals(agentId);
     }
   } catch (e) {
-    console.warn('[Letta API] Failed to check/disable tool approvals:', e);
+    log.warn('Failed to check/disable tool approvals:', e);
   }
 }
 
@@ -548,13 +630,17 @@ export async function ensureNoToolApprovals(agentId: string): Promise<void> {
  */
 export async function recoverOrphanedConversationApproval(
   agentId: string,
-  conversationId: string
+  conversationId: string,
+  deepScan = false
 ): Promise<{ recovered: boolean; details: string }> {
   try {
     const client = getClient();
     
-    // List recent messages from the conversation to find orphaned approvals
-    const messagesPage = await client.conversations.messages.list(conversationId, { limit: 50 });
+    // List recent messages from the conversation to find orphaned approvals.
+    // Default: 50 (fast path). Deep scan: 500 (for conversations with many approvals).
+    const scanLimit = deepScan ? 500 : 50;
+    console.log(`[Letta API] Scanning ${scanLimit} messages for orphaned approvals...`);
+    const messagesPage = await client.conversations.messages.list(conversationId, { limit: scanLimit });
     const messages: Array<Record<string, unknown>> = [];
     for await (const msg of messagesPage) {
       messages.push(msg as unknown as Record<string, unknown>);
@@ -630,7 +716,7 @@ export async function recoverOrphanedConversationApproval(
         const isStuckApproval = status === 'running' && stopReason === 'requires_approval';
         
         if (isTerminated || isAbandonedApproval || isStuckApproval) {
-          console.log(`[Letta API] Found ${approvals.length} blocking approval(s) from ${status}/${stopReason} run ${runId}`);
+          log.info(`Found ${approvals.length} blocking approval(s) from ${status}/${stopReason} run ${runId}`);
           
           // Send denial for each unresolved tool call
           const approvalResponses = approvals.map(a => ({
@@ -648,38 +734,45 @@ export async function recoverOrphanedConversationApproval(
             streaming: false,
           });
           
-          // Cancel active stuck runs after rejecting their approvals
+          // The denial triggers a new agent run server-side. Wait for it to
+          // settle before returning, otherwise the caller retries immediately
+          // and hits a 409 because the denial's run is still processing.
+          await new Promise(resolve => setTimeout(resolve, 3000));
+
+          // Cancel only active runs for this conversation to avoid interrupting
+          // unrelated in-flight requests on other conversations.
+          const activeRunIds = await listActiveConversationRunIds(agentId, conversationId);
           let cancelled = false;
-          if (isStuckApproval) {
-            cancelled = await cancelRuns(agentId, [runId]);
+          if (activeRunIds.length > 0) {
+            cancelled = await cancelRuns(agentId, activeRunIds);
             if (cancelled) {
-              console.log(`[Letta API] Cancelled stuck run ${runId}`);
-            } else {
-              console.warn(`[Letta API] Failed to cancel stuck run ${runId}`);
+              log.info(`Cancelled ${activeRunIds.length} active conversation run(s) after approval denial`);
             }
+          } else {
+            log.info(`No active runs to cancel for conversation ${conversationId}`);
           }
           
           recoveredCount += approvals.length;
-          const suffix = isStuckApproval ? (cancelled ? ' (cancelled)' : ' (cancel failed)') : '';
+          const suffix = cancelled ? ' (runs cancelled)' : '';
           details.push(`Denied ${approvals.length} approval(s) from ${status} run ${runId}${suffix}`);
         } else {
           details.push(`Run ${runId} is ${status}/${stopReason} - not orphaned`);
         }
       } catch (runError) {
-        console.warn(`[Letta API] Failed to check run ${runId}:`, runError);
+        log.warn(`Failed to check run ${runId}:`, runError);
         details.push(`Failed to check run ${runId}`);
       }
     }
     
     const detailStr = details.join('; ');
     if (recoveredCount > 0) {
-      console.log(`[Letta API] Recovered ${recoveredCount} orphaned approval(s): ${detailStr}`);
+      log.info(`Recovered ${recoveredCount} orphaned approval(s): ${detailStr}`);
       return { recovered: true, details: detailStr };
     }
     
     return { recovered: false, details: detailStr };
   } catch (e) {
-    console.error('[Letta API] Failed to recover orphaned conversation approval:', e);
+    log.error('Failed to recover orphaned conversation approval:', e);
     return { recovered: false, details: `Error: ${e instanceof Error ? e.message : String(e)}` };
   }
 }
@@ -694,10 +787,10 @@ export async function disableAllToolApprovals(agentId: string): Promise<number> 
       if (success) disabled++;
     }
     
-    console.log(`[Letta API] Disabled approval for ${disabled}/${tools.length} tools on agent ${agentId}`);
+    log.info(`Disabled approval for ${disabled}/${tools.length} tools on agent ${agentId}`);
     return disabled;
   } catch (e) {
-    console.error('[Letta API] Failed to disable all tool approvals:', e);
+    log.error('Failed to disable all tool approvals:', e);
     return 0;
   }
 }

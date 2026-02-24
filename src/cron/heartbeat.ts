@@ -16,6 +16,9 @@ import { getCronLogPath } from '../utils/paths.js';
 import { listActionableTodos } from '../todo/store.js';
 
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Heartbeat');
 // Log file
 const LOG_PATH = getCronLogPath();
 
@@ -33,7 +36,7 @@ function logEvent(event: string, data: Record<string, unknown>): void {
     // Ignore
   }
   
-  console.log(`[Heartbeat] ${event}:`, JSON.stringify(data));
+  log.info(`${event}:`, JSON.stringify(data));
 }
 
 /**
@@ -85,19 +88,19 @@ export class HeartbeatService {
    */
   start(): void {
     if (!this.config.enabled) {
-      console.log('[Heartbeat] Disabled');
+      log.info('Disabled');
       return;
     }
     
     if (this.intervalId) {
-      console.log('[Heartbeat] Already running');
+      log.info('Already running');
       return;
     }
     
     const intervalMs = this.config.intervalMinutes * 60 * 1000;
     
-    console.log(`[Heartbeat] Starting in SILENT MODE (every ${this.config.intervalMinutes} minutes)`);
-    console.log(`[Heartbeat] First heartbeat in ${this.config.intervalMinutes} minutes`);
+    log.info(`Starting in SILENT MODE (every ${this.config.intervalMinutes} minutes)`);
+    log.info(`First heartbeat in ${this.config.intervalMinutes} minutes`);
     
     // Wait full interval before first heartbeat (don't fire on startup)
     this.intervalId = setInterval(() => this.runHeartbeat(), intervalMs);
@@ -116,7 +119,7 @@ export class HeartbeatService {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
-      console.log('[Heartbeat] Stopped');
+      log.info('Stopped');
     }
   }
   
@@ -125,7 +128,7 @@ export class HeartbeatService {
    * Bypasses the "recently messaged" check since user explicitly requested it
    */
   async trigger(): Promise<void> {
-    console.log('[Heartbeat] Manual trigger requested');
+    log.info('Manual trigger requested');
     await this.runHeartbeat(true); // skipRecentCheck = true
   }
   
@@ -142,9 +145,9 @@ export class HeartbeatService {
     const formattedTime = now.toLocaleString();
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`[Heartbeat] ⏰ RUNNING at ${formattedTime} [SILENT MODE]`);
-    console.log(`${'='.repeat(60)}\n`);
+    log.info(`${'='.repeat(60)}`);
+    log.info(`⏰ RUNNING at ${formattedTime} [SILENT MODE]`);
+    log.info(`${'='.repeat(60)}`);
     
     // Skip if user sent a message in the configured window (unless manual trigger)
     if (!skipRecentCheck) {
@@ -155,7 +158,7 @@ export class HeartbeatService {
         
         if (msSinceLastMessage < skipWindowMs) {
           const minutesAgo = Math.round(msSinceLastMessage / 60000);
-          console.log(`[Heartbeat] User messaged ${minutesAgo}m ago - skipping heartbeat`);
+          log.info(`User messaged ${minutesAgo}m ago - skipping heartbeat`);
           logEvent('heartbeat_skipped_recent_user', {
             lastUserMessage: lastUserMessage.toISOString(),
             minutesAgo,
@@ -165,7 +168,7 @@ export class HeartbeatService {
       }
     }
     
-    console.log(`[Heartbeat] Sending heartbeat to agent...`);
+    log.info(`Sending heartbeat to agent...`);
     
     logEvent('heartbeat_running', { 
       time: now.toISOString(),
@@ -185,7 +188,7 @@ export class HeartbeatService {
       const todoAgentKey = this.bot.getStatus().agentId || this.config.agentKey;
       const actionableTodos = listActionableTodos(todoAgentKey, now);
       if (actionableTodos.length > 0) {
-        console.log(`[Heartbeat] Loaded ${actionableTodos.length} actionable to-do(s).`);
+        log.info(`Loaded ${actionableTodos.length} actionable to-do(s).`);
       }
 
       // Resolve custom prompt: inline config > promptFile (re-read each tick) > default
@@ -195,7 +198,7 @@ export class HeartbeatService {
           const promptPath = resolve(this.config.workingDir, this.config.promptFile);
           customPrompt = readFileSync(promptPath, 'utf-8').trim();
         } catch (err) {
-          console.error(`[Heartbeat] Failed to read promptFile "${this.config.promptFile}":`, err);
+          log.error(`Failed to read promptFile "${this.config.promptFile}":`, err);
         }
       }
 
@@ -203,18 +206,18 @@ export class HeartbeatService {
         ? buildCustomHeartbeatPrompt(customPrompt, formattedTime, timezone, this.config.intervalMinutes, actionableTodos, now)
         : buildHeartbeatPrompt(formattedTime, timezone, this.config.intervalMinutes, actionableTodos, now);
       
-      console.log(`[Heartbeat] Sending prompt (SILENT MODE):\n${'─'.repeat(50)}\n${message}\n${'─'.repeat(50)}\n`);
+      log.info(`Sending prompt (SILENT MODE):\n${'─'.repeat(50)}\n${message}\n${'─'.repeat(50)}\n`);
       
       // Send to agent - response text is NOT delivered (silent mode)
       // Agent must use `lettabot-message` CLI via Bash to send messages
       const response = await this.bot.sendToAgent(message, triggerContext);
       
       // Log results
-      console.log(`[Heartbeat] Agent finished.`);
-      console.log(`  - Response text: ${response?.length || 0} chars (NOT delivered - silent mode)`);
+      log.info(`Agent finished.`);
+      log.info(`  - Response text: ${response?.length || 0} chars (NOT delivered - silent mode)`);
       
       if (response && response.trim()) {
-        console.log(`  - Response preview: "${response.slice(0, 100)}${response.length > 100 ? '...' : ''}"`);
+        log.info(`  - Response preview: "${response.slice(0, 100)}${response.length > 100 ? '...' : ''}"`);
       }
       
       logEvent('heartbeat_completed', {
@@ -223,7 +226,7 @@ export class HeartbeatService {
       });
       
     } catch (error) {
-      console.error('[Heartbeat] Error:', error);
+      log.error('Error:', error);
       logEvent('heartbeat_error', {
         error: error instanceof Error ? error.message : String(error),
       });

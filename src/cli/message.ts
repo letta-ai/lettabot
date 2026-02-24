@@ -12,6 +12,7 @@
 
 // Config loaded from lettabot.yaml
 import { loadAppConfigOrExit, applyConfigToEnv, resolveConfigPath, normalizeAgents, type AgentConfig } from '../config/index.js';
+import { loadApiKey } from '../api/auth.js';
 import { dirname } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { loadLastTarget } from './shared.js';
@@ -293,11 +294,8 @@ async function sendViaApi(
   }
 ): Promise<void> {
   const apiUrl = process.env.LETTABOT_API_URL || 'http://localhost:8080';
-  const apiKey = process.env.LETTABOT_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('LETTABOT_API_KEY not set. Check bot server logs for the key.');
-  }
+  // Resolve API key: env var > lettabot-api.json (never generate -- that's the server's job)
+  const apiKey = loadApiKey();
 
   // Check if file exists
   if (options.filePath && !existsSync(options.filePath)) {
@@ -551,7 +549,7 @@ Environment variables:
   SLACK_BOT_TOKEN         Required for Slack
   DISCORD_BOT_TOKEN       Required for Discord
   SIGNAL_PHONE_NUMBER     Required for Signal (text only, no files)
-  LETTABOT_API_KEY        Required for file sending (telegram, slack, discord, whatsapp) and WhatsApp text
+  LETTABOT_API_KEY        Override API key (auto-read from lettabot-api.json if not set)
   LETTABOT_API_URL        API server URL (default: http://localhost:8080)
   SIGNAL_CLI_REST_API_URL Signal daemon URL (default: http://127.0.0.1:8090)
   LETTABOT_AGENT_NAME     Agent name for CLI hook context

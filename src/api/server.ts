@@ -11,7 +11,16 @@ import { listPairingRequests, approvePairingCode } from '../pairing/store.js';
 import { parseMultipart } from './multipart.js';
 import type { AgentRouter } from '../core/interfaces.js';
 import type { ChannelId } from '../core/types.js';
+import {
+  generateCompletionId, extractLastUserMessage, buildCompletion,
+  buildChunk, buildToolCallChunk, formatSSE, SSE_DONE,
+  buildErrorResponse, buildModelList, validateChatRequest,
+} from './openai-compat.js';
+import type { OpenAIChatRequest } from './openai-compat.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('API');
 const VALID_CHANNELS: ChannelId[] = ['telegram', 'slack', 'discord', 'whatsapp', 'signal'];
 const MAX_BODY_SIZE = 10 * 1024; // 10KB
 const MAX_TEXT_LENGTH = 10000; // 10k chars
@@ -33,7 +42,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     const corsOrigin = options.corsOrigin || req.headers.origin || 'null';
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Api-Key');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Api-Key, Authorization');
 
     // Handle OPTIONS preflight
     if (req.method === 'OPTIONS') {
@@ -104,7 +113,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           try {
             fs.unlinkSync(file.tempPath);
           } catch (err) {
-            console.warn('[API] Failed to cleanup temp file:', err);
+            log.warn('Failed to cleanup temp file:', err);
           }
         }
 
@@ -116,7 +125,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(response));
       } catch (error: any) {
-        console.error('[API] Error handling request:', error);
+        log.error('Error handling request:', error);
         sendError(res, 500, error.message || 'Internal server error');
       }
       return;
@@ -165,7 +174,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           return;
         }
 
-        console.log(`[API] Chat request for agent "${resolvedName}": ${chatReq.message.slice(0, 100)}...`);
+        log.info(`Chat request for agent "${resolvedName}": ${chatReq.message.slice(0, 100)}...`);
 
         const context = { type: 'webhook' as const, outputMode: 'silent' as const };
         const wantsStream = (req.headers.accept || '').includes('text/event-stream');
@@ -206,7 +215,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           res.end(JSON.stringify(chatRes));
         }
       } catch (error: any) {
-        console.error('[API] Chat error:', error);
+        log.error('Chat error:', error);
         const chatRes: ChatResponse = {
           success: false,
           error: error.message || 'Internal server error',
@@ -237,7 +246,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(response));
       } catch (error: any) {
-        console.error('[API] Pairing list error:', error);
+        log.error('Pairing list error:', error);
         sendError(res, 500, error.message || 'Internal server error');
       }
       return;
@@ -289,7 +298,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           return;
         }
 
-        console.log(`[API] Pairing approved: ${channel} user ${result.userId}`);
+        log.info(`Pairing approved: ${channel} user ${result.userId}`);
         const response: PairingApproveResponse = {
           success: true,
           userId: result.userId,
@@ -297,8 +306,180 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(response));
       } catch (error: any) {
-        console.error('[API] Pairing approve error:', error);
+        log.error('Pairing approve error:', error);
         sendError(res, 500, error.message || 'Internal server error');
+      }
+      return;
+    }
+
+    // Route: GET /v1/models (OpenAI-compatible)
+    if (req.url === '/v1/models' && req.method === 'GET') {
+      try {
+        if (!validateApiKey(req.headers, options.apiKey)) {
+          const err = buildErrorResponse('Invalid API key', 'invalid_request_error', 401);
+          res.writeHead(err.status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(err.body));
+          return;
+        }
+
+        const models = buildModelList(deliverer.getAgentNames());
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(models));
+      } catch (error: any) {
+        log.error('Models error:', error);
+        const err = buildErrorResponse(error.message || 'Internal server error', 'server_error', 500);
+        res.writeHead(err.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(err.body));
+      }
+      return;
+    }
+
+    // Route: POST /v1/chat/completions (OpenAI-compatible)
+    if (req.url === '/v1/chat/completions' && req.method === 'POST') {
+      try {
+        if (!validateApiKey(req.headers, options.apiKey)) {
+          const err = buildErrorResponse('Invalid API key', 'invalid_request_error', 401);
+          res.writeHead(err.status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(err.body));
+          return;
+        }
+
+        const contentType = req.headers['content-type'] || '';
+        if (!contentType.includes('application/json')) {
+          const err = buildErrorResponse('Content-Type must be application/json', 'invalid_request_error', 400);
+          res.writeHead(err.status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(err.body));
+          return;
+        }
+
+        const body = await readBody(req, MAX_BODY_SIZE);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(body);
+        } catch {
+          const err = buildErrorResponse('Invalid JSON body', 'invalid_request_error', 400);
+          res.writeHead(err.status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(err.body));
+          return;
+        }
+
+        // Validate OpenAI request shape
+        const validationError = validateChatRequest(parsed);
+        if (validationError) {
+          res.writeHead(validationError.status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(validationError.body));
+          return;
+        }
+
+        const chatReq = parsed as OpenAIChatRequest;
+
+        // Extract the last user message
+        const userMessage = extractLastUserMessage(chatReq.messages);
+        if (!userMessage) {
+          const err = buildErrorResponse('No user message found in messages array', 'invalid_request_error', 400);
+          res.writeHead(err.status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(err.body));
+          return;
+        }
+
+        if (userMessage.length > MAX_TEXT_LENGTH) {
+          const err = buildErrorResponse(`Message too long (max ${MAX_TEXT_LENGTH} chars)`, 'invalid_request_error', 400);
+          res.writeHead(err.status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(err.body));
+          return;
+        }
+
+        // Resolve agent from model field
+        const agentNames = deliverer.getAgentNames();
+        const modelName = chatReq.model || agentNames[0];
+        const agentName = agentNames.includes(modelName) ? modelName : undefined;
+
+        // If an explicit model was requested but doesn't match any agent, error
+        if (chatReq.model && !agentNames.includes(chatReq.model)) {
+          const err = buildErrorResponse(
+            `Model not found: ${chatReq.model}. Available: ${agentNames.join(', ')}`,
+            'model_not_found',
+            404,
+          );
+          res.writeHead(err.status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(err.body));
+          return;
+        }
+
+        const completionId = generateCompletionId();
+        const context = { type: 'webhook' as const, outputMode: 'silent' as const };
+
+        log.info(`OpenAI chat: model="${modelName}", stream=${!!chatReq.stream}, msg="${userMessage.slice(0, 100)}..."`);
+
+        if (chatReq.stream) {
+          // ---- Streaming response ----
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          });
+
+          let clientDisconnected = false;
+          req.on('close', () => { clientDisconnected = true; });
+
+          // First chunk: role announcement
+          res.write(formatSSE(buildChunk(completionId, modelName, { role: 'assistant' })));
+
+          try {
+            let toolIndex = 0;
+
+            for await (const msg of deliverer.streamToAgent(agentName, userMessage, context)) {
+              if (clientDisconnected) break;
+
+              if (msg.type === 'assistant' && msg.content) {
+                // Text content delta
+                res.write(formatSSE(buildChunk(completionId, modelName, { content: msg.content })));
+              } else if (msg.type === 'tool_call') {
+                // Tool call delta (emit name + args in one chunk)
+                const toolCallId = msg.toolCallId || `call_${msg.uuid || 'unknown'}`;
+                const toolName = msg.toolName || 'unknown';
+                const args = msg.toolInput ? JSON.stringify(msg.toolInput) : '{}';
+                res.write(formatSSE(buildToolCallChunk(
+                  completionId, modelName, toolIndex++, toolCallId, toolName, args,
+                )));
+              } else if (msg.type === 'result') {
+                if (!(msg as any).success) {
+                  const errMsg = (msg as any).error || 'Agent run failed';
+                  res.write(formatSSE(buildChunk(completionId, modelName, {
+                    content: `\n\n[Error: ${errMsg}]`,
+                  })));
+                }
+                break;
+              }
+              // Skip 'reasoning', 'tool_result', and other internal types
+            }
+          } catch (streamError: any) {
+            if (!clientDisconnected) {
+              // Emit error as a content delta so clients see it
+              res.write(formatSSE(buildChunk(completionId, modelName, {
+                content: `\n\n[Error: ${streamError.message}]`,
+              })));
+            }
+          }
+
+          // Finish chunk + done sentinel
+          if (!clientDisconnected) {
+            res.write(formatSSE(buildChunk(completionId, modelName, {}, 'stop')));
+            res.write(SSE_DONE);
+          }
+          res.end();
+        } else {
+          // ---- Sync response ----
+          const response = await deliverer.sendToAgent(agentName, userMessage, context);
+          const completion = buildCompletion(completionId, modelName, response);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(completion));
+        }
+      } catch (error: any) {
+        log.error('OpenAI chat error:', error);
+        const err = buildErrorResponse(error.message || 'Internal server error', 'server_error', 500);
+        res.writeHead(err.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(err.body));
       }
       return;
     }
@@ -311,7 +492,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
   // Use API_HOST=0.0.0.0 in Docker to expose on all interfaces
   const host = options.host || '127.0.0.1';
   server.listen(options.port, host, () => {
-    console.log(`[API] Server listening on ${host}:${options.port}`);
+    log.info(`Server listening on ${host}:${options.port}`);
   });
 
   return server;

@@ -6,6 +6,9 @@
  * 2. Letta API: Uses apiKey, optional BYOK providers
  */
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Config');
 export type ServerMode = 'api' | 'docker' | 'cloud' | 'selfhosted';
 export type CanonicalServerMode = 'api' | 'docker';
 
@@ -81,6 +84,9 @@ export interface AgentConfig {
     };
     memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
     maxToolCalls?: number;
+    sendFileDir?: string;    // Restrict <send-file> directive to this directory (default: data/outbound)
+    sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
+    sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete after send (default: false)
     display?: DisplayConfig;
   };
   /** Message hooks for this agent */
@@ -103,6 +109,8 @@ export interface LettaBotConfig {
     baseUrl?: string;
     // Only for api mode
     apiKey?: string;
+    // Log level (fatal|error|warn|info|debug|trace). Env vars LOG_LEVEL / LETTABOT_LOG_LEVEL override.
+    logLevel?: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace';
     // API server config (port, host, CORS) — canonical location
     api?: {
       port?: number;       // Default: 8080 (or PORT env var)
@@ -157,6 +165,9 @@ export interface LettaBotConfig {
     inlineImages?: boolean;   // Send images directly to the LLM (default: true). Set false to only send file paths.
     memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
     maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)
+    sendFileDir?: string;   // Restrict <send-file> directive to this directory (default: data/outbound)
+    sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
+    sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete after send (default: false)
     display?: DisplayConfig;  // Show tool calls / reasoning in channel output
   };
 
@@ -192,9 +203,9 @@ export interface LettaBotConfig {
 }
 
 export interface TranscriptionConfig {
-  provider: 'openai';  // Only OpenAI supported currently
-  apiKey?: string;     // Falls back to OPENAI_API_KEY env var
-  model?: string;      // Defaults to 'whisper-1'
+  provider: 'openai' | 'mistral';
+  apiKey?: string;     // Falls back to OPENAI_API_KEY or MISTRAL_API_KEY env var
+  model?: string;      // Defaults to 'whisper-1' (OpenAI) or 'voxtral-mini-latest' (Mistral)
 }
 
 export interface PollingYamlConfig {
@@ -367,7 +378,7 @@ function warnGroupConfigDeprecation(path: string, detail: string): void {
   const key = `${path}:${detail}`;
   if (warnedGroupConfigDeprecations.has(key)) return;
   warnedGroupConfigDeprecations.add(key);
-  console.warn(`[Config] WARNING: ${path} ${detail}`);
+  log.warn(`WARNING: ${path} ${detail}`);
 }
 
 function normalizeLegacyGroupFields(

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Store } from './store.js';
-import { existsSync, unlinkSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, unlinkSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { AgentStore } from './types.js';
@@ -8,6 +8,7 @@ import type { AgentStore } from './types.js';
 describe('Store', () => {
   const testDir = join(tmpdir(), 'lettabot-test-' + Date.now() + '-' + Math.random().toString(36).substring(7));
   const testStorePath = join(testDir, 'test-store.json');
+  const testBackupPath = `${testStorePath}.bak`;
   let originalLettaAgentId: string | undefined;
 
   beforeEach(() => {
@@ -23,6 +24,9 @@ describe('Store', () => {
     // Clean up test files
     if (existsSync(testStorePath)) {
       unlinkSync(testStorePath);
+    }
+    if (existsSync(testBackupPath)) {
+      unlinkSync(testBackupPath);
     }
     
     // Restore LETTA_AGENT_ID env var
@@ -297,5 +301,39 @@ describe('Store', () => {
 
     expect(store1.getConversationId('telegram')).toBe('conv-bot1-tg');
     expect(store2.getConversationId('telegram')).toBe('conv-bot2-tg');
+  });
+
+  it('should refresh in-memory state from disk', () => {
+    const writer = new Store(testStorePath, 'TestBot');
+    writer.agentId = 'agent-v1';
+
+    const reader = new Store(testStorePath, 'TestBot');
+    expect(reader.agentId).toBe('agent-v1');
+
+    writer.agentId = 'agent-v2';
+    expect(reader.agentId).toBe('agent-v1');
+
+    reader.refresh();
+    expect(reader.agentId).toBe('agent-v2');
+  });
+
+  it('should keep a backup and recover from a corrupted primary store file', () => {
+    const writer = new Store(testStorePath, 'TestBot');
+    writer.agentId = 'agent-backup';
+    writer.conversationId = 'conv-backup';
+
+    expect(existsSync(testBackupPath)).toBe(true);
+
+    // Simulate a torn/corrupted write on the primary file.
+    writeFileSync(testStorePath, '{"version":2,"agents":', 'utf-8');
+
+    const recovered = new Store(testStorePath, 'TestBot');
+    expect(recovered.agentId).toBe('agent-backup');
+    expect(recovered.conversationId).toBe('conv-backup');
+
+    // Constructor recovery should also rewrite a valid primary file.
+    const raw = JSON.parse(readFileSync(testStorePath, 'utf-8'));
+    expect(raw.version).toBe(2);
+    expect(raw.agents.TestBot.agentId).toBe('agent-backup');
   });
 });
