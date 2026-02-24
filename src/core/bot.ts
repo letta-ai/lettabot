@@ -19,6 +19,7 @@ import type { GroupBatcher } from './group-batcher.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { parseDirectives, stripActionsBlock, type Directive } from './directives.js';
+import { resolveEmoji } from './emoji.js';
 import { createManageTodoTool } from '../tools/todo.js';
 import { syncTodosFromTool } from '../todo/store.js';
 
@@ -642,10 +643,13 @@ export class LettaBot implements AgentSession {
           continue;
         }
         if (targetId) {
+          // Resolve text aliases (thumbsup, eyes, etc.) to Unicode characters.
+          // The LLM typically outputs names; channel APIs need actual emoji.
+          const resolved = resolveEmoji(directive.emoji);
           try {
-            await adapter.addReaction(chatId, targetId, directive.emoji);
+            await adapter.addReaction(chatId, targetId, resolved.unicode);
             acted = true;
-            log.info(`Directive: reacted with ${directive.emoji}`);
+            log.info(`Directive: reacted with ${resolved.unicode} (${directive.emoji})`);
           } catch (err) {
             log.warn('Directive react failed:', err instanceof Error ? err.message : err);
           }
