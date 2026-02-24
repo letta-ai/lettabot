@@ -17,6 +17,9 @@ export const SKILLS_SH_DIR = join(HOME, '.agents', 'skills'); // skills.sh globa
 // Bundled skills from the lettabot repo itself
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Skills');
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const BUNDLED_SKILLS_DIR = resolve(__dirname, '../../skills'); // lettabot/skills/
 
@@ -87,7 +90,7 @@ export function parseSkillFile(filePath: string): SkillEntry | null {
       clawdbot,
     };
   } catch (e) {
-    console.error(`Failed to parse skill at ${filePath}:`, e);
+    log.error(`Failed to parse skill at ${filePath}:`, e);
     return null;
   }
 }
@@ -115,7 +118,7 @@ export function loadSkillsFromDir(skillsDir: string): SkillEntry[] {
       }
     }
   } catch (e) {
-    console.error(`Failed to load skills from ${skillsDir}:`, e);
+    log.error(`Failed to load skills from ${skillsDir}:`, e);
   }
   
   return skills;
@@ -193,7 +196,7 @@ function installSkillsFromDir(sourceDir: string, targetDir: string): string[] {
       }
     }
   } catch (e) {
-    console.error(`[Skills] Failed to install from ${sourceDir}:`, e);
+    log.error(`Failed to install from ${sourceDir}:`, e);
   }
   
   return installed;
@@ -276,7 +279,7 @@ export function installSkillsToWorkingDir(workingDir: string, config: SkillsInst
   }
   
   if (skillsToInstall.length === 0) {
-    console.log('[Skills] No feature-gated skills to install');
+    log.info('No feature-gated skills to install');
     return;
   }
   
@@ -287,7 +290,7 @@ export function installSkillsToWorkingDir(workingDir: string, config: SkillsInst
   const installed = installSpecificSkills(skillsToInstall, sourceDirs, targetDir);
   
   if (installed.length > 0) {
-    console.log(`[Skills] Installed ${installed.length} skill(s): ${installed.join(', ')}`);
+    log.info(`Installed ${installed.length} skill(s): ${installed.join(', ')}`);
   }
 }
 
@@ -335,6 +338,6 @@ export function installSkillsToAgent(agentId: string, config: SkillsInstallConfi
   const installed = installSpecificSkills(skillsToInstall, sourceDirs, targetDir);
   
   if (installed.length > 0) {
-    console.log(`[Skills] Installed ${installed.length} skill(s) to agent: ${installed.join(', ')}`);
+    log.info(`Installed ${installed.length} skill(s) to agent: ${installed.join(', ')}`);
   }
 }

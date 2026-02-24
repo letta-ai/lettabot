@@ -57,12 +57,15 @@ export async function runSlackWizard(existingConfig?: {
   // Step 1: Create Slack App from Manifest (scopes, events, Socket Mode all pre-configured)
   const createdApp = await stepCreateApp();
   if (!createdApp) return null;
-  
-  // Step 2: Install to Workspace + Get Bot Token
+
+  // Step 2: Configure App Home (enable DM messaging)
+  await stepConfigureAppHome();
+
+  // Step 3: Install to Workspace + Get Bot Token
   const botToken = await stepInstallApp(existingConfig?.botToken);
   if (!botToken) return null;
   
-  // Step 3: Enable Socket Mode + Get App Token
+  // Step 4: Enable Socket Mode + Get App Token
   const appToken = await stepEnableSocketMode(existingConfig?.appToken);
   if (!appToken) return null;
   
@@ -82,7 +85,7 @@ export async function runSlackWizard(existingConfig?: {
 }
 
 async function stepCreateApp(): Promise<boolean> {
-  p.log.step('Step 1/3: Create Slack App from Manifest');
+  p.log.step('Step 1/4: Create Slack App from Manifest');
   
   // Inline manifest for Socket Mode configuration
   const appName = process.env.SLACK_APP_NAME || process.env.LETTA_AGENT_NAME || 'LettaBot';
@@ -99,6 +102,7 @@ oauth_config:
     bot:
       - app_mentions:read
       - chat:write
+      - files:read
       - im:history
       - im:read
       - im:write
@@ -117,7 +121,7 @@ settings:
   p.note(
     'Creates app with everything pre-configured:\n' +
     '  • Socket Mode enabled\n' +
-    '  • 5 bot scopes (app_mentions:read, chat:write, im:*)\n' +
+    '  • 6 bot scopes (app_mentions:read, chat:write, files:read, im:*)\n' +
     '  • 2 event subscriptions (app_mention, message.im)\n\n' +
     'Just review and click "Create"!',
     'One-Click Setup'
@@ -162,7 +166,7 @@ settings:
 }
 
 async function stepEnableSocketMode(existingToken?: string): Promise<string | null> {
-  p.log.step('Step 3/3: Get App-Level Token');
+  p.log.step('Step 4/4: Get App-Level Token');
   
   p.note(
     '1. In the left sidebar, click "Socket Mode"\n' +
@@ -197,6 +201,7 @@ async function stepConfigureScopes(): Promise<boolean> {
     '3. Click "Add an OAuth Scope" for each:\n' +
     '   • app_mentions:read\n' +
     '   • chat:write\n' +
+    '   • files:read\n' +
     '   • im:history\n' +
     '   • im:read\n' +
     '   • im:write',
@@ -244,7 +249,7 @@ async function stepConfigureEvents(): Promise<boolean> {
 }
 
 async function stepConfigureAppHome(): Promise<boolean> {
-  p.log.step('Step 5/6: Configure App Home');
+  p.log.step('Step 2/4: Configure App Home');
   
   p.note(
     '1. Go to "App Home" in left sidebar\n' +
@@ -267,7 +272,7 @@ async function stepConfigureAppHome(): Promise<boolean> {
 }
 
 async function stepInstallApp(existingToken?: string): Promise<string | null> {
-  p.log.step('Step 6/6: Install to Workspace');
+  p.log.step('Step 3/4: Install to Workspace');
   
   p.note(
     '1. Go to "Install App" in left sidebar\n' +

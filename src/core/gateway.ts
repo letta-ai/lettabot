@@ -11,6 +11,9 @@ import type { AgentSession, AgentRouter } from './interfaces.js';
 import type { TriggerContext } from './types.js';
 import type { StreamMsg } from './bot.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Gateway');
 export class LettaGateway implements AgentRouter {
   private agents: Map<string, AgentSession> = new Map();
 
@@ -26,7 +29,7 @@ export class LettaGateway implements AgentRouter {
       throw new Error(`Agent "${name}" already exists`);
     }
     this.agents.set(name, session);
-    console.log(`[Gateway] Added agent: ${name}`);
+    log.info(`Added agent: ${name}`);
   }
 
   /** Get an agent session by name */
@@ -46,29 +49,29 @@ export class LettaGateway implements AgentRouter {
 
   /** Start all agents */
   async start(): Promise<void> {
-    console.log(`[Gateway] Starting ${this.agents.size} agent(s)...`);
+    log.info(`Starting ${this.agents.size} agent(s)...`);
     const results = await Promise.allSettled(
       Array.from(this.agents.entries()).map(async ([name, session]) => {
         await session.start();
-        console.log(`[Gateway] Started: ${name}`);
+        log.info(`Started: ${name}`);
       })
     );
     const failed = results.filter(r => r.status === 'rejected');
     if (failed.length > 0) {
-      console.error(`[Gateway] ${failed.length} agent(s) failed to start`);
+      log.error(`${failed.length} agent(s) failed to start`);
     }
-    console.log(`[Gateway] ${results.length - failed.length}/${results.length} agents started`);
+    log.info(`${results.length - failed.length}/${results.length} agents started`);
   }
 
   /** Stop all agents */
   async stop(): Promise<void> {
-    console.log(`[Gateway] Stopping all agents...`);
+    log.info(`Stopping all agents...`);
     for (const [name, session] of this.agents) {
       try {
         await session.stop();
-        console.log(`[Gateway] Stopped: ${name}`);
+        log.info(`Stopped: ${name}`);
       } catch (e) {
-        console.error(`[Gateway] Failed to stop ${name}:`, e);
+        log.error(`Failed to stop ${name}:`, e);
       }
     }
   }

@@ -6,6 +6,9 @@
 
 import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, type GroupMode } from '../group-mode.js';
 
+import { createLogger } from '../../logger.js';
+
+const log = createLogger('Signal');
 export interface SignalGroupConfig {
   mode?: GroupMode;
   allowedUsers?: string[];
@@ -159,7 +162,7 @@ export function applySignalGroupGating(params: SignalGroupGatingParams): SignalG
           return { shouldProcess: true, mode, wasMentioned: true, method: 'regex' };
         }
       } catch (err) {
-        console.warn(`[Signal] Invalid mention pattern: ${pattern}`, err);
+        log.warn(`Invalid mention pattern: ${pattern}`, err);
       }
     }
   }

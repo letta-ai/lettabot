@@ -10,6 +10,9 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AgentSession } from '../core/interfaces.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Polling');
 /**
  * Parse Gmail accounts from a string (comma-separated) or string array.
  * Deduplicates and trims whitespace.
@@ -67,7 +70,7 @@ export class PollingService {
               : [];
             this.seenEmailIdsByAccount.set(account, new Set(ids));
           }
-          console.log(`[Polling] Loaded seen email IDs for ${this.seenEmailIdsByAccount.size} account(s)`);
+          log.info(`Loaded seen email IDs for ${this.seenEmailIdsByAccount.size} account(s)`);
           return;
         }
 
@@ -77,12 +80,12 @@ export class PollingService {
           const targetAccount = accounts[0];
           if (targetAccount) {
             this.seenEmailIdsByAccount.set(targetAccount, new Set(data.ids));
-            console.log(`[Polling] Migrated legacy seen emails to ${targetAccount}`);
+            log.info(`Migrated legacy seen emails to ${targetAccount}`);
           }
         }
       }
     } catch (e) {
-      console.error('[Polling] Failed to load seen emails:', e);
+      log.error('Failed to load seen emails:', e);
     }
   }
   
@@ -104,7 +107,7 @@ export class PollingService {
         updatedAt: now,
       }, null, 2));
     } catch (e) {
-      console.error('[Polling] Failed to save seen emails:', e);
+      log.error('Failed to save seen emails:', e);
     }
   }
   
@@ -113,7 +116,7 @@ export class PollingService {
    */
   start(): void {
     if (this.intervalId) {
-      console.log('[Polling] Already running');
+      log.info('Already running');
       return;
     }
     
@@ -122,16 +125,16 @@ export class PollingService {
       if (this.config.gmail.accounts.length > 0) {
         enabledPollers.push(`Gmail (${this.config.gmail.accounts.length} account${this.config.gmail.accounts.length === 1 ? '' : 's'})`);
       } else {
-        console.log('[Polling] Gmail enabled but no accounts configured');
+        log.info('Gmail enabled but no accounts configured');
       }
     }
     
     if (enabledPollers.length === 0) {
-      console.log('[Polling] No pollers enabled');
+      log.info('No pollers enabled');
       return;
     }
     
-    console.log(`[Polling] Starting (every ${this.config.intervalMs / 1000}s): ${enabledPollers.join(', ')}`);
+    log.info(`Starting (every ${this.config.intervalMs / 1000}s): ${enabledPollers.join(', ')}`);
     
     // Run immediately on start
     this.poll();
@@ -147,7 +150,7 @@ export class PollingService {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
-      console.log('[Polling] Stopped');
+      log.info('Stopped');
     }
   }
   
@@ -185,7 +188,7 @@ export class PollingService {
       });
       
       if (result.status !== 0) {
-        console.log(`[Polling] Gmail check failed for ${account}: ${result.stderr || 'unknown error'}`);
+        log.info(`Gmail check failed for ${account}: ${result.stderr || 'unknown error'}`);
         return;
       }
       
@@ -216,11 +219,11 @@ export class PollingService {
       
       // Only notify if there are NEW emails we haven't seen before
       if (newEmails.length === 0) {
-        console.log(`[Polling] No new emails for ${account} (${currentEmailIds.size} unread total)`);
+        log.info(`No new emails for ${account} (${currentEmailIds.size} unread total)`);
         return;
       }
       
-      console.log(`[Polling] Found ${newEmails.length} NEW email(s) for ${account}!`);
+      log.info(`Found ${newEmails.length} NEW email(s) for ${account}!`);
       
       // Build output with header + new emails only
       const header = lines[0];
@@ -244,11 +247,11 @@ export class PollingService {
       const response = await this.bot.sendToAgent(message);
       
       // Log response but do NOT auto-deliver (silent mode)
-      console.log(`[Polling] Agent finished (SILENT MODE)`);
-      console.log(`  - Response: ${response?.slice(0, 100)}${(response?.length || 0) > 100 ? '...' : ''}`);
-      console.log(`  - (Response NOT auto-delivered - agent uses lettabot-message CLI)`)
+      log.info(`Agent finished (SILENT MODE)`);
+      log.info(`  - Response: ${response?.slice(0, 100)}${(response?.length || 0) > 100 ? '...' : ''}`);
+      log.info(`  - (Response NOT auto-delivered - agent uses lettabot-message CLI)`)
     } catch (e) {
-      console.error(`[Polling] Gmail error for ${account}:`, e);
+      log.error(`Gmail error for ${account}:`, e);
     }
   }
 }

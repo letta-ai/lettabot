@@ -2,6 +2,20 @@ import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+
+// Mock the logger so log.warn/error route through console (tests spy on console)
+vi.mock('../logger.js', () => ({
+  createLogger: () => ({
+    fatal: (...args: unknown[]) => console.error(...args),
+    error: (...args: unknown[]) => console.error(...args),
+    warn: (...args: unknown[]) => console.warn(...args),
+    info: (...args: unknown[]) => console.log(...args),
+    debug: (...args: unknown[]) => console.log(...args),
+    trace: (...args: unknown[]) => console.log(...args),
+    pino: {},
+  }),
+}));
+
 import { loadAppConfigOrExit } from './runtime.js';
 import { didLoadFail } from './io.js';
 
