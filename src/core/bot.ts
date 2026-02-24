@@ -232,6 +232,9 @@ export class LettaBot implements AgentSession {
     /** For 'code' format: if the first argKey value exceeds this length,
      *  fall back to the next argKey shown as plain text instead. */
     adaptiveCodeThreshold?: number;
+    /** Dynamic header based on tool input. When provided, the return value
+     *  replaces `header` entirely and no argKey detail is appended. */
+    headerFn?: (input: Record<string, unknown>) => string;
   }> = {
     web_search:          { header: 'Searching',      argKeys: ['query'] },
     fetch_webpage:       { header: 'Reading',         argKeys: ['url'] },
@@ -248,6 +251,17 @@ export class LettaBot implements AgentSession {
     note:                { header: 'Taking note',      argKeys: ['title', 'content'] },
     manage_todo:         { header: 'Updating todos',   argKeys: [] },
     TodoWrite:           { header: 'Updating todos',   argKeys: [] },
+    Skill:               {
+      header: 'Loading skill',
+      argKeys: ['skill'],
+      headerFn: (input) => {
+        const skill = input.skill as string | undefined;
+        const command = (input.command as string | undefined) || (input.args as string | undefined);
+        if (command === 'unload') return skill ? `Unloading ${skill}` : 'Unloading skill';
+        if (command === 'refresh') return 'Refreshing skills';
+        return skill ? `Loading ${skill}` : 'Loading skill';
+      },
+    },
   };
 
   /**
@@ -265,6 +279,12 @@ export class LettaBot implements AgentSession {
     const display = LettaBot.TOOL_DISPLAY_MAP[name];
 
     if (display) {
+      // --- Dynamic header path (e.g., Skill tool with load/unload/refresh modes) ---
+      if (display.headerFn) {
+        const input = (streamMsg.toolInput as Record<string, unknown> | undefined) ?? {};
+        return `**${display.headerFn(input)}**`;
+      }
+
       // --- Custom display path ---
       const detail = this.extractToolDetail(display.argKeys, streamMsg, toolResult);
       if (detail) {
@@ -388,15 +408,23 @@ export class LettaBot implements AgentSession {
 
   /**
    * Format reasoning text for channel display, respecting truncation config.
+   * Uses blockquotes on channels that support them (Telegram, Discord, Slack)
+   * and falls back to italic on Signal (which only supports bold/italic/code).
    */
-  private formatReasoningDisplay(text: string): string {
+  private formatReasoningDisplay(text: string, channelId?: string): string {
     const maxChars = this.config.display?.reasoningMaxChars ?? 0;
     const truncated = maxChars > 0 && text.length > maxChars
       ? text.slice(0, maxChars) + '...'
       : text;
-    // Use italic for reasoning -- works across all channels including Signal
-    // (Signal only supports bold/italic/code, no blockquotes)
-    return `**Thinking**\n_${truncated}_`;
+
+    if (channelId === 'signal') {
+      // Signal: no blockquote support, use italic
+      return `**Thinking**\n_${truncated}_`;
+    }
+    // Telegram, Discord, Slack, etc: use blockquote
+    const lines = truncated.split('\n');
+    const quoted = lines.map(line => `> ${line}`).join('\n');
+    return `> **Thinking**\n${quoted}`;
   }
 
   // =========================================================================
@@ -1261,11 +1289,7 @@ export class LettaBot implements AgentSession {
       let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | null = null;
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
-      // Queue of tool_call displays waiting to be flushed.
-      // Parallel tool calls arrive as consecutive tool_call messages -- we
-      // buffer each and flush them when we see a non-tool_call type or when
-      // we get a tool_result that matches a queued call (so we can extract args).
-      const pendingToolDisplays: Array<{ toolCallId: string; msg: any }> = [];
+      // Tool call displays fire immediately on arrival (SDK now accumulates args).
       const msgTypeCounts: Record<string, number> = {};
       
       const finalizeMessage = async () => {
@@ -1334,7 +1358,7 @@ export class LettaBot implements AgentSession {
           if (isSemanticType && lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
             if (this.config.display?.showReasoning && !suppressDelivery) {
               try {
-                const text = this.formatReasoningDisplay(reasoningBuffer);
+                const text = this.formatReasoningDisplay(reasoningBuffer, adapter.id);
                 await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
                 // Note: display messages don't set sentAnyMessage -- they're informational,
                 // not a substitute for an assistant response. Error handling and retry must
@@ -1346,41 +1370,7 @@ export class LettaBot implements AgentSession {
             reasoningBuffer = '';
           }
 
-          // Flush pending tool call displays.
-          // When a tool_result arrives, flush the matching queued call (with the
-          // result content for arg extraction). When any other non-tool_call type
-          // arrives, flush ALL remaining queued calls (without result fallback).
-          if (isSemanticType && pendingToolDisplays.length > 0 && streamMsg.type !== 'tool_call') {
-            if (this.config.display?.showToolCalls && !suppressDelivery) {
-              if (streamMsg.type === 'tool_result' && streamMsg.toolCallId) {
-                // Flush just the matching tool call with its result for arg extraction
-                const idx = pendingToolDisplays.findIndex(p => p.toolCallId === streamMsg.toolCallId);
-                if (idx !== -1) {
-                  try {
-                    const text = this.formatToolCallDisplay(pendingToolDisplays[idx].msg, streamMsg);
-                    await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
-                  } catch (err) {
-                    console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
-                  }
-                  pendingToolDisplays.splice(idx, 1);
-                }
-              } else {
-                // Non-tool_call, non-tool_result: flush all remaining without result fallback
-                for (const pending of pendingToolDisplays) {
-                  try {
-                    const text = this.formatToolCallDisplay(pending.msg);
-                    await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
-                  } catch (err) {
-                    console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
-                  }
-                }
-                pendingToolDisplays.length = 0;
-              }
-            } else {
-              // Display disabled or suppressed -- just clear the queue
-              pendingToolDisplays.length = 0;
-            }
-          }
+          // (Tool call displays fire immediately in the tool_call handler below.)
           
           // Tool loop detection
           const maxToolCalls = this.config.maxToolCalls ?? 100;
@@ -1398,16 +1388,14 @@ export class LettaBot implements AgentSession {
             const tcId = streamMsg.toolCallId?.slice(0, 12) || '?';
             console.log(`[Stream] >>> TOOL CALL: ${tcName} (id: ${tcId})`);
             sawNonAssistantSinceLastUuid = true;
-            // Buffer the tool call for display.
-            // For parallel calls, each gets its own queue entry.
-            // For chunked calls (same ID), replace the existing entry so the
-            // last chunk (with the most complete args) wins.
-            const tcIdForDisplay = streamMsg.toolCallId || '';
-            const existingIdx = pendingToolDisplays.findIndex(p => p.toolCallId === tcIdForDisplay);
-            if (existingIdx !== -1) {
-              pendingToolDisplays[existingIdx] = { toolCallId: tcIdForDisplay, msg: streamMsg };
-            } else {
-              pendingToolDisplays.push({ toolCallId: tcIdForDisplay, msg: streamMsg });
+            // Display tool call immediately (args are now populated by SDK accumulation fix)
+            if (this.config.display?.showToolCalls && !suppressDelivery) {
+              try {
+                const text = this.formatToolCallDisplay(streamMsg);
+                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+              } catch (err) {
+                console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
+              }
             }
           } else if (streamMsg.type === 'tool_result') {
             console.log(`[Stream] <<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
