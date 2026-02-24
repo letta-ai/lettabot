@@ -1,4 +1,32 @@
+import type { InboundMessage } from '../../core/types.js';
+
 export type DidMode = 'open' | 'listen' | 'mention-only' | 'disabled';
+
+/**
+ * AT Protocol source identifiers attached to Bluesky inbound messages.
+ * Used by the adapter to construct replies, reposts, and likes.
+ */
+export interface BlueskySource {
+  uri?: string;
+  collection?: string;
+  cid?: string;
+  rkey?: string;
+  threadRootUri?: string;
+  threadParentUri?: string;
+  threadRootCid?: string;
+  threadParentCid?: string;
+  subjectUri?: string;
+  subjectCid?: string;
+}
+
+/**
+ * Bluesky-specific inbound message carrying AT Protocol source metadata
+ * and display context. Extends InboundMessage without polluting the core type.
+ */
+export interface BlueskyInboundMessage extends InboundMessage {
+  source?: BlueskySource;
+  extraContext?: Record<string, string>;
+}
 
 export interface BlueskyConfig {
   enabled?: boolean;

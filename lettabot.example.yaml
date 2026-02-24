@@ -127,6 +127,9 @@ features:
     enabled: false
     intervalMin: 30
     # skipRecentUserMin: 5   # Skip auto-heartbeats for N minutes after user message (0 disables)
+  # sendFileDir: ./data/outbound    # Restrict <send-file> directive to this directory (default: data/outbound)
+  # sendFileMaxSize: 52428800       # Max file size in bytes for <send-file> (default: 50MB)
+  # sendFileCleanup: false          # Allow <send-file cleanup="true"> to delete files after send (default: false)
   # memfs: true   # Enable memory filesystem (git-backed context repository). Syncs memory blocks to local files.
   # display:
   #   showToolCalls: false       # Show tool invocations in chat (e.g. "Using tool: Read (file_path: ...)")

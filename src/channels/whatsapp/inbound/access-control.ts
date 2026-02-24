@@ -9,6 +9,9 @@ import { isUserAllowed, upsertPairingRequest } from "../../../pairing/store.js";
 import type { DmPolicy } from "../../../pairing/types.js";
 import { normalizePhoneForStorage } from "../../../utils/phone.js";
 
+import { createLogger } from '../../../logger.js';
+
+const log = createLogger('WhatsApp');
 /**
  * Parameters for access control check
  */
@@ -213,7 +216,7 @@ export async function checkInboundAccess(
 
   // Send pairing message only on first contact
   if (created) {
-    console.log(`[WhatsApp] New pairing request from ${userId}: ${code}`);
+    log.info(`New pairing request from ${userId}: ${code}`);
     return {
       allowed: false,
       sendPairingMsg: true,

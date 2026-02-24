@@ -105,6 +105,42 @@ attachments:
 | `server.mode` | `'api'` \| `'docker'` | Connection mode (legacy aliases: `'cloud'`, `'selfhosted'`) |
 | `server.apiKey` | string | API key for Letta API |
 | `server.baseUrl` | string | URL for Docker/custom server (e.g., `http://localhost:8283`) |
+| `server.logLevel` | `'fatal'` \| `'error'` \| `'warn'` \| `'info'` \| `'debug'` \| `'trace'` | Log verbosity. Default: `info`. Env vars `LOG_LEVEL` / `LETTABOT_LOG_LEVEL` override. |
+
+### Logging
+
+LettaBot uses structured logging via [pino](https://getpino.io). In local dev, output is human-readable with colored timestamps and `[Module]` prefixes. In production (Railway/Docker), set `LOG_FORMAT=json` for structured JSON output that works with log aggregation tools.
+
+**Log levels** -- set in config or via environment variable (env takes precedence):
+
+```yaml
+server:
+  logLevel: info    # fatal | error | warn | info | debug | trace
+```
+
+```bash
+LOG_LEVEL=debug npm run dev       # verbose output for debugging
+LOG_FORMAT=json npm start         # structured JSON for production
+```
+
+**Debug logging** -- to enable verbose per-channel debug output (replaces the old `DEBUG_WHATSAPP=1` flag):
+
+```bash
+LOG_LEVEL=debug npm run dev
+```
+
+**Output formats:**
+
+Local dev (default) -- single-line colored output:
+```
+[23:22:37] INFO: [Bot] Session subprocess ready
+[23:22:37] WARN: [WhatsApp] Socket not available for access control
+```
+
+Production (`LOG_FORMAT=json`) -- structured JSON:
+```json
+{"level":30,"time":1234567890,"module":"Bot","msg":"Session subprocess ready"}
+```
 
 ### Docker Server Mode
 
@@ -472,6 +508,21 @@ Precedence: `prompt` (inline YAML) > `HEARTBEAT_PROMPT` (env var) > `promptFile`
 | `features.heartbeat.prompt` | string | _(none)_ | Custom heartbeat prompt text |
 | `features.heartbeat.promptFile` | string | _(none)_ | Path to prompt file (relative to working dir) |
 
+### Send-File Directory
+
+The `<send-file>` [response directive](./directives.md) allows the agent to send files to channels. For security, file paths are restricted to a configurable directory:
+
+```yaml
+features:
+  sendFileDir: ./data/outbound   # Default: agent working directory
+```
+
+Only files inside this directory (and its subdirectories) can be sent. Paths that resolve outside it are blocked. This prevents prompt injection attacks from exfiltrating sensitive files.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.sendFileDir` | string | _(workingDir)_ | Directory that `<send-file>` paths must be inside |
+
 ### Cron Jobs
 
 ```yaml
@@ -513,6 +564,39 @@ LETTABOT_MEMFS=true npm start
 - **Windows paths** ([letta-ai/letta-code#914](https://github.com/letta-ai/letta-code/issues/914)): Path separator issues on Windows have been fixed in Letta Code, but ensure you're on the latest version.
 
 For more details, see the [Letta Code memory documentation](https://docs.letta.com/letta-code/memory/) and the [Context Repositories blog post](https://www.letta.com/blog/context-repositories).
+
+### Display Tool Calls and Reasoning
+
+Show optional "what the agent is doing" messages directly in channel output.
+
+```yaml
+features:
+  display:
+    showToolCalls: true
+    showReasoning: false
+    reasoningMaxChars: 1200
+```
+
+In multi-agent configs, set this per agent:
+
+```yaml
+agents:
+  - name: work-assistant
+    features:
+      display:
+        showToolCalls: true
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.display.showToolCalls` | boolean | `false` | Show tool invocation summaries in chat output |
+| `features.display.showReasoning` | boolean | `false` | Show model reasoning/thinking text in chat output |
+| `features.display.reasoningMaxChars` | number | `0` | Truncate reasoning to N chars (`0` = no limit) |
+
+Notes:
+- Tool call display filters out empty/null input fields and shows the final args for the tool call.
+- Reasoning display uses plain bold/italic markdown for better cross-channel compatibility (including Signal).
+- Display messages are informational; they do not replace the assistant response. Normal retry/error handling still applies if no assistant reply is produced.
 
 ### No-Reply (Opt-Out)
 
@@ -716,5 +800,8 @@ Environment variables override config file values:
 | `OPENAI_API_KEY` | `transcription.apiKey` |
 | `GMAIL_ACCOUNT` | `polling.gmail.account` (comma-separated list allowed) |
 | `POLLING_INTERVAL_MS` | `polling.intervalMs` |
+| `LOG_LEVEL` | `server.logLevel` (fatal/error/warn/info/debug/trace). Overrides config. |
+| `LETTABOT_LOG_LEVEL` | Alias for `LOG_LEVEL` |
+| `LOG_FORMAT` | Set to `json` for structured JSON output (recommended for Railway/Docker) |
 
 See [SKILL.md](../SKILL.md) for complete environment variable reference.

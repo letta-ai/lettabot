@@ -20,6 +20,9 @@ import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { applyTelegramGroupGating } from './telegram-group-gating.js';
 import type { GroupModeConfig } from './group-mode.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Telegram');
 export interface TelegramConfig {
   token: string;
   dmPolicy?: DmPolicy;           // 'pairing' (default), 'allowlist', or 'open'
@@ -85,7 +88,7 @@ export class TelegramAdapter implements ChannelAdapter {
     });
 
     if (!gatingResult.shouldProcess) {
-      console.log(`[Telegram] Group message filtered: ${gatingResult.reason}`);
+      log.info(`Group message filtered: ${gatingResult.reason}`);
       return null;
     }
     const wasMentioned = gatingResult.wasMentioned ?? false;
@@ -141,7 +144,7 @@ export class TelegramAdapter implements ChannelAdapter {
       // No gating when policy is not pairing
       if (dmPolicy !== 'pairing') {
         await approveGroup('telegram', chatId);
-        console.log(`[Telegram] Group ${chatId} auto-approved (dmPolicy=${dmPolicy})`);
+        log.info(`Group ${chatId} auto-approved (dmPolicy=${dmPolicy})`);
         return;
       }
 
@@ -151,14 +154,14 @@ export class TelegramAdapter implements ChannelAdapter {
 
       if (allowed) {
         await approveGroup('telegram', chatId);
-        console.log(`[Telegram] Group ${chatId} approved by paired user ${fromId}`);
+        log.info(`Group ${chatId} approved by paired user ${fromId}`);
       } else {
-        console.log(`[Telegram] Unpaired user ${fromId} tried to add bot to group ${chatId}, leaving`);
+        log.info(`Unpaired user ${fromId} tried to add bot to group ${chatId}, leaving`);
         try {
           await ctx.api.sendMessage(chatId, 'This bot can only be added to groups by paired users.');
           await ctx.api.leaveChat(chatId);
         } catch (err) {
-          console.error('[Telegram] Failed to leave group:', err);
+          log.error('Failed to leave group:', err);
         }
       }
     });
@@ -213,7 +216,7 @@ export class TelegramAdapter implements ChannelAdapter {
       // Only send pairing message on first contact (created=true)
       // or if this is a new message (not just middleware check)
       if (created) {
-        console.log(`[Telegram] New pairing request from ${userId} (${ctx.from?.username || 'no username'}): ${code}`);
+        log.info(`New pairing request from ${userId} (${ctx.from?.username || 'no username'}): ${code}`);
         await ctx.reply(formatPairingMessage(code), { parse_mode: 'Markdown' });
       }
       
@@ -348,10 +351,9 @@ export class TelegramAdapter implements ChannelAdapter {
       const { isGroup, groupName, wasMentioned, isListeningMode } = gating;
 
       // Check if transcription is configured (config or env)
-      const { loadConfig } = await import('../config/index.js');
-      const config = loadConfig();
-      if (!config.transcription?.apiKey && !process.env.OPENAI_API_KEY) {
-        await ctx.reply('Voice messages require OpenAI API key for transcription. See: https://github.com/letta-ai/lettabot#voice-messages');
+      const { isTranscriptionConfigured } = await import('../transcription/index.js');
+      if (!isTranscriptionConfigured()) {
+        await ctx.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages');
         return;
       }
 
@@ -371,10 +373,10 @@ export class TelegramAdapter implements ChannelAdapter {
 
         let messageText: string;
         if (result.success && result.text) {
-          console.log(`[Telegram] Transcribed voice message: "${result.text.slice(0, 50)}..."`);
+          log.info(`Transcribed voice message: "${result.text.slice(0, 50)}..."`);
           messageText = `[Voice message]: ${result.text}`;
         } else {
-          console.error(`[Telegram] Transcription failed: ${result.error}`);
+          log.error(`Transcription failed: ${result.error}`);
           messageText = `[Voice message - transcription failed: ${result.error}]`;
         }
 
@@ -396,7 +398,7 @@ export class TelegramAdapter implements ChannelAdapter {
           });
         }
       } catch (error) {
-        console.error('[Telegram] Error processing voice message:', error);
+        log.error('Error processing voice message:', error);
         // Send error to agent so it can explain
         if (this.onMessage) {
           await this.onMessage({
@@ -453,7 +455,7 @@ export class TelegramAdapter implements ChannelAdapter {
     
     // Error handler
     this.bot.catch((err) => {
-      console.error('[Telegram] Bot error:', err);
+      log.error('Bot error:', err);
     });
   }
   
@@ -466,20 +468,20 @@ export class TelegramAdapter implements ChannelAdapter {
     // be active, causing a 409 Conflict. grammY retries internally but can throw.
     this.bot.start({
       onStart: (botInfo) => {
-        console.log(`[Telegram] Bot started as @${botInfo.username}`);
-        console.log(`[Telegram] DM policy: ${this.config.dmPolicy}`);
+        log.info(`Bot started as @${botInfo.username}`);
+        log.info(`DM policy: ${this.config.dmPolicy}`);
         this.running = true;
       },
     }).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('terminated by other getUpdates request') || msg.includes('409')) {
-        console.error(`[Telegram] getUpdates conflict (likely old instance still polling). Retrying in 5s...`);
+        log.error(`getUpdates conflict (likely old instance still polling). Retrying in 5s...`);
         setTimeout(() => {
           this.running = false;
-          this.start().catch(e => console.error('[Telegram] Retry failed:', e));
+          this.start().catch(e => log.error('Retry failed:', e));
         }, 5000);
       } else {
-        console.error('[Telegram] Bot polling error:', err);
+        log.error('Bot polling error:', err);
       }
     });
     
@@ -530,7 +532,7 @@ export class TelegramAdapter implements ChannelAdapter {
         }
       } catch (e) {
         // If MarkdownV2 fails, send raw text (also split if needed)
-        console.warn('[Telegram] MarkdownV2 send failed, falling back to raw text:', e);
+        log.warn('MarkdownV2 send failed, falling back to raw text:', e);
         const plainChunks = splitFormattedText(chunk);
         for (const plain of plainChunks) {
           const result = await this.bot.api.sendMessage(msg.chatId, plain, {
@@ -566,7 +568,7 @@ export class TelegramAdapter implements ChannelAdapter {
       // "message is not modified" means content is already up-to-date -- harmless, don't retry
       if (e?.description?.includes('message is not modified')) return;
       // If MarkdownV2 fails, fall back to plain text (mirrors sendMessage fallback)
-      console.warn('[Telegram] MarkdownV2 edit failed, falling back to raw text:', e);
+      log.warn('MarkdownV2 edit failed, falling back to raw text:', e);
       await this.bot.api.editMessageText(chatId, Number(messageId), text);
     }
   }
@@ -729,7 +731,7 @@ export class TelegramAdapter implements ChannelAdapter {
       return attachment;
     }
     if (this.attachmentsMaxBytes && size && size > this.attachmentsMaxBytes) {
-      console.warn(`[Telegram] Attachment ${fileName || fileId} exceeds size limit, skipping download.`);
+      log.warn(`Attachment ${fileName || fileId} exceeds size limit, skipping download.`);
       return attachment;
     }
 
@@ -742,9 +744,9 @@ export class TelegramAdapter implements ChannelAdapter {
       const url = `https://api.telegram.org/file/bot${this.config.token}/${remotePath}`;
       await downloadToFile(url, target);
       attachment.localPath = target;
-      console.log(`[Telegram] Attachment saved to ${target}`);
+      log.info(`Attachment saved to ${target}`);
     } catch (err) {
-      console.warn('[Telegram] Failed to download attachment:', err);
+      log.warn('Failed to download attachment:', err);
     }
     return attachment;
   }

@@ -108,7 +108,7 @@ export interface InboundMessage {
   timestamp: Date;
   threadId?: string;      // Slack thread_ts
   messageType?: MessageType; // 'dm', 'group', or 'public' (defaults to 'dm')
-  isGroup?: boolean;      // DEPRECATED: Use messageType instead. True if messageType === 'group'
+  isGroup?: boolean;      // True if group chat (convenience alias for messageType === 'group')
   groupName?: string;     // Group/channel name if applicable
   serverId?: string;      // Server/guild ID (Discord only)
   wasMentioned?: boolean; // Was bot explicitly mentioned? (groups only)
@@ -118,19 +118,6 @@ export interface InboundMessage {
   isBatch?: boolean;                  // Is this a batched group message?
   batchedMessages?: InboundMessage[]; // Original individual messages (for batch formatting)
   isListeningMode?: boolean;          // Listening mode: agent processes for memory but response is suppressed
-  source?: {
-    uri?: string;
-    collection?: string;
-    cid?: string;
-    rkey?: string;
-    threadRootUri?: string;
-    threadParentUri?: string;
-    threadRootCid?: string;
-    threadParentCid?: string;
-    subjectUri?: string;
-    subjectCid?: string;
-  };
-  extraContext?: Record<string, string>; // Extra key/value pairs rendered in Chat Context header
   formatterHints?: FormatterHints;   // Channel-specific formatting hints
 }
 
@@ -193,6 +180,9 @@ export interface BotConfig {
 
   // Security
   allowedUsers?: string[];  // Empty = allow all
+  sendFileDir?: string;     // Restrict <send-file> directive to this directory (default: data/outbound)
+  sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
+  sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete files after send (default: false)
 
   // Conversation routing
   conversationMode?: 'shared' | 'per-channel'; // Default: shared

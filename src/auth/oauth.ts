@@ -7,6 +7,9 @@
 
 import Letta from "@letta-ai/letta-client";
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Oauth');
 export const LETTA_API_URL = "https://api.letta.com";
 // Backward-compatible alias for older imports.
 export const LETTA_CLOUD_API_URL = LETTA_API_URL;
@@ -189,13 +192,13 @@ export async function revokeToken(refreshToken: string): Promise<void> {
     // OAuth 2.0 revoke endpoint should return 200 even if token is already invalid
     if (!response.ok) {
       const error = (await response.json()) as OAuthError;
-      console.error(
+      log.error(
         `Warning: Failed to revoke token: ${error.error_description || error.error}`,
       );
       // Don't throw - we still want to clear local credentials
     }
   } catch (error) {
-    console.error("Warning: Failed to revoke token:", error);
+    log.error("Warning: Failed to revoke token:", error);
     // Don't throw - we still want to clear local credentials
   }
 }

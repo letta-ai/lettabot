@@ -53,6 +53,8 @@ SLACK_APP_TOKEN=xapp-...
 | `HEARTBEAT_TARGET` | - | Target chat (e.g., `telegram:123456`) |
 | `OPENAI_API_KEY` | - | For voice message transcription |
 | `API_HOST` | `0.0.0.0` on Railway | Optional override for API bind address |
+| `LOG_LEVEL` | `info` | Log verbosity (fatal/error/warn/info/debug/trace) |
+| `LOG_FORMAT` | - | Set to `json` for structured JSON output (recommended for Railway) |
 
 ## How It Works
 
@@ -157,6 +159,10 @@ At startup, LettaBot prints a `[Railway] Preflight check` block with:
 - `OK` lines for detected config
 - `WARN` lines for risky settings (for example missing volume)
 - `FAIL` lines for blocking issues (for example missing `LETTA_API_KEY`)
+
+### Reading logs
+
+Set `LOG_FORMAT=json` for structured output compatible with Railway's log search and filtering. Use `LOG_LEVEL=debug` to enable verbose channel-level debug output when diagnosing issues.
 
 ### Data not persisting
 

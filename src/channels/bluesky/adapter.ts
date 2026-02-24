@@ -12,7 +12,7 @@ import type { ChannelAdapter } from '../types.js';
 import type { InboundMessage, OutboundFile, OutboundMessage } from '../../core/types.js';
 import { getDataDir } from '../../utils/paths.js';
 import { loadConfig } from '../../config/io.js';
-import type { BlueskyConfig, DidMode, JetstreamEvent } from './types.js';
+import type { BlueskyConfig, BlueskyInboundMessage, BlueskySource, DidMode, JetstreamEvent } from './types.js';
 import {
   CURSOR_BACKTRACK_US,
   DEFAULT_APPVIEW_URL,
@@ -397,7 +397,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     const allowReplies = this.config.autoReply === true;
     const shouldReply = allowReplies && isPost && didMode === 'open';
 
-    const inbound: InboundMessage = {
+    const inbound: BlueskyInboundMessage = {
       channel: 'bluesky',
       chatId: did,
       userId: did,
@@ -446,7 +446,7 @@ export class BlueskyAdapter implements ChannelAdapter {
   private formatCommit(payload: JetstreamEvent, handle?: string): {
     text: string;
     messageId?: string;
-    source?: InboundMessage['source'];
+    source?: BlueskySource;
     extraContext: Record<string, string>;
   } {
     const commit = payload.commit || {};
@@ -454,7 +454,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     const collection = commit.collection || 'unknown';
     const uri = buildAtUri(payload.did, commit.collection, commit.rkey);
 
-    const source: InboundMessage['source'] = {
+    const source: BlueskySource = {
       uri,
       collection: commit.collection,
       cid: commit.cid,
@@ -1147,7 +1147,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     const recordType = record ? readString(record.$type) : undefined;
     const timestamp = notification.indexedAt ? new Date(notification.indexedAt) : new Date();
 
-    const source: InboundMessage['source'] = {
+    const source: BlueskySource = {
       uri: notification.uri,
       cid: notification.cid,
     };
@@ -1222,7 +1222,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       && recordType === 'app.bsky.feed.post'
       && (didMode === 'open' || (didMode === 'mention-only' && notification.reason === 'mention'));
 
-    const inbound: InboundMessage = {
+    const inbound: BlueskyInboundMessage = {
       channel: 'bluesky',
       chatId: authorDid,
       userId: authorDid,

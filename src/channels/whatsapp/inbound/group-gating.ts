@@ -83,8 +83,8 @@ export function applyGroupGating(params: GroupGatingParams): GroupGatingResult {
   if (!isGroupAllowed(groupsConfig, [groupJid])) {
     return {
       shouldProcess: false,
-      mode: 'open',
-      reason: 'group-not-in-allowlist',
+      mode: 'disabled',
+      reason: groupsConfig ? 'group-not-in-allowlist' : 'no-groups-config',
     };
   }
 
