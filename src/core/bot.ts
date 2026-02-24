@@ -1342,7 +1342,7 @@ export class LettaBot implements AgentSession {
               || (trimmed.startsWith('<actions') && !trimmed.includes('</actions>'));
             // Strip any completed <actions> block from the streaming text
             const streamText = stripActionsBlock(response).trim();
-            if (canEdit && !mayBeHidden && !suppressDelivery && streamText.length > 0 && Date.now() - lastUpdate > 500) {
+            if (canEdit && !mayBeHidden && !suppressDelivery && !this.cancelledKeys.has(convKey) && streamText.length > 0 && Date.now() - lastUpdate > 500) {
               try {
                 const prefixedStream = this.prefixResponse(streamText);
                 if (messageId) {
@@ -1442,6 +1442,18 @@ export class LettaBot implements AgentSession {
         adapter.stopTypingIndicator?.(msg.chatId)?.catch(() => {});
       }
       lap('stream complete');
+
+      // If cancelled, skip all post-stream delivery (directives, final send, no-response handling)
+      if (this.cancelledKeys.has(convKey)) {
+        // If a streaming edit already sent partial text, delete it so the user doesn't see a ghost
+        if (messageId) {
+          try {
+            await adapter.editMessage(msg.chatId, messageId, '(Run cancelled.)');
+          } catch { /* best effort */ }
+        }
+        console.log(`[Bot] Skipping post-stream delivery -- cancelled (key=${convKey})`);
+        return;
+      }
 
       // Parse and execute XML directives (e.g. <actions><react emoji="eyes" /></actions>)
       if (response.trim()) {
