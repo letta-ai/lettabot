@@ -1723,6 +1723,15 @@ export class LettaBot implements AgentSession {
     if (!acquired) return;
     if (convKey !== 'shared') {
       this.processingKeys.delete(convKey);
+      // Heartbeats/sendToAgent may hold a channel key while user messages for
+      // that same key queue up. Kick the keyed worker after unlock so queued
+      // messages are not left waiting for another inbound message to arrive.
+      const queue = this.keyedQueues.get(convKey);
+      if (queue && queue.length > 0) {
+        this.processKeyedQueue(convKey).catch(err =>
+          log.error(`Fatal error in processKeyedQueue(${convKey}) after lock release:`, err)
+        );
+      }
     } else {
       this.processing = false;
       this.processQueue();

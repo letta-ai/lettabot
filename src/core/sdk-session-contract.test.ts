@@ -251,4 +251,33 @@ describe('SDK session contract', () => {
     const opts = vi.mocked(createSession).mock.calls[0][1];
     expect(opts).not.toHaveProperty('memfs');
   });
+
+  it('restarts a keyed queue after non-shared lock release when backlog exists', async () => {
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+    const botInternal = bot as any;
+
+    botInternal.processingKeys.add('slack');
+    botInternal.keyedQueues.set('slack', [
+      {
+        msg: {
+          userId: 'u1',
+          channel: 'slack',
+          chatId: 'C123',
+          text: 'queued while locked',
+          timestamp: new Date(),
+          isGroup: false,
+        },
+        adapter: {},
+      },
+    ]);
+
+    const processSpy = vi.spyOn(botInternal, 'processKeyedQueue').mockResolvedValue(undefined);
+    botInternal.releaseLock('slack', true);
+
+    expect(botInternal.processingKeys.has('slack')).toBe(false);
+    expect(processSpy).toHaveBeenCalledWith('slack');
+  });
 });
