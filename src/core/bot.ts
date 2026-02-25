@@ -5,15 +5,16 @@
  */
 
 import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { extname, resolve, join } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
 import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval, getLatestRunError } from '../tools/letta-api.js';
-import { installSkillsToAgent, withAgentSkillsOnPath } from '../skills/loader.js';
+import { installSkillsToAgent, withAgentSkillsOnPath, getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
 import { loadMemoryBlocks } from './memory.js';
@@ -780,6 +781,59 @@ export class LettaBot implements AgentSession {
           }
         } catch (err) {
           console.warn('[Bot] Directive send-file failed:', err instanceof Error ? err.message : err);
+        }
+      }
+
+      if (directive.type === 'voice') {
+        if (!isVoiceMemoConfigured()) {
+          log.warn('Directive voice skipped: no TTS credentials configured');
+          continue;
+        }
+        if (typeof adapter.sendFile !== 'function') {
+          log.warn(`Directive voice skipped: ${adapter.name} does not support sendFile`);
+          continue;
+        }
+
+        // Find lettabot-tts in agent's skill dirs
+        const agentId = this.store.agentId;
+        const skillDirs = agentId ? getAgentSkillExecutableDirs(agentId) : [];
+        const ttsPath = skillDirs
+          .map(dir => join(dir, 'lettabot-tts'))
+          .find(p => existsSync(p));
+
+        if (!ttsPath) {
+          log.warn('Directive voice skipped: lettabot-tts not found in skill dirs');
+          continue;
+        }
+
+        try {
+          const outputPath = await new Promise<string>((resolve, reject) => {
+            execFile(ttsPath, [directive.text], {
+              cwd: this.config.workingDir,
+              env: { ...process.env, LETTABOT_WORKING_DIR: this.config.workingDir },
+              timeout: 30_000,
+            }, (err, stdout, stderr) => {
+              if (err) {
+                reject(new Error(stderr?.trim() || err.message));
+              } else {
+                resolve(stdout.trim());
+              }
+            });
+          });
+
+          await adapter.sendFile({
+            chatId,
+            filePath: outputPath,
+            kind: 'audio',
+            threadId,
+          });
+          acted = true;
+          log.info(`Directive: sent voice memo (${directive.text.length} chars)`);
+
+          // Clean up generated file
+          try { await unlink(outputPath); } catch {}
+        } catch (err) {
+          log.warn('Directive voice failed:', err instanceof Error ? err.message : err);
         }
       }
     }

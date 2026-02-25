@@ -157,6 +157,37 @@ describe('parseDirectives', () => {
     expect(result.cleanText).toBe('');
     expect(result.directives).toEqual([]);
   });
+
+  it('parses voice directive with text content', () => {
+    const result = parseDirectives('<actions><voice>Hello from a voice memo</voice></actions>');
+    expect(result.cleanText).toBe('');
+    expect(result.directives).toEqual([{ type: 'voice', text: 'Hello from a voice memo' }]);
+  });
+
+  it('parses voice directive with text after actions block', () => {
+    const result = parseDirectives('<actions><voice>Here is a voice note</voice></actions>\nHere\'s the audio!');
+    expect(result.cleanText).toBe("Here's the audio!");
+    expect(result.directives).toEqual([{ type: 'voice', text: 'Here is a voice note' }]);
+  });
+
+  it('parses voice directive with multiline text', () => {
+    const result = parseDirectives('<actions><voice>Line one.\nLine two.</voice></actions>');
+    expect(result.cleanText).toBe('');
+    expect(result.directives).toEqual([{ type: 'voice', text: 'Line one.\nLine two.' }]);
+  });
+
+  it('ignores empty voice directive', () => {
+    const result = parseDirectives('<actions><voice>  </voice></actions>');
+    expect(result.cleanText).toBe('');
+    expect(result.directives).toEqual([]);
+  });
+
+  it('parses voice and react directives together', () => {
+    const result = parseDirectives('<actions><react emoji="🎤" /><voice>Check this out</voice></actions>');
+    expect(result.directives).toHaveLength(2);
+    expect(result.directives[0]).toEqual({ type: 'react', emoji: '🎤' });
+    expect(result.directives[1]).toEqual({ type: 'voice', text: 'Check this out' });
+  });
 });
 
 describe('stripActionsBlock', () => {

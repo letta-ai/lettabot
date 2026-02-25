@@ -356,6 +356,7 @@ export function formatMessageEnvelope(
     `- To skip replying: \`<no-reply/>\``,
     `- To perform actions: wrap in \`<actions>\` at the start of your response`,
     `  Example: \`<actions><react emoji="thumbsup" /></actions>Your text here\``,
+    `- To send a voice memo: \`<actions><voice>Your message here</voice></actions>\``,
   ];
   sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
 

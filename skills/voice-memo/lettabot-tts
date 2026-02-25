@@ -31,7 +31,13 @@ PROVIDER="${TTS_PROVIDER:-elevenlabs}"
 mkdir -p "$OUTBOUND_DIR"
 
 # Use collision-safe random filenames when output path is not explicitly provided.
-OUTPUT="${2:-$(mktemp "${OUTBOUND_DIR}/voice-XXXXXX.ogg")}"
+if [ -n "${2:-}" ]; then
+  OUTPUT="$2"
+else
+  # Clean stale voice files older than 1 hour
+  find "$OUTBOUND_DIR" -name 'voice-*.ogg' -mmin +60 -delete 2>/dev/null || true
+  OUTPUT=$(mktemp "${OUTBOUND_DIR}/voice-XXXXXXXXXX.ogg")
+fi
 
 # ---------------------------------------------------------------------------
 # Provider: ElevenLabs
@@ -42,7 +48,7 @@ tts_elevenlabs() {
     exit 1
   fi
 
-  local voice_id="${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}"
+  local voice_id="${ELEVENLABS_VOICE_ID:-onwK4e9ZLuTAKqWW03F9}"
   local model_id="${ELEVENLABS_MODEL_ID:-eleven_multilingual_v2}"
 
   local http_code

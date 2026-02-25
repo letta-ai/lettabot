@@ -30,8 +30,13 @@ export interface SendFileDirective {
   cleanup?: boolean;
 }
 
+export interface VoiceDirective {
+  type: 'voice';
+  text: string;
+}
+
 // Union type — extend with more directive types later
-export type Directive = ReactDirective | SendFileDirective;
+export type Directive = ReactDirective | SendFileDirective | VoiceDirective;
 
 export interface ParseResult {
   cleanText: string;
@@ -49,6 +54,12 @@ const ACTIONS_BLOCK_REGEX = /^\s*<actions>([\s\S]*?)<\/actions>/;
  * Captures the tag name and the full attributes string.
  */
 const CHILD_DIRECTIVE_REGEX = /<(react|send-file)\b([^>]*)\/>/g;
+
+/**
+ * Match content-bearing directive tags (open + close) inside the actions block.
+ * Currently: <voice>text to synthesize</voice>
+ */
+const VOICE_DIRECTIVE_REGEX = /<voice>([\s\S]*?)<\/voice>/g;
 
 /**
  * Parse a single attribute string like: emoji="eyes" message="123"
@@ -106,6 +117,15 @@ function parseChildDirectives(block: string): Directive[] {
         ...(kind ? { kind } : {}),
         ...(cleanup ? { cleanup } : {}),
       });
+    }
+  }
+
+  // Content-bearing directives: <voice>...</voice>
+  VOICE_DIRECTIVE_REGEX.lastIndex = 0;
+  while ((match = VOICE_DIRECTIVE_REGEX.exec(normalizedBlock)) !== null) {
+    const text = match[1].trim();
+    if (text) {
+      directives.push({ type: 'voice', text });
     }
   }
 

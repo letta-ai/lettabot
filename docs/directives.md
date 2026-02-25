@@ -64,6 +64,22 @@ Sends a file or image to the same channel/chat as the triggering message.
 - File size is limited to `sendFileMaxSize` (default: 50MB).
 - The `cleanup` attribute only works when `sendFileCleanup: true` is set in the agent's features config (disabled by default).
 
+### `<voice>`
+
+Generates speech from text via TTS and sends it as a native voice note. No tool calls needed.
+
+```xml
+<voice>Hey, here's a quick voice reply!</voice>
+```
+
+The text content is sent to the configured TTS provider (see [TTS Configuration](./configuration.md#text-to-speech-tts-configuration)), converted to audio, and delivered as a voice note. Audio is automatically cleaned up after sending.
+
+- Requires `tts` to be configured in `lettabot.yaml`
+- Renders as native voice bubbles on Telegram and WhatsApp
+- Discord and Slack receive a playable audio attachment
+- On Telegram, falls back to audio file if voice messages are restricted by Premium privacy settings
+- Can be combined with text: any text after the `</actions>` block is sent as a normal message alongside the voice note
+
 ### `<no-reply/>`
 
 Suppresses response delivery entirely. The agent's text is discarded.

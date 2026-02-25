@@ -1,61 +1,34 @@
 ---
 name: voice-memo
-description: Reply with voice memos using ElevenLabs text-to-speech. Use when the user sends a voice message, asks for an audio reply, or when a voice response would be more natural.
+description: Reply with voice memos using text-to-speech. Use when the user sends a voice message, asks for an audio reply, or when a voice response would be more natural.
 ---
 
 # Voice Memo Responses
 
-Generate voice memos using ElevenLabs TTS and send them as native voice notes.
-
-## Requirements
-
-Set `TTS_PROVIDER` to choose the TTS backend (default: `elevenlabs`).
-
-**ElevenLabs** (`TTS_PROVIDER=elevenlabs`):
-- `ELEVENLABS_API_KEY` -- required
-- `ELEVENLABS_VOICE_ID` -- optional (default: `21m00Tcm4TlvDq8ikWAM` / Rachel)
-- `ELEVENLABS_MODEL_ID` -- optional (default: `eleven_multilingual_v2`)
-
-**OpenAI** (`TTS_PROVIDER=openai`):
-- `OPENAI_API_KEY` -- required (usually already set)
-- `OPENAI_TTS_VOICE` -- optional (default: `alloy`)
-- `OPENAI_TTS_MODEL` -- optional (default: `tts-1`)
+Generate voice memos using TTS and send them as native voice notes.
 
 ## Usage
 
-`lettabot-tts` is on PATH and callable directly. It generates an OGG Opus audio file and prints the output path.
-
-```bash
-lettabot-tts "Your message here"
-# prints: /tmp/lettabot/data/outbound/voice-ABC123.ogg
-```
-
-### Responsive mode
-
-Generate audio, then send via directive:
-
-```bash
-OUTPUT=$(lettabot-tts "Your message here")
-```
-
-Then respond with:
+Use the `<voice>` directive to send voice memos. No tool calls needed:
 
 ```
 <actions>
-  <send-file path="<output path>" kind="audio" cleanup="true" />
+  <voice>Hey, here's a quick update on that thing we discussed.</voice>
 </actions>
 ```
 
-Or with accompanying text:
+With accompanying text:
 
 ```
 <actions>
-  <send-file path="<output path>" kind="audio" cleanup="true" />
+  <voice>Here's the summary as audio.</voice>
 </actions>
-Here's a voice reply!
+And here it is in text form too!
 ```
 
 ### Silent mode (heartbeats, cron)
+
+For background tasks that need to send voice without a user message context:
 
 ```bash
 OUTPUT=$(lettabot-tts "Your message here") || exit 1
