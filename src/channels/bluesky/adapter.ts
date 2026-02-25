@@ -188,17 +188,11 @@ export class BlueskyAdapter implements ChannelAdapter {
         throw new Error('Reply post returned no URI.');
       }
       const isLast = i === chunks.length - 1;
-      if (!isLast && !post?.cid) {
-        throw new Error('Reply post returned no CID.');
-      }
       lastUri = postUri;
-      if (!isLast && post?.cid) {
-        currentTarget = {
-          uri: postUri,
-          cid: post.cid,
-          rootUri,
-          rootCid,
-        };
+      if (!isLast) {
+        const cid = post?.cid || await this.resolveRecordCid(postUri);
+        if (!cid) throw new Error('Reply post returned no CID for intermediate chunk.');
+        currentTarget = { uri: postUri, cid, rootUri, rootCid };
       }
     }
     return { messageId: lastUri };
@@ -1258,8 +1252,9 @@ export class BlueskyAdapter implements ChannelAdapter {
     await this.onMessage?.(inbound);
   }
 
-  private async createReply(text: string, target: { uri: string; cid?: string; rootUri?: string; rootCid?: string }): Promise<{ uri?: string; cid?: string } | undefined> {
+  private async createReply(text: string, target: { uri: string; cid?: string; rootUri?: string; rootCid?: string }, retried = false): Promise<{ uri?: string; cid?: string } | undefined> {
     await this.ensureSession();
+    if (!this.accessJwt) throw new Error('[Bluesky] ensureSession() completed but accessJwt is not set.');
 
     const rootUri = target.rootUri || target.uri;
     const rootCid = target.rootCid || target.cid;
@@ -1293,11 +1288,12 @@ export class BlueskyAdapter implements ChannelAdapter {
     });
 
     if (res.status === 401) {
+      if (retried) throw new Error('[Bluesky] createReply: still unauthorized after re-auth.');
       this.accessJwt = undefined;
       this.sessionDid = undefined;
       this.accessJwtExpiresAt = undefined;
       await this.ensureSession();
-      return this.createReply(text, target);
+      return this.createReply(text, target, true);
     }
 
     if (!res.ok) {
@@ -1370,10 +1366,6 @@ export class BlueskyAdapter implements ChannelAdapter {
           auth?: {
             did?: string;
             handle?: string;
-            accessJwt?: string;
-            refreshJwt?: string;
-            accessJwtExpiresAt?: number;
-            refreshJwtExpiresAt?: number;
           };
           notificationsCursor?: string;
         }>;
@@ -1389,14 +1381,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       if (entry?.wantedCollections && entry.wantedCollections.length > 0) {
         this.config.wantedCollections = entry.wantedCollections;
       }
-      if (entry?.auth?.accessJwt) {
-        this.accessJwt = entry.auth.accessJwt;
-        this.accessJwtExpiresAt = entry.auth.accessJwtExpiresAt || decodeJwtExp(entry.auth.accessJwt);
-      }
-      if (entry?.auth?.refreshJwt) {
-        this.refreshJwt = entry.auth.refreshJwt;
-        this.refreshJwtExpiresAt = entry.auth.refreshJwtExpiresAt || decodeJwtExp(entry.auth.refreshJwt);
-      }
+      // JWTs are not persisted; session DID and handle are non-secret and safe to store
       if (entry?.auth?.did) {
         this.sessionDid = entry.auth.did;
       }
@@ -1443,14 +1428,11 @@ export class BlueskyAdapter implements ChannelAdapter {
       const agents = typeof existing.agents === 'object' && existing.agents
         ? { ...existing.agents }
         : {};
-      const auth = (this.accessJwt || this.refreshJwt || this.sessionDid)
+      // Only persist non-secret session metadata; JWTs are re-acquired on startup
+      const auth = this.sessionDid
         ? {
             did: this.sessionDid,
             handle: this.config.handle,
-            accessJwt: this.accessJwt,
-            refreshJwt: this.refreshJwt,
-            accessJwtExpiresAt: this.accessJwtExpiresAt,
-            refreshJwtExpiresAt: this.refreshJwtExpiresAt,
           }
         : undefined;
 

@@ -1,6 +1,6 @@
 # LettaBot Configuration
 # Copy this to lettabot.yaml and fill in your values.
-# 
+#
 # Server modes:
 # - 'api': Use Letta API (api.letta.com) with API key
 # - 'docker': Use a Docker/custom Letta server
@@ -54,11 +54,24 @@ agents:
       # whatsapp:
       #   enabled: true
       #   selfChat: false
-
-conversations:
-  mode: shared        # shared (single conversation) or per-channel
-  heartbeat: last-active
-  # perChannel: ["bluesky"]  # Always use a separate conversation for these channels
+      # bluesky:
+      #   enabled: true
+      #   # autoReply: true  # Enable auto-replies (default: false / read-only)
+      #   wantedDids: ["did:plc:..."]
+      #   # groups:
+      #   #   "*": { mode: listen }
+      #   #   "did:plc:...": { mode: open }
+      #   # lists:
+      #   #   "at://did:plc:.../app.bsky.graph.list/xyz": { mode: listen }
+      #   # wantedCollections: ["app.bsky.feed.post"]
+      #   # notifications:
+      #   #   enabled: true
+      #   #   intervalSec: 60
+      #   #   reasons: ["mention", "reply", "quote"]
+      #   # jetstreamUrl: wss://jetstream2.us-east.bsky.network/subscribe
+      #   # handle: you.bsky.social
+      #   # appPassword: xxxx-xxxx-xxxx-xxxx
+      #   # serviceUrl: https://bsky.social
 
 # BYOK Providers (optional, api mode only)
 # These will be synced to Letta API on startup
@@ -71,55 +84,6 @@ conversations:
 #     name: lc-openai
 #     type: openai
 #     apiKey: sk-YOUR-OPENAI-KEY
-
-<<<<<<< HEAD
-channels:
-  telegram:
-    enabled: true
-    token: YOUR-TELEGRAM-BOT-TOKEN
-    dmPolicy: pairing  # 'pairing', 'allowlist', or 'open'
-    # groupPollIntervalMin: 5       # Batch interval for group messages (default: 10)
-    # instantGroups: ["-100123456"] # Groups that bypass batching
-    # Group access + response mode:
-    # groups:
-    #   "*": { mode: listen }                      # Observe all groups; only reply when @mentioned
-    #   "-1001234567890": { mode: open }           # This group gets all messages
-    #   "-1009876543210": { mode: mention-only }   # Drop unless @mentioned
-    # mentionPatterns: ["hey bot"]                  # Additional regex patterns for mention detection
-  # slack:
-  #   enabled: true
-  #   appToken: xapp-...
-  #   botToken: xoxb-...
-  #   groups:
-  #     "*": { mode: listen }
-  #     "C0123456789": { mode: open }
-  # discord:
-  #   enabled: true
-  #   token: YOUR-DISCORD-BOT-TOKEN
-  #   groups:
-  #     "*": { mode: listen }
-  #     "1234567890123456789": { mode: open }  # Server or channel ID
-  # whatsapp:
-  #   enabled: true
-  #   selfChat: false
-  # bluesky:
-  #   enabled: true
-  #   # autoReply: true  # Enable auto-replies (default: false / read-only)
-  #   wantedDids: ["did:plc:..."]
-  #   # groups:
-  #   #   "*": { mode: listen }
-  #   #   "did:plc:...": { mode: open }
-  #   # lists:
-  #   #   "at://did:plc:.../app.bsky.graph.list/xyz": { mode: listen }
-  #   # wantedCollections: ["app.bsky.feed.post"]
-  #   # notifications:
-  #   #   enabled: true
-  #   #   intervalSec: 60
-  #   #   reasons: ["mention", "reply", "quote"]
-  #   # jetstreamUrl: wss://jetstream2.us-east.bsky.network/subscribe
-  #   # handle: you.bsky.social
-  #   # appPassword: xxxx-xxxx-xxxx-xxxx
-  #   # serviceUrl: https://bsky.social
 
 features:
   cron: false
@@ -134,7 +98,7 @@ features:
   # display:
   #   showToolCalls: false       # Show tool invocations in chat (e.g. "Using tool: Read (file_path: ...)")
   #   showReasoning: false       # Show agent reasoning/thinking in chat
-  #   reasoningMaxChars: 0        # Truncate reasoning to N chars (0 = no limit, default)
+  #   reasoningMaxChars: 0       # Truncate reasoning to N chars (0 = no limit, default)
 
 # Attachment handling (defaults to 20MB if omitted)
 # attachments:
