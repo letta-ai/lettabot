@@ -24,12 +24,14 @@ TEXT="${1:?Usage: lettabot-tts <text> [output_path]}"
 # same base directory that <send-file> directives resolve from. This means
 # $(pwd) and LETTABOT_WORKING_DIR produce paths in the correct coordinate space.
 OUTBOUND_DIR="${LETTABOT_WORKING_DIR:-$(pwd)}/data/outbound"
-OUTPUT="${2:-${OUTBOUND_DIR}/voice-$(date +%s).ogg}"
 
 PROVIDER="${TTS_PROVIDER:-elevenlabs}"
 
 # Ensure output directory exists
-mkdir -p "$(dirname "$OUTPUT")"
+mkdir -p "$OUTBOUND_DIR"
+
+# Use collision-safe random filenames when output path is not explicitly provided.
+OUTPUT="${2:-$(mktemp "${OUTBOUND_DIR}/voice-XXXXXX.ogg")}"
 
 # ---------------------------------------------------------------------------
 # Provider: ElevenLabs

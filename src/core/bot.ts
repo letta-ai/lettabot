@@ -13,7 +13,7 @@ import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
 import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval, getLatestRunError } from '../tools/letta-api.js';
-import { installSkillsToAgent, addSkillsToPath } from '../skills/loader.js';
+import { installSkillsToAgent, withAgentSkillsOnPath } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
 import { loadMemoryBlocks } from './memory.js';
@@ -870,6 +870,7 @@ export class LettaBot implements AgentSession {
 
     const opts = this.baseSessionOptions(this.sessionCanUseTool);
     let session: Session;
+    let sessionAgentId: string | undefined;
 
     // In per-channel mode, look up per-key conversation ID.
     // In shared mode (key === "shared"), use the legacy single conversationId.
@@ -879,12 +880,15 @@ export class LettaBot implements AgentSession {
 
     if (convId) {
       process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
-      if (this.store.agentId) addSkillsToPath(this.store.agentId);
+      if (this.store.agentId) {
+        installSkillsToAgent(this.store.agentId, this.config.skills);
+        sessionAgentId = this.store.agentId;
+      }
       session = resumeSession(convId, opts);
     } else if (this.store.agentId) {
       process.env.LETTA_AGENT_ID = this.store.agentId;
       installSkillsToAgent(this.store.agentId, this.config.skills);
-      addSkillsToPath(this.store.agentId);
+      sessionAgentId = this.store.agentId;
       session = createSession(this.store.agentId, opts);
     } else {
       // Create new agent -- persist immediately so we don't orphan it on later failures
@@ -902,7 +906,7 @@ export class LettaBot implements AgentSession {
         updateAgentName(newAgentId, this.config.agentName).catch(() => {});
       }
       installSkillsToAgent(newAgentId, this.config.skills);
-      addSkillsToPath(newAgentId);
+      sessionAgentId = newAgentId;
 
       session = createSession(newAgentId, opts);
     }
@@ -910,7 +914,14 @@ export class LettaBot implements AgentSession {
     // Initialize eagerly so the subprocess is ready before the first send()
     log.info(`Initializing session subprocess (key=${key})...`);
     try {
-      await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
+      if (sessionAgentId) {
+        await withAgentSkillsOnPath(
+          sessionAgentId,
+          () => this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`),
+        );
+      } else {
+        await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
+      }
       log.info(`Session subprocess ready (key=${key})`);
     } catch (error) {
       // Close immediately so failed initialization cannot leak a subprocess.

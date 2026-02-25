@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import {
   getAgentSkillsDir,
   FEATURE_SKILLS,
+  isVoiceMemoConfigured,
 } from './loader.js';
 
 describe('skills loader', () => {
@@ -51,6 +52,23 @@ describe('skills loader', () => {
       expect(FEATURE_SKILLS.google).toBeDefined();
       expect(FEATURE_SKILLS.google).toContain('gog');
       expect(FEATURE_SKILLS.google).toContain('google');
+    });
+
+    it('has tts feature with voice-memo skill', () => {
+      expect(FEATURE_SKILLS.tts).toBeDefined();
+      expect(FEATURE_SKILLS.tts).toContain('voice-memo');
+    });
+  });
+
+  describe('isVoiceMemoConfigured', () => {
+    it('defaults to elevenlabs and requires ELEVENLABS_API_KEY', () => {
+      expect(isVoiceMemoConfigured({})).toBe(false);
+      expect(isVoiceMemoConfigured({ ELEVENLABS_API_KEY: 'test' })).toBe(true);
+    });
+
+    it('supports openai provider and requires OPENAI_API_KEY', () => {
+      expect(isVoiceMemoConfigured({ TTS_PROVIDER: 'openai' })).toBe(false);
+      expect(isVoiceMemoConfigured({ TTS_PROVIDER: 'openai', OPENAI_API_KEY: 'test' })).toBe(true);
     });
   });
 

@@ -248,7 +248,7 @@ export async function sendWhatsAppFile(
   if (file.kind === "image") {
     payload = { image: { url: file.filePath }, caption };
   } else if (file.kind === "audio") {
-    payload = { audio: { url: file.filePath }, ptt: true, ...(caption ? { caption } : {}) };
+    payload = { audio: { url: file.filePath }, ptt: true };
   } else {
     payload = { document: { url: file.filePath }, mimetype: "application/octet-stream", caption, fileName };
   }

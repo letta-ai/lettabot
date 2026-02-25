@@ -27,7 +27,7 @@ Set `TTS_PROVIDER` to choose the TTS backend (default: `elevenlabs`).
 
 ```bash
 lettabot-tts "Your message here"
-# prints: /tmp/lettabot/data/outbound/voice-1709012345.ogg
+# prints: /tmp/lettabot/data/outbound/voice-ABC123.ogg
 ```
 
 ### Responsive mode

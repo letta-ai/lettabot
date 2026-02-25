@@ -77,6 +77,14 @@ describe('parseDirectives', () => {
     ]);
   });
 
+  it('parses send-file directive with audio kind', () => {
+    const result = parseDirectives('<actions><send-file path="voice.ogg" kind="audio" /></actions>');
+    expect(result.cleanText).toBe('');
+    expect(result.directives).toEqual([
+      { type: 'send-file', path: 'voice.ogg', kind: 'audio' },
+    ]);
+  });
+
   it('parses send-file directive with cleanup attribute', () => {
     const result = parseDirectives('<actions><send-file path="/tmp/report.pdf" cleanup="true" /></actions>');
     expect(result.cleanText).toBe('');
