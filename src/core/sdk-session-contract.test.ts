@@ -11,7 +11,17 @@ vi.mock('@letta-ai/letta-code-sdk', () => ({
   imageFromURL: vi.fn(),
 }));
 
+vi.mock('../tools/letta-api.js', () => ({
+  updateAgentName: vi.fn(),
+  getPendingApprovals: vi.fn(),
+  rejectApproval: vi.fn(),
+  cancelRuns: vi.fn(),
+  recoverOrphanedConversationApproval: vi.fn(),
+  getLatestRunError: vi.fn().mockResolvedValue(null),
+}));
+
 import { createSession, resumeSession } from '@letta-ai/letta-code-sdk';
+import { getLatestRunError } from '../tools/letta-api.js';
 import { LettaBot } from './bot.js';
 
 function deferred<T>() {
@@ -351,5 +361,91 @@ describe('SDK session contract', () => {
 
     expect(botInternal.processingKeys.has('slack')).toBe(false);
     expect(processSpy).toHaveBeenCalledWith('slack');
+  });
+
+  it('enriches opaque error via stream error event in sendToAgent', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'error', message: 'Bad request to Anthropic: context too long', stopReason: 'llm_api_error' };
+          yield { type: 'result', success: false, error: 'error' };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    await expect(bot.sendToAgent('trigger error')).rejects.toThrow(
+      'Bad request to Anthropic: context too long'
+    );
+  });
+
+  it('enriches error from run metadata when stream error is opaque', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: false, error: 'error', conversationId: 'conv-123' };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-123',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(getLatestRunError).mockResolvedValueOnce({
+      message: 'INTERNAL_SERVER_ERROR: Bad request to Anthropic: Error code: 400',
+      stopReason: 'llm_api_error',
+      isApprovalError: false,
+    });
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    await expect(bot.sendToAgent('trigger error')).rejects.toThrow(
+      'INTERNAL_SERVER_ERROR: Bad request to Anthropic: Error code: 400'
+    );
+    expect(getLatestRunError).toHaveBeenCalledWith('agent-contract-test', 'conv-123');
+  });
+
+  it('falls back to msg.error when no enrichment is available', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: false, error: 'timeout' };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(getLatestRunError).mockResolvedValueOnce(null);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    await expect(bot.sendToAgent('trigger error')).rejects.toThrow(
+      'Agent run failed: timeout'
+    );
   });
 });

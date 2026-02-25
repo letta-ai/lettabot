@@ -2052,9 +2052,17 @@ export class LettaBot implements AgentSession {
       
       try {
         let response = '';
+        let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | undefined;
         for await (const msg of stream()) {
           if (msg.type === 'tool_call') {
             this.syncTodoToolCall(msg);
+          }
+          if (msg.type === 'error') {
+            lastErrorDetail = {
+              message: (msg as any).message || 'unknown',
+              stopReason: (msg as any).stopReason || 'error',
+              apiError: (msg as any).apiError,
+            };
           }
           if (msg.type === 'assistant') {
             response += msg.content || '';
@@ -2062,8 +2070,19 @@ export class LettaBot implements AgentSession {
           if (msg.type === 'result') {
             // TODO(letta-code-sdk#31): Remove once SDK handles HITL approvals in bypassPermissions mode.
             if (msg.success === false || msg.error) {
+              // Enrich opaque errors from run metadata (mirrors processMessage logic).
+              const convId = typeof msg.conversationId === 'string' ? msg.conversationId : undefined;
+              if (this.store.agentId &&
+                  (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
+                const enriched = await getLatestRunError(this.store.agentId, convId);
+                if (enriched) {
+                  lastErrorDetail = { message: enriched.message, stopReason: enriched.stopReason };
+                }
+              }
+              const errMsg = lastErrorDetail?.message || msg.error || 'error';
+              const errReason = lastErrorDetail?.stopReason || msg.error || 'error';
               const detail = typeof msg.result === 'string' ? msg.result.trim() : '';
-              throw new Error(detail ? `Agent run failed: ${msg.error || 'error'} (${detail})` : `Agent run failed: ${msg.error || 'error'}`);
+              throw new Error(detail ? `Agent run failed: ${errReason} (${errMsg})` : `Agent run failed: ${errReason} -- ${errMsg}`);
             }
             break;
           }
