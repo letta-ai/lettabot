@@ -90,6 +90,7 @@ export async function withAgentSkillsOnPath<T>(agentId: string, fn: () => Promis
 
     if (prepend.length > 0) {
       process.env.PATH = [...prepend, ...originalParts].join(delimiter);
+      log.info(`Added ${prepend.length} skill dir(s) to PATH: ${prepend.join(', ')}`);
     }
 
     try {

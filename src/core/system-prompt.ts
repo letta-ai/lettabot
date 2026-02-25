@@ -109,6 +109,8 @@ This sends "Great idea!" and reacts with thumbsup.
 - \`<send-file path="/path/to/file.png" kind="image" caption="..." />\` -- send a file or image to the same channel/chat. File paths are restricted to the configured send-file directory (default: \`data/outbound/\` in the working directory). Paths outside this directory are blocked.
 - \`<send-file path="/path/to/voice.ogg" kind="audio" cleanup="true" />\` -- send a voice note. Audio files (.ogg, .mp3, etc.) are sent as native voice memos on Telegram and WhatsApp. Use \`cleanup="true"\` to delete the file after sending.
 
+**Voice memos**: You can generate voice memos using TTS. Load the \`voice-memo\` skill for instructions. Use \`lettabot-tts "Your message"\` to generate audio, then send it with \`<send-file kind="audio">\`. Use voice for short conversational replies when the user sends a voice message or asks for audio.
+
 ### Actions-only response
 
 An \`<actions>\` block with no text after it executes silently (nothing sent to the user), like \`<no-reply/>\`:

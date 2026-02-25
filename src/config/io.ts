@@ -352,6 +352,36 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
     env.ATTACHMENTS_MAX_AGE_DAYS = String(config.attachments.maxAgeDays);
   }
 
+  // TTS (text-to-speech for voice memos)
+  if (config.tts?.provider) {
+    env.TTS_PROVIDER = config.tts.provider;
+  }
+  if (config.tts?.apiKey) {
+    // Set the provider-specific key based on provider
+    const provider = config.tts.provider || 'elevenlabs';
+    if (provider === 'elevenlabs') {
+      env.ELEVENLABS_API_KEY = config.tts.apiKey;
+    } else if (provider === 'openai') {
+      env.OPENAI_API_KEY = config.tts.apiKey;
+    }
+  }
+  if (config.tts?.voiceId) {
+    const provider = config.tts.provider || 'elevenlabs';
+    if (provider === 'elevenlabs') {
+      env.ELEVENLABS_VOICE_ID = config.tts.voiceId;
+    } else if (provider === 'openai') {
+      env.OPENAI_TTS_VOICE = config.tts.voiceId;
+    }
+  }
+  if (config.tts?.model) {
+    const provider = config.tts.provider || 'elevenlabs';
+    if (provider === 'elevenlabs') {
+      env.ELEVENLABS_MODEL_ID = config.tts.model;
+    } else if (provider === 'openai') {
+      env.OPENAI_TTS_MODEL = config.tts.model;
+    }
+  }
+
   // API server (server.api is canonical, top-level api is deprecated fallback)
   const apiConfig = config.server.api ?? config.api;
   if (apiConfig?.port !== undefined) {

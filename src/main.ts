@@ -791,7 +791,9 @@ async function main() {
       },
     };
   });
-  printStartupBanner(bannerAgents);
+  if (!process.env.LETTABOT_NO_BANNER) {
+    printStartupBanner(bannerAgents);
+  }
   
   // Shutdown
   const shutdown = async () => {

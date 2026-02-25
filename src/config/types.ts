@@ -177,8 +177,11 @@ export interface LettaBotConfig {
     google?: GoogleConfig;
   };
 
-  // Transcription (voice messages)
+  // Transcription (inbound voice messages)
   transcription?: TranscriptionConfig;
+
+  // Text-to-speech (outbound voice memos)
+  tts?: TtsConfig;
 
   // Attachment handling
   attachments?: {
@@ -193,6 +196,13 @@ export interface LettaBotConfig {
     host?: string;       // Default: 127.0.0.1 (secure). Use '0.0.0.0' for Docker/Railway
     corsOrigin?: string; // CORS origin. Default: same-origin only
   };
+}
+
+export interface TtsConfig {
+  provider?: 'elevenlabs' | 'openai';  // Default: 'elevenlabs'
+  apiKey?: string;                      // Falls back to ELEVENLABS_API_KEY or OPENAI_API_KEY env var
+  voiceId?: string;                     // ElevenLabs voice ID or OpenAI voice name
+  model?: string;                       // Model ID (provider-specific defaults)
 }
 
 export interface TranscriptionConfig {

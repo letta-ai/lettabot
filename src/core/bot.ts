@@ -1654,7 +1654,11 @@ export class LettaBot implements AgentSession {
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
           const preview = JSON.stringify(streamMsg).slice(0, 300);
-          log.info(`type=${streamMsg.type} ${preview}`);
+          if (streamMsg.type === 'reasoning' || streamMsg.type === 'assistant') {
+            log.debug(`type=${streamMsg.type} ${preview}`);
+          } else {
+            log.info(`type=${streamMsg.type} ${preview}`);
+          }
           
           // stream_event is a low-level streaming primitive (partial deltas), not a
           // semantic type change. Skip it for type-transition logic so it doesn't
@@ -1668,6 +1672,7 @@ export class LettaBot implements AgentSession {
 
           // Flush reasoning buffer when type changes away from reasoning
           if (isSemanticType && lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
+            log.info(`Reasoning: ${reasoningBuffer.trim()}`);
             if (this.config.display?.showReasoning && !suppressDelivery) {
               try {
                 const reasoning = this.formatReasoningDisplay(reasoningBuffer, adapter.id);
