@@ -4,6 +4,7 @@
  *
  * Usage:
  *   lettabot-bluesky post --text "Hello" --agent <name>
+ *   lettabot-bluesky post --text "Hello" --image data/outbound/photo.jpg --alt "Alt text" --agent <name>
  *   lettabot-bluesky post --reply-to <at://...> --text "Reply" --agent <name>
  *   lettabot-bluesky post --text "Long..." --threaded --agent <name>
  *   lettabot-bluesky like <at://...> --agent <name>
@@ -23,9 +24,26 @@
  *   lettabot-bluesky mutes --limit 50 --cursor <cursor> --agent <name>
  */
 
+import { readFileSync, statSync } from 'node:fs';
+import { resolve, extname, join } from 'node:path';
 import { loadAppConfigOrExit, normalizeAgents } from '../../config/index.js';
 import type { AgentConfig, BlueskyConfig } from '../../config/types.js';
+import { isPathAllowed } from '../../core/bot.js';
+import { createLogger } from '../../logger.js';
 import { DEFAULT_APPVIEW_URL, DEFAULT_SERVICE_URL, POST_MAX_CHARS } from './constants.js';
+
+const log = createLogger('Bluesky');
+
+// Bluesky supports JPEG, PNG, GIF, and WebP; max 976,560 bytes per image (AT Protocol lexicon limit)
+const BLUESKY_IMAGE_MIMES: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+};
+const BLUESKY_IMAGE_MAX_BYTES = 976_560;
+const BLUESKY_IMAGE_MAX_COUNT = 4;
 
 function usage(): void {
   console.log(`\nUsage:\n  lettabot-bluesky post --text "Hello" --agent <name>\n  lettabot-bluesky post --reply-to <at://...> --text "Reply" --agent <name>\n  lettabot-bluesky post --text "Long..." --threaded --agent <name>\n  lettabot-bluesky like <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --text "Quote" --agent <name> [--threaded]\n  lettabot-bluesky profile <did|handle> --agent <name>\n  lettabot-bluesky thread <at://...> --agent <name>\n  lettabot-bluesky author-feed <did|handle> --limit 25 --cursor <cursor> --agent <name>\n  lettabot-bluesky list-feed <listUri> --limit 25 --cursor <cursor> --agent <name>\n  lettabot-bluesky search --query \"...\" --limit 25 --cursor <cursor> --agent <name>\n  lettabot-bluesky notifications --limit 25 --cursor <cursor> --reasons mention,reply --agent <name>\n  lettabot-bluesky block <did|handle> --agent <name>\n  lettabot-bluesky unblock <blockUri> --agent <name>\n  lettabot-bluesky mute <did|handle> --agent <name>\n  lettabot-bluesky unmute <did|handle> --agent <name>\n  lettabot-bluesky blocks --limit 50 --cursor <cursor> --agent <name>\n  lettabot-bluesky mutes --limit 50 --cursor <cursor> --agent <name>\n`);
@@ -238,11 +256,88 @@ async function createRecord(
   return res.json() as Promise<{ uri?: string; cid?: string }>;
 }
 
+async function uploadBlob(
+  serviceUrl: string,
+  accessJwt: string,
+  filePath: string,
+  mimeType: string,
+): Promise<{ blob: unknown }> {
+  const data = readFileSync(filePath);
+  const res = await fetch(`${serviceUrl}/xrpc/com.atproto.repo.uploadBlob`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessJwt}`,
+      'Content-Type': mimeType,
+    },
+    body: data,
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`uploadBlob failed (${mimeType}): ${detail}`);
+  }
+  const result = await res.json() as { blob?: unknown };
+  if (!result.blob) throw new Error('uploadBlob response missing blob field');
+  return { blob: result.blob };
+}
+
+type ImageFeatures = { sendFileDir?: string; sendFileMaxSize?: number } | undefined;
+type ImageEntry = { path: string; alt: string };
+
+async function validateAndUploadImages(
+  serviceUrl: string,
+  accessJwt: string,
+  entries: ImageEntry[],
+  features: ImageFeatures,
+): Promise<Array<{ image: unknown; alt: string }>> {
+  if (entries.length === 0) return [];
+  if (entries.length > BLUESKY_IMAGE_MAX_COUNT) {
+    throw new Error(`Too many images: max ${BLUESKY_IMAGE_MAX_COUNT}, got ${entries.length}`);
+  }
+
+  const workingDir = process.cwd();
+  const allowedDir = resolve(workingDir, features?.sendFileDir ?? join('data', 'outbound'));
+  const maxSize = Math.min(features?.sendFileMaxSize ?? 50 * 1024 * 1024, BLUESKY_IMAGE_MAX_BYTES);
+
+  const result: Array<{ image: unknown; alt: string }> = [];
+  for (const { path: imagePath, alt } of entries) {
+    const resolvedPath = resolve(workingDir, imagePath);
+
+    if (!await isPathAllowed(resolvedPath, allowedDir)) {
+      throw new Error(`Image path is outside the allowed directory (${allowedDir}): ${imagePath}`);
+    }
+
+    let size: number;
+    try {
+      size = statSync(resolvedPath).size;
+    } catch {
+      throw new Error(`Image file not found or not readable: ${imagePath}`);
+    }
+
+    if (size > maxSize) {
+      throw new Error(`Image too large (${size} bytes, max ${maxSize}): ${imagePath}`);
+    }
+
+    const imageExt = extname(resolvedPath).toLowerCase();
+    const mimeType = BLUESKY_IMAGE_MIMES[imageExt];
+    if (!mimeType) {
+      throw new Error(
+        `Unsupported image type "${imageExt}" for ${imagePath}. Supported: ${Object.keys(BLUESKY_IMAGE_MIMES).join(', ')}`,
+      );
+    }
+
+    const { blob } = await uploadBlob(serviceUrl, accessJwt, resolvedPath, mimeType);
+    result.push({ image: blob, alt });
+  }
+  return result;
+}
+
 async function handlePost(
   bluesky: BlueskyConfig,
+  features: ImageFeatures,
   text: string,
   replyTo?: string,
   threaded = false,
+  images: ImageEntry[] = [],
 ): Promise<void> {
   const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
   const appViewUrl = (bluesky.appViewUrl || DEFAULT_APPVIEW_URL).replace(/\/+$/, '');
@@ -256,6 +351,12 @@ async function handlePost(
   if (!chunks[0] || !chunks[0].trim()) {
     throw new Error('Refusing to post empty text.');
   }
+
+  if (images.length > 0 && threaded && chunks.length > 1) {
+    log.warn('Images will only be attached to the first post in the thread.');
+  }
+
+  const imageBlobs = await validateAndUploadImages(serviceUrl, session.accessJwt, images, features);
 
   let rootUri: string | undefined;
   let rootCid: string | undefined;
@@ -292,6 +393,10 @@ async function handlePost(
         root: { uri: rootUri, cid: rootCid },
         parent: { uri: parentUri, cid: parentCid },
       };
+    }
+
+    if (i === 0 && imageBlobs.length > 0) {
+      record.embed = { $type: 'app.bsky.embed.images', images: imageBlobs };
     }
 
     const created = await createRecord(serviceUrl, session.accessJwt, session.did, 'app.bsky.feed.post', record);
@@ -655,6 +760,7 @@ async function main(): Promise<void> {
   let limit: number | undefined;
   let reasons: string[] | undefined;
   let priority = false;
+  const imageEntries: ImageEntry[] = [];
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -692,13 +798,20 @@ async function main(): Promise<void> {
       i++;
     } else if (arg === '--priority') {
       priority = true;
+    } else if ((arg === '--image' || arg === '-i') && next) {
+      imageEntries.push({ path: next, alt: '' });
+      i++;
+    } else if ((arg === '--alt' || arg === '-a') && next) {
+      if (imageEntries.length === 0) throw new Error('--alt requires a preceding --image');
+      imageEntries[imageEntries.length - 1].alt = next;
+      i++;
     } else if (arg === '--quote' && next) {
       uriArg = next;
       i++;
     } else if (!arg.startsWith('-') && !uriArg) {
       uriArg = arg;
     } else {
-      console.warn(`Unknown arg: ${arg}`);
+      log.warn(`Unknown arg: ${arg}`);
     }
   }
 
@@ -709,7 +822,7 @@ async function main(): Promise<void> {
 
   if (command === 'post') {
     if (!text) throw new Error('Missing --text');
-    await handlePost(bluesky, text, replyTo || undefined, threaded);
+    await handlePost(bluesky, agent.features, text, replyTo || undefined, threaded, imageEntries);
     return;
   }
 

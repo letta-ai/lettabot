@@ -20,6 +20,8 @@ Bluesky is **read-only by default** in Lettabot. To post, reply, like, or repost
 lettabot-bluesky post --text "Hello" --agent <name>
 lettabot-bluesky post --reply-to at://did:plc:.../app.bsky.feed.post/... --text "Reply" --agent <name>
 lettabot-bluesky post --text "Long..." --threaded --agent <name>
+lettabot-bluesky post --text "Check this out" --image data/outbound/photo.jpg --alt "Alt text" --agent <name>
+lettabot-bluesky post --text "Gallery" --image data/outbound/a.jpg --alt "First" --image data/outbound/b.jpg --alt "Second" --agent <name>
 lettabot-bluesky like at://did:plc:.../app.bsky.feed.post/... --agent <name>
 lettabot-bluesky repost at://did:plc:.../app.bsky.feed.post/... --agent <name>
 lettabot-bluesky repost at://did:plc:.../app.bsky.feed.post/... --text "Quote" --agent <name> [--threaded]
@@ -68,3 +70,4 @@ Notes:
 - `--threaded` splits text into a reply thread (explicit opt‑in).
 - Replies and quotes require the target `at://` URI (included in incoming Bluesky messages).
 - The CLI uses the Bluesky app password from your `lettabot.yaml` for the selected agent.
+- **Images**: up to 4 per post; supported formats: JPEG, PNG, GIF, WebP. Use `--image <path>` (up to 4×) and `--alt <text>` after each image for alt text. `--alt` applies to the immediately preceding `--image`. Images must be inside the configured `sendFileDir` (default: `data/outbound`). Images attach to the first post only when `--threaded`.
