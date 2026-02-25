@@ -24,6 +24,7 @@ import {
 } from './config/index.js';
 import { isLettaApiUrl } from './utils/server.js';
 import { getDataDir, getWorkingDir, hasRailwayVolume } from './utils/paths.js';
+import { parseCsvList, parseNonNegativeNumber } from './utils/parse.js';
 import { createLogger, setLogLevel } from './logger.js';
 
 const log = createLogger('Config');
@@ -483,20 +484,6 @@ function createGroupBatcher(
 }
 
 // Skills are installed to agent-scoped directory when agent is created (see core/bot.ts)
-
-function parseCsvList(raw: string): string[] {
-  return raw
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-}
-
-function parseNonNegativeNumber(raw: string | undefined): number | undefined {
-  if (!raw) return undefined;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
-  return parsed;
-}
 
 function ensureRequiredTools(tools: string[]): string[] {
   const out = [...tools];
