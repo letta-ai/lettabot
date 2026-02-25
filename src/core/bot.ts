@@ -13,7 +13,7 @@ import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
 import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval, getLatestRunError } from '../tools/letta-api.js';
-import { installSkillsToAgent } from '../skills/loader.js';
+import { installSkillsToAgent, addSkillsToPath } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
 import { loadMemoryBlocks } from './memory.js';
@@ -117,10 +117,16 @@ const IMAGE_FILE_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff',
 ]);
 
-/** Infer whether a file is an image or generic file based on extension. */
-export function inferFileKind(filePath: string): 'image' | 'file' {
+const AUDIO_FILE_EXTENSIONS = new Set([
+  '.ogg', '.opus', '.mp3', '.m4a', '.wav', '.aac', '.flac',
+]);
+
+/** Infer whether a file is an image, audio, or generic file based on extension. */
+export function inferFileKind(filePath: string): 'image' | 'file' | 'audio' {
   const ext = extname(filePath).toLowerCase();
-  return IMAGE_FILE_EXTENSIONS.has(ext) ? 'image' : 'file';
+  if (IMAGE_FILE_EXTENSIONS.has(ext)) return 'image';
+  if (AUDIO_FILE_EXTENSIONS.has(ext)) return 'audio';
+  return 'file';
 }
 
 /**
@@ -873,9 +879,12 @@ export class LettaBot implements AgentSession {
 
     if (convId) {
       process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
+      if (this.store.agentId) addSkillsToPath(this.store.agentId);
       session = resumeSession(convId, opts);
     } else if (this.store.agentId) {
       process.env.LETTA_AGENT_ID = this.store.agentId;
+      installSkillsToAgent(this.store.agentId, this.config.skills);
+      addSkillsToPath(this.store.agentId);
       session = createSession(this.store.agentId, opts);
     } else {
       // Create new agent -- persist immediately so we don't orphan it on later failures
@@ -893,6 +902,7 @@ export class LettaBot implements AgentSession {
         updateAgentName(newAgentId, this.config.agentName).catch(() => {});
       }
       installSkillsToAgent(newAgentId, this.config.skills);
+      addSkillsToPath(newAgentId);
 
       session = createSession(newAgentId, opts);
     }
@@ -2114,7 +2124,7 @@ export class LettaBot implements AgentSession {
     options: {
       text?: string;
       filePath?: string;
-      kind?: 'image' | 'file';
+      kind?: 'image' | 'file' | 'audio';
     }
   ): Promise<string | undefined> {
     const adapter = this.channels.get(channelId);

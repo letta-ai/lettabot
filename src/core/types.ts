@@ -108,7 +108,7 @@ export interface OutboundFile {
   filePath: string;
   caption?: string;
   threadId?: string;
-  kind?: 'image' | 'file';
+  kind?: 'image' | 'file' | 'audio';
 }
 
 /**

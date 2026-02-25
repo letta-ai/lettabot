@@ -147,7 +147,7 @@ async function sendViaApi(
   options: {
     text?: string;
     filePath?: string;
-    kind?: 'image' | 'file';
+    kind?: 'image' | 'file' | 'audio';
   }
 ): Promise<void> {
   const apiUrl = process.env.LETTABOT_API_URL || 'http://localhost:8080';
@@ -249,7 +249,7 @@ async function sendToChannel(channel: string, chatId: string, text: string): Pro
 async function sendCommand(args: string[]): Promise<void> {
   let text = '';
   let filePath = '';
-  let kind: 'image' | 'file' | undefined = undefined;
+  let kind: 'image' | 'file' | 'audio' | undefined = undefined;
   let channel = '';
   let chatId = '';
   const fileCapableChannels = new Set(['telegram', 'slack', 'discord', 'whatsapp']);
@@ -267,6 +267,8 @@ async function sendCommand(args: string[]): Promise<void> {
       i++;
     } else if (arg === '--image') {
       kind = 'image';
+    } else if (arg === '--voice') {
+      kind = 'audio';
     } else if ((arg === '--channel' || arg === '-c' || arg === '-C') && next) {
       channel = next;
       i++;
@@ -332,6 +334,7 @@ Send options:
   --text, -t <text>       Message text (or caption when used with --file)
   --file, -f <path>       File path (optional, for file messages)
   --image                 Treat file as image (vs document)
+  --voice                 Treat file as voice note (sends as native voice memo)
   --channel, -c <name>    Channel: telegram, slack, whatsapp, discord (default: last used)
   --chat, --to <id>       Chat/conversation ID (default: last messaged)
 
@@ -347,6 +350,9 @@ Examples:
 
   # Send to specific WhatsApp chat
   lettabot-message send --file report.pdf --text "Report attached" --channel whatsapp --chat "+1555@s.whatsapp.net"
+
+  # Send voice note
+  lettabot-message send --file voice.ogg --voice
 
   # Short form
   lettabot-message send -t "Done!" -f doc.pdf -c telegram

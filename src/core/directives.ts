@@ -26,7 +26,7 @@ export interface SendFileDirective {
   type: 'send-file';
   path: string;
   caption?: string;
-  kind?: 'image' | 'file';
+  kind?: 'image' | 'file' | 'audio';
   cleanup?: boolean;
 }
 
@@ -95,7 +95,7 @@ function parseChildDirectives(block: string): Directive[] {
       const path = attrs.path || attrs.file;
       if (!path) continue;
       const caption = attrs.caption || attrs.text;
-      const kind = attrs.kind === 'image' || attrs.kind === 'file'
+      const kind = attrs.kind === 'image' || attrs.kind === 'file' || attrs.kind === 'audio'
         ? attrs.kind
         : undefined;
       const cleanup = attrs.cleanup === 'true';

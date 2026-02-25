@@ -539,6 +539,7 @@ async function main() {
   }
   log.info(`Data directory: ${dataDir}`);
   log.info(`Working directory: ${globalConfig.workingDir}`);
+  process.env.LETTABOT_WORKING_DIR = globalConfig.workingDir;
   
   // Normalize config to agents array
   const agents = normalizeAgents(yamlConfig);

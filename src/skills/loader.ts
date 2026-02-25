@@ -31,6 +31,32 @@ export function getAgentSkillsDir(agentId: string): string {
 }
 
 /**
+ * Add agent skill directories to PATH so scripts (e.g. lettabot-tts) are
+ * callable by name from the session subprocess. Idempotent -- only mutates
+ * PATH once per agent.
+ */
+const _skillPathsAdded = new Set<string>();
+export function addSkillsToPath(agentId: string): void {
+  const skillsDir = getAgentSkillsDir(agentId);
+  if (_skillPathsAdded.has(skillsDir) || !existsSync(skillsDir)) return;
+  _skillPathsAdded.add(skillsDir);
+
+  // Only add dirs that contain at least one executable (non-.md) file
+  const skillDirs = readdirSync(skillsDir, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .map(d => join(skillsDir, d.name))
+    .filter(dir => {
+      try {
+        return readdirSync(dir).some(f => !f.endsWith('.md'));
+      } catch { return false; }
+    });
+
+  if (skillDirs.length > 0) {
+    process.env.PATH = [...skillDirs, process.env.PATH].join(':');
+  }
+}
+
+/**
  * Check if a binary exists on PATH
  */
 export function hasBinary(name: string): boolean {
@@ -160,6 +186,9 @@ export function loadAllSkills(agentId?: string | null): SkillEntry[] {
   
   // Global skills
   dirs.push(GLOBAL_SKILLS_DIR);
+  
+  // Bundled skills (ship with the project in skills/)
+  dirs.push(BUNDLED_SKILLS_DIR);
   
   // Agent-scoped skills (middle priority)
   if (agentId) {

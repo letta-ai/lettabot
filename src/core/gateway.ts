@@ -114,7 +114,7 @@ export class LettaGateway implements AgentRouter {
   async deliverToChannel(
     channelId: string,
     chatId: string,
-    options: { text?: string; filePath?: string; kind?: 'image' | 'file' }
+    options: { text?: string; filePath?: string; kind?: 'image' | 'file' | 'audio' }
   ): Promise<string | undefined> {
     // Try each agent until one owns the channel
     for (const [name, session] of this.agents) {

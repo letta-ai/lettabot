@@ -48,13 +48,14 @@ Sends a file or image to the same channel/chat as the triggering message.
 ```xml
 <send-file path="/tmp/report.pdf" caption="Report attached" />
 <send-file path="/tmp/photo.png" kind="image" caption="Look!" />
+<send-file path="/tmp/voice.ogg" kind="audio" cleanup="true" />
 <send-file path="/tmp/temp-export.csv" cleanup="true" />
 ```
 
 **Attributes:**
 - `path` / `file` (required) -- Local file path on the LettaBot server
 - `caption` / `text` (optional) -- Caption text for the file
-- `kind` (optional) -- `image` or `file` (defaults to auto-detect based on extension)
+- `kind` (optional) -- `image`, `file`, or `audio` (defaults to auto-detect based on extension). Audio files (.ogg, .opus, .mp3, .m4a, .wav, .aac, .flac) are auto-detected as `audio`.
 - `cleanup` (optional) -- `true` to delete the file after sending (default: false)
 
 **Security:**
@@ -88,13 +89,13 @@ Backslash-escaped quotes (common when LLMs generate XML inside a JSON context) a
 
 ## Channel Support
 
-| Channel   | `addReaction` | `send-file` | Notes |
-|-----------|:---:|:---:|-------|
-| Telegram  | Yes | Yes | Reactions limited to Telegram's [allowed reaction set](https://core.telegram.org/bots/api#reactiontype). |
-| Slack     | Yes | Yes | Reactions use Slack emoji names (`:thumbsup:` style). |
-| Discord   | Yes | Yes | Custom server emoji not yet supported. |
-| WhatsApp  | No  | Yes | Reactions skipped with a warning. |
-| Signal    | No  | No  | Directive skipped with a warning. |
+| Channel   | `addReaction` | `send-file` | `kind="audio"` | Notes |
+|-----------|:---:|:---:|:---:|-------|
+| Telegram  | Yes | Yes | Voice note (`sendVoice`) | Falls back to `sendAudio` if voice messages are restricted by Telegram Premium privacy settings. |
+| Slack     | Yes | Yes | Audio attachment | Reactions use Slack emoji names (`:thumbsup:` style). |
+| Discord   | Yes | Yes | Audio attachment | Custom server emoji not yet supported. |
+| WhatsApp  | No  | Yes | Voice note (PTT) | Sent with `ptt: true` for native voice bubble. |
+| Signal    | No  | No  | No | Directive skipped with a warning. |
 
 When a channel doesn't implement `addReaction`, the directive is silently skipped and a warning is logged. This never blocks message delivery.
 

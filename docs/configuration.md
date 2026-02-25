@@ -803,5 +803,11 @@ Environment variables override config file values:
 | `LOG_LEVEL` | `server.logLevel` (fatal/error/warn/info/debug/trace). Overrides config. |
 | `LETTABOT_LOG_LEVEL` | Alias for `LOG_LEVEL` |
 | `LOG_FORMAT` | Set to `json` for structured JSON output (recommended for Railway/Docker) |
+| `TTS_PROVIDER` | TTS backend: `elevenlabs` (default) or `openai` |
+| `ELEVENLABS_API_KEY` | API key for ElevenLabs TTS |
+| `ELEVENLABS_VOICE_ID` | ElevenLabs voice ID (default: `21m00Tcm4TlvDq8ikWAM` / Rachel) |
+| `ELEVENLABS_MODEL_ID` | ElevenLabs model (default: `eleven_multilingual_v2`) |
+| `OPENAI_TTS_VOICE` | OpenAI TTS voice (default: `alloy`) |
+| `OPENAI_TTS_MODEL` | OpenAI TTS model (default: `tts-1`) |
 
 See [SKILL.md](../SKILL.md) for complete environment variable reference.
