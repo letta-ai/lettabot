@@ -123,8 +123,10 @@ describe('BlueskyAdapter', () => {
     const text = Array.from({ length: 120 }, () => 'word').join(' ');
     const chunks = (adapter as any).splitPostText(text) as string[];
     expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.every(chunk => Array.from(chunk).length <= 300)).toBe(true);
-    const total = chunks.reduce((sum, chunk) => sum + Array.from(chunk).length, 0);
+    const segmenter = new Intl.Segmenter();
+    const graphemeCount = (s: string) => [...segmenter.segment(s)].length;
+    expect(chunks.every(chunk => graphemeCount(chunk) <= 300)).toBe(true);
+    const total = chunks.reduce((sum, chunk) => sum + graphemeCount(chunk), 0);
     expect(total).toBeGreaterThan(300);
   });
 });

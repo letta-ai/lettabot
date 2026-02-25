@@ -99,7 +99,7 @@ function resolveBlueskyConfig(agent: AgentConfig): BlueskyConfig {
     throw new Error(`Bluesky not configured for agent ${agent.name}.`);
   }
   if (!config.handle || !config.appPassword) {
-    throw new Error('BLUESKY handle/appPassword missing in config.');
+    throw new Error('Bluesky handle/app password not configured for this agent.');
   }
   return config;
 }
