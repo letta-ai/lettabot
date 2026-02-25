@@ -7,6 +7,7 @@
 
 import { spawnSync } from 'node:child_process';
 import * as p from '@clack/prompts';
+import type { BlueskyConfig } from '../config/types.js';
 
 // ============================================================================
 // Channel Metadata
@@ -565,7 +566,7 @@ export async function setupSignal(existing?: any): Promise<any> {
   };
 }
 
-export async function setupBluesky(existing?: any): Promise<any> {
+export async function setupBluesky(existing?: BlueskyConfig): Promise<BlueskyConfig> {
   p.note(
     'Uses the Bluesky Jetstream WebSocket feed (read-only).\n' +
     'Provide one or more DID(s) to filter the stream.\n' +
