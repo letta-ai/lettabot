@@ -171,7 +171,7 @@ export async function collectAttachments(params: {
             text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages'
           });
         } catch (sendError) {
-          console.error('[WhatsApp] Failed to send transcription error message:', sendError);
+          log.error('Failed to send transcription error message:', sendError);
         }
         // Don't forward error to agent - return early
         const caption = mediaMessage.caption as string | undefined;
@@ -191,14 +191,14 @@ export async function collectAttachments(params: {
       const result = await transcribeAudio(buffer, name);
 
       if (result.success && result.text) {
-        console.log(`[WhatsApp] Transcribed voice message: "${result.text.slice(0, 50)}..."`);
+        log.info(`Transcribed voice message: "${result.text.slice(0, 50)}..."`);
         voiceTranscription = `[Voice message]: ${result.text}`;
       } else {
-        console.error(`[WhatsApp] Transcription failed: ${result.error}`);
+        log.error(`Transcription failed: ${result.error}`);
         voiceTranscription = `[Voice message - transcription failed: ${result.error}]`;
       }
     } catch (error) {
-      console.error('[WhatsApp] Error transcribing voice message:', error);
+      log.error('Error transcribing voice message:', error);
       voiceTranscription = `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`;
     }
   }
