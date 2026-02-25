@@ -56,10 +56,9 @@ agents:
       #   selfChat: false
       # bluesky:
       #   enabled: true
-      #   # autoReply: true  # Enable auto-replies (default: false / read-only)
       #   wantedDids: ["did:plc:..."]
       #   # groups:
-      #   #   "*": { mode: listen }
+      #   #   "*": { mode: listen }    # listen = observe only; open = observe + auto-reply; mention-only = auto-reply to @mentions only
       #   #   "did:plc:...": { mode: open }
       #   # lists:
       #   #   "at://did:plc:.../app.bsky.graph.list/xyz": { mode: listen }

@@ -90,21 +90,35 @@ export class BlueskyAdapter implements ChannelAdapter {
   onMessage?: (msg: InboundMessage) => Promise<void>;
   onCommand?: (command: string) => Promise<string | null>;
 
-  private buildFormatterHints(shouldReply: boolean) {
-    const actionsSection = shouldReply
-      ? [
-          'Your text response will be posted as a Bluesky reply.',
-          'Like: `lettabot-bluesky like <uri>`',
-          'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
-        ]
-      : [
-          'This channel is read-only; your text response will NOT be posted.',
-          'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
-          'Reply: `lettabot-bluesky post --reply-to <uri> --text "..."`',
-          'Like: `lettabot-bluesky like <uri>`',
-          'Posts over 300 chars require `--threaded` to create a reply thread.',
-          'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
-        ];
+  private buildFormatterHints(shouldReply: boolean, didMode: DidMode) {
+    let actionsSection: string[];
+    if (shouldReply) {
+      // open or mention-only (notification mention) — bot will auto-post the reply
+      actionsSection = [
+        'Your text response will be posted as a Bluesky reply.',
+        'Like: `lettabot-bluesky like <uri>`',
+        'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
+      ];
+    } else if (didMode === 'mention-only') {
+      // mention-only but not a mention notification (reply/quote or Jetstream) — observing only
+      actionsSection = [
+        'In mention-only mode, auto-replies are limited to @mention notifications. Your text response will NOT be auto-posted.',
+        'Use the Bluesky skill to reply manually: `lettabot-bluesky post --reply-to <uri> --text "..."`',
+        'Like: `lettabot-bluesky like <uri>`',
+        'Posts over 300 chars require `--threaded` to create a reply thread.',
+        'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
+      ];
+    } else {
+      // listen — read-only, use CLI to act
+      actionsSection = [
+        'This channel is read-only; your text response will NOT be posted.',
+        'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
+        'Reply: `lettabot-bluesky post --reply-to <uri> --text "..."`',
+        'Like: `lettabot-bluesky like <uri>`',
+        'Posts over 300 chars require `--threaded` to create a reply thread.',
+        'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
+      ];
+    }
     return {
       isReadOnly: !shouldReply,
       formatHint: 'Plain text only (no markdown, no tables).',
@@ -414,8 +428,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     }
 
     const isPost = payload.commit?.collection === 'app.bsky.feed.post';
-    const allowReplies = this.config.autoReply === true;
-    const shouldReply = allowReplies && isPost && didMode === 'open';
+    const shouldReply = isPost && didMode === 'open';
 
     const inbound: BlueskyInboundMessage = {
       channel: 'bluesky',
@@ -431,7 +444,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       isListeningMode: !shouldReply,
       source,
       extraContext,
-      formatterHints: this.buildFormatterHints(shouldReply),
+      formatterHints: this.buildFormatterHints(shouldReply, didMode),
     };
 
     if (payload.commit?.collection === 'app.bsky.feed.post' && source?.uri) {
@@ -1245,8 +1258,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     const actionable = notification.reason === 'mention'
       || notification.reason === 'reply'
       || notification.reason === 'quote';
-    const allowReplies = this.config.autoReply === true;
-    const shouldReply = allowReplies && actionable
+    const shouldReply = actionable
       && recordType === 'app.bsky.feed.post'
       && (didMode === 'open' || (didMode === 'mention-only' && notification.reason === 'mention'));
 
@@ -1264,7 +1276,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       isListeningMode: !shouldReply,
       source,
       extraContext,
-      formatterHints: this.buildFormatterHints(shouldReply),
+      formatterHints: this.buildFormatterHints(shouldReply, didMode),
     };
 
     if (notificationMessageId) {
