@@ -12,6 +12,7 @@ import type { ChannelAdapter } from '../types.js';
 import type { InboundMessage, OutboundFile, OutboundMessage } from '../../core/types.js';
 import { getDataDir } from '../../utils/paths.js';
 import { loadConfig } from '../../config/io.js';
+import { createLogger } from '../../logger.js';
 import type { BlueskyConfig, BlueskyInboundMessage, BlueskySource, DidMode, JetstreamEvent } from './types.js';
 import {
   CURSOR_BACKTRACK_US,
@@ -41,6 +42,8 @@ import {
   truncate,
   uniqueList,
 } from './utils.js';
+
+const log = createLogger('Bluesky');
 
 export class BlueskyAdapter implements ChannelAdapter {
   readonly id = 'bluesky' as const;
@@ -137,7 +140,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       if (this.hasJetstreamTargets()) {
         this.connect();
       } else {
-        console.warn('[Bluesky] Jetstream disabled (no wantedDids or list-expanded DIDs).');
+        log.warn('Jetstream disabled (no wantedDids or list-expanded DIDs).');
       }
     }
   }
@@ -222,7 +225,7 @@ export class BlueskyAdapter implements ChannelAdapter {
   }
 
   async editMessage(_chatId: string, _messageId: string, _text: string): Promise<void> {
-    console.warn('[Bluesky] editMessage is not supported (read-only channel).');
+    log.warn('editMessage is not supported (read-only channel).');
   }
 
   supportsEditing(): boolean {
@@ -243,7 +246,7 @@ export class BlueskyAdapter implements ChannelAdapter {
 
   async sendFile(_file: OutboundFile): Promise<{ messageId: string }>
   {
-    console.warn('[Bluesky] sendFile is not supported (read-only channel).');
+    log.warn('sendFile is not supported (read-only channel).');
     return { messageId: '' };
   }
 
@@ -251,24 +254,24 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (!this.running) return;
     if (this.ws) return; // Already connected — prevent double-connections
     if (!this.hasJetstreamTargets()) {
-      console.warn('[Bluesky] Jetstream disabled (no wantedDids or list-expanded DIDs).');
+      log.warn('Jetstream disabled (no wantedDids or list-expanded DIDs).');
       return;
     }
 
     const url = this.buildJetstreamUrl();
-    console.log(`[Bluesky] Connecting to Jetstream: ${url}`);
+    log.info(`Connecting to Jetstream: ${url}`);
 
     const ws = new WebSocket(url);
     this.ws = ws;
 
     ws.addEventListener('open', () => {
       this.reconnectAttempts = 0;
-      console.log('[Bluesky] Connected');
+      log.info('Connected');
     });
 
     ws.addEventListener('message', (event) => {
       this.handleMessageEvent(event).catch(err => {
-        console.error('[Bluesky] Failed to process event:', err);
+        log.error('Failed to process event:', err);
       });
     });
 
@@ -276,7 +279,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       const error = (event as { error?: unknown; message?: string }).error
         || (event as { error?: unknown; message?: string }).message
         || 'Unknown WebSocket error';
-      console.error('[Bluesky] WebSocket error:', {
+      log.error('WebSocket error:', {
         error,
         url: this.buildJetstreamUrl(),
         reconnectAttempts: this.reconnectAttempts,
@@ -289,7 +292,7 @@ export class BlueskyAdapter implements ChannelAdapter {
         return;
       }
       this.ws = null;
-      console.warn('[Bluesky] Disconnected');
+      log.warn('Disconnected');
       if (this.intentionalClose) {
         // reconnectJetstream() already called connect() — don't schedule another reconnect
         this.intentionalClose = false;
@@ -305,7 +308,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (!this.running) return;
     if (this.reconnectTimer) return;
     if (!this.hasJetstreamTargets()) {
-      console.warn('[Bluesky] Jetstream reconnect skipped (no wantedDids or list-expanded DIDs).');
+      log.warn('Jetstream reconnect skipped (no wantedDids or list-expanded DIDs).');
       return;
     }
 
@@ -317,7 +320,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       this.connect();
     }, delay);
 
-    console.log(`[Bluesky] Reconnecting in ${delay}ms...`);
+    log.info(`Reconnecting in ${delay}ms...`);
   }
 
   private buildJetstreamUrl(): string {
@@ -365,7 +368,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     try {
       payload = JSON.parse(raw) as JetstreamEvent;
     } catch {
-      console.warn('[Bluesky] Received non-JSON message');
+      log.warn('Received non-JSON message');
       return;
     }
 
@@ -432,11 +435,13 @@ export class BlueskyAdapter implements ChannelAdapter {
     };
 
     if (payload.commit?.collection === 'app.bsky.feed.post' && source?.uri) {
+      // For standalone posts (not replies), root is the post itself.
+      // For reply posts, threadRootUri/Cid point to the conversation root.
       this.lastPostByChatId.set(did, {
         uri: source.uri,
         cid: source.cid,
-        rootUri: source.threadRootUri,
-        rootCid: source.threadRootCid,
+        rootUri: source.threadRootUri ?? source.uri,
+        rootCid: source.threadRootCid ?? source.cid,
       });
       pruneMap(this.lastPostByChatId, LAST_POST_CACHE_MAX);
     }
@@ -603,7 +608,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     try {
       await this.ensureSession();
     } catch (err) {
-      console.warn('[Bluesky] Posting identity init failed:', err);
+      log.warn('Posting identity init failed:', err);
     }
   }
 
@@ -617,7 +622,7 @@ export class BlueskyAdapter implements ChannelAdapter {
         await this.refreshSessionWithRetry();
         return;
       } catch (err) {
-        console.warn('[Bluesky] refreshSession failed, falling back to createSession:', err);
+        log.warn('refreshSession failed, falling back to createSession:', err);
       }
     }
 
@@ -633,7 +638,7 @@ export class BlueskyAdapter implements ChannelAdapter {
         lastError = err as Error;
         if (attempt < maxRetries - 1) {
           const delay = Math.min(5000, 1000 * Math.pow(2, attempt));
-          console.warn(`[Bluesky] ${label} failed (attempt ${attempt + 1}/${maxRetries}). Retrying in ${delay}ms.`);
+          log.warn(`${label} failed (attempt ${attempt + 1}/${maxRetries}). Retrying in ${delay}ms.`);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
@@ -713,7 +718,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     for (const [did, config] of Object.entries(groups)) {
       if (did === '*') continue;
       if (!BlueskyAdapter.DID_PATTERN.test(did)) {
-        console.warn(`[Bluesky] Ignoring groups entry with invalid DID: "${did}"`);
+        log.warn(`Ignoring groups entry with invalid DID: "${did}"`);
         continue;
       }
       const mode = config?.mode;
@@ -769,7 +774,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     const hasAuth = !!(this.config.handle && this.config.appPassword) || !!this.refreshJwt;
     if (!config?.enabled && !hasAuth) return null;
     if (config?.enabled && !hasAuth) {
-      console.warn('[Bluesky] Notifications enabled but no auth configured.');
+      log.warn('Notifications enabled but no auth configured.');
       return null;
     }
 
@@ -797,13 +802,13 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (this.notificationsTimer) return;
     this.notificationsTimer = setInterval(() => {
       this.pollNotifications().catch(err => {
-        console.error('[Bluesky] Notifications poll failed:', err);
+        log.error('Notifications poll failed:', err);
       });
     }, config.intervalMs);
     this.pollNotifications().catch(err => {
-      console.error('[Bluesky] Notifications poll failed:', err);
+      log.error('Notifications poll failed:', err);
     });
-    console.log(`[Bluesky] Notifications polling every ${config.intervalMs / 1000}s`);
+    log.info(`Notifications polling every ${config.intervalMs / 1000}s`);
   }
 
   private async pollNotifications(): Promise<void> {
@@ -859,7 +864,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       this.notificationsCursor = data.cursor;
       this.notificationsInitialized = true;
       this.stateDirty = true;
-      console.log('[Bluesky] Notifications cursor initialized (skipping initial backlog).');
+      log.info('Notifications cursor initialized (skipping initial backlog).');
       return;
     }
 
@@ -890,7 +895,7 @@ export class BlueskyAdapter implements ChannelAdapter {
         try {
           await this.ensureSession();
         } catch (err) {
-          console.warn('[Bluesky] List expansion auth failed:', err);
+          log.warn('List expansion auth failed:', err);
         }
       }
 
@@ -904,7 +909,12 @@ export class BlueskyAdapter implements ChannelAdapter {
 
         const dids = await this.fetchListDids(listUri);
         for (const did of dids) {
-          if (!did || this.didModes[did]) continue; // explicit DID overrides list
+          if (!did) continue;
+          if (this.didModes[did]) {
+            // Explicit groups config takes precedence over list membership
+            log.debug(`List DID ${did} already explicitly configured, skipping list entry`);
+            continue;
+          }
           if (!nextModes[did]) {
             nextModes[did] = mode;
           }
@@ -913,7 +923,7 @@ export class BlueskyAdapter implements ChannelAdapter {
 
       this.listModes = nextModes;
     } catch (err) {
-      console.error('[Bluesky] List expansion failed:', err);
+      log.error('List expansion failed:', err);
     } finally {
       this.listRefreshInFlight = false;
     }
@@ -962,11 +972,11 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (!this.runtimePath || this.runtimeTimer) return;
     this.runtimeTimer = setInterval(() => {
       this.checkRuntimeState().catch(err => {
-        console.error('[Bluesky] Runtime check failed:', err);
+        log.error('Runtime check failed:', err);
       });
     }, 5000);
     this.checkRuntimeState().catch(err => {
-      console.error('[Bluesky] Runtime check failed:', err);
+      log.error('Runtime check failed:', err);
     });
   }
 
@@ -1020,7 +1030,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       }
 
       if (!nextBluesky) {
-        console.warn('[Bluesky] Config reload skipped (no bluesky config found).');
+        log.warn('Config reload skipped (no bluesky config found).');
         return;
       }
 
@@ -1032,11 +1042,11 @@ export class BlueskyAdapter implements ChannelAdapter {
       this.loadDidModes();
       this.listModes = {};
       this.maybeInitPostingIdentity().catch(err => {
-        console.warn('[Bluesky] Posting identity init failed after reload:', err);
+        log.warn('Posting identity init failed after reload:', err);
       });
-      console.log('[Bluesky] Config reloaded.');
+      log.info('Config reloaded.');
     } catch (err) {
-      console.warn('[Bluesky] Config reload failed:', err);
+      log.warn('Config reload failed:', err);
     }
   }
 
@@ -1053,7 +1063,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       clearInterval(this.notificationsTimer);
       this.notificationsTimer = null;
     }
-    console.log('[Bluesky] Runtime disabled via kill switch.');
+    log.info('Runtime disabled via kill switch.');
   }
 
   private async resumeRuntime(): Promise<void> {
@@ -1062,14 +1072,14 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (this.hasJetstreamTargets()) {
       this.connect();
     } else {
-      console.warn('[Bluesky] Jetstream disabled (no wantedDids or list-expanded DIDs).');
+      log.warn('Jetstream disabled (no wantedDids or list-expanded DIDs).');
     }
-    console.log('[Bluesky] Runtime re-enabled via kill switch.');
+    log.info('Runtime re-enabled via kill switch.');
   }
 
   private reconnectJetstream(): void {
     if (!this.hasJetstreamTargets()) {
-      console.warn('[Bluesky] Jetstream reconnect skipped (no wantedDids or list-expanded DIDs).');
+      log.warn('Jetstream reconnect skipped (no wantedDids or list-expanded DIDs).');
       return;
     }
     if (this.ws) {
@@ -1223,9 +1233,12 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (didMode === 'disabled') return;
 
     const baseMsgId = notification.cid || notification.uri;
-    // Cross-path dedup: skip if Jetstream already delivered this CID (stored as bare CID)
+    // Cross-path dedup: if Jetstream already delivered this post (stored as bare CID), skip.
+    // This prevents double-delivery when both Jetstream and Notifications see the same post.
     if (baseMsgId && this.seenMessageIds.has(baseMsgId)) return;
-    // Within-notification dedup: same reason+CID pair seen before (use reason-scoped key)
+    // Within-notification dedup: use a reason-scoped key so the same post arriving with
+    // *different* reasons (e.g., "mention" and "reply") is delivered once per reason —
+    // each represents a distinct actionable event (mention vs. thread reply context).
     const notificationMessageId = notification.reason ? `${notification.reason}:${baseMsgId}` : baseMsgId;
     if (notificationMessageId && this.seenMessageIds.has(notificationMessageId)) return;
 
@@ -1403,7 +1416,7 @@ export class BlueskyAdapter implements ChannelAdapter {
         this.notificationsInitialized = true;
       }
     } catch (err) {
-      console.warn('[Bluesky] Failed to load cursor state:', err);
+      log.warn('Failed to load cursor state:', err);
     }
   }
 
@@ -1460,7 +1473,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       }, null, 2));
       this.stateDirty = false;
     } catch (err) {
-      console.warn('[Bluesky] Failed to persist cursor state:', err);
+      log.warn('Failed to persist cursor state:', err);
     }
   }
 }

@@ -198,7 +198,9 @@ async function resolveActorDid(bluesky: BlueskyConfig, actor: string): Promise<s
     if (!DID_PATTERN.test(actor)) throw new Error(`Invalid DID format: "${actor}"`);
     return actor;
   }
-  return resolveHandleToDid(bluesky, actor);
+  const did = await resolveHandleToDid(bluesky, actor);
+  if (!DID_PATTERN.test(did)) throw new Error(`Handle "${actor}" resolved to invalid DID: "${did}"`);
+  return did;
 }
 
 async function ensureCid(serviceUrl: string, appViewUrl: string, accessJwt: string, uri: string, cid?: string): Promise<string> {
