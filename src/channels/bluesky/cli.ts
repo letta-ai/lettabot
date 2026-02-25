@@ -191,8 +191,13 @@ async function resolveHandleToDid(bluesky: BlueskyConfig, handle: string): Promi
   return data.did;
 }
 
+const DID_PATTERN = /^did:[a-z]+:[a-zA-Z0-9._:-]+$/;
+
 async function resolveActorDid(bluesky: BlueskyConfig, actor: string): Promise<string> {
-  if (actor.startsWith('did:')) return actor;
+  if (actor.startsWith('did:')) {
+    if (!DID_PATTERN.test(actor)) throw new Error(`Invalid DID format: "${actor}"`);
+    return actor;
+  }
   return resolveHandleToDid(bluesky, actor);
 }
 

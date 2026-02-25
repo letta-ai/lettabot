@@ -87,6 +87,29 @@ export class BlueskyAdapter implements ChannelAdapter {
   onMessage?: (msg: InboundMessage) => Promise<void>;
   onCommand?: (command: string) => Promise<string | null>;
 
+  private buildFormatterHints(shouldReply: boolean) {
+    const actionsSection = shouldReply
+      ? [
+          'Your text response will be posted as a Bluesky reply.',
+          'Like: `lettabot-bluesky like <uri>`',
+          'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
+        ]
+      : [
+          'This channel is read-only; your text response will NOT be posted.',
+          'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
+          'Reply: `lettabot-bluesky post --reply-to <uri> --text "..."`',
+          'Like: `lettabot-bluesky like <uri>`',
+          'Posts over 300 chars require `--threaded` to create a reply thread.',
+          'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
+        ];
+    return {
+      isReadOnly: !shouldReply,
+      formatHint: 'Plain text only (no markdown, no tables).',
+      actionsSection,
+      skipDirectives: true,
+    };
+  }
+
   constructor(config: BlueskyConfig) {
     this.config = config;
     this.loadDidModes();
@@ -402,22 +425,10 @@ export class BlueskyAdapter implements ChannelAdapter {
       timestamp,
       messageType: 'public',
       groupName: handle ? `@${handle}` : did,
-      isListeningMode: shouldReply ? false : true,
+      isListeningMode: !shouldReply,
       source,
       extraContext,
-      formatterHints: {
-        isReadOnly: !shouldReply,
-        formatHint: 'Plain text only (no markdown, no tables).',
-        actionsSection: [
-          'This channel is read-only; your text response will NOT be posted.',
-          'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
-          'Reply: `lettabot-bluesky post --reply-to <uri> --text "..."`',
-          'Like: `lettabot-bluesky like <uri>`',
-          'Posts over 300 chars require `--threaded` to create a reply thread.',
-          'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
-        ],
-        skipDirectives: true,
-      },
+      formatterHints: this.buildFormatterHints(shouldReply),
     };
 
     if (payload.commit?.collection === 'app.bsky.feed.post' && source?.uri) {
@@ -536,9 +547,11 @@ export class BlueskyAdapter implements ChannelAdapter {
   }
 
   private splitPostText(text: string): string[] {
-    const chars = Array.from(text);
-    if (chars.length === 0) return [];
-    if (chars.length <= POST_MAX_CHARS) {
+    // Bluesky enforces maxGraphemes: 300 — count Unicode grapheme clusters, not code points
+    const segmenter = new Intl.Segmenter();
+    const graphemes = [...segmenter.segment(text)].map(s => s.segment);
+    if (graphemes.length === 0) return [];
+    if (graphemes.length <= POST_MAX_CHARS) {
       const trimmed = text.trim();
       return trimmed ? [trimmed] : [];
     }
@@ -546,13 +559,13 @@ export class BlueskyAdapter implements ChannelAdapter {
     const chunks: string[] = [];
     let start = 0;
 
-    while (start < chars.length) {
-      let end = Math.min(start + POST_MAX_CHARS, chars.length);
+    while (start < graphemes.length) {
+      let end = Math.min(start + POST_MAX_CHARS, graphemes.length);
 
-      if (end < chars.length) {
+      if (end < graphemes.length) {
         let split = end;
         for (let i = end - 1; i > start; i--) {
-          if (/\s/.test(chars[i])) {
+          if (/\s/.test(graphemes[i])) {
             split = i;
             break;
           }
@@ -560,12 +573,12 @@ export class BlueskyAdapter implements ChannelAdapter {
         end = split > start ? split : end;
       }
 
-      let chunk = chars.slice(start, end).join('');
+      let chunk = graphemes.slice(start, end).join('');
       chunk = chunk.replace(/^\s+/, '').replace(/\s+$/, '');
       if (chunk) chunks.push(chunk);
 
       start = end;
-      while (start < chars.length && /\s/.test(chars[start])) {
+      while (start < graphemes.length && /\s/.test(graphemes[start])) {
         start++;
       }
     }
@@ -692,11 +705,17 @@ export class BlueskyAdapter implements ChannelAdapter {
     this.stateDirty = true;
   }
 
+  private static readonly DID_PATTERN = /^did:[a-z]+:[a-zA-Z0-9._:-]+$/;
+
   private loadDidModes(): void {
     const modes: Record<string, DidMode> = {};
     const groups = this.config.groups || {};
     for (const [did, config] of Object.entries(groups)) {
       if (did === '*') continue;
+      if (!BlueskyAdapter.DID_PATTERN.test(did)) {
+        console.warn(`[Bluesky] Ignoring groups entry with invalid DID: "${did}"`);
+        continue;
+      }
       const mode = config?.mode;
       if (mode === 'open' || mode === 'listen' || mode === 'mention-only' || mode === 'disabled') {
         modes[did] = mode;
@@ -1092,22 +1111,24 @@ export class BlueskyAdapter implements ChannelAdapter {
         }
 
         const res = await fetch(url, { headers });
-        if (!res.ok) {
-          return undefined;
+        if (res.ok) {
+          const data = await res.json() as { handle?: string };
+          if (data.handle && typeof data.handle === 'string') {
+            this.handleByDid.set(did, data.handle);
+            pruneMap(this.handleByDid, HANDLE_CACHE_MAX);
+            return data.handle;
+          }
         }
-        const data = await res.json() as { handle?: string };
-        if (data.handle && typeof data.handle === 'string') {
-          this.handleByDid.set(did, data.handle);
-          pruneMap(this.handleByDid, HANDLE_CACHE_MAX);
-          return data.handle;
-        }
+        // Failed to resolve: apply cooldown to avoid hammering on repeated misses
+        this.lastHandleFetchAt.set(did, Date.now());
+        return undefined;
       } catch {
+        // Network error: apply cooldown before retrying
+        this.lastHandleFetchAt.set(did, Date.now());
         return undefined;
       } finally {
-        this.lastHandleFetchAt.set(did, Date.now());
         this.handleFetchInFlight.delete(did);
       }
-      return undefined;
     })();
 
     this.handleFetchInFlight.set(did, promise);
@@ -1227,22 +1248,10 @@ export class BlueskyAdapter implements ChannelAdapter {
       timestamp,
       messageType: 'public',
       groupName: authorHandle ? `@${authorHandle}` : authorDid,
-      isListeningMode: shouldReply ? false : true,
+      isListeningMode: !shouldReply,
       source,
       extraContext,
-      formatterHints: {
-        isReadOnly: !shouldReply,
-        formatHint: 'Plain text only (no markdown, no tables).',
-        actionsSection: [
-          'This channel is read-only; your text response will NOT be posted.',
-          'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
-          'Reply: `lettabot-bluesky post --reply-to <uri> --text "..."`',
-          'Like: `lettabot-bluesky like <uri>`',
-          'Posts over 300 chars require `--threaded` to create a reply thread.',
-          'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
-        ],
-        skipDirectives: true,
-      },
+      formatterHints: this.buildFormatterHints(shouldReply),
     };
 
     if (notificationMessageId) {
@@ -1255,6 +1264,7 @@ export class BlueskyAdapter implements ChannelAdapter {
   private async createReply(text: string, target: { uri: string; cid?: string; rootUri?: string; rootCid?: string }, retried = false): Promise<{ uri?: string; cid?: string } | undefined> {
     await this.ensureSession();
     if (!this.accessJwt) throw new Error('[Bluesky] ensureSession() completed but accessJwt is not set.');
+    if (!this.sessionDid) throw new Error('[Bluesky] ensureSession() completed but sessionDid is not set.');
 
     const rootUri = target.rootUri || target.uri;
     const rootCid = target.rootCid || target.cid;
