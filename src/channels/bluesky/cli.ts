@@ -23,9 +23,9 @@
  *   lettabot-bluesky mutes --limit 50 --cursor <cursor> --agent <name>
  */
 
-import { loadAppConfigOrExit, normalizeAgents } from '../config/index.js';
-import type { AgentConfig, BlueskyConfig } from '../config/types.js';
-import { DEFAULT_APPVIEW_URL, DEFAULT_SERVICE_URL, POST_MAX_CHARS } from '../channels/bluesky/constants.js';
+import { loadAppConfigOrExit, normalizeAgents } from '../../config/index.js';
+import type { AgentConfig, BlueskyConfig } from '../../config/types.js';
+import { DEFAULT_APPVIEW_URL, DEFAULT_SERVICE_URL, POST_MAX_CHARS } from './constants.js';
 
 function usage(): void {
   console.log(`\nUsage:\n  lettabot-bluesky post --text "Hello" --agent <name>\n  lettabot-bluesky post --reply-to <at://...> --text "Reply" --agent <name>\n  lettabot-bluesky post --text "Long..." --threaded --agent <name>\n  lettabot-bluesky like <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --text "Quote" --agent <name> [--threaded]\n  lettabot-bluesky profile <did|handle> --agent <name>\n  lettabot-bluesky thread <at://...> --agent <name>\n  lettabot-bluesky author-feed <did|handle> --limit 25 --cursor <cursor> --agent <name>\n  lettabot-bluesky list-feed <listUri> --limit 25 --cursor <cursor> --agent <name>\n  lettabot-bluesky search --query \"...\" --limit 25 --cursor <cursor> --agent <name>\n  lettabot-bluesky notifications --limit 25 --cursor <cursor> --reasons mention,reply --agent <name>\n  lettabot-bluesky block <did|handle> --agent <name>\n  lettabot-bluesky unblock <blockUri> --agent <name>\n  lettabot-bluesky mute <did|handle> --agent <name>\n  lettabot-bluesky unmute <did|handle> --agent <name>\n  lettabot-bluesky blocks --limit 50 --cursor <cursor> --agent <name>\n  lettabot-bluesky mutes --limit 50 --cursor <cursor> --agent <name>\n`);

@@ -1,6 +1,13 @@
 ---
 name: bluesky
 description: Post, reply, like, and repost on Bluesky using the lettabot-bluesky CLI. Read-only by default; explicit actions required.
+metadata: |
+  {
+    "clawdbot": {
+      "emoji": "🦋",
+      "primaryEnv": "BLUESKY_HANDLE"
+    }
+  }
 ---
 
 # Bluesky

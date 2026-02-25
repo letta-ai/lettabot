@@ -146,6 +146,7 @@ export interface OutboundFile {
 export interface SkillsConfig {
   cronEnabled?: boolean;
   googleEnabled?: boolean;
+  blueskyEnabled?: boolean;
   additionalSkills?: string[];
 }
 

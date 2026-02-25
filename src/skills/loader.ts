@@ -208,6 +208,7 @@ function installSkillsFromDir(sourceDir: string, targetDir: string): string[] {
 export const FEATURE_SKILLS: Record<string, string[]> = {
   cron: ['scheduling'],      // Scheduling handles both one-off reminders and recurring cron jobs
   google: ['gog', 'google'], // Installed when Google/Gmail is configured
+  bluesky: ['bluesky'],      // Installed when Bluesky is configured
 };
 
 /**
@@ -242,6 +243,7 @@ function installSpecificSkills(
 export interface SkillsInstallConfig {
   cronEnabled?: boolean;
   googleEnabled?: boolean;  // Gmail polling or Google integration
+  blueskyEnabled?: boolean; // Bluesky integration
   additionalSkills?: string[]; // Explicitly enabled skills
 }
 
@@ -272,12 +274,17 @@ export function installSkillsToWorkingDir(workingDir: string, config: SkillsInst
   if (config.googleEnabled) {
     skillsToInstall.push(...FEATURE_SKILLS.google);
   }
-  
+
+  // Bluesky skills (if Bluesky is configured)
+  if (config.blueskyEnabled) {
+    skillsToInstall.push(...FEATURE_SKILLS.bluesky);
+  }
+
   // Additional explicitly enabled skills
   if (config.additionalSkills?.length) {
     skillsToInstall.push(...config.additionalSkills);
   }
-  
+
   if (skillsToInstall.length === 0) {
     log.info('No feature-gated skills to install');
     return;
@@ -321,12 +328,17 @@ export function installSkillsToAgent(agentId: string, config: SkillsInstallConfi
   if (config.googleEnabled) {
     skillsToInstall.push(...FEATURE_SKILLS.google);
   }
-  
+
+  // Bluesky skills (if Bluesky is configured)
+  if (config.blueskyEnabled) {
+    skillsToInstall.push(...FEATURE_SKILLS.bluesky);
+  }
+
   // Additional explicitly enabled skills
   if (config.additionalSkills?.length) {
     skillsToInstall.push(...config.additionalSkills);
   }
-  
+
   if (skillsToInstall.length === 0) {
     return; // No skills to install - silent return
   }

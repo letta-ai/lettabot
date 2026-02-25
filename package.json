@@ -7,7 +7,7 @@
     "lettabot": "./dist/cli.js",
     "lettabot-schedule": "./dist/cron/cli.js",
     "lettabot-message": "./dist/cli/message.js",
-    "lettabot-bluesky": "./dist/cli/bluesky-post.js",
+    "lettabot-bluesky": "./dist/channels/bluesky/cli.js",
     "lettabot-react": "./dist/cli/react.js",
     "lettabot-history": "./dist/cli/history.js",
     "lettabot-channels": "./dist/cli/channels.js"
