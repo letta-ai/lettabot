@@ -777,6 +777,10 @@ data: {"type":"result","success":true}
 
 **Multi-agent:** In multi-agent configs, use the `agent` field to target a specific agent by name. Omit it to use the first agent. A 404 is returned if the agent name doesn't match any configured agent.
 
+### OpenAI-Compatible Endpoint
+
+The API server also exposes `/v1/chat/completions` and `/v1/models` -- a drop-in OpenAI-compatible API. Use it with the OpenAI Python/Node SDK, Open WebUI, or any compatible client. See the [OpenAI-Compatible API docs](openai-compat.md) for details.
+
 ## Environment Variables
 
 Environment variables override config file values:
