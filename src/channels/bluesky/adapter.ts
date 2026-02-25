@@ -922,7 +922,10 @@ export class BlueskyAdapter implements ChannelAdapter {
 
         const dids = await this.fetchListDids(listUri);
         for (const did of dids) {
-          if (!did) continue;
+          if (!did || !BlueskyAdapter.DID_PATTERN.test(did)) {
+            if (did) log.warn(`Skipping list entry with invalid DID: "${did}"`);
+            continue;
+          }
           if (this.didModes[did]) {
             // Explicit groups config takes precedence over list membership
             log.debug(`List DID ${did} already explicitly configured, skipping list entry`);

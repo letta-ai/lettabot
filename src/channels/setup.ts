@@ -672,7 +672,13 @@ export async function setupBluesky(existing?: BlueskyConfig): Promise<BlueskyCon
     }
 
     const appPasswordInput = await p.password({
-      message: 'Bluesky app password',
+      message: 'Bluesky app password (format: xxxx-xxxx-xxxx-xxxx)',
+      validate: (v) => {
+        if (!v) return 'App password is required.';
+        if (!/^[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/.test(v)) {
+          return 'Expected format: xxxx-xxxx-xxxx-xxxx (lowercase letters and digits).';
+        }
+      },
     });
 
     if (p.isCancel(appPasswordInput)) {
