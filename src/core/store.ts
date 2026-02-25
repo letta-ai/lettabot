@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import type { AgentStore, LastMessageTarget } from './types.js';
 import { getDataDir } from '../utils/paths.js';
+import { sleepSync } from '../utils/time.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Store');
@@ -28,7 +29,6 @@ const DEFAULT_STORE_PATH = 'lettabot-agent.json';
 const LOCK_RETRY_MS = 25;
 const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_STALE_MS = 30_000;
-const SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 
 interface StoreV2 {
   version: 2;
@@ -38,23 +38,6 @@ interface StoreV2 {
 interface ParsedStore {
   data: StoreV2;
   wasV1: boolean;
-}
-
-let warnedAboutBusyWait = false;
-
-function sleepSync(ms: number): void {
-  if (typeof Atomics.wait === 'function') {
-    Atomics.wait(SLEEP_BUFFER, 0, 0, ms);
-    return;
-  }
-  if (!warnedAboutBusyWait) {
-    log.warn('Atomics.wait unavailable, falling back to busy-wait for lock retries');
-    warnedAboutBusyWait = true;
-  }
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    // Busy-wait fallback -- should not be reached in standard Node.js (v8+)
-  }
 }
 
 export class Store {
@@ -197,7 +180,9 @@ export class Store {
         if (Date.now() - start >= LOCK_TIMEOUT_MS) {
           throw new Error(`Timed out waiting for store lock: ${this.lockPath}`);
         }
-        sleepSync(LOCK_RETRY_MS);
+        sleepSync(LOCK_RETRY_MS, () => {
+          log.warn('Atomics.wait unavailable, falling back to busy-wait for lock retries');
+        });
       }
     }
   }

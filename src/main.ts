@@ -25,6 +25,7 @@ import {
 import { isLettaApiUrl } from './utils/server.js';
 import { getDataDir, getWorkingDir, hasRailwayVolume } from './utils/paths.js';
 import { parseCsvList, parseNonNegativeNumber } from './utils/parse.js';
+import { sleep } from './utils/time.js';
 import { createLogger, setLogLevel } from './logger.js';
 
 const log = createLogger('Config');
@@ -210,10 +211,6 @@ const ATTACHMENTS_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DISCOVERY_LOCK_TIMEOUT_MS = 15_000;
 const DISCOVERY_LOCK_STALE_MS = 60_000;
 const DISCOVERY_LOCK_RETRY_MS = 100;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 function getDiscoveryLockPath(agentName: string): string {
   const safe = agentName
