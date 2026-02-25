@@ -1127,6 +1127,8 @@ export class LettaBot implements AgentSession {
     // This ensures display messages always have complete args (channels can't
     // edit messages after sending).
     const pendingToolCalls = new Map<string, { msg: StreamMsg; accumulatedArgs: string }>();
+    /** Key of the most recently buffered tool call -- used to merge orphan chunks. */
+    let lastPendingKey: string | null = null;
     const self = this;
     const capturedConvKey = convKey; // Capture for closure
 
@@ -1140,6 +1142,12 @@ export class LettaBot implements AgentSession {
       if (existing.endsWith(incoming)) return existing;
       // Delta: each chunk is an append
       return `${existing}${incoming}`;
+    }
+
+    /** Check whether a string is parseable as complete JSON. */
+    function isCompleteJson(s: string): boolean {
+      if (!s) return false;
+      try { JSON.parse(s); return true; } catch { return false; }
     }
 
     function* flushPending(): Generator<StreamMsg> {
@@ -1156,6 +1164,7 @@ export class LettaBot implements AgentSession {
         yield { ...pending.msg, toolInput };
       }
       pendingToolCalls.clear();
+      lastPendingKey = null;
     }
 
     async function* dedupedStream(): AsyncGenerator<StreamMsg> {
@@ -1164,15 +1173,46 @@ export class LettaBot implements AgentSession {
 
         if (msg.type === 'tool_call') {
           const id = msg.toolCallId;
-          if (!id) { yield msg; continue; }
-
           const incoming = (msg as StreamMsg & { rawArguments?: string }).rawArguments || '';
-          const existing = pendingToolCalls.get(id);
-          if (existing) {
-            existing.accumulatedArgs = mergeToolArgs(existing.accumulatedArgs, incoming);
+
+          if (id) {
+            // Chunk has a toolCallId -- try exact match first.
+            const existing = pendingToolCalls.get(id);
+            if (existing) {
+              existing.accumulatedArgs = mergeToolArgs(existing.accumulatedArgs, incoming);
+            } else if (
+              // Different ID from last pending entry, but the last entry's
+              // accumulated args aren't valid JSON yet -- this is likely a
+              // continuation chunk with a rotating/new ID (observed with
+              // Kimi k2.5 and other models that assign per-delta IDs).
+              lastPendingKey &&
+              pendingToolCalls.has(lastPendingKey) &&
+              !isCompleteJson(pendingToolCalls.get(lastPendingKey)!.accumulatedArgs)
+            ) {
+              const lastPending = pendingToolCalls.get(lastPendingKey)!;
+              lastPending.accumulatedArgs = mergeToolArgs(lastPending.accumulatedArgs, incoming);
+            } else {
+              pendingToolCalls.set(id, { msg, accumulatedArgs: incoming });
+              lastPendingKey = id;
+            }
           } else {
-            pendingToolCalls.set(id, { msg, accumulatedArgs: incoming });
+            // No toolCallId -- merge with the last pending entry if one
+            // exists and its args are still incomplete, otherwise create a
+            // synthetic entry so the chunk isn't lost.
+            if (
+              lastPendingKey &&
+              pendingToolCalls.has(lastPendingKey) &&
+              !isCompleteJson(pendingToolCalls.get(lastPendingKey)!.accumulatedArgs)
+            ) {
+              const lastPending = pendingToolCalls.get(lastPendingKey)!;
+              lastPending.accumulatedArgs = mergeToolArgs(lastPending.accumulatedArgs, incoming);
+            } else {
+              const syntheticKey = `__no_id_${Date.now()}`;
+              pendingToolCalls.set(syntheticKey, { msg, accumulatedArgs: incoming });
+              lastPendingKey = syntheticKey;
+            }
           }
+
           continue; // buffer, don't yield yet
         }
 
