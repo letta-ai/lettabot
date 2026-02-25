@@ -40,7 +40,7 @@ export class SlackAdapter implements ChannelAdapter {
   private attachmentsMaxBytes?: number;
   
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string) => Promise<string | null>;
   
   constructor(config: SlackConfig) {
     this.config = config;

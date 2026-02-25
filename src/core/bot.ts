@@ -214,6 +214,7 @@ export function isResponseDeliverySuppressed(msg: Pick<InboundMessage, 'isListen
 
 /**
  * Pure function: resolve the conversation key for a channel message.
+ * Returns `${channel}:${chatId}` in per-chat mode.
  * Returns the channel id in per-channel mode or when the channel is in overrides.
  * Returns 'shared' otherwise.
  */
@@ -221,8 +222,10 @@ export function resolveConversationKey(
   channel: string,
   conversationMode: string | undefined,
   conversationOverrides: Set<string>,
+  chatId?: string,
 ): string {
   const normalized = channel.toLowerCase();
+  if (conversationMode === 'per-chat' && chatId) return `${normalized}:${chatId}`;
   if (conversationMode === 'per-channel') return normalized;
   if (conversationOverrides.has(normalized)) return normalized;
   return 'shared';
@@ -230,6 +233,7 @@ export function resolveConversationKey(
 
 /**
  * Pure function: resolve the conversation key for heartbeat/sendToAgent.
+ * In per-chat mode, uses the full channel:chatId of the last-active target.
  * In per-channel mode, respects heartbeatConversation setting.
  * In shared mode with overrides, respects override channels when using last-active.
  */
@@ -238,8 +242,18 @@ export function resolveHeartbeatConversationKey(
   heartbeatConversation: string | undefined,
   conversationOverrides: Set<string>,
   lastActiveChannel?: string,
+  lastActiveChatId?: string,
 ): string {
   const hb = heartbeatConversation || 'last-active';
+
+  if (conversationMode === 'per-chat') {
+    if (hb === 'dedicated') return 'heartbeat';
+    if (hb === 'last-active' && lastActiveChannel && lastActiveChatId) {
+      return `${lastActiveChannel.toLowerCase()}:${lastActiveChatId}`;
+    }
+    // Fall back to shared if no last-active target
+    return lastActiveChannel ?? 'shared';
+  }
 
   if (conversationMode === 'per-channel') {
     if (hb === 'dedicated') return 'heartbeat';
@@ -271,13 +285,17 @@ export class LettaBot implements AgentSession {
   private processing = false; // Global lock for shared mode
   private processingKeys: Set<string> = new Set(); // Per-key locks for per-channel mode
 
-  // AskUserQuestion support: resolves when the next user message arrives
-  private pendingQuestionResolver: ((text: string) => void) | null = null;
+  // AskUserQuestion support: resolves when the next user message arrives.
+  // In per-chat mode, keyed by convKey so each chat resolves independently.
+  // In shared mode, a single entry keyed by 'shared' provides legacy behavior.
+  private pendingQuestionResolvers: Map<string, (text: string) => void> = new Map();
 
   // Persistent sessions: reuse CLI subprocesses across messages.
   // In shared mode, only the "shared" key is used. In per-channel mode, each
-  // channel (and optionally heartbeat) gets its own subprocess.
+  // channel (and optionally heartbeat) gets its own subprocess. In per-chat
+  // mode, each unique channel:chatId gets its own subprocess (LRU-evicted).
   private sessions: Map<string, Session> = new Map();
+  private sessionLastUsed: Map<string, number> = new Map(); // LRU tracking for per-chat mode
   // Coalesces concurrent ensureSessionForKey calls for the same key so the
   // second caller waits for the first instead of creating a duplicate session.
   // generation prevents stale in-flight creations from being reused after reset.
@@ -789,8 +807,8 @@ export class LettaBot implements AgentSession {
    * Returns 'shared' in shared mode (unless channel is in perChannel overrides).
    * Returns channel id in per-channel mode or for override channels.
    */
-  private resolveConversationKey(channel: string): string {
-    return resolveConversationKey(channel, this.config.conversationMode, this.conversationOverrides);
+  private resolveConversationKey(channel: string, chatId?: string): string {
+    return resolveConversationKey(channel, this.config.conversationMode, this.conversationOverrides, chatId);
   }
 
   /**
@@ -798,12 +816,13 @@ export class LettaBot implements AgentSession {
    * Respects perChannel overrides when using last-active in shared mode.
    */
   private resolveHeartbeatConversationKey(): string {
-    const lastActiveChannel = this.store.lastMessageTarget?.channel;
+    const target = this.store.lastMessageTarget;
     return resolveHeartbeatConversationKey(
       this.config.conversationMode,
       this.config.heartbeatConversation,
       this.conversationOverrides,
-      lastActiveChannel,
+      target?.channel,
+      target?.chatId,
     );
   }
 
@@ -824,7 +843,10 @@ export class LettaBot implements AgentSession {
 
     // Fast path: session already exists
     const existing = this.sessions.get(key);
-    if (existing) return existing;
+    if (existing) {
+      this.sessionLastUsed.set(key, Date.now());
+      return existing;
+    }
 
     // Coalesce concurrent callers: if another call is already creating this
     // key (e.g. warmSession running while first message arrives), wait for
@@ -959,7 +981,32 @@ export class LettaBot implements AgentSession {
       return this.ensureSessionForKey(key, bootstrapRetried);
     }
 
+    // LRU eviction: in per-chat mode, limit concurrent sessions to avoid
+    // unbounded subprocess growth. Evicted sessions can be cheaply recreated
+    // via resumeSession() since conversation IDs are persisted in the store.
+    const maxSessions = this.config.maxSessions ?? 10;
+    if (this.config.conversationMode === 'per-chat' && this.sessions.size >= maxSessions) {
+      let oldestKey: string | null = null;
+      let oldestTime = Infinity;
+      for (const [k, ts] of this.sessionLastUsed) {
+        if (k !== key && ts < oldestTime && this.sessions.has(k)) {
+          oldestKey = k;
+          oldestTime = ts;
+        }
+      }
+      if (oldestKey) {
+        log.info(`LRU session eviction: closing session for key="${oldestKey}" (${this.sessions.size} active, max=${maxSessions})`);
+        const evicted = this.sessions.get(oldestKey);
+        evicted?.close();
+        this.sessions.delete(oldestKey);
+        this.sessionLastUsed.delete(oldestKey);
+        this.sessionGenerations.delete(oldestKey);
+        this.sessionCreationLocks.delete(oldestKey);
+      }
+    }
+
     this.sessions.set(key, session);
+    this.sessionLastUsed.set(key, Date.now());
     return session;
   }
 
@@ -985,6 +1032,7 @@ export class LettaBot implements AgentSession {
         log.info(`Invalidating session (key=${key})`);
         session.close();
         this.sessions.delete(key);
+        this.sessionLastUsed.delete(key);
       }
     } else {
       const keys = new Set<string>([
@@ -1002,6 +1050,7 @@ export class LettaBot implements AgentSession {
       }
       this.sessions.clear();
       this.sessionCreationLocks.clear();
+      this.sessionLastUsed.clear();
     }
   }
 
@@ -1207,7 +1256,7 @@ export class LettaBot implements AgentSession {
 
   registerChannel(adapter: ChannelAdapter): void {
     adapter.onMessage = (msg) => this.handleMessage(msg, adapter);
-    adapter.onCommand = (cmd) => this.handleCommand(cmd, adapter.id);
+    adapter.onCommand = (cmd, chatId) => this.handleCommand(cmd, adapter.id, chatId);
     this.channels.set(adapter.id, adapter);
     log.info(`Registered channel: ${adapter.name}`);
   }
@@ -1240,7 +1289,7 @@ export class LettaBot implements AgentSession {
       }
     }
 
-    const convKey = this.resolveConversationKey(effective.channel);
+    const convKey = this.resolveConversationKey(effective.channel, effective.chatId);
     if (convKey !== 'shared') {
       this.enqueueForKey(convKey, effective, adapter);
     } else {
@@ -1255,7 +1304,7 @@ export class LettaBot implements AgentSession {
   // Commands
   // =========================================================================
 
-  private async handleCommand(command: string, channelId?: string): Promise<string | null> {
+  private async handleCommand(command: string, channelId?: string, chatId?: string): Promise<string | null> {
     log.info(`Received: /${command}`);
     switch (command) {
       case 'status': {
@@ -1280,10 +1329,10 @@ export class LettaBot implements AgentSession {
       }
       case 'reset': {
         // Always scope the reset to the caller's conversation key so that
-        // other channels' conversations are never silently destroyed.
+        // other channels/chats' conversations are never silently destroyed.
         // resolveConversationKey returns 'shared' for non-override channels,
-        // or the channel id for per-channel / override channels.
-        const convKey = channelId ? this.resolveConversationKey(channelId) : 'shared';
+        // the channel id for per-channel, or channel:chatId for per-chat.
+        const convKey = channelId ? this.resolveConversationKey(channelId, chatId) : 'shared';
         this.store.clearConversation(convKey);
         this.store.resetRecoveryAttempts();
         this.invalidateSession(convKey);
@@ -1296,12 +1345,14 @@ export class LettaBot implements AgentSession {
           if (convKey === 'shared') {
             return `Conversation reset. New conversation: ${newConvId}\n(Agent memory is preserved.)`;
           }
-          return `Conversation reset for this channel. New conversation: ${newConvId}\nOther channels are unaffected. (Agent memory is preserved.)`;
+          const scope = this.config.conversationMode === 'per-chat' ? 'this chat' : 'this channel';
+          return `Conversation reset for ${scope}. New conversation: ${newConvId}\nOther conversations are unaffected. (Agent memory is preserved.)`;
         } catch {
           if (convKey === 'shared') {
             return 'Conversation reset. Send a message to start a new conversation. (Agent memory is preserved.)';
           }
-          return `Conversation reset for this channel. Other channels are unaffected. (Agent memory is preserved.)`;
+          const scope = this.config.conversationMode === 'per-chat' ? 'this chat' : 'this channel';
+          return `Conversation reset for ${scope}. Other conversations are unaffected. (Agent memory is preserved.)`;
         }
       }
       default:
@@ -1412,10 +1463,12 @@ export class LettaBot implements AgentSession {
     // queuing it for normal processing. This prevents a deadlock where
     // the stream is paused waiting for user input while the processing
     // flag blocks new messages from being handled.
-    if (this.pendingQuestionResolver) {
-      log.info(`Intercepted message as AskUserQuestion answer from ${msg.userId}`);
-      this.pendingQuestionResolver(msg.text || '');
-      this.pendingQuestionResolver = null;
+    const incomingConvKey = this.resolveConversationKey(msg.channel, msg.chatId);
+    const pendingResolver = this.pendingQuestionResolvers.get(incomingConvKey);
+    if (pendingResolver) {
+      log.info(`Intercepted message as AskUserQuestion answer from ${msg.userId} (key=${incomingConvKey})`);
+      pendingResolver(msg.text || '');
+      this.pendingQuestionResolvers.delete(incomingConvKey);
       return;
     }
 
@@ -1430,9 +1483,9 @@ export class LettaBot implements AgentSession {
       return;
     }
 
-    const convKey = this.resolveConversationKey(msg.channel);
+    const convKey = this.resolveConversationKey(msg.channel, msg.chatId);
     if (convKey !== 'shared') {
-      // Per-channel or override mode: messages on different keys can run in parallel.
+      // Per-channel, per-chat, or override mode: messages on different keys can run in parallel.
       this.enqueueForKey(convKey, msg, adapter);
     } else {
       // Shared mode: single global queue (existing behavior)
@@ -1578,9 +1631,11 @@ export class LettaBot implements AgentSession {
         log.info(`AskUserQuestion: sending ${questions.length} question(s) to ${msg.channel}:${msg.chatId}`);
         await adapter.sendMessage({ chatId: msg.chatId, text: questionText, threadId: msg.threadId });
 
-        // Wait for the user's next message (intercepted by handleMessage)
+        // Wait for the user's next message (intercepted by handleMessage).
+        // Key by convKey so each chat resolves independently in per-chat mode.
+        const questionConvKey = this.resolveConversationKey(msg.channel, msg.chatId);
         const answer = await new Promise<string>((resolve) => {
-          this.pendingQuestionResolver = resolve;
+          this.pendingQuestionResolvers.set(questionConvKey, resolve);
         });
         log.info(`AskUserQuestion: received answer (${answer.length} chars)`);
 
@@ -1601,7 +1656,7 @@ export class LettaBot implements AgentSession {
     // Run session
     let session: Session | null = null;
     try {
-      const convKey = this.resolveConversationKey(msg.channel);
+      const convKey = this.resolveConversationKey(msg.channel, msg.chatId);
       const run = await this.runSession(messageToSend, { retried, canUseTool, convKey });
       lap('session send');
       session = run.session;
@@ -1842,7 +1897,7 @@ export class LettaBot implements AgentSession {
             // the current buffer, but finalizeMessage() clears it on type changes.
             // sentAnyMessage is the authoritative "did we deliver output" flag.
             const nothingDelivered = !hasResponse && !sentAnyMessage;
-            const retryConvKey = this.resolveConversationKey(msg.channel);
+            const retryConvKey = this.resolveConversationKey(msg.channel, msg.chatId);
             const retryConvIdFromStore = (retryConvKey === 'shared'
               ? this.store.conversationId
               : this.store.getConversationId(retryConvKey)) ?? undefined;

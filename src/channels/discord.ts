@@ -56,7 +56,7 @@ export class DiscordAdapter implements ChannelAdapter {
   private attachmentsMaxBytes?: number;
 
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string) => Promise<string | null>;
 
   constructor(config: DiscordConfig) {
     this.config = {

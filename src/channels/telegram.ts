@@ -44,7 +44,7 @@ export class TelegramAdapter implements ChannelAdapter {
   private attachmentsMaxBytes?: number;
   
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string) => Promise<string | null>;
   
   constructor(config: TelegramConfig) {
     this.config = {
@@ -239,7 +239,7 @@ export class TelegramAdapter implements ChannelAdapter {
     // Handle /status
     this.bot.command('status', async (ctx) => {
       if (this.onCommand) {
-        const result = await this.onCommand('status');
+        const result = await this.onCommand('status', String(ctx.chat.id));
         await ctx.reply(result || 'No status available');
       }
     });
@@ -247,14 +247,14 @@ export class TelegramAdapter implements ChannelAdapter {
     // Handle /heartbeat - trigger heartbeat manually (silent - no reply)
     this.bot.command('heartbeat', async (ctx) => {
       if (this.onCommand) {
-        await this.onCommand('heartbeat');
+        await this.onCommand('heartbeat', String(ctx.chat.id));
       }
     });
 
     // Handle /reset
     this.bot.command('reset', async (ctx) => {
       if (this.onCommand) {
-        const result = await this.onCommand('reset');
+        const result = await this.onCommand('reset', String(ctx.chat.id));
         await ctx.reply(result || 'Reset complete');
       }
     });

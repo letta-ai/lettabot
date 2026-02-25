@@ -181,7 +181,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
   // Event handlers (set by bot core)
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string) => Promise<string | null>;
 
   // Pre-bound handlers (created once to avoid bind() overhead)
   private boundHandleConnectionUpdate: (update: Partial<import("@whiskeysockets/baileys").ConnectionState>) => void;
