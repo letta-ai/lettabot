@@ -1246,14 +1246,18 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (didMode === 'disabled') return;
 
     const baseMsgId = notification.cid || notification.uri;
+    if (!baseMsgId) {
+      log.warn('Skipping notification with no cid or uri');
+      return;
+    }
     // Cross-path dedup: if Jetstream already delivered this post (stored as bare CID), skip.
     // This prevents double-delivery when both Jetstream and Notifications see the same post.
-    if (baseMsgId && this.seenMessageIds.has(baseMsgId)) return;
+    if (this.seenMessageIds.has(baseMsgId)) return;
     // Within-notification dedup: use a reason-scoped key so the same post arriving with
     // *different* reasons (e.g., "mention" and "reply") is delivered once per reason —
     // each represents a distinct actionable event (mention vs. thread reply context).
     const notificationMessageId = notification.reason ? `${notification.reason}:${baseMsgId}` : baseMsgId;
-    if (notificationMessageId && this.seenMessageIds.has(notificationMessageId)) return;
+    if (this.seenMessageIds.has(notificationMessageId)) return;
 
     const actionable = notification.reason === 'mention'
       || notification.reason === 'reply'
@@ -1439,9 +1443,8 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (!raw || typeof raw !== 'object') {
       return { version: STATE_VERSION, agents: {} };
     }
-    if (!raw.version || raw.version === STATE_VERSION) {
-      return { version: STATE_VERSION, agents: raw.agents && typeof raw.agents === 'object' ? raw.agents : {} };
-    }
+    // Accept any version; STATE_VERSION is written on next flush.
+    // Add version-specific migration logic here if the state shape ever changes.
     return { version: STATE_VERSION, agents: raw.agents && typeof raw.agents === 'object' ? raw.agents : {} };
   }
 
@@ -1482,7 +1485,7 @@ export class BlueskyAdapter implements ChannelAdapter {
         version: STATE_VERSION,
         updatedAt: new Date().toISOString(),
         agents,
-      }, null, 2));
+      }, null, 2), { mode: 0o600 });
       this.stateDirty = false;
     } catch (err) {
       log.warn('Failed to persist cursor state:', err);

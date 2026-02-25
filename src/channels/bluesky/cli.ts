@@ -39,22 +39,23 @@ function parseAtUri(uri: string): { did: string; collection: string; rkey: strin
 }
 
 function splitPostText(text: string): string[] {
-  const chars = Array.from(text);
-  if (chars.length === 0) return [];
-  if (chars.length <= POST_MAX_CHARS) {
+  const segmenter = new Intl.Segmenter();
+  const graphemes = [...segmenter.segment(text)].map(s => s.segment);
+  if (graphemes.length === 0) return [];
+  if (graphemes.length <= POST_MAX_CHARS) {
     const trimmed = text.trim();
     return trimmed ? [trimmed] : [];
   }
 
   const chunks: string[] = [];
   let start = 0;
-  while (start < chars.length) {
-    let end = Math.min(start + POST_MAX_CHARS, chars.length);
+  while (start < graphemes.length) {
+    let end = Math.min(start + POST_MAX_CHARS, graphemes.length);
 
-    if (end < chars.length) {
+    if (end < graphemes.length) {
       let split = end;
       for (let i = end - 1; i > start; i--) {
-        if (/\s/.test(chars[i])) {
+        if (/\s/.test(graphemes[i])) {
           split = i;
           break;
         }
@@ -62,12 +63,12 @@ function splitPostText(text: string): string[] {
       end = split > start ? split : end;
     }
 
-    let chunk = chars.slice(start, end).join('');
+    let chunk = graphemes.slice(start, end).join('');
     chunk = chunk.replace(/^\s+/, '').replace(/\s+$/, '');
     if (chunk) chunks.push(chunk);
 
     start = end;
-    while (start < chars.length && /\s/.test(chars[start])) {
+    while (start < graphemes.length && /\s/.test(graphemes[start])) {
       start++;
     }
   }
@@ -246,7 +247,7 @@ async function handlePost(
   const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
   const appViewUrl = (bluesky.appViewUrl || DEFAULT_APPVIEW_URL).replace(/\/+$/, '');
   const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
-  const charCount = Array.from(text).length;
+  const charCount = [...new Intl.Segmenter().segment(text)].length;
   if (charCount > POST_MAX_CHARS && !threaded) {
     throw new Error(`Post is ${charCount} chars. Use --threaded to split into a thread.`);
   }
@@ -324,7 +325,7 @@ async function handleQuote(
   const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
   const appViewUrl = (bluesky.appViewUrl || DEFAULT_APPVIEW_URL).replace(/\/+$/, '');
   const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
-  const charCount = Array.from(text).length;
+  const charCount = [...new Intl.Segmenter().segment(text)].length;
   if (charCount > POST_MAX_CHARS && !threaded) {
     throw new Error(`Post is ${charCount} chars. Use --threaded to split into a thread.`);
   }
