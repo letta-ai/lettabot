@@ -53,6 +53,8 @@ export interface AgentConfig {
   displayName?: string;
   /** Model for initial agent creation */
   model?: string;
+  /** Working directory for this agent's SDK sessions (overrides global) */
+  workingDir?: string;
   /** Channels this agent connects to */
   channels: {
     telegram?: TelegramConfig;
