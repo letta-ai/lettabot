@@ -521,14 +521,14 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     }
 
     // Warn when a channel block exists but was dropped due to missing credentials
-    const channelCredentials: Array<[string, Record<string, unknown> | undefined, boolean]> = [
+    const channelCredentials: Array<[string, unknown, boolean]> = [
       ['telegram', channels.telegram, !!normalized.telegram],
       ['slack', channels.slack, !!normalized.slack],
       ['signal', channels.signal, !!normalized.signal],
       ['discord', channels.discord, !!normalized.discord],
     ];
     for (const [name, raw, included] of channelCredentials) {
-      if (raw && (raw as any).enabled !== false && !included) {
+      if (raw && (raw as Record<string, unknown>).enabled !== false && !included) {
         console.warn(`[Config] Channel '${name}' is in ${sourcePath} but missing required credentials -- skipping. Check your lettabot.yaml or environment variables.`);
       }
     }
