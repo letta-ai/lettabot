@@ -714,8 +714,13 @@ export async function recoverOrphanedConversationApproval(
         // No client is going to approve them -- reject and cancel so
         // lettabot can proceed.
         const isStuckApproval = status === 'running' && stopReason === 'requires_approval';
+        // Letta Cloud uses status "created" with no stop_reason for runs
+        // that paused on requires_approval but haven't been resumed yet.
+        // If we found unresolved approval_request_messages for this run,
+        // it's stuck -- treat it the same as a running/requires_approval.
+        const isCreatedWithApproval = status === 'created';
         
-        if (isTerminated || isAbandonedApproval || isStuckApproval) {
+        if (isTerminated || isAbandonedApproval || isStuckApproval || isCreatedWithApproval) {
           log.info(`Found ${approvals.length} blocking approval(s) from ${status}/${stopReason} run ${runId}`);
           
           // Send denial for each unresolved tool call

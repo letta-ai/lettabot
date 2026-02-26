@@ -23,6 +23,36 @@ import {
 } from './types.js';
 
 describe('normalizeAgents', () => {
+  const envVars = [
+    'TELEGRAM_BOT_TOKEN', 'TELEGRAM_DM_POLICY', 'TELEGRAM_ALLOWED_USERS',
+    'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_DM_POLICY', 'SLACK_ALLOWED_USERS',
+    'WHATSAPP_ENABLED', 'WHATSAPP_SELF_CHAT_MODE', 'WHATSAPP_DM_POLICY', 'WHATSAPP_ALLOWED_USERS',
+    'SIGNAL_PHONE_NUMBER', 'SIGNAL_SELF_CHAT_MODE', 'SIGNAL_DM_POLICY', 'SIGNAL_ALLOWED_USERS',
+    'DISCORD_BOT_TOKEN', 'DISCORD_DM_POLICY', 'DISCORD_ALLOWED_USERS',
+    'BLUESKY_WANTED_DIDS', 'BLUESKY_WANTED_COLLECTIONS', 'BLUESKY_JETSTREAM_URL', 'BLUESKY_CURSOR',
+    'BLUESKY_HANDLE', 'BLUESKY_APP_PASSWORD', 'BLUESKY_SERVICE_URL', 'BLUESKY_APPVIEW_URL',
+    'BLUESKY_NOTIFICATIONS_ENABLED', 'BLUESKY_NOTIFICATIONS_INTERVAL_SEC', 'BLUESKY_NOTIFICATIONS_LIMIT',
+    'BLUESKY_NOTIFICATIONS_PRIORITY', 'BLUESKY_NOTIFICATIONS_REASONS',
+  ];
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of envVars) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of envVars) {
+      if (savedEnv[key] !== undefined) {
+        process.env[key] = savedEnv[key];
+      } else {
+        delete process.env[key];
+      }
+    }
+  });
+
   it('canonicalizes legacy server mode aliases', () => {
     expect(canonicalizeServerMode('cloud')).toBe('api');
     expect(canonicalizeServerMode('api')).toBe('api');
@@ -243,32 +273,6 @@ describe('normalizeAgents', () => {
   });
 
   describe('env var fallback (container deploys)', () => {
-    const envVars = [
-      'TELEGRAM_BOT_TOKEN', 'TELEGRAM_DM_POLICY', 'TELEGRAM_ALLOWED_USERS',
-      'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_DM_POLICY', 'SLACK_ALLOWED_USERS',
-      'WHATSAPP_ENABLED', 'WHATSAPP_SELF_CHAT_MODE', 'WHATSAPP_DM_POLICY', 'WHATSAPP_ALLOWED_USERS',
-      'SIGNAL_PHONE_NUMBER', 'SIGNAL_SELF_CHAT_MODE', 'SIGNAL_DM_POLICY', 'SIGNAL_ALLOWED_USERS',
-      'DISCORD_BOT_TOKEN', 'DISCORD_DM_POLICY', 'DISCORD_ALLOWED_USERS',
-    ];
-    const savedEnv: Record<string, string | undefined> = {};
-
-    beforeEach(() => {
-      for (const key of envVars) {
-        savedEnv[key] = process.env[key];
-        delete process.env[key];
-      }
-    });
-
-    afterEach(() => {
-      for (const key of envVars) {
-        if (savedEnv[key] !== undefined) {
-          process.env[key] = savedEnv[key];
-        } else {
-          delete process.env[key];
-        }
-      }
-    });
-
     it('should pick up channels from env vars when YAML has none', () => {
       process.env.TELEGRAM_BOT_TOKEN = 'env-telegram-token';
       process.env.DISCORD_BOT_TOKEN = 'env-discord-token';

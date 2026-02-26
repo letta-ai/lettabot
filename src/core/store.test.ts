@@ -282,6 +282,23 @@ describe('Store', () => {
     expect(store.getConversationId('discord')).toBeNull();
   });
 
+  it('clearConversation("shared") only clears the legacy conversationId, not per-channel overrides', () => {
+    const store = new Store(testStorePath, 'TestBot');
+
+    store.conversationId = 'conv-shared';
+    store.setConversationId('slack', 'conv-slack-override');
+    store.setConversationId('discord', 'conv-discord-override');
+
+    // Simulate /reset from a shared-mode channel (e.g. Telegram)
+    store.clearConversation('shared');
+
+    // Only the shared conversation should be wiped
+    expect(store.conversationId).toBeNull();
+    // Per-channel override conversations must survive
+    expect(store.getConversationId('slack')).toBe('conv-slack-override');
+    expect(store.getConversationId('discord')).toBe('conv-discord-override');
+  });
+
   it('should persist per-key conversations across reloads', () => {
     const store1 = new Store(testStorePath, 'TestBot');
     store1.setConversationId('telegram', 'conv-tg-persist');

@@ -109,6 +109,10 @@ export interface OutboundMessage {
   text: string;
   replyToMessageId?: string;
   threadId?: string;  // Slack thread_ts
+  /** When set, tells the adapter which parse mode to use (e.g., 'MarkdownV2',
+   *  'HTML') and to skip its default markdown conversion. Adapters that don't
+   *  support the specified mode ignore this and fall back to default. */
+  parseMode?: string;
 }
 
 /**
@@ -119,7 +123,7 @@ export interface OutboundFile {
   filePath: string;
   caption?: string;
   threadId?: string;
-  kind?: 'image' | 'file';
+  kind?: 'image' | 'file' | 'audio';
 }
 
 /**
@@ -128,6 +132,7 @@ export interface OutboundFile {
 export interface SkillsConfig {
   cronEnabled?: boolean;
   googleEnabled?: boolean;
+  ttsEnabled?: boolean;
   additionalSkills?: string[];
 }
 
@@ -167,6 +172,7 @@ export interface BotConfig {
   // Conversation routing
   conversationMode?: 'shared' | 'per-channel'; // Default: shared
   heartbeatConversation?: string; // "dedicated" | "last-active" | "<channel>" (default: last-active)
+  conversationOverrides?: string[]; // Channels that always use their own conversation (shared mode)
 }
 
 /**

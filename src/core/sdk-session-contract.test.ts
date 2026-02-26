@@ -11,8 +11,43 @@ vi.mock('@letta-ai/letta-code-sdk', () => ({
   imageFromURL: vi.fn(),
 }));
 
-import { createSession, resumeSession } from '@letta-ai/letta-code-sdk';
+vi.mock('../tools/letta-api.js', () => ({
+  updateAgentName: vi.fn(),
+  getPendingApprovals: vi.fn(),
+  rejectApproval: vi.fn(),
+  cancelRuns: vi.fn(),
+  recoverOrphanedConversationApproval: vi.fn(),
+  getLatestRunError: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('../skills/loader.js', () => ({
+  installSkillsToAgent: vi.fn(),
+  withAgentSkillsOnPath: vi.fn((_id: string, fn: () => unknown) => fn()),
+  getAgentSkillExecutableDirs: vi.fn().mockReturnValue([]),
+  isVoiceMemoConfigured: vi.fn().mockReturnValue(false),
+}));
+
+vi.mock('./memory.js', () => ({
+  loadMemoryBlocks: vi.fn().mockReturnValue([]),
+}));
+
+vi.mock('./system-prompt.js', () => ({
+  SYSTEM_PROMPT: 'test system prompt',
+}));
+
+import { createAgent, createSession, resumeSession } from '@letta-ai/letta-code-sdk';
+import { getLatestRunError } from '../tools/letta-api.js';
 import { LettaBot } from './bot.js';
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 describe('SDK session contract', () => {
   let dataDir: string;
@@ -165,6 +200,68 @@ describe('SDK session contract', () => {
     expect(vi.mocked(createSession)).toHaveBeenCalledTimes(2);
   });
 
+  it('reset ignores stale in-flight warm session and creates a fresh one', async () => {
+    const init = deferred<void>();
+
+    const warmSession = {
+      initialize: vi.fn(() => init.promise),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: false, conversationId: 'conv-old' })),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-old',
+    };
+
+    const resetSession = {
+      initialize: vi.fn(async () => undefined),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: false, conversationId: 'conv-new' })),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-new',
+    };
+
+    vi.mocked(resumeSession).mockReturnValue(warmSession as never);
+    vi.mocked(createSession).mockReturnValue(resetSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    // Simulate an existing shared conversation being pre-warmed.
+    bot.setAgentId('agent-contract-test');
+    const botInternal = bot as unknown as {
+      store: { conversationId: string | null };
+      handleCommand: (command: string, channelId?: string) => Promise<string | null>;
+    };
+    botInternal.store.conversationId = 'conv-old';
+
+    const warmPromise = bot.warmSession();
+    await Promise.resolve();
+
+    const resetPromise = botInternal.handleCommand('reset');
+
+    init.resolve();
+    await warmPromise;
+    const resetMessage = await resetPromise;
+
+    expect(resetMessage).toContain('New conversation: conv-new');
+    expect(warmSession.close).toHaveBeenCalledTimes(1);
+    expect(resetSession.initialize).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createSession)).toHaveBeenCalledTimes(1);
+  });
+
   it('passes memfs: true to createSession when config sets memfs true', async () => {
     const mockSession = {
       initialize: vi.fn(async () => undefined),
@@ -250,5 +347,156 @@ describe('SDK session contract', () => {
 
     const opts = vi.mocked(createSession).mock.calls[0][1];
     expect(opts).not.toHaveProperty('memfs');
+  });
+
+  it('restarts a keyed queue after non-shared lock release when backlog exists', async () => {
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+    const botInternal = bot as any;
+
+    botInternal.processingKeys.add('slack');
+    botInternal.keyedQueues.set('slack', [
+      {
+        msg: {
+          userId: 'u1',
+          channel: 'slack',
+          chatId: 'C123',
+          text: 'queued while locked',
+          timestamp: new Date(),
+          isGroup: false,
+        },
+        adapter: {},
+      },
+    ]);
+
+    const processSpy = vi.spyOn(botInternal, 'processKeyedQueue').mockResolvedValue(undefined);
+    botInternal.releaseLock('slack', true);
+
+    expect(botInternal.processingKeys.has('slack')).toBe(false);
+    expect(processSpy).toHaveBeenCalledWith('slack');
+  });
+
+  it('enriches opaque error via stream error event in sendToAgent', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'error', message: 'Bad request to Anthropic: context too long', stopReason: 'llm_api_error' };
+          yield { type: 'result', success: false, error: 'error' };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    await expect(bot.sendToAgent('trigger error')).rejects.toThrow(
+      'Bad request to Anthropic: context too long'
+    );
+  });
+
+  it('enriches error from run metadata when stream error is opaque', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: false, error: 'error', conversationId: 'conv-123' };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-123',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(getLatestRunError).mockResolvedValueOnce({
+      message: 'INTERNAL_SERVER_ERROR: Bad request to Anthropic: Error code: 400',
+      stopReason: 'llm_api_error',
+      isApprovalError: false,
+    });
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    await expect(bot.sendToAgent('trigger error')).rejects.toThrow(
+      'INTERNAL_SERVER_ERROR: Bad request to Anthropic: Error code: 400'
+    );
+    expect(getLatestRunError).toHaveBeenCalledWith('agent-contract-test', 'conv-123');
+  });
+
+  it('falls back to msg.error when no enrichment is available', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: false, error: 'timeout' };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(getLatestRunError).mockResolvedValueOnce(null);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    await expect(bot.sendToAgent('trigger error')).rejects.toThrow(
+      'Agent run failed: timeout'
+    );
+  });
+
+  it('passes tags: [origin:lettabot] to createAgent when creating a new agent', async () => {
+    delete process.env.LETTA_AGENT_ID;
+
+    vi.mocked(createAgent).mockResolvedValue('agent-new-tagged');
+
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'hello' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-new-tagged',
+      conversationId: 'conversation-new-tagged',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    await bot.sendToAgent('first message');
+
+    expect(vi.mocked(createAgent)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createAgent)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tags: ['origin:lettabot'],
+      })
+    );
   });
 });
