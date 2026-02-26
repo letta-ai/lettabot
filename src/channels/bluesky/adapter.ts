@@ -278,6 +278,7 @@ export class BlueskyAdapter implements ChannelAdapter {
 
     const ws = new WebSocket(url);
     this.ws = ws;
+    let sawError = false;
 
     ws.addEventListener('open', () => {
       this.reconnectAttempts = 0;
@@ -291,6 +292,8 @@ export class BlueskyAdapter implements ChannelAdapter {
     });
 
     ws.addEventListener('error', (event) => {
+      if (sawError) return;
+      sawError = true;
       const error = (event as { error?: unknown; message?: string }).error
         || (event as { error?: unknown; message?: string }).message
         || 'Unknown WebSocket error';
