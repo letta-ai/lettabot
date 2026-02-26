@@ -529,7 +529,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     ];
     for (const [name, raw, included] of channelCredentials) {
       if (raw && (raw as Record<string, unknown>).enabled !== false && !included) {
-        console.warn(`[Config] Channel '${name}' is in ${sourcePath} but missing required credentials -- skipping. Check your lettabot.yaml or environment variables.`);
+        log.warn(`Channel '${name}' is in ${sourcePath} but missing required credentials -- skipping. Check your lettabot.yaml or environment variables.`);
       }
     }
 
