@@ -950,6 +950,7 @@ export class LettaBot implements AgentSession {
       const newAgentId = await createAgent({
         systemPrompt: SYSTEM_PROMPT,
         memory: loadMemoryBlocks(this.config.agentName),
+        tags: ['origin:lettabot'],
         ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
       });
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
