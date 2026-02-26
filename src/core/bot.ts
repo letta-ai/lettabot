@@ -1335,9 +1335,11 @@ export class LettaBot implements AgentSession {
     adapter.onMessage = (msg) => this.handleMessage(msg, adapter);
     adapter.onCommand = (cmd, chatId) => this.handleCommand(cmd, adapter.id, chatId);
 
-    // Wrap outbound methods with redaction if configured (default: secrets on)
+    // Wrap outbound methods when any redaction layer is active.
+    // Secrets are enabled by default unless explicitly disabled.
     const redactionConfig = this.config.redaction;
-    if (redactionConfig?.secrets !== false) {
+    const shouldRedact = redactionConfig?.secrets !== false || redactionConfig?.pii === true;
+    if (shouldRedact) {
       const origSend = adapter.sendMessage.bind(adapter);
       adapter.sendMessage = (msg) => origSend({ ...msg, text: redactOutbound(msg.text, redactionConfig) });
 
