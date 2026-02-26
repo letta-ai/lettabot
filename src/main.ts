@@ -23,7 +23,7 @@ import {
   serverModeLabel,
 } from './config/index.js';
 import { isLettaApiUrl } from './utils/server.js';
-import { getDataDir, getWorkingDir, hasRailwayVolume } from './utils/paths.js';
+import { getDataDir, getWorkingDir, hasRailwayVolume, resolveWorkingDirPath } from './utils/paths.js';
 import { parseCsvList, parseNonNegativeNumber } from './utils/parse.js';
 import { sleep } from './utils/time.js';
 import { createLogger, setLogLevel } from './logger.js';
@@ -576,7 +576,9 @@ async function main() {
     const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : false);
 
     // Create LettaBot for this agent
-    const resolvedWorkingDir = agentConfig.workingDir ?? globalConfig.workingDir;
+    const resolvedWorkingDir = agentConfig.workingDir
+      ? resolveWorkingDirPath(agentConfig.workingDir)
+      : globalConfig.workingDir;
     const bot = new LettaBot({
       workingDir: resolvedWorkingDir,
       agentName: agentConfig.name,

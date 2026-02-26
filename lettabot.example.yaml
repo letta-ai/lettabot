@@ -20,7 +20,7 @@ agents:
     # Note: model is configured on the Letta agent server-side.
     # Select a model during `lettabot onboard` or change it with `lettabot model set <handle>`.
 
-    # workingDir: ~/my-project  # Per-agent working directory (overrides global LETTABOT_WORKING_DIR)
+    # workingDir: ~/my-project  # Per-agent working directory (overrides global WORKING_DIR)
 
     # Per-agent tool access (overrides global features.allowedTools / features.disallowedTools)
     # features:
