@@ -244,10 +244,14 @@ export async function sendWhatsAppFile(
   const caption = file.caption || undefined;
   const fileName = basename(file.filePath);
 
-  const payload =
-    file.kind === "image"
-      ? { image: { url: file.filePath }, caption }
-      : { document: { url: file.filePath }, mimetype: "application/octet-stream", caption, fileName };
+  let payload;
+  if (file.kind === "image") {
+    payload = { image: { url: file.filePath }, caption };
+  } else if (file.kind === "audio") {
+    payload = { audio: { url: file.filePath }, ptt: true };
+  } else {
+    payload = { document: { url: file.filePath }, mimetype: "application/octet-stream", caption, fileName };
+  }
 
   try {
     // Send file

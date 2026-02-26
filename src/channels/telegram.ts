@@ -510,6 +510,21 @@ export class TelegramAdapter implements ChannelAdapter {
       // Only first chunk replies to the original message
       const replyId = !lastMessageId && msg.replyToMessageId ? Number(msg.replyToMessageId) : undefined;
       
+      // If caller specified a parse mode, send directly (skip markdown conversion)
+      if (msg.parseMode) {
+        try {
+          const result = await this.bot.api.sendMessage(msg.chatId, chunk, {
+            parse_mode: msg.parseMode as 'MarkdownV2' | 'HTML',
+            reply_to_message_id: replyId,
+          });
+          lastMessageId = String(result.message_id);
+          continue;
+        } catch (e) {
+          console.warn(`[Telegram] ${msg.parseMode} send failed, falling back to default:`, e);
+          // Fall through to default conversion path
+        }
+      }
+
       // Try MarkdownV2 first
       try {
         const formatted = await markdownToTelegramV2(chunk);
@@ -553,6 +568,21 @@ export class TelegramAdapter implements ChannelAdapter {
     if (file.kind === 'image') {
       const result = await this.bot.api.sendPhoto(file.chatId, input, { caption });
       return { messageId: String(result.message_id) };
+    }
+
+    if (file.kind === 'audio') {
+      try {
+        const result = await this.bot.api.sendVoice(file.chatId, input, { caption });
+        return { messageId: String(result.message_id) };
+      } catch (err: any) {
+        // Fall back to sendAudio if voice messages are restricted (Telegram Premium privacy setting)
+        if (err?.description?.includes('VOICE_MESSAGES_FORBIDDEN')) {
+          log.warn('sendVoice forbidden, falling back to sendAudio');
+          const result = await this.bot.api.sendAudio(file.chatId, new InputFile(file.filePath), { caption });
+          return { messageId: String(result.message_id) };
+        }
+        throw err;
+      }
     }
 
     const result = await this.bot.api.sendDocument(file.chatId, input, { caption });

@@ -340,6 +340,19 @@ Any LettaBot agent can also be directly chatted with through [Letta Code](https:
 letta --agent <agent_id>
 ```
 
+## OpenAI-Compatible API
+
+LettaBot exposes `/v1/chat/completions` and `/v1/models` endpoints, so you can use any OpenAI SDK or compatible frontend (like [Open WebUI](https://github.com/open-webui/open-webui)) to chat with your agents:
+
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"model": "lettabot", "messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+Supports sync and streaming responses. See the [full documentation](docs/openai-compat.md) for Python/Node SDK examples and details.
+
 ## Security
 
 ### Network Architecture
@@ -450,6 +463,7 @@ Check the [ADE](https://app.letta.com) to see if your agent is attempting to use
 - [Getting Started](docs/getting-started.md)
 - [Docker Server Setup](docs/selfhosted-setup.md) - Run with your own Letta server
 - [Configuration Reference](docs/configuration.md)
+- [OpenAI-Compatible API](docs/openai-compat.md)
 - [Slack Setup](docs/slack-setup.md)
 - [Discord Setup](docs/discord-setup.md)
 - [WhatsApp Setup](docs/whatsapp-setup.md)

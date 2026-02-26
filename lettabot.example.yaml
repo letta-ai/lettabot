@@ -24,6 +24,7 @@ agents:
     conversations:
       mode: shared        # "shared" (default) or "per-channel"
       heartbeat: last-active  # "dedicated" | "last-active" | "<channel>"
+      # perChannel: ["slack"]  # Keep these channels isolated while others share a conversation
 
     channels:
       telegram:

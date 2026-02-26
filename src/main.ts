@@ -24,6 +24,8 @@ import {
 } from './config/index.js';
 import { isLettaApiUrl } from './utils/server.js';
 import { getDataDir, getWorkingDir, hasRailwayVolume } from './utils/paths.js';
+import { parseCsvList, parseNonNegativeNumber } from './utils/parse.js';
+import { sleep } from './utils/time.js';
 import { createLogger, setLogLevel } from './logger.js';
 
 const log = createLogger('Config');
@@ -177,6 +179,7 @@ import { CronService } from './cron/service.js';
 import { HeartbeatService } from './cron/heartbeat.js';
 import { PollingService, parseGmailAccounts } from './polling/service.js';
 import { agentExists, findAgentByName, ensureNoToolApprovals } from './tools/letta-api.js';
+import { isVoiceMemoConfigured } from './skills/loader.js';
 // Skills are now installed to agent-scoped location after agent creation (see bot.ts)
 
 // Check if config exists (skip in Railway/Docker where env vars are used directly)
@@ -210,10 +213,6 @@ const ATTACHMENTS_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DISCOVERY_LOCK_TIMEOUT_MS = 15_000;
 const DISCOVERY_LOCK_STALE_MS = 60_000;
 const DISCOVERY_LOCK_RETRY_MS = 100;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 function getDiscoveryLockPath(agentName: string): string {
   const safe = agentName
@@ -509,20 +508,6 @@ function createGroupBatcher(
 
 // Skills are installed to agent-scoped directory when agent is created (see core/bot.ts)
 
-function parseCsvList(raw: string): string[] {
-  return raw
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-}
-
-function parseNonNegativeNumber(raw: string | undefined): number | undefined {
-  if (!raw) return undefined;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
-  return parsed;
-}
-
 function ensureRequiredTools(tools: string[]): string[] {
   const out = [...tools];
   if (!out.includes('manage_todo')) {
@@ -564,6 +549,7 @@ async function main() {
   }
   log.info(`Data directory: ${dataDir}`);
   log.info(`Working directory: ${globalConfig.workingDir}`);
+  process.env.LETTABOT_WORKING_DIR = globalConfig.workingDir;
   
   // Normalize config to agents array
   const agents = normalizeAgents(yamlConfig);
@@ -592,6 +578,7 @@ async function main() {
   }
   
   const gateway = new LettaGateway();
+  const voiceMemoEnabled = isVoiceMemoConfigured();
   const services: { 
     cronServices: CronService[], 
     heartbeatServices: HeartbeatService[], 
@@ -632,6 +619,7 @@ async function main() {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
         googleEnabled: !!agentConfig.integrations?.google?.enabled || !!agentConfig.polling?.gmail?.enabled,
         blueskyEnabled: !!agentConfig.channels?.bluesky?.enabled,
+        ttsEnabled: voiceMemoEnabled,
       },
     });
     
@@ -813,7 +801,9 @@ async function main() {
       },
     };
   });
-  printStartupBanner(bannerAgents);
+  if (!process.env.LETTABOT_NO_BANNER) {
+    printStartupBanner(bannerAgents);
+  }
   
   // Shutdown
   const shutdown = async () => {

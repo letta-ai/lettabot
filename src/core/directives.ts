@@ -26,12 +26,17 @@ export interface SendFileDirective {
   type: 'send-file';
   path: string;
   caption?: string;
-  kind?: 'image' | 'file';
+  kind?: 'image' | 'file' | 'audio';
   cleanup?: boolean;
 }
 
+export interface VoiceDirective {
+  type: 'voice';
+  text: string;
+}
+
 // Union type — extend with more directive types later
-export type Directive = ReactDirective | SendFileDirective;
+export type Directive = ReactDirective | SendFileDirective | VoiceDirective;
 
 export interface ParseResult {
   cleanText: string;
@@ -45,10 +50,11 @@ export interface ParseResult {
 const ACTIONS_BLOCK_REGEX = /^\s*<actions>([\s\S]*?)<\/actions>/;
 
 /**
- * Match self-closing child directive tags inside the actions block.
- * Captures the tag name and the full attributes string.
+ * Match supported directive tags inside the actions block in source order.
+ * - Self-closing: <react ... />, <send-file ... />
+ * - Content-bearing: <voice>...</voice>
  */
-const CHILD_DIRECTIVE_REGEX = /<(react|send-file)\b([^>]*)\/>/g;
+const DIRECTIVE_TOKEN_REGEX = /<(react|send-file)\b([^>]*)\/>|<voice>([\s\S]*?)<\/voice>/g;
 
 /**
  * Parse a single attribute string like: emoji="eyes" message="123"
@@ -73,13 +79,21 @@ function parseChildDirectives(block: string): Directive[] {
   const normalizedBlock = block.replace(/\\(['"])/g, '$1');
 
   // Reset regex state (global flag)
-  CHILD_DIRECTIVE_REGEX.lastIndex = 0;
+  DIRECTIVE_TOKEN_REGEX.lastIndex = 0;
 
-  while ((match = CHILD_DIRECTIVE_REGEX.exec(normalizedBlock)) !== null) {
-    const [, tagName, attrString] = match;
+  while ((match = DIRECTIVE_TOKEN_REGEX.exec(normalizedBlock)) !== null) {
+    const [, tagName, attrString, voiceText] = match;
+
+    if (voiceText !== undefined) {
+      const text = voiceText.trim();
+      if (text) {
+        directives.push({ type: 'voice', text });
+      }
+      continue;
+    }
 
     if (tagName === 'react') {
-      const attrs = parseAttributes(attrString);
+      const attrs = parseAttributes(attrString || '');
       if (attrs.emoji) {
         directives.push({
           type: 'react',
@@ -91,11 +105,11 @@ function parseChildDirectives(block: string): Directive[] {
     }
 
     if (tagName === 'send-file') {
-      const attrs = parseAttributes(attrString);
+      const attrs = parseAttributes(attrString || '');
       const path = attrs.path || attrs.file;
       if (!path) continue;
       const caption = attrs.caption || attrs.text;
-      const kind = attrs.kind === 'image' || attrs.kind === 'file'
+      const kind = attrs.kind === 'image' || attrs.kind === 'file' || attrs.kind === 'audio'
         ? attrs.kind
         : undefined;
       const cleanup = attrs.cleanup === 'true';
