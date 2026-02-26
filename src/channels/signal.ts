@@ -785,7 +785,7 @@ This code expires in 1 hour.`;
         if (command === 'help' || command === 'start') {
           await this.sendMessage({ chatId, text: HELP_TEXT });
         } else if (this.onCommand) {
-          const result = await this.onCommand(command);
+          const result = await this.onCommand(command, chatId);
           if (result) await this.sendMessage({ chatId, text: result });
         }
         return; // Don't pass commands to agent

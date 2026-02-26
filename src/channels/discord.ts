@@ -253,7 +253,7 @@ Ask the bot owner to approve with:
         }
         if (this.onCommand) {
           if (command === 'status' || command === 'reset' || command === 'heartbeat') {
-            const result = await this.onCommand(command);
+            const result = await this.onCommand(command, message.channel.id);
             if (result) {
               await message.channel.send(result);
             }

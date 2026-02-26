@@ -141,8 +141,8 @@ describe('resolveHeartbeatConversationKey', () => {
     expect(resolveHeartbeatConversationKey('per-chat', 'dedicated', new Set(), 'telegram', '12345')).toBe('heartbeat');
   });
 
-  it('falls back to channel in per-chat mode when chatId is missing', () => {
-    expect(resolveHeartbeatConversationKey('per-chat', 'last-active', new Set(), 'telegram', undefined)).toBe('telegram');
+  it('falls back to shared in per-chat mode when chatId is missing', () => {
+    expect(resolveHeartbeatConversationKey('per-chat', 'last-active', new Set(), 'telegram', undefined)).toBe('shared');
   });
 
   it('falls back to "shared" in per-chat mode when no last-active target', () => {

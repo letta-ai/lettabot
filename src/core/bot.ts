@@ -252,7 +252,7 @@ export function resolveHeartbeatConversationKey(
       return `${lastActiveChannel.toLowerCase()}:${lastActiveChatId}`;
     }
     // Fall back to shared if no last-active target
-    return lastActiveChannel ?? 'shared';
+    return 'shared';
   }
 
   if (conversationMode === 'per-channel') {

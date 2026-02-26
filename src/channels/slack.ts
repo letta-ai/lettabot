@@ -119,7 +119,7 @@ export class SlackAdapter implements ChannelAdapter {
         if (command === 'help' || command === 'start') {
           await say(await markdownToSlackMrkdwn(HELP_TEXT));
         } else if (this.onCommand) {
-          const result = await this.onCommand(command);
+          const result = await this.onCommand(command, channelId);
           if (result) await say(await markdownToSlackMrkdwn(result));
         }
         return; // Don't pass commands to agent
@@ -236,7 +236,7 @@ export class SlackAdapter implements ChannelAdapter {
         if (command === 'help' || command === 'start') {
           await this.sendMessage({ chatId: channelId, text: HELP_TEXT, threadId: threadTs });
         } else if (this.onCommand) {
-          const result = await this.onCommand(command);
+          const result = await this.onCommand(command, channelId);
           if (result) await this.sendMessage({ chatId: channelId, text: result, threadId: threadTs });
         }
         return; // Don't pass commands to agent
