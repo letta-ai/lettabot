@@ -105,6 +105,84 @@ describe('BlueskyAdapter', () => {
     expect(messages[1].isListeningMode).toBe(true);
   });
 
+  it('uses post uri as chatId and defaults notification reply root to the post itself', async () => {
+    const adapter = makeAdapter();
+
+    const notification = {
+      uri: 'at://did:plc:author/app.bsky.feed.post/abc',
+      cid: 'cid-post',
+      author: { did: 'did:plc:author', handle: 'author.bsky.social' },
+      reason: 'reply',
+      record: {
+        $type: 'app.bsky.feed.post',
+        text: 'Hello',
+        createdAt: new Date().toISOString(),
+      },
+      indexedAt: new Date().toISOString(),
+    };
+
+    const messages: any[] = [];
+    adapter.onMessage = async (msg) => {
+      messages.push(msg);
+    };
+
+    await (adapter as any).processNotification(notification);
+
+    expect(messages[0].chatId).toBe(notification.uri);
+
+    const lastPostByChatId = (adapter as any).lastPostByChatId as Map<string, any>;
+    const entry = lastPostByChatId.get(notification.uri);
+    expect(entry?.rootUri).toBe(notification.uri);
+    expect(entry?.rootCid).toBe(notification.cid);
+  });
+
+  it('deduplicates Jetstream delivery after notifications', async () => {
+    const adapter = makeAdapter();
+
+    const messages: any[] = [];
+    adapter.onMessage = async (msg) => {
+      messages.push(msg);
+    };
+
+    const cid = 'cid-dup';
+    const notification = {
+      uri: 'at://did:plc:author/app.bsky.feed.post/dup',
+      cid,
+      author: { did: 'did:plc:author', handle: 'author.bsky.social' },
+      reason: 'mention',
+      record: {
+        $type: 'app.bsky.feed.post',
+        text: 'Hello',
+        createdAt: new Date().toISOString(),
+      },
+      indexedAt: new Date().toISOString(),
+    };
+
+    await (adapter as any).processNotification(notification);
+
+    const event = {
+      data: JSON.stringify({
+        did: 'did:plc:author',
+        time_us: Date.now() * 1000,
+        identity: { handle: 'author.bsky.social' },
+        commit: {
+          collection: 'app.bsky.feed.post',
+          rkey: 'dup',
+          cid,
+          record: {
+            $type: 'app.bsky.feed.post',
+            text: 'Hello',
+            createdAt: new Date().toISOString(),
+          },
+        },
+      }),
+    };
+
+    await (adapter as any).handleMessageEvent(event);
+
+    expect(messages).toHaveLength(1);
+  });
+
   it('excludes disabled DIDs from wantedDids', () => {
     const adapter = makeAdapter({
       wantedDids: ['did:plc:disabled'],

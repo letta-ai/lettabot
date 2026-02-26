@@ -60,6 +60,7 @@ export class BlueskyAdapter implements ChannelAdapter {
   private handleFetchInFlight = new Map<string, Promise<string | undefined>>();
   private lastHandleFetchAt = new Map<string, number>();
   private seenMessageIds = new Map<string, true>();
+  private seenBaseMessageIds = new Map<string, true>();
   private lastPostByChatId = new Map<string, {
     uri: string;
     cid?: string;
@@ -78,6 +79,7 @@ export class BlueskyAdapter implements ChannelAdapter {
   private notificationsTimer: ReturnType<typeof setInterval> | null = null;
   private notificationsCursor?: string;
   private notificationsInitialized = false;
+  private notificationsInFlight = false;
   private listModes: Record<string, DidMode> = {};
   private listRefreshInFlight = false;
   private runtimePath?: string;
@@ -260,8 +262,7 @@ export class BlueskyAdapter implements ChannelAdapter {
 
   async sendFile(_file: OutboundFile): Promise<{ messageId: string }>
   {
-    log.warn('sendFile is not supported (read-only channel).');
-    return { messageId: '' };
+    throw new Error('sendFile is not supported (read-only channel).');
   }
 
   private connect(): void {
@@ -416,7 +417,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     const handle = payload.did ? this.handleByDid.get(payload.did) : undefined;
     const { text, messageId, source, extraContext } = this.formatCommit(payload, handle);
     if (!text) return;
-    if (messageId && this.seenMessageIds.has(messageId)) return;
+    if (messageId && (this.seenMessageIds.has(messageId) || this.seenBaseMessageIds.has(messageId))) return;
 
     const timestamp = payload.time_us
       ? new Date(Math.floor(payload.time_us / 1000))
@@ -430,9 +431,10 @@ export class BlueskyAdapter implements ChannelAdapter {
     const isPost = payload.commit?.collection === 'app.bsky.feed.post';
     const shouldReply = isPost && didMode === 'open';
 
+    const chatId = source?.uri ?? did;
     const inbound: BlueskyInboundMessage = {
       channel: 'bluesky',
-      chatId: did,
+      chatId,
       userId: did,
       userHandle: handle,
       userName: handle ? `@${handle}` : undefined,
@@ -450,7 +452,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (payload.commit?.collection === 'app.bsky.feed.post' && source?.uri) {
       // For standalone posts (not replies), root is the post itself.
       // For reply posts, threadRootUri/Cid point to the conversation root.
-      this.lastPostByChatId.set(did, {
+      this.lastPostByChatId.set(chatId, {
         uri: source.uri,
         cid: source.cid,
         rootUri: source.threadRootUri ?? source.uri,
@@ -462,6 +464,8 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (messageId) {
       this.seenMessageIds.set(messageId, true);
       pruneMap(this.seenMessageIds, SEEN_MESSAGE_IDS_MAX);
+      this.seenBaseMessageIds.set(messageId, true);
+      pruneMap(this.seenBaseMessageIds, SEEN_MESSAGE_IDS_MAX);
     }
     await this.onMessage?.(inbound);
   }
@@ -827,72 +831,78 @@ export class BlueskyAdapter implements ChannelAdapter {
   private async pollNotifications(): Promise<void> {
     const config = this.getNotificationsConfig();
     if (!config || !this.running) return;
+    if (this.notificationsInFlight) return;
+    this.notificationsInFlight = true;
 
-    await this.ensureSession();
-    if (!this.accessJwt) return;
-
-    const params = new URLSearchParams();
-    params.set('limit', String(config.limit));
-    if (this.notificationsCursor) {
-      params.set('cursor', this.notificationsCursor);
-    }
-    if (config.priority !== undefined) {
-      params.set('priority', config.priority ? 'true' : 'false');
-    }
-    for (const reason of config.reasons) {
-      params.append('reasons', reason);
-    }
-
-    const res = await fetch(`${this.getAppViewUrl()}/xrpc/app.bsky.notification.listNotifications?${params}`, {
-      headers: { Authorization: `Bearer ${this.accessJwt}` },
-    });
-
-    if (res.status === 401) {
-      this.accessJwt = undefined;
-      this.accessJwtExpiresAt = undefined;
+    try {
       await this.ensureSession();
-      return;
-    }
+      if (!this.accessJwt) return;
 
-    if (!res.ok) {
-      const detail = await res.text();
-      throw new Error(`listNotifications failed: ${detail}`);
-    }
+      const params = new URLSearchParams();
+      params.set('limit', String(config.limit));
+      if (this.notificationsCursor) {
+        params.set('cursor', this.notificationsCursor);
+      }
+      if (config.priority !== undefined) {
+        params.set('priority', config.priority ? 'true' : 'false');
+      }
+      for (const reason of config.reasons) {
+        params.append('reasons', reason);
+      }
 
-    const data = await res.json() as {
-      cursor?: string;
-      notifications: Array<{
-        uri: string;
-        cid?: string;
-        author?: { did: string; handle?: string; displayName?: string };
-        reason: string;
-        reasonSubject?: string;
-        record?: Record<string, unknown>;
-        indexedAt?: string;
-        isRead?: boolean;
-      }>;
-    };
+      const res = await fetch(`${this.getAppViewUrl()}/xrpc/app.bsky.notification.listNotifications?${params}`, {
+        headers: { Authorization: `Bearer ${this.accessJwt}` },
+      });
 
-    if (!this.notificationsInitialized) {
-      this.notificationsCursor = data.cursor;
-      this.notificationsInitialized = true;
-      this.stateDirty = true;
-      log.info('Notifications cursor initialized (skipping initial backlog).');
-      return;
-    }
+      if (res.status === 401) {
+        this.accessJwt = undefined;
+        this.accessJwtExpiresAt = undefined;
+        await this.ensureSession();
+        return;
+      }
 
-    if (data.cursor) {
-      this.notificationsCursor = data.cursor;
-      this.stateDirty = true;
-    }
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(`listNotifications failed: ${detail}`);
+      }
 
-    const notifications = Array.isArray(data.notifications) ? data.notifications : [];
-    if (notifications.length === 0) return;
+      const data = await res.json() as {
+        cursor?: string;
+        notifications: Array<{
+          uri: string;
+          cid?: string;
+          author?: { did: string; handle?: string; displayName?: string };
+          reason: string;
+          reasonSubject?: string;
+          record?: Record<string, unknown>;
+          indexedAt?: string;
+          isRead?: boolean;
+        }>;
+      };
 
-    // Deliver oldest first
-    const ordered = [...notifications].reverse();
-    for (const notification of ordered) {
-      await this.processNotification(notification);
+      if (!this.notificationsInitialized) {
+        this.notificationsCursor = data.cursor;
+        this.notificationsInitialized = true;
+        this.stateDirty = true;
+        log.info('Notifications cursor initialized (skipping initial backlog).');
+        return;
+      }
+
+      if (data.cursor) {
+        this.notificationsCursor = data.cursor;
+        this.stateDirty = true;
+      }
+
+      const notifications = Array.isArray(data.notifications) ? data.notifications : [];
+      if (notifications.length === 0) return;
+
+      // Deliver oldest first
+      const ordered = [...notifications].reverse();
+      for (const notification of ordered) {
+        await this.processNotification(notification);
+      }
+    } finally {
+      this.notificationsInFlight = false;
     }
   }
 
@@ -1234,11 +1244,12 @@ export class BlueskyAdapter implements ChannelAdapter {
       if (details.replyRefs.parentUri) source.threadParentUri = details.replyRefs.parentUri;
       if (details.replyRefs.parentCid) source.threadParentCid = details.replyRefs.parentCid;
 
-      this.lastPostByChatId.set(authorDid, {
+      const chatId = source.uri ?? authorDid;
+      this.lastPostByChatId.set(chatId, {
         uri: notification.uri,
         cid: notification.cid,
-        rootUri: source.threadRootUri,
-        rootCid: source.threadRootCid,
+        rootUri: source.threadRootUri ?? notification.uri,
+        rootCid: source.threadRootCid ?? notification.cid,
       });
       pruneMap(this.lastPostByChatId, LAST_POST_CACHE_MAX);
     } else if (record) {
@@ -1269,9 +1280,10 @@ export class BlueskyAdapter implements ChannelAdapter {
       && recordType === 'app.bsky.feed.post'
       && (didMode === 'open' || (didMode === 'mention-only' && notification.reason === 'mention'));
 
+    const chatId = source.uri ?? authorDid;
     const inbound: BlueskyInboundMessage = {
       channel: 'bluesky',
-      chatId: authorDid,
+      chatId,
       userId: authorDid,
       userHandle: authorHandle,
       userName: authorHandle ? `@${authorHandle}` : undefined,
@@ -1289,6 +1301,10 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (notificationMessageId) {
       this.seenMessageIds.set(notificationMessageId, true);
       pruneMap(this.seenMessageIds, SEEN_MESSAGE_IDS_MAX);
+    }
+    if (baseMsgId) {
+      this.seenBaseMessageIds.set(baseMsgId, true);
+      pruneMap(this.seenBaseMessageIds, SEEN_MESSAGE_IDS_MAX);
     }
     await this.onMessage?.(inbound);
   }
