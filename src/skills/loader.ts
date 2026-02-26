@@ -243,11 +243,11 @@ export function loadAllSkills(agentId?: string | null): SkillEntry[] {
   // skills.sh global installs (lowest priority)
   dirs.push(SKILLS_SH_DIR);
   
-  // Global skills
-  dirs.push(GLOBAL_SKILLS_DIR);
-  
   // Bundled skills (ship with the project in skills/)
   dirs.push(BUNDLED_SKILLS_DIR);
+
+  // Global skills (override bundled defaults)
+  dirs.push(GLOBAL_SKILLS_DIR);
   
   // Agent-scoped skills (middle priority)
   if (agentId) {

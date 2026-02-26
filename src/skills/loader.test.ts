@@ -2,7 +2,7 @@
  * Skills Loader Tests
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -161,6 +161,55 @@ describe('skills loader', () => {
       const { readFileSync } = require('node:fs');
       const content = readFileSync(join(dest, 'SKILL.md'), 'utf-8');
       expect(content).toBe('target version');
+    });
+  });
+
+  describe('loadAllSkills precedence', () => {
+    it('prefers global skills over bundled skills for the same name', async () => {
+      const originalHome = process.env.HOME;
+      const originalUserProfile = process.env.USERPROFILE;
+      const originalCwd = process.cwd();
+      const tempHome = mkdtempSync(join(tmpdir(), 'lettabot-home-test-'));
+      const tempProject = mkdtempSync(join(tmpdir(), 'lettabot-project-test-'));
+
+      try {
+        process.env.HOME = tempHome;
+        process.env.USERPROFILE = tempHome;
+        process.chdir(tempProject);
+
+        const globalVoiceMemoDir = join(tempHome, '.letta', 'skills', 'voice-memo');
+        mkdirSync(globalVoiceMemoDir, { recursive: true });
+        writeFileSync(
+          join(globalVoiceMemoDir, 'SKILL.md'),
+          [
+            '---',
+            'name: voice-memo',
+            'description: global override',
+            '---',
+            '',
+            '# Global override',
+            '',
+          ].join('\n'),
+        );
+
+        vi.resetModules();
+        const mod = await import('./loader.js');
+        const skills = mod.loadAllSkills();
+        const voiceMemo = skills.find((skill: any) => skill.name === 'voice-memo');
+        const expectedPath = join(tempHome, '.letta', 'skills', 'voice-memo', 'SKILL.md');
+
+        expect(voiceMemo).toBeDefined();
+        expect(voiceMemo.description).toBe('global override');
+        expect(voiceMemo.filePath).toContain(expectedPath);
+      } finally {
+        process.chdir(originalCwd);
+        if (originalHome === undefined) delete process.env.HOME;
+        else process.env.HOME = originalHome;
+        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+        else process.env.USERPROFILE = originalUserProfile;
+        rmSync(tempHome, { recursive: true, force: true });
+        rmSync(tempProject, { recursive: true, force: true });
+      }
     });
   });
 });

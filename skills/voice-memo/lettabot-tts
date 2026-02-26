@@ -48,7 +48,7 @@ tts_elevenlabs() {
     exit 1
   fi
 
-  local voice_id="${ELEVENLABS_VOICE_ID:-onwK4e9ZLuTAKqWW03F9}"
+  local voice_id="${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}"
   local model_id="${ELEVENLABS_MODEL_ID:-eleven_multilingual_v2}"
 
   local http_code

@@ -188,6 +188,26 @@ describe('parseDirectives', () => {
     expect(result.directives[0]).toEqual({ type: 'react', emoji: '🎤' });
     expect(result.directives[1]).toEqual({ type: 'voice', text: 'Check this out' });
   });
+
+  it('preserves order when voice appears before react', () => {
+    const result = parseDirectives('<actions><voice>First</voice><react emoji="🎤" /></actions>');
+    expect(result.directives).toEqual([
+      { type: 'voice', text: 'First' },
+      { type: 'react', emoji: '🎤' },
+    ]);
+  });
+
+  it('preserves mixed directive order across voice and self-closing tags', () => {
+    const result = parseDirectives(
+      '<actions><send-file path="a.pdf" /><voice>One</voice><react emoji="👍" /><voice>Two</voice></actions>',
+    );
+    expect(result.directives).toEqual([
+      { type: 'send-file', path: 'a.pdf' },
+      { type: 'voice', text: 'One' },
+      { type: 'react', emoji: '👍' },
+      { type: 'voice', text: 'Two' },
+    ]);
+  });
 });
 
 describe('stripActionsBlock', () => {
