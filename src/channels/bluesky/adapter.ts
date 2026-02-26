@@ -262,7 +262,7 @@ export class BlueskyAdapter implements ChannelAdapter {
 
   async sendFile(_file: OutboundFile): Promise<{ messageId: string }>
   {
-    throw new Error('sendFile is not supported (read-only channel).');
+    throw new Error('sendFile is not supported.');
   }
 
   private connect(): void {
