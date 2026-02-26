@@ -601,7 +601,7 @@ async function main() {
     // Log memfs config (from either YAML or env var)
     if (resolvedMemfs !== undefined) {
       const source = agentConfig.features?.memfs !== undefined ? '' : ' (from LETTABOT_MEMFS env)';
-      console.log(`[Agent:${agentConfig.name}] memfs: ${resolvedMemfs ? 'enabled' : 'disabled'}${source}`);
+      log.info(`Agent ${agentConfig.name}: memfs ${resolvedMemfs ? 'enabled' : 'disabled'}${source}`);
     }
 
     // Apply explicit agent ID from config (before store verification)

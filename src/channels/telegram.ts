@@ -515,7 +515,7 @@ export class TelegramAdapter implements ChannelAdapter {
           lastMessageId = String(result.message_id);
           continue;
         } catch (e) {
-          console.warn(`[Telegram] ${msg.parseMode} send failed, falling back to default:`, e);
+          log.warn(`${msg.parseMode} send failed, falling back to default:`, e);
           // Fall through to default conversion path
         }
       }

@@ -492,7 +492,7 @@ export async function getLatestRunError(
     if (conversationId
       && typeof run.conversation_id === 'string'
       && run.conversation_id !== conversationId) {
-      console.warn('[Letta API] Latest run lookup returned a different conversation, skipping enrichment');
+      log.warn('Latest run lookup returned a different conversation, skipping enrichment');
       return null;
     }
 
@@ -506,10 +506,10 @@ export async function getLatestRunError(
     const isApprovalError = detail.toLowerCase().includes('waiting for approval')
       || detail.toLowerCase().includes('approve or deny');
 
-    console.log(`[Letta API] Latest run error: ${detail.slice(0, 150)}${isApprovalError ? ' [approval]' : ''}`);
+    log.info(`Latest run error: ${detail.slice(0, 150)}${isApprovalError ? ' [approval]' : ''}`);
     return { message: detail, stopReason, isApprovalError };
   } catch (e) {
-    console.warn('[Letta API] Failed to fetch latest run error:', e instanceof Error ? e.message : e);
+    log.warn('Failed to fetch latest run error:', e instanceof Error ? e.message : e);
     return null;
   }
 }
@@ -538,7 +538,7 @@ async function listActiveConversationRunIds(
     }
     return runIds;
   } catch (e) {
-    console.warn('[Letta API] Failed to list active conversation runs:', e instanceof Error ? e.message : e);
+    log.warn('Failed to list active conversation runs:', e instanceof Error ? e.message : e);
     return [];
   }
 }
@@ -639,7 +639,7 @@ export async function recoverOrphanedConversationApproval(
     // List recent messages from the conversation to find orphaned approvals.
     // Default: 50 (fast path). Deep scan: 500 (for conversations with many approvals).
     const scanLimit = deepScan ? 500 : 50;
-    console.log(`[Letta API] Scanning ${scanLimit} messages for orphaned approvals...`);
+    log.info(`Scanning ${scanLimit} messages for orphaned approvals...`);
     const messagesPage = await client.conversations.messages.list(conversationId, { limit: scanLimit });
     const messages: Array<Record<string, unknown>> = [];
     for await (const msg of messagesPage) {

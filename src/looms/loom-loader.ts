@@ -18,6 +18,9 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Looms');
 
 export interface LoomMetadata {
   name: string;
@@ -40,7 +43,7 @@ export function parseLoomFile(content: string, filename: string): Loom | null {
     // Also handle --- at the very start or with \r\n
     const altIndex = content.indexOf('\r\n---\r\n');
     if (altIndex === -1) {
-      console.warn(`[Loom] Skipping ${filename}: no --- separator found`);
+      log.warn(`Skipping ${filename}: no --- separator found`);
       return null;
     }
     return parseLoomContent(
@@ -69,7 +72,7 @@ function parseLoomContent(header: string, art: string, filename: string): Loom |
   }
 
   if (!meta.name || !meta.author) {
-    console.warn(`[Loom] Skipping ${filename}: missing required name or author in metadata`);
+    log.warn(`Skipping ${filename}: missing required name or author in metadata`);
     return null;
   }
 
@@ -106,7 +109,7 @@ export function loadAllLooms(loomsDir?: string): Loom[] {
   try {
     files = readdirSync(dir).filter(f => f.endsWith('.txt'));
   } catch (err) {
-    console.warn(`[Loom] Could not read looms directory: ${dir}`);
+    log.warn(`Could not read looms directory: ${dir}`);
     return looms;
   }
 
@@ -118,7 +121,7 @@ export function loadAllLooms(loomsDir?: string): Loom[] {
         looms.push(loom);
       }
     } catch (err) {
-      console.warn(`[Loom] Error reading ${file}:`, err);
+      log.warn(`Error reading ${file}:`, err);
     }
   }
 

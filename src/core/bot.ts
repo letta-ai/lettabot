@@ -741,7 +741,7 @@ export class LettaBot implements AgentSession {
 
       if (directive.type === 'send-file') {
         if (typeof adapter.sendFile !== 'function') {
-          console.warn(`[Bot] Directive send-file skipped: ${adapter.name} does not support sendFile`);
+          log.warn(`Directive send-file skipped: ${adapter.name} does not support sendFile`);
           continue;
         }
 
@@ -751,7 +751,7 @@ export class LettaBot implements AgentSession {
         const allowedDir = resolve(this.config.workingDir, allowedDirConfig);
         const resolvedPath = resolve(this.config.workingDir, directive.path);
         if (!await isPathAllowed(resolvedPath, allowedDir)) {
-          console.warn(`[Bot] Directive send-file blocked: ${directive.path} is outside allowed directory ${allowedDir}`);
+          log.warn(`Directive send-file blocked: ${directive.path} is outside allowed directory ${allowedDir}`);
           continue;
         }
 
@@ -759,7 +759,7 @@ export class LettaBot implements AgentSession {
         try {
           await access(resolvedPath, constants.R_OK);
         } catch {
-          console.warn(`[Bot] Directive send-file skipped: file not found or not readable at ${directive.path}`);
+          log.warn(`Directive send-file skipped: file not found or not readable at ${directive.path}`);
           continue;
         }
 
@@ -768,11 +768,11 @@ export class LettaBot implements AgentSession {
         try {
           const fileStat = await stat(resolvedPath);
           if (fileStat.size > maxSize) {
-            console.warn(`[Bot] Directive send-file blocked: ${directive.path} is ${fileStat.size} bytes (max: ${maxSize})`);
+            log.warn(`Directive send-file blocked: ${directive.path} is ${fileStat.size} bytes (max: ${maxSize})`);
             continue;
           }
         } catch {
-          console.warn(`[Bot] Directive send-file skipped: could not stat ${directive.path}`);
+          log.warn(`Directive send-file skipped: could not stat ${directive.path}`);
           continue;
         }
 
@@ -785,20 +785,20 @@ export class LettaBot implements AgentSession {
             threadId,
           });
           acted = true;
-          console.log(`[Bot] Directive: sent file ${resolvedPath}`);
+          log.info(`Directive: sent file ${resolvedPath}`);
 
           // Optional cleanup: delete file after successful send.
           // Only honored when sendFileCleanup is enabled in config (defense-in-depth).
           if (directive.cleanup && this.config.sendFileCleanup) {
             try {
               await unlink(resolvedPath);
-              console.warn(`[Bot] Directive: cleaned up ${resolvedPath}`);
+              log.warn(`Directive: cleaned up ${resolvedPath}`);
             } catch (cleanupErr) {
-              console.warn('[Bot] Directive send-file cleanup failed:', cleanupErr instanceof Error ? cleanupErr.message : cleanupErr);
+              log.warn('Directive send-file cleanup failed:', cleanupErr instanceof Error ? cleanupErr.message : cleanupErr);
             }
           }
         } catch (err) {
-          console.warn('[Bot] Directive send-file failed:', err instanceof Error ? err.message : err);
+          log.warn('Directive send-file failed:', err instanceof Error ? err.message : err);
         }
       }
 
@@ -1758,7 +1758,7 @@ export class LettaBot implements AgentSession {
         if (directives.length === 0) return;
 
         if (suppressDelivery) {
-          console.log(`[Bot] Listening mode: skipped ${directives.length} directive(s)`);
+          log.info(`Listening mode: skipped ${directives.length} directive(s)`);
           return;
         }
 
@@ -1838,7 +1838,7 @@ export class LettaBot implements AgentSession {
                 // not a substitute for an assistant response. Error handling and retry must
                 // still fire even if reasoning was displayed.
               } catch (err) {
-                console.warn('[Bot] Failed to send reasoning display:', err instanceof Error ? err.message : err);
+                log.warn('Failed to send reasoning display:', err instanceof Error ? err.message : err);
               }
             }
             reasoningBuffer = '';
@@ -1868,7 +1868,7 @@ export class LettaBot implements AgentSession {
                 const text = this.formatToolCallDisplay(streamMsg);
                 await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
               } catch (err) {
-                console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
+                log.warn('Failed to send tool call display:', err instanceof Error ? err.message : err);
               }
             }
           } else if (streamMsg.type === 'tool_result') {
@@ -2007,7 +2007,7 @@ export class LettaBot implements AgentSession {
               lastErrorDetail?.message?.toLowerCase().includes('waiting for approval');
             if (isApprovalConflict && !retried && this.store.agentId) {
               if (retryConvId) {
-                console.log('[Bot] Approval conflict detected -- attempting targeted recovery...');
+                log.info('Approval conflict detected -- attempting targeted recovery...');
                 this.invalidateSession(retryConvKey);
                 session = null;
                 clearInterval(typingInterval);
@@ -2015,10 +2015,10 @@ export class LettaBot implements AgentSession {
                   this.store.agentId, retryConvId, true /* deepScan */
                 );
                 if (convResult.recovered) {
-                  console.log(`[Bot] Approval recovery succeeded (${convResult.details}), retrying message...`);
+                  log.info(`Approval recovery succeeded (${convResult.details}), retrying message...`);
                   return this.processMessage(msg, adapter, true);
                 }
-                console.warn(`[Bot] Approval recovery failed: ${convResult.details}`);
+                log.warn(`Approval recovery failed: ${convResult.details}`);
               }
             }
 
