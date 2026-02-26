@@ -122,6 +122,42 @@ describe('SDK session contract', () => {
     expect(mockSession.stream).toHaveBeenCalledTimes(2);
   });
 
+  it('accumulates tool_call arguments when continuation chunks omit toolCallId', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'tool_call', toolCallId: 'tc-1', toolName: 'Bash', rawArguments: '{"command":"ec' };
+          yield { type: 'tool_call', toolName: 'Bash', rawArguments: 'ho hi"}' };
+          yield { type: 'assistant', content: 'done' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    const chunks: Array<Record<string, unknown>> = [];
+    for await (const msg of bot.streamToAgent('test')) {
+      chunks.push(msg as Record<string, unknown>);
+    }
+
+    const toolCalls = chunks.filter((m) => m.type === 'tool_call');
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0].toolCallId).toBe('tc-1');
+    expect(toolCalls[0].toolInput).toEqual({ command: 'echo hi' });
+  });
+
   it('closes session if initialize times out before first send', async () => {
     process.env.LETTA_SESSION_TIMEOUT_MS = '5';
 

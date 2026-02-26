@@ -1281,10 +1281,11 @@ export class LettaBot implements AgentSession {
         yield { ...pending.msg, toolInput };
       }
       pendingToolCalls.clear();
+      lastPendingToolCallId = null;
     }
 
     let anonToolCallCounter = 0;
-    let currentAnonId: string | null = null;
+    let lastPendingToolCallId: string | null = null;
 
     async function* dedupedStream(): AsyncGenerator<StreamMsg> {
       for await (const raw of session.stream()) {
@@ -1296,13 +1297,13 @@ export class LettaBot implements AgentSession {
             // Tool calls without IDs (e.g., from models that don't emit
             // tool_call_id on subsequent argument chunks) still need to be
             // accumulated. Assign a synthetic ID so they enter the buffer.
-            // If the tool name changes, start a new synthetic entry.
-            const currentPending = currentAnonId ? pendingToolCalls.get(currentAnonId) : null;
-            if (currentAnonId && currentPending && (currentPending.msg.toolName || 'unknown') === (msg.toolName || 'unknown')) {
-              id = currentAnonId;
+            // If tool name matches the most recent pending call, treat this as
+            // a continuation even when the first chunk had a real toolCallId.
+            const currentPending = lastPendingToolCallId ? pendingToolCalls.get(lastPendingToolCallId) : null;
+            if (lastPendingToolCallId && currentPending && (currentPending.msg.toolName || 'unknown') === (msg.toolName || 'unknown')) {
+              id = lastPendingToolCallId;
             } else {
               id = `__anon_${++anonToolCallCounter}__`;
-              currentAnonId = id;
             }
           }
 
@@ -1313,6 +1314,7 @@ export class LettaBot implements AgentSession {
           } else {
             pendingToolCalls.set(id, { msg, accumulatedArgs: incoming });
           }
+          lastPendingToolCallId = id;
           continue; // buffer, don't yield yet
         }
 
