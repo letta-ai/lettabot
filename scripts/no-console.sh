@@ -3,25 +3,24 @@
 # Runtime code should use createLogger() from src/logger.ts instead.
 #
 # Excluded:
-#   - CLI commands (src/cli*, onboard, setup) -- user-facing terminal output
+#   - CLI commands (src/cli*, src/cron/cli.ts, onboard, setup) -- user-facing terminal output
 #   - Test files (*.test.ts, mock-*) -- test output
 #   - banner.ts -- ASCII art display
-#   - whatsapp/session.ts installConsoleFilters() -- intentional console interception (Baileys noise filter)
 #   - JSDoc examples (lines starting with ' *')
 
 set -euo pipefail
 
-hits=$(grep -rn 'console\.\(log\|error\|warn\|info\)(' src/ --include='*.ts' \
-  | grep -v '/cli' \
-  | grep -v '\.test\.' \
-  | grep -v 'mock-channel' \
-  | grep -v 'banner\.ts' \
-  | grep -v 'session\.ts.*\(originalLog\|originalError\|originalWarn\|console\.\(log\|error\|warn\) =\)' \
-  | grep -v 'setup\.ts' \
-  | grep -v 'onboard\.ts' \
-  | grep -v 'slack-wizard\.ts' \
-  | grep -v 'cron/cli\.ts' \
-  | grep -v ' \* ' \
+hits=$(grep -rEn 'console\.(log|error|warn|info|debug|trace)[[:space:]]*\(' src/ --include='*.ts' \
+  --exclude='*.test.ts' \
+  --exclude='mock-*.ts' \
+  --exclude='mock-channel.ts' \
+  --exclude='banner.ts' \
+  --exclude='setup.ts' \
+  --exclude='onboard.ts' \
+  --exclude='slack-wizard.ts' \
+  --exclude='cli.ts' \
+  --exclude-dir='cli' \
+  | grep -Ev ':[0-9]+:[[:space:]]*\* ' \
   || true)
 
 if [ -n "$hits" ]; then
