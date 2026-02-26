@@ -68,6 +68,7 @@ agents:
       #   #   enabled: true
       #   #   intervalSec: 60
       #   #   reasons: ["mention", "reply", "quote"]  # also: like, repost, follow
+      #   #   backfill: false                         # process initial backlog on startup
       #   # jetstreamUrl: wss://jetstream2.us-east.bsky.network/subscribe
       #   # handle: you.bsky.social
       #   # appPassword: xxxx-xxxx-xxxx-xxxx

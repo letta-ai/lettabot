@@ -784,6 +784,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     limit: number;
     priority?: boolean;
     reasons: string[];
+    backfill: boolean;
   } | null {
     const config = this.config.notifications;
     if (config?.enabled === false) return null;
@@ -810,6 +811,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       limit,
       priority: config?.priority,
       reasons,
+      backfill: config?.backfill === true,
     };
   }
 
@@ -880,26 +882,51 @@ export class BlueskyAdapter implements ChannelAdapter {
         }>;
       };
 
-      if (!this.notificationsInitialized) {
-        this.notificationsCursor = data.cursor;
+      const backfill = config.backfill;
+      const initializing = !this.notificationsInitialized;
+      let deferredCursor: string | undefined;
+
+      if (initializing) {
+        deferredCursor = data.cursor;
         this.notificationsInitialized = true;
         this.stateDirty = true;
-        log.info('Notifications cursor initialized (skipping initial backlog).');
-        return;
+        if (!backfill) {
+          if (deferredCursor) {
+            this.notificationsCursor = deferredCursor;
+            this.stateDirty = true;
+          }
+          log.info('Notifications cursor initialized (skipping initial backlog).');
+          return;
+        }
+        if (!deferredCursor) {
+          log.warn('Notifications backfill enabled but API returned no cursor; may reprocess initial page.');
+        }
+        log.info('Notifications cursor initialized (backfill enabled).');
       }
 
-      if (data.cursor) {
+      if (!initializing && data.cursor) {
         this.notificationsCursor = data.cursor;
         this.stateDirty = true;
       }
 
       const notifications = Array.isArray(data.notifications) ? data.notifications : [];
-      if (notifications.length === 0) return;
+      if (notifications.length === 0) {
+        if (initializing && deferredCursor) {
+          this.notificationsCursor = deferredCursor;
+          this.stateDirty = true;
+        }
+        return;
+      }
 
       // Deliver oldest first
       const ordered = [...notifications].reverse();
       for (const notification of ordered) {
         await this.processNotification(notification);
+      }
+
+      if (initializing && deferredCursor) {
+        this.notificationsCursor = deferredCursor;
+        this.stateDirty = true;
       }
     } finally {
       this.notificationsInFlight = false;
