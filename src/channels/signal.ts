@@ -316,6 +316,37 @@ This code expires in 1 hour.`;
   async editMessage(_chatId: string, _messageId: string, _text: string): Promise<void> {
     // Signal doesn't support editing messages - no-op
   }
+
+  async addReaction(chatId: string, messageId: string, emoji: string): Promise<void> {
+    // messageId is encoded as "timestamp:author" by the inbound handler
+    const colonIdx = messageId.indexOf(':');
+    if (colonIdx === -1) {
+      throw new Error(`Signal addReaction: invalid messageId format (expected "timestamp:author"): ${messageId}`);
+    }
+    const targetTimestamp = Number(messageId.slice(0, colonIdx));
+    const targetAuthor = messageId.slice(colonIdx + 1);
+    if (!targetTimestamp || !targetAuthor) {
+      throw new Error(`Signal addReaction: could not parse timestamp/author from "${messageId}"`);
+    }
+
+    const params: Record<string, unknown> = {
+      emoji,
+      'target-author': targetAuthor,
+      'target-timestamp': targetTimestamp,
+    };
+
+    if (this.config.phoneNumber) {
+      params.account = this.config.phoneNumber;
+    }
+
+    if (chatId.startsWith('group:')) {
+      params.groupId = chatId.slice('group:'.length);
+    } else {
+      params.recipient = [chatId === 'note-to-self' ? this.config.phoneNumber : chatId];
+    }
+
+    await this.rpcRequest('sendReaction', params);
+  }
   
   async sendTypingIndicator(chatId: string): Promise<void> {
     try {
@@ -792,12 +823,16 @@ This code expires in 1 hour.`;
         }
       }
       
+      // Signal uses timestamps as message IDs. Encode as "timestamp:author" so
+      // addReaction() can extract the target-author for sendReaction.
+      const signalTimestamp = envelope.timestamp || Date.now();
       const msg: InboundMessage = {
         channel: 'signal',
         chatId,
         userId: source,
+        messageId: `${signalTimestamp}:${source}`,
         text: messageText || '',
-        timestamp: new Date(envelope.timestamp || Date.now()),
+        timestamp: new Date(signalTimestamp),
         isGroup,
         groupName: groupInfo?.groupName,
         wasMentioned,

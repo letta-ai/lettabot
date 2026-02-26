@@ -5,20 +5,22 @@
  */
 
 import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { extname, resolve, join } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
 import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval, getLatestRunError } from '../tools/letta-api.js';
-import { installSkillsToAgent } from '../skills/loader.js';
+import { installSkillsToAgent, withAgentSkillsOnPath, getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { parseDirectives, stripActionsBlock, type Directive } from './directives.js';
+import { resolveEmoji } from './emoji.js';
 import { createManageTodoTool } from '../tools/todo.js';
 import { syncTodosFromTool } from '../todo/store.js';
 
@@ -67,6 +69,11 @@ function formatApiErrorForUser(error: { message: string; stopReason: string; api
   const apiMsg = (typeof apiError.message === 'string' ? apiError.message : '').toLowerCase();
   const reasons: string[] = Array.isArray(apiError.reasons) ? apiError.reasons : [];
 
+  // Billing / credits exhausted
+  if (msg.includes('out of credits') || apiMsg.includes('out of credits')) {
+    return '(Out of credits for hosted inference. Add credits or enable auto-recharge at app.letta.com/settings/organization/usage.)';
+  }
+
   // Rate limiting / usage exceeded (429)
   if (msg.includes('rate limit') || msg.includes('429') || msg.includes('usage limit')
     || apiMsg.includes('rate limit') || apiMsg.includes('usage limit')) {
@@ -111,10 +118,16 @@ const IMAGE_FILE_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff',
 ]);
 
-/** Infer whether a file is an image or generic file based on extension. */
-export function inferFileKind(filePath: string): 'image' | 'file' {
+const AUDIO_FILE_EXTENSIONS = new Set([
+  '.ogg', '.opus', '.mp3', '.m4a', '.wav', '.aac', '.flac',
+]);
+
+/** Infer whether a file is an image, audio, or generic file based on extension. */
+export function inferFileKind(filePath: string): 'image' | 'file' | 'audio' {
   const ext = extname(filePath).toLowerCase();
-  return IMAGE_FILE_EXTENSIONS.has(ext) ? 'image' : 'file';
+  if (IMAGE_FILE_EXTENSIONS.has(ext)) return 'image';
+  if (AUDIO_FILE_EXTENSIONS.has(ext)) return 'audio';
+  return 'file';
 }
 
 /**
@@ -206,6 +219,49 @@ export function isResponseDeliverySuppressed(msg: Pick<InboundMessage, 'isListen
   return msg.isListeningMode === true;
 }
 
+/**
+ * Pure function: resolve the conversation key for a channel message.
+ * Returns the channel id in per-channel mode or when the channel is in overrides.
+ * Returns 'shared' otherwise.
+ */
+export function resolveConversationKey(
+  channel: string,
+  conversationMode: string | undefined,
+  conversationOverrides: Set<string>,
+): string {
+  const normalized = channel.toLowerCase();
+  if (conversationMode === 'per-channel') return normalized;
+  if (conversationOverrides.has(normalized)) return normalized;
+  return 'shared';
+}
+
+/**
+ * Pure function: resolve the conversation key for heartbeat/sendToAgent.
+ * In per-channel mode, respects heartbeatConversation setting.
+ * In shared mode with overrides, respects override channels when using last-active.
+ */
+export function resolveHeartbeatConversationKey(
+  conversationMode: string | undefined,
+  heartbeatConversation: string | undefined,
+  conversationOverrides: Set<string>,
+  lastActiveChannel?: string,
+): string {
+  const hb = heartbeatConversation || 'last-active';
+
+  if (conversationMode === 'per-channel') {
+    if (hb === 'dedicated') return 'heartbeat';
+    if (hb === 'last-active') return lastActiveChannel ?? 'shared';
+    return hb;
+  }
+
+  // shared mode — if last-active and overrides exist, respect the override channel
+  if (hb === 'last-active' && conversationOverrides.size > 0 && lastActiveChannel) {
+    return resolveConversationKey(lastActiveChannel, conversationMode, conversationOverrides);
+  }
+
+  return 'shared';
+}
+
 export class LettaBot implements AgentSession {
   private store: Store;
   private config: BotConfig;
@@ -229,7 +285,13 @@ export class LettaBot implements AgentSession {
   // In shared mode, only the "shared" key is used. In per-channel mode, each
   // channel (and optionally heartbeat) gets its own subprocess.
   private sessions: Map<string, Session> = new Map();
+  // Coalesces concurrent ensureSessionForKey calls for the same key so the
+  // second caller waits for the first instead of creating a duplicate session.
+  // generation prevents stale in-flight creations from being reused after reset.
+  private sessionCreationLocks: Map<string, { promise: Promise<Session>; generation: number }> = new Map();
+  private sessionGenerations: Map<string, number> = new Map();
   private currentCanUseTool: CanUseToolCallback | undefined;
+  private conversationOverrides: Set<string> = new Set();
   // Stable callback wrapper so the Session options never change, but we can
   // swap out the per-message handler before each send().
   private readonly sessionCanUseTool: CanUseToolCallback = async (toolName, toolInput) => {
@@ -243,6 +305,9 @@ export class LettaBot implements AgentSession {
     this.config = config;
     mkdirSync(config.workingDir, { recursive: true });
     this.store = new Store('lettabot-agent.json', config.agentName);
+    if (config.conversationOverrides?.length) {
+      this.conversationOverrides = new Set(config.conversationOverrides.map((ch) => ch.toLowerCase()));
+    }
     log.info(`LettaBot initialized. Agent ID: ${this.store.agentId || '(new)'}`);
   }
 
@@ -259,18 +324,148 @@ export class LettaBot implements AgentSession {
     return `${this.config.displayName}: ${text}`;
   }
 
+  // ---- Tool call display ----
+
+  /**
+   * Pretty display config for known tools.
+   * `header`: bold verb shown to the user (e.g., "Searching")
+   * `argKeys`: ordered preference list of fields to extract from toolInput
+   *            or tool_result JSON as the detail line
+   * `format`: optional -- 'code' wraps the detail in backticks
+   */
+  private static readonly TOOL_DISPLAY_MAP: Record<string, {
+    header: string;
+    argKeys: string[];
+    format?: 'code';
+    /** For 'code' format: if the first argKey value exceeds this length,
+     *  fall back to the next argKey shown as plain text instead. */
+    adaptiveCodeThreshold?: number;
+    /** Dynamic header based on tool input. When provided, the return value
+     *  replaces `header` entirely and no argKey detail is appended. */
+    headerFn?: (input: Record<string, unknown>) => string;
+  }> = {
+    web_search:          { header: 'Searching',      argKeys: ['query'] },
+    fetch_webpage:       { header: 'Reading',         argKeys: ['url'] },
+    Bash:                { header: 'Running',          argKeys: ['command', 'description'], format: 'code', adaptiveCodeThreshold: 80 },
+    Read:                { header: 'Reading',          argKeys: ['file_path'] },
+    Edit:                { header: 'Editing',          argKeys: ['file_path'] },
+    Write:               { header: 'Writing',          argKeys: ['file_path'] },
+    Glob:                { header: 'Finding files',    argKeys: ['pattern'] },
+    Grep:                { header: 'Searching code',   argKeys: ['pattern'] },
+    Task:                { header: 'Delegating',       argKeys: ['description'] },
+    conversation_search: { header: 'Searching conversation history', argKeys: ['query'] },
+    archival_memory_search: { header: 'Searching archival memory', argKeys: ['query'] },
+    run_code:            { header: 'Running code',     argKeys: ['code'], format: 'code' },
+    note:                { header: 'Taking note',      argKeys: ['title', 'content'] },
+    manage_todo:         { header: 'Updating todos',   argKeys: [] },
+    TodoWrite:           { header: 'Updating todos',   argKeys: [] },
+    Skill:               {
+      header: 'Loading skill',
+      argKeys: ['skill'],
+      headerFn: (input) => {
+        const skill = input.skill as string | undefined;
+        const command = (input.command as string | undefined) || (input.args as string | undefined);
+        if (command === 'unload') return skill ? `Unloading ${skill}` : 'Unloading skill';
+        if (command === 'refresh') return 'Refreshing skills';
+        return skill ? `Loading ${skill}` : 'Loading skill';
+      },
+    },
+  };
+
   /**
    * Format a tool call for channel display.
-   * Shows tool name + abbreviated key parameters.
+   *
+   * Known tools get a pretty verb-based header (e.g., **Searching**).
+   * Unknown tools fall back to **Tool**\n<name> (<args>).
+   *
+   * When toolInput is empty (SDK streaming limitation -- the CLI only
+   * forwards the first chunk before args are accumulated), we fall back
+   * to extracting the detail from the tool_result content.
    */
-  private formatToolCallDisplay(streamMsg: StreamMsg): string {
+  private formatToolCallDisplay(streamMsg: StreamMsg, toolResult?: StreamMsg): string {
     const name = streamMsg.toolName || 'unknown';
-    const params = this.abbreviateToolInput(streamMsg);
-    return params ? `**Tool:** ${name} (${params})` : `**Tool:** ${name}`;
+    const display = LettaBot.TOOL_DISPLAY_MAP[name];
+
+    if (display) {
+      // --- Dynamic header path (e.g., Skill tool with load/unload/refresh modes) ---
+      if (display.headerFn) {
+        const input = (streamMsg.toolInput as Record<string, unknown> | undefined) ?? {};
+        return `**${display.headerFn(input)}**`;
+      }
+
+      // --- Custom display path ---
+      const detail = this.extractToolDetail(display.argKeys, streamMsg, toolResult);
+      if (detail) {
+        let formatted: string;
+        if (display.format === 'code' && display.adaptiveCodeThreshold) {
+          // Adaptive: short values get code format, long values fall back to
+          // the next argKey as plain text (e.g., Bash shows `command` for short
+          // commands, but the human-readable `description` for long ones).
+          if (detail.length <= display.adaptiveCodeThreshold) {
+            formatted = `\`${detail}\``;
+          } else {
+            const fallback = this.extractToolDetail(display.argKeys.slice(1), streamMsg, toolResult);
+            formatted = fallback || detail.slice(0, display.adaptiveCodeThreshold) + '...';
+          }
+        } else {
+          formatted = display.format === 'code' ? `\`${detail}\`` : detail;
+        }
+        return `**${display.header}**\n${formatted}`;
+      }
+      return `**${display.header}**`;
+    }
+
+    // --- Generic fallback for unknown tools ---
+    let params = this.abbreviateToolInput(streamMsg);
+    if (!params && toolResult?.content) {
+      params = this.extractInputFromToolResult(toolResult.content);
+    }
+    return params ? `**Tool**\n${name} (${params})` : `**Tool**\n${name}`;
+  }
+
+  /**
+   * Extract the first matching detail string from a tool call's input or
+   * the subsequent tool_result content (fallback for empty toolInput).
+   */
+  private extractToolDetail(
+    argKeys: string[],
+    streamMsg: StreamMsg,
+    toolResult?: StreamMsg,
+  ): string {
+    if (argKeys.length === 0) return '';
+
+    // 1. Try toolInput (primary -- when SDK provides args)
+    const input = streamMsg.toolInput as Record<string, unknown> | undefined;
+    if (input && typeof input === 'object') {
+      for (const key of argKeys) {
+        const val = input[key];
+        if (typeof val === 'string' && val.length > 0) {
+          return val.length > 120 ? val.slice(0, 117) + '...' : val;
+        }
+      }
+    }
+
+    // 2. Try tool_result content (fallback for empty toolInput)
+    if (toolResult?.content) {
+      try {
+        const parsed = JSON.parse(toolResult.content);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          for (const key of argKeys) {
+            const val = (parsed as Record<string, unknown>)[key];
+            if (typeof val === 'string' && val.length > 0) {
+              return val.length > 120 ? val.slice(0, 117) + '...' : val;
+            }
+          }
+        }
+      } catch { /* non-JSON result -- skip */ }
+    }
+
+    return '';
   }
 
   /**
    * Extract a brief parameter summary from a tool call's input.
+   * Used only by the generic fallback display path.
    */
   private abbreviateToolInput(streamMsg: StreamMsg): string {
     const input = streamMsg.toolInput as Record<string, unknown> | undefined;
@@ -292,16 +487,68 @@ export class LettaBot implements AgentSession {
   }
 
   /**
-   * Format reasoning text for channel display, respecting truncation config.
+   * Fallback: extract input parameters from a tool_result's content.
+   * Some tools echo their input in the result (e.g., web_search includes
+   * `query`). Used only by the generic fallback display path.
    */
-  private formatReasoningDisplay(text: string): string {
+  private extractInputFromToolResult(content: string): string {
+    try {
+      const parsed = JSON.parse(content);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return '';
+
+      const inputKeys = ['query', 'input', 'prompt', 'url', 'search_query', 'text'];
+      const parts: string[] = [];
+
+      for (const key of inputKeys) {
+        const val = (parsed as Record<string, unknown>)[key];
+        if (typeof val === 'string' && val.length > 0) {
+          const truncated = val.length > 80 ? val.slice(0, 77) + '...' : val;
+          parts.push(`${key}: ${truncated}`);
+          if (parts.length >= 2) break;
+        }
+      }
+
+      return parts.join(', ');
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Format reasoning text for channel display, respecting truncation config.
+   * Returns { text, parseMode? } -- Telegram gets HTML with <blockquote> to
+   * bypass telegramify-markdown (which adds unwanted spaces to blockquotes).
+   * Signal falls back to italic (no blockquote support).
+   * Discord/Slack use markdown blockquotes.
+   */
+  private formatReasoningDisplay(text: string, channelId?: string): { text: string; parseMode?: string } {
     const maxChars = this.config.display?.reasoningMaxChars ?? 0;
-    const truncated = maxChars > 0 && text.length > maxChars
-      ? text.slice(0, maxChars) + '...'
-      : text;
-    // Use italic for reasoning -- works across all channels including Signal
-    // (Signal only supports bold/italic/code, no blockquotes)
-    return `**Thinking**\n_${truncated}_`;
+    // Trim leading whitespace from each line -- the API often includes leading
+    // spaces in reasoning chunks that look wrong in channel output.
+    const cleaned = text.split('\n').map(line => line.trimStart()).join('\n').trim();
+    const truncated = maxChars > 0 && cleaned.length > maxChars
+      ? cleaned.slice(0, maxChars) + '...'
+      : cleaned;
+
+    if (channelId === 'signal') {
+      // Signal: no blockquote support, use italic
+      return { text: `**Thinking**\n_${truncated}_` };
+    }
+    if (channelId === 'telegram' || channelId === 'telegram-mtproto') {
+      // Telegram: use HTML blockquote to bypass telegramify-markdown spacing
+      const escaped = truncated
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      return {
+        text: `<blockquote expandable><b>Thinking</b>\n${escaped}</blockquote>`,
+        parseMode: 'HTML',
+      };
+    }
+    // Discord, Slack, etc: markdown blockquote
+    const lines = truncated.split('\n');
+    const quoted = lines.map(line => `> ${line}`).join('\n');
+    return { text: `> **Thinking**\n${quoted}` };
   }
 
   // =========================================================================
@@ -460,10 +707,13 @@ export class LettaBot implements AgentSession {
           continue;
         }
         if (targetId) {
+          // Resolve text aliases (thumbsup, eyes, etc.) to Unicode characters.
+          // The LLM typically outputs names; channel APIs need actual emoji.
+          const resolved = resolveEmoji(directive.emoji);
           try {
-            await adapter.addReaction(chatId, targetId, directive.emoji);
+            await adapter.addReaction(chatId, targetId, resolved.unicode);
             acted = true;
-            log.info(`Directive: reacted with ${directive.emoji}`);
+            log.info(`Directive: reacted with ${resolved.unicode} (${directive.emoji})`);
           } catch (err) {
             log.warn('Directive react failed:', err instanceof Error ? err.message : err);
           }
@@ -533,6 +783,59 @@ export class LettaBot implements AgentSession {
           console.warn('[Bot] Directive send-file failed:', err instanceof Error ? err.message : err);
         }
       }
+
+      if (directive.type === 'voice') {
+        if (!isVoiceMemoConfigured()) {
+          log.warn('Directive voice skipped: no TTS credentials configured');
+          continue;
+        }
+        if (typeof adapter.sendFile !== 'function') {
+          log.warn(`Directive voice skipped: ${adapter.name} does not support sendFile`);
+          continue;
+        }
+
+        // Find lettabot-tts in agent's skill dirs
+        const agentId = this.store.agentId;
+        const skillDirs = agentId ? getAgentSkillExecutableDirs(agentId) : [];
+        const ttsPath = skillDirs
+          .map(dir => join(dir, 'lettabot-tts'))
+          .find(p => existsSync(p));
+
+        if (!ttsPath) {
+          log.warn('Directive voice skipped: lettabot-tts not found in skill dirs');
+          continue;
+        }
+
+        try {
+          const outputPath = await new Promise<string>((resolve, reject) => {
+            execFile(ttsPath, [directive.text], {
+              cwd: this.config.workingDir,
+              env: { ...process.env, LETTABOT_WORKING_DIR: this.config.workingDir },
+              timeout: 30_000,
+            }, (err, stdout, stderr) => {
+              if (err) {
+                reject(new Error(stderr?.trim() || err.message));
+              } else {
+                resolve(stdout.trim());
+              }
+            });
+          });
+
+          await adapter.sendFile({
+            chatId,
+            filePath: outputPath,
+            kind: 'audio',
+            threadId,
+          });
+          acted = true;
+          log.info(`Directive: sent voice memo (${directive.text.length} chars)`);
+
+          // Clean up generated file
+          try { await unlink(outputPath); } catch {}
+        } catch (err) {
+          log.warn('Directive voice failed:', err instanceof Error ? err.message : err);
+        }
+      }
     }
     return acted;
   }
@@ -543,27 +846,25 @@ export class LettaBot implements AgentSession {
 
   /**
    * Resolve the conversation key for a channel message.
-   * In shared mode returns "shared"; in per-channel mode returns the channel id.
+   * Returns 'shared' in shared mode (unless channel is in perChannel overrides).
+   * Returns channel id in per-channel mode or for override channels.
    */
   private resolveConversationKey(channel: string): string {
-    return this.config.conversationMode === 'per-channel' ? channel : 'shared';
+    return resolveConversationKey(channel, this.config.conversationMode, this.conversationOverrides);
   }
 
   /**
    * Resolve the conversation key for heartbeat/sendToAgent.
+   * Respects perChannel overrides when using last-active in shared mode.
    */
   private resolveHeartbeatConversationKey(): string {
-    if (this.config.conversationMode !== 'per-channel') return 'shared';
-
-    const hb = this.config.heartbeatConversation || 'last-active';
-    if (hb === 'dedicated') return 'heartbeat';
-    if (hb === 'last-active') {
-      // Use the last channel the user messaged on
-      const target = this.store.lastMessageTarget;
-      return target ? target.channel : 'shared';
-    }
-    // Explicit channel name (e.g., "telegram")
-    return hb;
+    const lastActiveChannel = this.store.lastMessageTarget?.channel;
+    return resolveHeartbeatConversationKey(
+      this.config.conversationMode,
+      this.config.heartbeatConversation,
+      this.conversationOverrides,
+      lastActiveChannel,
+    );
   }
 
   // =========================================================================
@@ -573,8 +874,47 @@ export class LettaBot implements AgentSession {
   /**
    * Return the persistent session for the given conversation key,
    * creating and initializing it if needed.
+   *
+   * After initialization, calls bootstrapState() to detect pending approvals.
+   * If an orphaned approval is found, recovers proactively before returning
+   * the session -- preventing the first send() from hitting a 409 CONFLICT.
    */
-  private async ensureSessionForKey(key: string): Promise<Session> {
+  private async ensureSessionForKey(key: string, bootstrapRetried = false): Promise<Session> {
+    const generation = this.sessionGenerations.get(key) ?? 0;
+
+    // Fast path: session already exists
+    const existing = this.sessions.get(key);
+    if (existing) return existing;
+
+    // Coalesce concurrent callers: if another call is already creating this
+    // key (e.g. warmSession running while first message arrives), wait for
+    // it instead of creating a duplicate session.
+    const pending = this.sessionCreationLocks.get(key);
+    if (pending && pending.generation === generation) return pending.promise;
+
+    const promise = this._createSessionForKey(key, bootstrapRetried, generation);
+    this.sessionCreationLocks.set(key, { promise, generation });
+    try {
+      return await promise;
+    } finally {
+      const current = this.sessionCreationLocks.get(key);
+      if (current?.promise === promise) {
+        this.sessionCreationLocks.delete(key);
+      }
+    }
+  }
+
+  /** Internal session creation -- called via ensureSessionForKey's lock. */
+  private async _createSessionForKey(
+    key: string,
+    bootstrapRetried: boolean,
+    generation: number,
+  ): Promise<Session> {
+    // Session was invalidated while this creation path was queued.
+    if ((this.sessionGenerations.get(key) ?? 0) !== generation) {
+      return this.ensureSessionForKey(key, bootstrapRetried);
+    }
+
     // Re-read the store file from disk so we pick up agent/conversation ID
     // changes made by other processes (e.g. after a restart or container deploy).
     // This costs one synchronous disk read per incoming message, which is fine
@@ -582,11 +922,9 @@ export class LettaBot implements AgentSession {
     // refresh at most once per second.
     this.store.refresh();
 
-    const existing = this.sessions.get(key);
-    if (existing) return existing;
-
     const opts = this.baseSessionOptions(this.sessionCanUseTool);
     let session: Session;
+    let sessionAgentId: string | undefined;
 
     // In per-channel mode, look up per-key conversation ID.
     // In shared mode (key === "shared"), use the legacy single conversationId.
@@ -596,9 +934,15 @@ export class LettaBot implements AgentSession {
 
     if (convId) {
       process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
+      if (this.store.agentId) {
+        installSkillsToAgent(this.store.agentId, this.config.skills);
+        sessionAgentId = this.store.agentId;
+      }
       session = resumeSession(convId, opts);
     } else if (this.store.agentId) {
       process.env.LETTA_AGENT_ID = this.store.agentId;
+      installSkillsToAgent(this.store.agentId, this.config.skills);
+      sessionAgentId = this.store.agentId;
       session = createSession(this.store.agentId, opts);
     } else {
       // Create new agent -- persist immediately so we don't orphan it on later failures
@@ -606,6 +950,7 @@ export class LettaBot implements AgentSession {
       const newAgentId = await createAgent({
         systemPrompt: SYSTEM_PROMPT,
         memory: loadMemoryBlocks(this.config.agentName),
+        tags: ['origin:lettabot'],
         ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
       });
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
@@ -616,6 +961,7 @@ export class LettaBot implements AgentSession {
         updateAgentName(newAgentId, this.config.agentName).catch(() => {});
       }
       installSkillsToAgent(newAgentId, this.config.skills);
+      sessionAgentId = newAgentId;
 
       session = createSession(newAgentId, opts);
     }
@@ -623,15 +969,74 @@ export class LettaBot implements AgentSession {
     // Initialize eagerly so the subprocess is ready before the first send()
     log.info(`Initializing session subprocess (key=${key})...`);
     try {
-      await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
+      if (sessionAgentId) {
+        await withAgentSkillsOnPath(
+          sessionAgentId,
+          () => this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`),
+        );
+      } else {
+        await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
+      }
       log.info(`Session subprocess ready (key=${key})`);
-      this.sessions.set(key, session);
-      return session;
     } catch (error) {
       // Close immediately so failed initialization cannot leak a subprocess.
       session.close();
       throw error;
     }
+
+    // reset/invalidate can happen while initialize() is in-flight.
+    if ((this.sessionGenerations.get(key) ?? 0) !== generation) {
+      log.info(`Discarding stale initialized session (key=${key})`);
+      session.close();
+      return this.ensureSessionForKey(key, bootstrapRetried);
+    }
+
+    // Proactive approval detection via bootstrapState().
+    // Single CLI round-trip that returns hasPendingApproval flag alongside
+    // session metadata. If an orphaned approval is stuck, recover now so the
+    // first send() doesn't hit a 409 CONFLICT.
+    if (!bootstrapRetried && this.store.agentId) {
+      try {
+        const bootstrap = await this.withSessionTimeout(
+          session.bootstrapState(),
+          `Session bootstrapState (key=${key})`,
+        );
+        if (bootstrap.hasPendingApproval) {
+          const convId = bootstrap.conversationId || session.conversationId;
+          log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
+          session.close();
+          if (convId) {
+            const result = await recoverOrphanedConversationApproval(
+              this.store.agentId,
+              convId,
+              true, /* deepScan */
+            );
+            if (result.recovered) {
+              log.info(`Proactive approval recovery succeeded: ${result.details}`);
+            } else {
+              log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
+            }
+          }
+          // Recreate session after recovery (conversation state changed).
+          // Call _createSessionForKey directly (not ensureSessionForKey) since
+          // we're already inside the creation lock for this key.
+          return this._createSessionForKey(key, true, generation);
+        }
+      } catch (err) {
+        // bootstrapState failure is non-fatal -- the session is still usable.
+        // The reactive 409 handler in runSession() will catch stuck approvals.
+        log.warn(`bootstrapState check failed (key=${key}), continuing:`, err instanceof Error ? err.message : err);
+      }
+    }
+
+    if ((this.sessionGenerations.get(key) ?? 0) !== generation) {
+      log.info(`Discarding stale session after bootstrapState (key=${key})`);
+      session.close();
+      return this.ensureSessionForKey(key, bootstrapRetried);
+    }
+
+    this.sessions.set(key, session);
+    return session;
   }
 
   /** Legacy convenience: resolve key from shared/per-channel mode and delegate. */
@@ -645,6 +1050,12 @@ export class LettaBot implements AgentSession {
    */
   private invalidateSession(key?: string): void {
     if (key) {
+      // Invalidate any in-flight creation for this key so reset can force
+      // a fresh conversation/session immediately.
+      const nextGeneration = (this.sessionGenerations.get(key) ?? 0) + 1;
+      this.sessionGenerations.set(key, nextGeneration);
+      this.sessionCreationLocks.delete(key);
+
       const session = this.sessions.get(key);
       if (session) {
         log.info(`Invalidating session (key=${key})`);
@@ -652,11 +1063,21 @@ export class LettaBot implements AgentSession {
         this.sessions.delete(key);
       }
     } else {
+      const keys = new Set<string>([
+        ...this.sessions.keys(),
+        ...this.sessionCreationLocks.keys(),
+      ]);
+      for (const k of keys) {
+        const nextGeneration = (this.sessionGenerations.get(k) ?? 0) + 1;
+        this.sessionGenerations.set(k, nextGeneration);
+      }
+
       for (const [k, session] of this.sessions) {
         log.info(`Invalidating session (key=${k})`);
         session.close();
       }
       this.sessions.clear();
+      this.sessionCreationLocks.clear();
     }
   }
 
@@ -777,23 +1198,68 @@ export class LettaBot implements AgentSession {
     // Persist conversation ID immediately after successful send, before streaming.
     this.persistSessionState(session, convKey);
 
-    // Return session and a deduplicated stream generator
-    const seenToolCallIds = new Set<string>();
+    // Return session and a stream generator that buffers tool_call chunks and
+    // flushes them with fully accumulated arguments on the next type boundary.
+    // This ensures display messages always have complete args (channels can't
+    // edit messages after sending).
+    const pendingToolCalls = new Map<string, { msg: StreamMsg; accumulatedArgs: string }>();
     const self = this;
     const capturedConvKey = convKey; // Capture for closure
+
+    /** Merge tool argument strings, handling both delta and cumulative chunking. */
+    function mergeToolArgs(existing: string, incoming: string): string {
+      if (!incoming) return existing;
+      if (!existing) return incoming;
+      if (incoming === existing) return existing;
+      // Cumulative: latest chunk includes all prior text
+      if (incoming.startsWith(existing)) return incoming;
+      if (existing.endsWith(incoming)) return existing;
+      // Delta: each chunk is an append
+      return `${existing}${incoming}`;
+    }
+
+    function* flushPending(): Generator<StreamMsg> {
+      for (const [, pending] of pendingToolCalls) {
+        if (!pending.accumulatedArgs) {
+          // No rawArguments accumulated (old SDK or single complete chunk) --
+          // preserve the original toolInput from the first chunk as-is.
+          yield pending.msg;
+          continue;
+        }
+        let toolInput: Record<string, unknown> = {};
+        try { toolInput = JSON.parse(pending.accumulatedArgs); }
+        catch { toolInput = { raw: pending.accumulatedArgs }; }
+        yield { ...pending.msg, toolInput };
+      }
+      pendingToolCalls.clear();
+    }
 
     async function* dedupedStream(): AsyncGenerator<StreamMsg> {
       for await (const raw of session.stream()) {
         const msg = raw as StreamMsg;
 
-        // Deduplicate tool_call chunks (server streams token-by-token)
         if (msg.type === 'tool_call') {
           const id = msg.toolCallId;
-          if (id && seenToolCallIds.has(id)) continue;
-          if (id) seenToolCallIds.add(id);
+          if (!id) { yield msg; continue; }
+
+          const incoming = (msg as StreamMsg & { rawArguments?: string }).rawArguments || '';
+          const existing = pendingToolCalls.get(id);
+          if (existing) {
+            existing.accumulatedArgs = mergeToolArgs(existing.accumulatedArgs, incoming);
+          } else {
+            pendingToolCalls.set(id, { msg, accumulatedArgs: incoming });
+          }
+          continue; // buffer, don't yield yet
+        }
+
+        // Flush pending tool calls on semantic type boundary (not stream_event)
+        if (pendingToolCalls.size > 0 && msg.type !== 'stream_event') {
+          yield* flushPending();
         }
 
         if (msg.type === 'result') {
+          // Flush any remaining before result
+          yield* flushPending();
           self.persistSessionState(session, capturedConvKey);
         }
 
@@ -803,6 +1269,9 @@ export class LettaBot implements AgentSession {
           break;
         }
       }
+
+      // Flush remaining at generator end (shouldn't normally happen)
+      yield* flushPending();
     }
 
     return { session, stream: dedupedStream };
@@ -847,8 +1316,8 @@ export class LettaBot implements AgentSession {
       }
     }
 
-    if (this.config.conversationMode === 'per-channel') {
-      const convKey = this.resolveConversationKey(effective.channel);
+    const convKey = this.resolveConversationKey(effective.channel);
+    if (convKey !== 'shared') {
       this.enqueueForKey(convKey, effective, adapter);
     } else {
       this.messageQueue.push({ msg: effective, adapter });
@@ -886,34 +1355,29 @@ export class LettaBot implements AgentSession {
         return '⏰ Heartbeat triggered (silent mode - check server logs)';
       }
       case 'reset': {
-        const convKey = channelId ? this.resolveConversationKey(channelId) : undefined;
-        if (convKey && convKey !== 'shared') {
-          // Per-channel mode: only clear the conversation for this channel
-          this.store.clearConversation(convKey);
-          this.invalidateSession(convKey);
-          log.info(`/reset - conversation cleared for ${convKey}`);
-          // Eagerly create the new session so we can report the conversation ID
-          try {
-            const session = await this.ensureSessionForKey(convKey);
-            const newConvId = session.conversationId || '(pending)';
-            this.persistSessionState(session, convKey);
-            return `Conversation reset for this channel. New conversation: ${newConvId}\nOther channels are unaffected. (Agent memory is preserved.)`;
-          } catch {
-            return `Conversation reset for this channel. Other channels are unaffected. (Agent memory is preserved.)`;
-          }
-        }
-        // Shared mode or no channel context: clear everything
-        this.store.clearConversation();
+        // Always scope the reset to the caller's conversation key so that
+        // other channels' conversations are never silently destroyed.
+        // resolveConversationKey returns 'shared' for non-override channels,
+        // or the channel id for per-channel / override channels.
+        const convKey = channelId ? this.resolveConversationKey(channelId) : 'shared';
+        this.store.clearConversation(convKey);
         this.store.resetRecoveryAttempts();
-        this.invalidateSession();
-        log.info('/reset - all conversations cleared');
+        this.invalidateSession(convKey);
+        log.info(`/reset - conversation cleared for key="${convKey}"`);
+        // Eagerly create the new session so we can report the conversation ID.
         try {
-          const session = await this.ensureSessionForKey('shared');
+          const session = await this.ensureSessionForKey(convKey);
           const newConvId = session.conversationId || '(pending)';
-          this.persistSessionState(session, 'shared');
-          return `Conversation reset. New conversation: ${newConvId}\n(Agent memory is preserved.)`;
+          this.persistSessionState(session, convKey);
+          if (convKey === 'shared') {
+            return `Conversation reset. New conversation: ${newConvId}\n(Agent memory is preserved.)`;
+          }
+          return `Conversation reset for this channel. New conversation: ${newConvId}\nOther channels are unaffected. (Agent memory is preserved.)`;
         } catch {
-          return 'Conversation reset. Send a message to start a new conversation. (Agent memory is preserved.)';
+          if (convKey === 'shared') {
+            return 'Conversation reset. Send a message to start a new conversation. (Agent memory is preserved.)';
+          }
+          return `Conversation reset for this channel. Other channels are unaffected. (Agent memory is preserved.)`;
         }
       }
       default:
@@ -1042,10 +1506,9 @@ export class LettaBot implements AgentSession {
       return;
     }
 
-    if (this.config.conversationMode === 'per-channel') {
-      // Per-channel mode: messages on different channels can run in parallel.
-      // Only serialize within the same conversation key.
-      const convKey = this.resolveConversationKey(msg.channel);
+    const convKey = this.resolveConversationKey(msg.channel);
+    if (convKey !== 'shared') {
+      // Per-channel or override mode: messages on different keys can run in parallel.
       this.enqueueForKey(convKey, msg, adapter);
     } else {
       // Shared mode: single global queue (existing behavior)
@@ -1143,10 +1606,10 @@ export class LettaBot implements AgentSession {
     }
     lap('typing indicator');
 
-    // Pre-send approval recovery
-    // Only run proactive recovery when previous failures were detected.
-    // Clean-path messages skip straight to session creation (the 409 retry
-    // in runSession() still catches stuck states reactively).
+    // Pre-send approval recovery (secondary defense).
+    // Primary detection is now in ensureSessionForKey() via bootstrapState().
+    // This fallback only fires when previous failures incremented recoveryAttempts,
+    // covering edge cases where a cached session encounters a new stuck approval.
     const recovery = this.store.recoveryAttempts > 0
       ? await this.attemptRecovery()
       : { recovered: false, shouldReset: false };
@@ -1231,9 +1694,6 @@ export class LettaBot implements AgentSession {
       let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | null = null;
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
-      // Buffer the latest tool_call by ID so we display it once with full args
-      // (the SDK streams multiple tool_call messages per call -- first has empty input).
-      let pendingToolDisplay: { toolCallId: string; msg: any } | null = null;
       const msgTypeCounts: Record<string, number> = {};
 
       const parseAndHandleDirectives = async () => {
@@ -1296,7 +1756,11 @@ export class LettaBot implements AgentSession {
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
           const preview = JSON.stringify(streamMsg).slice(0, 300);
-          log.info(`type=${streamMsg.type} ${preview}`);
+          if (streamMsg.type === 'reasoning' || streamMsg.type === 'assistant') {
+            log.debug(`type=${streamMsg.type} ${preview}`);
+          } else {
+            log.info(`type=${streamMsg.type} ${preview}`);
+          }
           
           // stream_event is a low-level streaming primitive (partial deltas), not a
           // semantic type change. Skip it for type-transition logic so it doesn't
@@ -1310,10 +1774,11 @@ export class LettaBot implements AgentSession {
 
           // Flush reasoning buffer when type changes away from reasoning
           if (isSemanticType && lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
+            log.info(`Reasoning: ${reasoningBuffer.trim()}`);
             if (this.config.display?.showReasoning && !suppressDelivery) {
               try {
-                const text = this.formatReasoningDisplay(reasoningBuffer);
-                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+                const reasoning = this.formatReasoningDisplay(reasoningBuffer, adapter.id);
+                await adapter.sendMessage({ chatId: msg.chatId, text: reasoning.text, threadId: msg.threadId, parseMode: reasoning.parseMode });
                 // Note: display messages don't set sentAnyMessage -- they're informational,
                 // not a substitute for an assistant response. Error handling and retry must
                 // still fire even if reasoning was displayed.
@@ -1324,21 +1789,7 @@ export class LettaBot implements AgentSession {
             reasoningBuffer = '';
           }
 
-          // Flush pending tool call display when type changes away from tool_call.
-          // The SDK streams multiple tool_call messages per call (first has empty args),
-          // so we buffer and display the last one which has the complete input.
-          if (isSemanticType && pendingToolDisplay && streamMsg.type !== 'tool_call') {
-            if (this.config.display?.showToolCalls && !suppressDelivery) {
-              try {
-                const text = this.formatToolCallDisplay(pendingToolDisplay.msg);
-                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
-                // Display messages don't set sentAnyMessage (see reasoning display comment).
-              } catch (err) {
-                console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
-              }
-            }
-            pendingToolDisplay = null;
-          }
+          // (Tool call displays fire immediately in the tool_call handler below.)
           
           // Tool loop detection
           const maxToolCalls = this.config.maxToolCalls ?? 100;
@@ -1356,9 +1807,15 @@ export class LettaBot implements AgentSession {
             const tcId = streamMsg.toolCallId?.slice(0, 12) || '?';
             log.info(`>>> TOOL CALL: ${tcName} (id: ${tcId})`);
             sawNonAssistantSinceLastUuid = true;
-            // Buffer the tool call -- the SDK streams multiple chunks per call
-            // (first has empty args). We display the last chunk when type changes.
-            pendingToolDisplay = { toolCallId: streamMsg.toolCallId || '', msg: streamMsg };
+            // Display tool call (args are fully accumulated by dedupedStream buffer-and-flush)
+            if (this.config.display?.showToolCalls && !suppressDelivery) {
+              try {
+                const text = this.formatToolCallDisplay(streamMsg);
+                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+              } catch (err) {
+                console.warn('[Bot] Failed to send tool call display:', err instanceof Error ? err.message : err);
+              }
+            }
           } else if (streamMsg.type === 'tool_result') {
             log.info(`<<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
             sawNonAssistantSinceLastUuid = true;
@@ -1510,8 +1967,25 @@ export class LettaBot implements AgentSession {
               }
             }
 
+            // Non-retryable errors: billing, auth, not-found -- skip recovery/retry
+            // entirely and surface the error to the user immediately.
+            // Check both the top-level message and the nested apiError.message
+            // (the billing/auth string can appear in either location).
+            const errMsg = lastErrorDetail?.message?.toLowerCase() || '';
+            const errApiMsg = (typeof lastErrorDetail?.apiError?.message === 'string'
+              ? lastErrorDetail.apiError.message : '').toLowerCase();
+            const errAny = errMsg + ' ' + errApiMsg;
+            const isNonRetryableError = isTerminalError && (
+              errAny.includes('out of credits') || errAny.includes('usage limit') ||
+              errAny.includes('401') || errAny.includes('403') ||
+              errAny.includes('unauthorized') || errAny.includes('forbidden') ||
+              errAny.includes('404') ||
+              ((errAny.includes('agent') || errAny.includes('conversation')) && errAny.includes('not found')) ||
+              errAny.includes('rate limit') || errAny.includes('429')
+            );
+
             const shouldRetryForEmptyResult = streamMsg.success && resultText === '' && nothingDelivered;
-            const shouldRetryForErrorResult = isTerminalError && nothingDelivered && !isConflictError;
+            const shouldRetryForErrorResult = isTerminalError && nothingDelivered && !isConflictError && !isNonRetryableError;
             if (shouldRetryForEmptyResult || shouldRetryForErrorResult) {
               if (shouldRetryForEmptyResult) {
                 log.error(`Warning: Agent returned empty result with no response. stopReason=${streamMsg.stopReason || 'N/A'}, conv=${streamMsg.conversationId || 'N/A'}`);
@@ -1661,7 +2135,7 @@ export class LettaBot implements AgentSession {
   private async acquireLock(convKey: string): Promise<boolean> {
     if (convKey === 'heartbeat') return false; // No lock needed
 
-    if (this.config.conversationMode === 'per-channel') {
+    if (convKey !== 'shared') {
       while (this.processingKeys.has(convKey)) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
@@ -1677,8 +2151,17 @@ export class LettaBot implements AgentSession {
 
   private releaseLock(convKey: string, acquired: boolean): void {
     if (!acquired) return;
-    if (this.config.conversationMode === 'per-channel') {
+    if (convKey !== 'shared') {
       this.processingKeys.delete(convKey);
+      // Heartbeats/sendToAgent may hold a channel key while user messages for
+      // that same key queue up. Kick the keyed worker after unlock so queued
+      // messages are not left waiting for another inbound message to arrive.
+      const queue = this.keyedQueues.get(convKey);
+      if (queue && queue.length > 0) {
+        this.processKeyedQueue(convKey).catch(err =>
+          log.error(`Fatal error in processKeyedQueue(${convKey}) after lock release:`, err)
+        );
+      }
     } else {
       this.processing = false;
       this.processQueue();
@@ -1697,9 +2180,17 @@ export class LettaBot implements AgentSession {
       
       try {
         let response = '';
+        let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | undefined;
         for await (const msg of stream()) {
           if (msg.type === 'tool_call') {
             this.syncTodoToolCall(msg);
+          }
+          if (msg.type === 'error') {
+            lastErrorDetail = {
+              message: (msg as any).message || 'unknown',
+              stopReason: (msg as any).stopReason || 'error',
+              apiError: (msg as any).apiError,
+            };
           }
           if (msg.type === 'assistant') {
             response += msg.content || '';
@@ -1707,8 +2198,19 @@ export class LettaBot implements AgentSession {
           if (msg.type === 'result') {
             // TODO(letta-code-sdk#31): Remove once SDK handles HITL approvals in bypassPermissions mode.
             if (msg.success === false || msg.error) {
+              // Enrich opaque errors from run metadata (mirrors processMessage logic).
+              const convId = typeof msg.conversationId === 'string' ? msg.conversationId : undefined;
+              if (this.store.agentId &&
+                  (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
+                const enriched = await getLatestRunError(this.store.agentId, convId);
+                if (enriched) {
+                  lastErrorDetail = { message: enriched.message, stopReason: enriched.stopReason };
+                }
+              }
+              const errMsg = lastErrorDetail?.message || msg.error || 'error';
+              const errReason = lastErrorDetail?.stopReason || msg.error || 'error';
               const detail = typeof msg.result === 'string' ? msg.result.trim() : '';
-              throw new Error(detail ? `Agent run failed: ${msg.error || 'error'} (${detail})` : `Agent run failed: ${msg.error || 'error'}`);
+              throw new Error(detail ? `Agent run failed: ${errReason} (${errMsg})` : `Agent run failed: ${errReason} -- ${errMsg}`);
             }
             break;
           }
@@ -1759,7 +2261,7 @@ export class LettaBot implements AgentSession {
     options: {
       text?: string;
       filePath?: string;
-      kind?: 'image' | 'file';
+      kind?: 'image' | 'file' | 'audio';
     }
   ): Promise<string | undefined> {
     const adapter = this.channels.get(channelId);

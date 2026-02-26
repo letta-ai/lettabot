@@ -36,6 +36,9 @@ lettabot-message send --file /path/to/image.jpg --text "Check this out!"
 # Send file without text (treated as image)
 lettabot-message send --file photo.png --image
 
+# Send voice note
+lettabot-message send --file voice.ogg --voice
+
 # Send to specific channel and chat
 lettabot-message send --text "Hello!" --channel telegram --chat 123456789
 
@@ -46,7 +49,7 @@ lettabot-react add --emoji :eyes:
 lettabot-react add --emoji :eyes: --channel telegram --chat 123456789 --message 987654321
 
 # Note: File sending supported on telegram, slack, discord, whatsapp (via API)
-# Signal does not support files or reactions
+# Signal supports reactions (via directives) but not file sending
 
 # Discover channel IDs (Discord and Slack)
 lettabot-channels list
@@ -92,7 +95,7 @@ You can include an \`<actions>\` block at the **start** of your response to perf
 
 \`\`\`
 <actions>
-  <react emoji="thumbsup" />
+  <react emoji="👍" />
 </actions>
 Great idea!
 \`\`\`
@@ -101,9 +104,11 @@ This sends "Great idea!" and reacts with thumbsup.
 
 ### Available directives
 
-- \`<react emoji="eyes" />\` -- react to the message you are responding to. Emoji names (eyes, thumbsup, heart, fire, tada, clap) or unicode.
-- \`<react emoji="fire" message="123" />\` -- react to a specific message by ID.
+- \`<react emoji="👀" />\` -- react to the message you are responding to. Use the actual emoji character (👀, 👍, ❤️, 🔥, 🎉, 👏).
+- \`<react emoji="🔥" message="123" />\` -- react to a specific message by ID.
 - \`<send-file path="/path/to/file.png" kind="image" caption="..." />\` -- send a file or image to the same channel/chat. File paths are restricted to the configured send-file directory (default: \`data/outbound/\` in the working directory). Paths outside this directory are blocked.
+- \`<send-file path="/path/to/voice.ogg" kind="audio" cleanup="true" />\` -- send a voice note. Audio files (.ogg, .mp3, etc.) are sent as native voice memos on Telegram and WhatsApp. Use \`cleanup="true"\` to delete the file after sending.
+- \`<voice>Your message here</voice>\` -- generate and send a voice memo. The text is converted to speech via TTS and sent as a native voice note. No tool calls needed. Use for short conversational replies, responding to voice messages, or when the user asks for audio.
 
 ### Actions-only response
 
@@ -111,7 +116,7 @@ An \`<actions>\` block with no text after it executes silently (nothing sent to 
 
 \`\`\`
 <actions>
-  <react emoji="eyes" />
+  <react emoji="👀" />
 </actions>
 \`\`\`
 

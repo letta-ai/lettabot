@@ -48,13 +48,14 @@ Sends a file or image to the same channel/chat as the triggering message.
 ```xml
 <send-file path="/tmp/report.pdf" caption="Report attached" />
 <send-file path="/tmp/photo.png" kind="image" caption="Look!" />
+<send-file path="/tmp/voice.ogg" kind="audio" cleanup="true" />
 <send-file path="/tmp/temp-export.csv" cleanup="true" />
 ```
 
 **Attributes:**
 - `path` / `file` (required) -- Local file path on the LettaBot server
 - `caption` / `text` (optional) -- Caption text for the file
-- `kind` (optional) -- `image` or `file` (defaults to auto-detect based on extension)
+- `kind` (optional) -- `image`, `file`, or `audio` (defaults to auto-detect based on extension). Audio files (.ogg, .opus, .mp3, .m4a, .wav, .aac, .flac) are auto-detected as `audio`.
 - `cleanup` (optional) -- `true` to delete the file after sending (default: false)
 
 **Security:**
@@ -62,6 +63,22 @@ Sends a file or image to the same channel/chat as the triggering message.
 - Symlinks that resolve outside the allowed directory are also blocked.
 - File size is limited to `sendFileMaxSize` (default: 50MB).
 - The `cleanup` attribute only works when `sendFileCleanup: true` is set in the agent's features config (disabled by default).
+
+### `<voice>`
+
+Generates speech from text via TTS and sends it as a native voice note. No tool calls needed.
+
+```xml
+<voice>Hey, here's a quick voice reply!</voice>
+```
+
+The text content is sent to the configured TTS provider (see [TTS Configuration](./configuration.md#text-to-speech-tts-configuration)), converted to audio, and delivered as a voice note. Audio is automatically cleaned up after sending.
+
+- Requires `tts` to be configured in `lettabot.yaml`
+- Renders as native voice bubbles on Telegram and WhatsApp
+- Discord and Slack receive a playable audio attachment
+- On Telegram, falls back to audio file if voice messages are restricted by Premium privacy settings
+- Can be combined with text: any text after the `</actions>` block is sent as a normal message alongside the voice note
 
 ### `<no-reply/>`
 
@@ -88,13 +105,13 @@ Backslash-escaped quotes (common when LLMs generate XML inside a JSON context) a
 
 ## Channel Support
 
-| Channel   | `addReaction` | `send-file` | Notes |
-|-----------|:---:|:---:|-------|
-| Telegram  | Yes | Yes | Reactions limited to Telegram's [allowed reaction set](https://core.telegram.org/bots/api#reactiontype). |
-| Slack     | Yes | Yes | Reactions use Slack emoji names (`:thumbsup:` style). |
-| Discord   | Yes | Yes | Custom server emoji not yet supported. |
-| WhatsApp  | No  | Yes | Reactions skipped with a warning. |
-| Signal    | No  | No  | Directive skipped with a warning. |
+| Channel   | `addReaction` | `send-file` | `kind="audio"` | Notes |
+|-----------|:---:|:---:|:---:|-------|
+| Telegram  | Yes | Yes | Voice note (`sendVoice`) | Falls back to `sendAudio` if voice messages are restricted by Telegram Premium privacy settings. |
+| Slack     | Yes | Yes | Audio attachment | Reactions use Slack emoji names (`:thumbsup:` style). |
+| Discord   | Yes | Yes | Audio attachment | Custom server emoji not yet supported. |
+| WhatsApp  | No  | Yes | Voice note (PTT) | Sent with `ptt: true` for native voice bubble. |
+| Signal    | No  | No  | No | Directive skipped with a warning. |
 
 When a channel doesn't implement `addReaction`, the directive is silently skipped and a warning is logged. This never blocks message delivery.
 
