@@ -53,6 +53,8 @@ export interface AgentConfig {
   displayName?: string;
   /** Model for initial agent creation */
   model?: string;
+  /** Working directory for this agent's SDK sessions (overrides global) */
+  workingDir?: string;
   /** Channels this agent connects to */
   channels: {
     telegram?: TelegramConfig;
@@ -86,6 +88,8 @@ export interface AgentConfig {
     sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
     sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete after send (default: false)
     display?: DisplayConfig;
+    allowedTools?: string[];       // Per-agent tool whitelist (overrides global/env ALLOWED_TOOLS)
+    disallowedTools?: string[];    // Per-agent tool blocklist (overrides global/env DISALLOWED_TOOLS)
   };
   /** Polling config */
   polling?: PollingYamlConfig;
@@ -167,6 +171,8 @@ export interface LettaBotConfig {
     sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
     sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete after send (default: false)
     display?: DisplayConfig;  // Show tool calls / reasoning in channel output
+    allowedTools?: string[];       // Global tool whitelist (overridden by per-agent, falls back to ALLOWED_TOOLS env)
+    disallowedTools?: string[];    // Global tool blocklist (overridden by per-agent, falls back to DISALLOWED_TOOLS env)
   };
 
   // Polling - system-level background checks (Gmail, etc.)

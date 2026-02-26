@@ -494,12 +494,13 @@ function ensureRequiredTools(tools: string[]): string[] {
 // Global config (shared across all agents)
 const globalConfig = {
   workingDir: getWorkingDir(),
-  allowedTools: ensureRequiredTools(parseCsvList(
-    process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search',
-  )),
-  disallowedTools: parseCsvList(
-    process.env.DISALLOWED_TOOLS || 'EnterPlanMode,ExitPlanMode',
+  allowedTools: ensureRequiredTools(
+    yamlConfig.features?.allowedTools ??
+    parseCsvList(process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search'),
   ),
+  disallowedTools:
+    yamlConfig.features?.disallowedTools ??
+    parseCsvList(process.env.DISALLOWED_TOOLS || 'EnterPlanMode,ExitPlanMode'),
   attachmentsMaxBytes: resolveAttachmentsMaxBytes(),
   attachmentsMaxAgeDays: resolveAttachmentsMaxAgeDays(),
   cronEnabled: process.env.CRON_ENABLED === 'true',  // Legacy env var fallback
@@ -575,11 +576,12 @@ async function main() {
     const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : false);
 
     // Create LettaBot for this agent
+    const resolvedWorkingDir = agentConfig.workingDir ?? globalConfig.workingDir;
     const bot = new LettaBot({
-      workingDir: globalConfig.workingDir,
+      workingDir: resolvedWorkingDir,
       agentName: agentConfig.name,
-      allowedTools: globalConfig.allowedTools,
-      disallowedTools: globalConfig.disallowedTools,
+      allowedTools: ensureRequiredTools(agentConfig.features?.allowedTools ?? globalConfig.allowedTools),
+      disallowedTools: agentConfig.features?.disallowedTools ?? globalConfig.disallowedTools,
       displayName: agentConfig.displayName,
       maxToolCalls: agentConfig.features?.maxToolCalls,
       sendFileDir: agentConfig.features?.sendFileDir,
@@ -688,7 +690,7 @@ async function main() {
       agentKey: agentConfig.name,
       prompt: heartbeatConfig?.prompt || process.env.HEARTBEAT_PROMPT,
       promptFile: heartbeatConfig?.promptFile,
-      workingDir: globalConfig.workingDir,
+      workingDir: resolvedWorkingDir,
       target: parseHeartbeatTarget(heartbeatConfig?.target) || parseHeartbeatTarget(process.env.HEARTBEAT_TARGET),
     });
     if (heartbeatConfig?.enabled) {
@@ -731,7 +733,7 @@ async function main() {
     if (pollConfig.enabled && pollConfig.gmail.enabled && pollConfig.gmail.accounts.length > 0) {
       const pollingService = new PollingService(bot, {
         intervalMs: pollConfig.intervalMs,
-        workingDir: globalConfig.workingDir,
+        workingDir: resolvedWorkingDir,
         gmail: pollConfig.gmail,
       });
       pollingService.start();
