@@ -48,6 +48,7 @@ export interface BlueskyConfig {
     limit?: number;
     priority?: boolean;
     reasons?: string[] | string;
+    backfill?: boolean;
   };
 }
 
