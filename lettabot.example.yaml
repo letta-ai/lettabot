@@ -20,6 +20,10 @@ agents:
     # Note: model is configured on the Letta agent server-side.
     # Select a model during `lettabot onboard` or change it with `lettabot model set <handle>`.
 
+    # Per-agent tool access (overrides global features.allowedTools / features.disallowedTools)
+    # features:
+    #   allowedTools: [Read, Glob, Grep, web_search, conversation_search]  # Read-only agent (no Bash/Edit/Write)
+
     # Conversation routing (optional)
     conversations:
       mode: shared        # "shared" (default) or "per-channel"
@@ -78,6 +82,8 @@ features:
   # sendFileMaxSize: 52428800       # Max file size in bytes for <send-file> (default: 50MB)
   # sendFileCleanup: false          # Allow <send-file cleanup="true"> to delete files after send (default: false)
   # memfs: true   # Enable memory filesystem (git-backed context repository). Syncs memory blocks to local files.
+  # allowedTools: [Bash, Read, Edit, Write, Glob, Grep, Task, web_search, conversation_search]  # Global default
+  # disallowedTools: [EnterPlanMode, ExitPlanMode]  # Global default
   # display:
   #   showToolCalls: false       # Show tool invocations in chat (e.g. "Using tool: Read (file_path: ...)")
   #   showReasoning: false       # Show agent reasoning/thinking in chat

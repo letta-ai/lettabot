@@ -494,12 +494,13 @@ function ensureRequiredTools(tools: string[]): string[] {
 // Global config (shared across all agents)
 const globalConfig = {
   workingDir: getWorkingDir(),
-  allowedTools: ensureRequiredTools(parseCsvList(
-    process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search',
-  )),
-  disallowedTools: parseCsvList(
-    process.env.DISALLOWED_TOOLS || 'EnterPlanMode,ExitPlanMode',
+  allowedTools: ensureRequiredTools(
+    yamlConfig.features?.allowedTools ??
+    parseCsvList(process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search'),
   ),
+  disallowedTools:
+    yamlConfig.features?.disallowedTools ??
+    parseCsvList(process.env.DISALLOWED_TOOLS || 'EnterPlanMode,ExitPlanMode'),
   attachmentsMaxBytes: resolveAttachmentsMaxBytes(),
   attachmentsMaxAgeDays: resolveAttachmentsMaxAgeDays(),
   cronEnabled: process.env.CRON_ENABLED === 'true',  // Legacy env var fallback
@@ -578,8 +579,8 @@ async function main() {
     const bot = new LettaBot({
       workingDir: globalConfig.workingDir,
       agentName: agentConfig.name,
-      allowedTools: globalConfig.allowedTools,
-      disallowedTools: globalConfig.disallowedTools,
+      allowedTools: ensureRequiredTools(agentConfig.features?.allowedTools ?? globalConfig.allowedTools),
+      disallowedTools: agentConfig.features?.disallowedTools ?? globalConfig.disallowedTools,
       displayName: agentConfig.displayName,
       maxToolCalls: agentConfig.features?.maxToolCalls,
       sendFileDir: agentConfig.features?.sendFileDir,
