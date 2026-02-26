@@ -299,6 +299,14 @@ export class BlueskyAdapter implements ChannelAdapter {
         url: this.buildJetstreamUrl(),
         reconnectAttempts: this.reconnectAttempts,
       });
+      // Some WebSocket errors never emit "close"; force a close to trigger reconnect.
+      if (this.ws === ws && !this.runtimeDisabled) {
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      }
     });
 
     ws.addEventListener('close', () => {
