@@ -56,6 +56,9 @@ export interface HookHandlerConfig {
 export interface MessageHooksConfig {
   preMessage?: HookHandlerConfig;
   postMessage?: HookHandlerConfig;
+  postReasoning?: HookHandlerConfig;
+  postToolCall?: HookHandlerConfig;
+  postToolResult?: HookHandlerConfig;
 }
 
 export interface MessageHookContext {
@@ -69,6 +72,44 @@ export interface MessageHookContext {
   response?: string;
   delivered?: boolean;
   error?: string;
+  agent?: {
+    id?: string | null;
+    name?: string;
+    conversationId?: string | null;
+    conversationKey?: string;
+  };
+}
+
+export interface ReasoningHookContext {
+  /** The full content of this reasoning block */
+  reasoning: string;
+  /** Which reasoning block this is within the turn (0-based) */
+  stepIndex: number;
+  agent?: {
+    id?: string | null;
+    name?: string;
+    conversationId?: string | null;
+    conversationKey?: string;
+  };
+}
+
+export interface ToolCallHookContext {
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  toolCallId?: string;
+  agent?: {
+    id?: string | null;
+    name?: string;
+    conversationId?: string | null;
+    conversationKey?: string;
+  };
+}
+
+export interface ToolResultHookContext {
+  toolCallId: string;
+  toolName?: string;
+  content: string;
+  isError: boolean;
   agent?: {
     id?: string | null;
     name?: string;

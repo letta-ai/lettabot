@@ -2,11 +2,14 @@ import { existsSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { SendMessage } from '@letta-ai/letta-code-sdk';
-import type { HookHandlerConfig, MessageHookContext } from './types.js';
+import type { HookHandlerConfig, MessageHookContext, ReasoningHookContext, ToolCallHookContext, ToolResultHookContext } from './types.js';
 
 type HookModule = {
   preMessage?: (ctx: MessageHookContext) => Promise<unknown> | unknown;
   postMessage?: (ctx: MessageHookContext) => Promise<unknown> | unknown;
+  postReasoning?: (ctx: ReasoningHookContext) => Promise<unknown> | unknown;
+  postToolCall?: (ctx: ToolCallHookContext) => Promise<unknown> | unknown;
+  postToolResult?: (ctx: ToolResultHookContext) => Promise<unknown> | unknown;
 };
 
 const DEFAULT_HOOK_MODE: HookHandlerConfig['mode'] = 'await';
@@ -130,5 +133,56 @@ export class MessageHookRunner {
     }
     const result = await this.invokeHook('postMessage', config, ctx);
     return extractResponseText(result);
+  }
+
+  async runReasoning(config: HookHandlerConfig | undefined, ctx: ReasoningHookContext): Promise<void> {
+    if (!config) return;
+    const module = await this.loadModule(config.file);
+    if (!module || typeof module.postReasoning !== 'function') return;
+    const mode = config.mode ?? DEFAULT_HOOK_MODE;
+    const task = module.postReasoning(ctx);
+    if (mode === 'parallel') {
+      void this.invokeWithTimeout(task, config.timeoutMs);
+      return;
+    }
+    try {
+      await this.invokeWithTimeout(task, config.timeoutMs);
+    } catch (err) {
+      console.warn(`[Hooks] postReasoning failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async runToolCall(config: HookHandlerConfig | undefined, ctx: ToolCallHookContext): Promise<void> {
+    if (!config) return;
+    const module = await this.loadModule(config.file);
+    if (!module || typeof module.postToolCall !== 'function') return;
+    const mode = config.mode ?? DEFAULT_HOOK_MODE;
+    const task = module.postToolCall(ctx);
+    if (mode === 'parallel') {
+      void this.invokeWithTimeout(task, config.timeoutMs);
+      return;
+    }
+    try {
+      await this.invokeWithTimeout(task, config.timeoutMs);
+    } catch (err) {
+      console.warn(`[Hooks] postToolCall failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async runToolResult(config: HookHandlerConfig | undefined, ctx: ToolResultHookContext): Promise<void> {
+    if (!config) return;
+    const module = await this.loadModule(config.file);
+    if (!module || typeof module.postToolResult !== 'function') return;
+    const mode = config.mode ?? DEFAULT_HOOK_MODE;
+    const task = module.postToolResult(ctx);
+    if (mode === 'parallel') {
+      void this.invokeWithTimeout(task, config.timeoutMs);
+      return;
+    }
+    try {
+      await this.invokeWithTimeout(task, config.timeoutMs);
+    } catch (err) {
+      console.warn(`[Hooks] postToolResult failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
