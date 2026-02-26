@@ -104,7 +104,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           {
             text: fields.text,
             filePath: file?.tempPath,
-            kind: fields.kind as 'image' | 'file' | undefined,
+            kind: fields.kind as 'image' | 'file' | 'audio' | undefined,
           }
         );
 

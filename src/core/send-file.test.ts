@@ -23,10 +23,21 @@ describe('inferFileKind', () => {
     expect(inferFileKind('/tmp/script.ts')).toBe('file');
   });
 
+  it('returns audio for common audio extensions', () => {
+    expect(inferFileKind('/tmp/voice.ogg')).toBe('audio');
+    expect(inferFileKind('/tmp/voice.opus')).toBe('audio');
+    expect(inferFileKind('/tmp/voice.mp3')).toBe('audio');
+    expect(inferFileKind('/tmp/voice.m4a')).toBe('audio');
+    expect(inferFileKind('/tmp/voice.wav')).toBe('audio');
+    expect(inferFileKind('/tmp/voice.aac')).toBe('audio');
+    expect(inferFileKind('/tmp/voice.flac')).toBe('audio');
+  });
+
   it('is case insensitive', () => {
     expect(inferFileKind('/tmp/PHOTO.PNG')).toBe('image');
     expect(inferFileKind('/tmp/photo.JPG')).toBe('image');
     expect(inferFileKind('/tmp/photo.Jpeg')).toBe('image');
+    expect(inferFileKind('/tmp/VOICE.OGG')).toBe('audio');
   });
 
   it('returns file for extensionless paths', () => {

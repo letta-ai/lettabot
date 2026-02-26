@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# lettabot-tts - Generate speech audio via configurable TTS provider
+#
+# Usage: lettabot-tts <text> [output_path]
+#
+# Environment:
+#   TTS_PROVIDER         - Optional. "elevenlabs" (default) or "openai".
+#
+#   ElevenLabs:
+#     ELEVENLABS_API_KEY   - Required. API key.
+#     ELEVENLABS_VOICE_ID  - Optional. Voice ID (default: 21m00Tcm4TlvDq8ikWAM / Rachel).
+#     ELEVENLABS_MODEL_ID  - Optional. Model ID (default: eleven_multilingual_v2).
+#
+#   OpenAI:
+#     OPENAI_API_KEY       - Required. API key.
+#     OPENAI_TTS_VOICE     - Optional. Voice name (default: alloy).
+#     OPENAI_TTS_MODEL     - Optional. Model (default: tts-1).
+
+set -euo pipefail
+
+TEXT="${1:?Usage: lettabot-tts <text> [output_path]}"
+
+# The session subprocess CWD is set to workingDir (bot.ts:642), which is the
+# same base directory that <send-file> directives resolve from. This means
+# $(pwd) and LETTABOT_WORKING_DIR produce paths in the correct coordinate space.
+OUTBOUND_DIR="${LETTABOT_WORKING_DIR:-$(pwd)}/data/outbound"
+
+PROVIDER="${TTS_PROVIDER:-elevenlabs}"
+
+# Ensure output directory exists
+mkdir -p "$OUTBOUND_DIR"
+
+# Use collision-safe random filenames when output path is not explicitly provided.
+if [ -n "${2:-}" ]; then
+  OUTPUT="$2"
+else
+  # Clean stale voice files older than 1 hour
+  find "$OUTBOUND_DIR" -name 'voice-*.ogg' -mmin +60 -delete 2>/dev/null || true
+  OUTPUT=$(mktemp "${OUTBOUND_DIR}/voice-XXXXXXXXXX.ogg")
+fi
+
+# ---------------------------------------------------------------------------
+# Provider: ElevenLabs
+# ---------------------------------------------------------------------------
+tts_elevenlabs() {
+  if [ -z "${ELEVENLABS_API_KEY:-}" ]; then
+    echo "Error: ELEVENLABS_API_KEY is not set" >&2
+    exit 1
+  fi
+
+  local voice_id="${ELEVENLABS_VOICE_ID:-onwK4e9ZLuTAKqWW03F9}"
+  local model_id="${ELEVENLABS_MODEL_ID:-eleven_multilingual_v2}"
+
+  local http_code
+  http_code=$(curl -s -w "%{http_code}" -o "$OUTPUT" \
+    "https://api.elevenlabs.io/v1/text-to-speech/${voice_id}" \
+    -H "xi-api-key: ${ELEVENLABS_API_KEY}" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n \
+      --arg text "$TEXT" \
+      --arg model "$model_id" \
+      '{
+        text: $text,
+        model_id: $model,
+        output_format: "ogg_opus"
+      }'
+    )")
+
+  if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+    echo "Error: ElevenLabs API returned HTTP $http_code" >&2
+    if file "$OUTPUT" | grep -q "text\|JSON\|ASCII"; then
+      cat "$OUTPUT" >&2
+    fi
+    rm -f "$OUTPUT"
+    exit 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Provider: OpenAI
+# ---------------------------------------------------------------------------
+tts_openai() {
+  if [ -z "${OPENAI_API_KEY:-}" ]; then
+    echo "Error: OPENAI_API_KEY is not set" >&2
+    exit 1
+  fi
+
+  local voice="${OPENAI_TTS_VOICE:-alloy}"
+  local model="${OPENAI_TTS_MODEL:-tts-1}"
+
+  local http_code
+  http_code=$(curl -s -w "%{http_code}" -o "$OUTPUT" \
+    "https://api.openai.com/v1/audio/speech" \
+    -H "Authorization: Bearer ${OPENAI_API_KEY}" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n \
+      --arg text "$TEXT" \
+      --arg model "$model" \
+      --arg voice "$voice" \
+      '{
+        model: $model,
+        input: $text,
+        voice: $voice,
+        response_format: "opus"
+      }'
+    )")
+
+  if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+    echo "Error: OpenAI TTS API returned HTTP $http_code" >&2
+    if file "$OUTPUT" | grep -q "text\|JSON\|ASCII"; then
+      cat "$OUTPUT" >&2
+    fi
+    rm -f "$OUTPUT"
+    exit 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+case "$PROVIDER" in
+  elevenlabs) tts_elevenlabs ;;
+  openai)     tts_openai ;;
+  *)
+    echo "Error: Unknown TTS_PROVIDER: $PROVIDER (supported: elevenlabs, openai)" >&2
+    exit 1
+    ;;
+esac
+
+echo "$OUTPUT"

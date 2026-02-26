@@ -20,7 +20,22 @@ vi.mock('../tools/letta-api.js', () => ({
   getLatestRunError: vi.fn().mockResolvedValue(null),
 }));
 
-import { createSession, resumeSession } from '@letta-ai/letta-code-sdk';
+vi.mock('../skills/loader.js', () => ({
+  installSkillsToAgent: vi.fn(),
+  withAgentSkillsOnPath: vi.fn((_id: string, fn: () => unknown) => fn()),
+  getAgentSkillExecutableDirs: vi.fn().mockReturnValue([]),
+  isVoiceMemoConfigured: vi.fn().mockReturnValue(false),
+}));
+
+vi.mock('./memory.js', () => ({
+  loadMemoryBlocks: vi.fn().mockReturnValue([]),
+}));
+
+vi.mock('./system-prompt.js', () => ({
+  SYSTEM_PROMPT: 'test system prompt',
+}));
+
+import { createAgent, createSession, resumeSession } from '@letta-ai/letta-code-sdk';
 import { getLatestRunError } from '../tools/letta-api.js';
 import { LettaBot } from './bot.js';
 
@@ -446,6 +461,42 @@ describe('SDK session contract', () => {
 
     await expect(bot.sendToAgent('trigger error')).rejects.toThrow(
       'Agent run failed: timeout'
+    );
+  });
+
+  it('passes tags: [origin:lettabot] to createAgent when creating a new agent', async () => {
+    delete process.env.LETTA_AGENT_ID;
+
+    vi.mocked(createAgent).mockResolvedValue('agent-new-tagged');
+
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'hello' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-new-tagged',
+      conversationId: 'conversation-new-tagged',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    await bot.sendToAgent('first message');
+
+    expect(vi.mocked(createAgent)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createAgent)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tags: ['origin:lettabot'],
+      })
     );
   });
 });

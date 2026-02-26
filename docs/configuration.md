@@ -675,6 +675,36 @@ transcription:
   model: whisper-1     # Default
 ```
 
+## Text-to-Speech (TTS) Configuration
+
+Voice memo generation via the `<voice>` directive. The agent can reply with voice notes on Telegram and WhatsApp:
+
+```yaml
+tts:
+  provider: elevenlabs    # "elevenlabs" (default) or "openai"
+  apiKey: sk_475a...      # Provider API key
+  voiceId: 21m00Tcm4TlvDq8ikWAM  # Voice selection (see below)
+  model: eleven_multilingual_v2   # Optional model override
+```
+
+**ElevenLabs** (default):
+- `voiceId` is an ElevenLabs voice ID. Default: `21m00Tcm4TlvDq8ikWAM` (Rachel). Browse voices at [elevenlabs.io/voice-library](https://elevenlabs.io/voice-library).
+- `model` defaults to `eleven_multilingual_v2`.
+
+**OpenAI**:
+- `voiceId` is one of: `alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`. Default: `alloy`.
+- `model` defaults to `tts-1`. Use `tts-1-hd` for higher quality.
+
+The agent uses the `<voice>` directive in responses:
+
+```xml
+<actions>
+  <voice>Hey, here's a quick voice reply!</voice>
+</actions>
+```
+
+The `lettabot-tts` CLI tool is also available for background tasks (heartbeats, cron).
+
 ## Attachments Configuration
 
 ```yaml
@@ -807,5 +837,11 @@ Environment variables override config file values:
 | `LOG_LEVEL` | `server.logLevel` (fatal/error/warn/info/debug/trace). Overrides config. |
 | `LETTABOT_LOG_LEVEL` | Alias for `LOG_LEVEL` |
 | `LOG_FORMAT` | Set to `json` for structured JSON output (recommended for Railway/Docker) |
+| `TTS_PROVIDER` | TTS backend: `elevenlabs` (default) or `openai` |
+| `ELEVENLABS_API_KEY` | API key for ElevenLabs TTS |
+| `ELEVENLABS_VOICE_ID` | ElevenLabs voice ID (default: `21m00Tcm4TlvDq8ikWAM` / Rachel) |
+| `ELEVENLABS_MODEL_ID` | ElevenLabs model (default: `eleven_multilingual_v2`) |
+| `OPENAI_TTS_VOICE` | OpenAI TTS voice (default: `alloy`) |
+| `OPENAI_TTS_MODEL` | OpenAI TTS model (default: `tts-1`) |
 
 See [SKILL.md](../SKILL.md) for complete environment variable reference.

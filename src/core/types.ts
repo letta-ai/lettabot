@@ -108,7 +108,7 @@ export interface OutboundFile {
   filePath: string;
   caption?: string;
   threadId?: string;
-  kind?: 'image' | 'file';
+  kind?: 'image' | 'file' | 'audio';
 }
 
 /**
@@ -117,6 +117,7 @@ export interface OutboundFile {
 export interface SkillsConfig {
   cronEnabled?: boolean;
   googleEnabled?: boolean;
+  ttsEnabled?: boolean;
   additionalSkills?: string[];
 }
 

@@ -1528,7 +1528,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   if (config.agentChoice === 'new' && !config.agentId) {
     const { createAgent } = await import('@letta-ai/letta-code-sdk');
     const { updateAgentName, ensureNoToolApprovals } = await import('./tools/letta-api.js');
-    const { installSkillsToAgent } = await import('./skills/loader.js');
+    const { installSkillsToAgent, isVoiceMemoConfigured } = await import('./skills/loader.js');
     const { loadMemoryBlocks } = await import('./core/memory.js');
     const { SYSTEM_PROMPT } = await import('./core/system-prompt.js');
     
@@ -1538,6 +1538,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
       const agentId = await createAgent({
         systemPrompt: SYSTEM_PROMPT,
         memory: loadMemoryBlocks(config.agentName || 'LettaBot'),
+        tags: ['origin:lettabot'],
         ...(config.model ? { model: config.model } : {}),
       });
       
@@ -1545,9 +1546,11 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
       if (config.agentName) {
         await updateAgentName(agentId, config.agentName).catch(() => {});
       }
+      const ttsEnv = { ...process.env, ...env };
       installSkillsToAgent(agentId, {
         cronEnabled: config.cron,
         googleEnabled: config.google.enabled,
+        ttsEnabled: isVoiceMemoConfigured(ttsEnv),
       });
       
       // Disable tool approvals

@@ -178,6 +178,7 @@ import { CronService } from './cron/service.js';
 import { HeartbeatService } from './cron/heartbeat.js';
 import { PollingService, parseGmailAccounts } from './polling/service.js';
 import { agentExists, findAgentByName, ensureNoToolApprovals } from './tools/letta-api.js';
+import { isVoiceMemoConfigured } from './skills/loader.js';
 // Skills are now installed to agent-scoped location after agent creation (see bot.ts)
 
 // Check if config exists (skip in Railway/Docker where env vars are used directly)
@@ -523,6 +524,7 @@ async function main() {
   }
   log.info(`Data directory: ${dataDir}`);
   log.info(`Working directory: ${globalConfig.workingDir}`);
+  process.env.LETTABOT_WORKING_DIR = globalConfig.workingDir;
   
   // Normalize config to agents array
   const agents = normalizeAgents(yamlConfig);
@@ -551,6 +553,7 @@ async function main() {
   }
   
   const gateway = new LettaGateway();
+  const voiceMemoEnabled = isVoiceMemoConfigured();
   const services: { 
     cronServices: CronService[], 
     heartbeatServices: HeartbeatService[], 
@@ -591,6 +594,7 @@ async function main() {
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
         googleEnabled: !!agentConfig.integrations?.google?.enabled || !!agentConfig.polling?.gmail?.enabled,
+        ttsEnabled: voiceMemoEnabled,
       },
     });
     
@@ -772,7 +776,9 @@ async function main() {
       },
     };
   });
-  printStartupBanner(bannerAgents);
+  if (!process.env.LETTABOT_NO_BANNER) {
+    printStartupBanner(bannerAgents);
+  }
   
   // Shutdown
   const shutdown = async () => {
