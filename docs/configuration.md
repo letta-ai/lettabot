@@ -813,7 +813,9 @@ The API server also exposes `/v1/chat/completions` and `/v1/models` -- a drop-in
 
 ## Environment Variables
 
-Environment variables override config file values:
+Environment variables serve as fallbacks and can fill in missing credentials. If a channel block exists in YAML but is missing its key credential (e.g., `signal: enabled: true` without `phone`), the corresponding env var (e.g., `SIGNAL_PHONE_NUMBER`) will be merged in. YAML values always take priority -- env vars never overwrite values already set in the config file.
+
+Reference:
 
 | Env Variable | Config Equivalent |
 |--------------|-------------------|
