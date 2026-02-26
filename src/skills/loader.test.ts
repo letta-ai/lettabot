@@ -199,8 +199,8 @@ describe('skills loader', () => {
         const expectedPath = join(tempHome, '.letta', 'skills', 'voice-memo', 'SKILL.md');
 
         expect(voiceMemo).toBeDefined();
-        expect(voiceMemo.description).toBe('global override');
-        expect(voiceMemo.filePath).toContain(expectedPath);
+        expect(voiceMemo!.description).toBe('global override');
+        expect(voiceMemo!.filePath).toContain(expectedPath);
       } finally {
         process.chdir(originalCwd);
         if (originalHome === undefined) delete process.env.HOME;
