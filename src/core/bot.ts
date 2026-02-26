@@ -18,6 +18,7 @@ import { installSkillsToAgent, withAgentSkillsOnPath, getAgentSkillExecutableDir
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
 import { loadMemoryBlocks } from './memory.js';
+import { redactOutbound } from './redact.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { parseDirectives, stripActionsBlock, type Directive } from './directives.js';
 import { resolveEmoji } from './emoji.js';
@@ -1333,6 +1334,17 @@ export class LettaBot implements AgentSession {
   registerChannel(adapter: ChannelAdapter): void {
     adapter.onMessage = (msg) => this.handleMessage(msg, adapter);
     adapter.onCommand = (cmd, chatId) => this.handleCommand(cmd, adapter.id, chatId);
+
+    // Wrap outbound methods with redaction if configured (default: secrets on)
+    const redactionConfig = this.config.redaction;
+    if (redactionConfig?.secrets !== false) {
+      const origSend = adapter.sendMessage.bind(adapter);
+      adapter.sendMessage = (msg) => origSend({ ...msg, text: redactOutbound(msg.text, redactionConfig) });
+
+      const origEdit = adapter.editMessage.bind(adapter);
+      adapter.editMessage = (chatId, messageId, text) => origEdit(chatId, messageId, redactOutbound(text, redactionConfig));
+    }
+
     this.channels.set(adapter.id, adapter);
     log.info(`Registered channel: ${adapter.name}`);
   }

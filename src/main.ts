@@ -591,6 +591,7 @@ async function main() {
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
       conversationOverrides: agentConfig.conversations?.perChannel,
       maxSessions: agentConfig.conversations?.maxSessions,
+      redaction: agentConfig.security?.redaction,
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
         googleEnabled: !!agentConfig.integrations?.google?.enabled || !!agentConfig.polling?.gmail?.enabled,

@@ -87,6 +87,13 @@ export interface AgentConfig {
     sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete after send (default: false)
     display?: DisplayConfig;
   };
+  /** Security settings */
+  security?: {
+    redaction?: {
+      secrets?: boolean;
+      pii?: boolean;
+    };
+  };
   /** Polling config */
   polling?: PollingYamlConfig;
   /** Integrations */
@@ -189,6 +196,17 @@ export interface LettaBotConfig {
   attachments?: {
     maxMB?: number;
     maxAgeDays?: number;
+  };
+
+  // Security
+  security?: {
+    /** Outbound message redaction (catches leaked secrets/PII before channel delivery) */
+    redaction?: {
+      /** Redact common secret patterns (API keys, tokens, bearer tokens). Default: true */
+      secrets?: boolean;
+      /** Redact PII patterns (emails, phone numbers). Default: false */
+      pii?: boolean;
+    };
   };
 
   // API server (health checks, CLI messaging)

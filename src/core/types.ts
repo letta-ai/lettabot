@@ -149,6 +149,7 @@ export interface BotConfig {
   memfs?: boolean; // true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
 
   // Security
+  redaction?: import('./redact.js').RedactionConfig;
   allowedUsers?: string[];  // Empty = allow all
   sendFileDir?: string;     // Restrict <send-file> directive to this directory (default: data/outbound)
   sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
