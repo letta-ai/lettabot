@@ -8,7 +8,7 @@ import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL,
 import { mkdirSync, existsSync } from 'node:fs';
 import { extname } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
-import type { BotConfig, InboundMessage, MessageHookContext, MessageHooksConfig, TriggerContext } from './types.js';
+import type { BotConfig, InboundMessage, MessageHookContext, MessageHooksConfig, ReasoningHookContext, ToolCallHookContext, ToolResultHookContext, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
 import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
@@ -168,7 +168,8 @@ export class LettaBot implements AgentSession {
     mkdirSync(config.workingDir, { recursive: true });
     this.store = new Store('lettabot-agent.json', config.agentName);
     this.hooksConfig = config.hooks;
-    if (this.hooksConfig?.preMessage || this.hooksConfig?.postMessage) {
+    if (this.hooksConfig?.preMessage || this.hooksConfig?.postMessage ||
+        this.hooksConfig?.postReasoning || this.hooksConfig?.postToolCall || this.hooksConfig?.postToolResult) {
       const baseDir = config.hooksDir || process.cwd();
       this.hookRunner = new MessageHookRunner(baseDir);
       console.log(`[Bot] Message hooks enabled (baseDir=${baseDir})`);
@@ -227,6 +228,21 @@ export class LettaBot implements AgentSession {
     return this.hookRunner.runPost(this.hooksConfig.postMessage, ctx);
   }
 
+  private runReasoningHook(ctx: ReasoningHookContext): void {
+    if (!this.hookRunner || !this.hooksConfig?.postReasoning) return;
+    void this.hookRunner.runReasoning(this.hooksConfig.postReasoning, ctx);
+  }
+
+  private runToolCallHook(ctx: ToolCallHookContext): void {
+    if (!this.hookRunner || !this.hooksConfig?.postToolCall) return;
+    void this.hookRunner.runToolCall(this.hooksConfig.postToolCall, ctx);
+  }
+
+  private runToolResultHook(ctx: ToolResultHookContext): void {
+    if (!this.hookRunner || !this.hooksConfig?.postToolResult) return;
+    void this.hookRunner.runToolResult(this.hooksConfig.postToolResult, ctx);
+  }
+
   // =========================================================================
   // Session options (shared by processMessage and sendToAgent)
   // =========================================================================
@@ -278,6 +294,32 @@ export class LettaBot implements AgentSession {
     }
   }
 
+  private getSessionTimeoutMs(): number {
+    const envTimeoutMs = Number(process.env.LETTA_SESSION_TIMEOUT_MS);
+    if (Number.isFinite(envTimeoutMs) && envTimeoutMs > 0) {
+      return envTimeoutMs;
+    }
+    return 60000;
+  }
+
+  private async withSessionTimeout<T>(
+    promise: Promise<T>,
+    label: string,
+  ): Promise<T> {
+    const timeoutMs = this.getSessionTimeoutMs();
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<T>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
   private baseSessionOptions(canUseTool?: CanUseToolCallback) {
     return {
       permissionMode: 'bypassPermissions' as const,
@@ -292,6 +334,8 @@ export class LettaBot implements AgentSession {
       ],
       cwd: this.config.workingDir,
       tools: [createManageTodoTool(this.getTodoAgentKey())],
+      // Memory filesystem (context repository): true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
+      ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
       // In bypassPermissions mode, canUseTool is only called for interactive
       // tools (AskUserQuestion, ExitPlanMode). When no callback is provided
       // (background triggers), the SDK auto-denies interactive tools.
@@ -453,6 +497,7 @@ export class LettaBot implements AgentSession {
       const newAgentId = await createAgent({
         systemPrompt: SYSTEM_PROMPT,
         memory: loadMemoryBlocks(this.config.agentName),
+        ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
       });
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
       this.store.setAgent(newAgentId, currentBaseUrl);
@@ -468,10 +513,16 @@ export class LettaBot implements AgentSession {
 
     // Initialize eagerly so the subprocess is ready before the first send()
     console.log(`[Bot] Initializing session subprocess (key=${key})...`);
-    await session.initialize();
-    console.log(`[Bot] Session subprocess ready (key=${key})`);
-    this.sessions.set(key, session);
-    return session;
+    try {
+      await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
+      console.log(`[Bot] Session subprocess ready (key=${key})`);
+      this.sessions.set(key, session);
+      return session;
+    } catch (error) {
+      // Close immediately so failed initialization cannot leak a subprocess.
+      session.close();
+      throw error;
+    }
   }
 
   /** Legacy convenience: resolve key from shared/per-channel mode and delegate. */
@@ -570,7 +621,7 @@ export class LettaBot implements AgentSession {
 
     // Send message with fallback chain
     try {
-      await session.send(message);
+      await this.withSessionTimeout(session.send(message), `Session send (key=${convKey})`);
     } catch (error) {
       // 409 CONFLICT from orphaned approval
       if (!retried && isApprovalConflictError(error) && this.store.agentId && convId) {
@@ -600,7 +651,12 @@ export class LettaBot implements AgentSession {
           this.store.conversationId = null;
         }
         session = await this.ensureSessionForKey(convKey);
-        await session.send(message);
+        try {
+          await this.withSessionTimeout(session.send(message), `Session send retry (key=${convKey})`);
+        } catch (retryError) {
+          this.invalidateSession(convKey);
+          throw retryError;
+        }
       } else {
         // Unknown error -- invalidate so we get a fresh subprocess next time
         this.invalidateSession(convKey);
@@ -627,11 +683,13 @@ export class LettaBot implements AgentSession {
           if (id) seenToolCallIds.add(id);
         }
 
-        yield msg;
-
-        // Persist state on result
         if (msg.type === 'result') {
           self.persistSessionState(session, capturedConvKey);
+        }
+
+        yield msg;
+
+        if (msg.type === 'result') {
           break;
         }
       }
@@ -1014,7 +1072,7 @@ export class LettaBot implements AgentSession {
       if (!suppressDelivery) {
         await adapter.sendMessage({
           chatId: msg.chatId,
-          text: '(Session recovery failed after multiple attempts. Try: lettabot reset-conversation)',
+          text: `(I had trouble processing that -- the session hit a stuck state and automatic recovery failed after ${this.store.recoveryAttempts} attempt(s). Please try sending your message again. If this keeps happening, /reset will clear the conversation for this channel.)`,
           threadId: msg.threadId,
         });
       }
@@ -1103,16 +1161,11 @@ export class LettaBot implements AgentSession {
       let receivedAnyData = false;
       let sawNonAssistantSinceLastUuid = false;
       const msgTypeCounts: Record<string, number> = {};
+      // Reasoning hook tracking: buffer chunks until the block is complete, then fire hook
+      let reasoningBuffer = '';
+      let reasoningStepIndex = 0;
       
       const finalizeMessage = async () => {
-        if (response.trim() === '<no-reply/>') {
-          console.log('[Bot] Agent chose not to reply (no-reply marker)');
-          sentAnyMessage = true;
-          response = '';
-          messageId = null;
-          lastUpdate = Date.now();
-          return;
-        }
         // Parse and execute XML directives before sending
         if (response.trim()) {
           const { cleanText, directives } = parseDirectives(response);
@@ -1121,6 +1174,17 @@ export class LettaBot implements AgentSession {
             sentAnyMessage = true;
           }
         }
+
+        // Check for no-reply AFTER directive parsing
+        if (response.trim() === '<no-reply/>') {
+          console.log('[Bot] Agent chose not to reply (no-reply marker)');
+          sentAnyMessage = true;
+          response = '';
+          messageId = null;
+          lastUpdate = Date.now();
+          return;
+        }
+
         if (!suppressDelivery && response.trim()) {
           try {
             const prefixed = this.prefixResponse(response);
@@ -1152,12 +1216,28 @@ export class LettaBot implements AgentSession {
           
           const preview = JSON.stringify(streamMsg).slice(0, 300);
           console.log(`[Stream] type=${streamMsg.type} ${preview}`);
-          
+
+          // stream_event is a low-level streaming primitive (partial deltas), not a
+          // semantic type change. Skip it for type-transition logic so it doesn't
+          // prematurely flush reasoning buffers or finalize assistant messages.
+          const isSemanticType = streamMsg.type !== 'stream_event';
+
           // Finalize on type change (avoid double-handling when result provides full response)
-          if (lastMsgType && lastMsgType !== streamMsg.type && response.trim() && streamMsg.type !== 'result') {
+          if (isSemanticType && lastMsgType && lastMsgType !== streamMsg.type && response.trim() && streamMsg.type !== 'result') {
             await finalizeMessage();
           }
-          
+
+          // Flush completed reasoning block when type changes away from reasoning
+          if (isSemanticType && lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
+            this.runReasoningHook({
+              reasoning: reasoningBuffer,
+              stepIndex: reasoningStepIndex,
+              agent: hookContextBase?.agent,
+            });
+            reasoningStepIndex++;
+            reasoningBuffer = '';
+          }
+
           // Tool loop detection
           const maxToolCalls = this.config.maxToolCalls ?? 100;
           if (streamMsg.type === 'tool_call' && (msgTypeCounts['tool_call'] || 0) >= maxToolCalls) {
@@ -1170,20 +1250,40 @@ export class LettaBot implements AgentSession {
           // Log meaningful events with structured summaries
           if (streamMsg.type === 'tool_call') {
             this.syncTodoToolCall(streamMsg);
-            console.log(`[Stream] >>> TOOL CALL: ${streamMsg.toolName || 'unknown'} (id: ${streamMsg.toolCallId?.slice(0, 12) || '?'})`);
+            const toolCallId = streamMsg.toolCallId || '';
+            const toolName = streamMsg.toolName || 'unknown';
+            console.log(`[Stream] >>> TOOL CALL: ${toolName} (id: ${toolCallId.slice(0, 12) || '?'})`);
+            this.runToolCallHook({
+              toolName,
+              toolInput: (streamMsg.toolInput || {}) as Record<string, unknown>,
+              toolCallId,
+              agent: hookContextBase?.agent,
+            });
             sawNonAssistantSinceLastUuid = true;
           } else if (streamMsg.type === 'tool_result') {
-            console.log(`[Stream] <<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
+            const resultContent = (streamMsg as any).content || '';
+            console.log(`[Stream] <<< TOOL RESULT: error=${streamMsg.isError}, len=${resultContent.length}`);
+            this.runToolResultHook({
+              toolCallId: streamMsg.toolCallId || '',
+              content: resultContent,
+              isError: streamMsg.isError ?? false,
+              agent: hookContextBase?.agent,
+            });
             sawNonAssistantSinceLastUuid = true;
           } else if (streamMsg.type === 'assistant' && lastMsgType !== 'assistant') {
             console.log(`[Bot] Generating response...`);
-          } else if (streamMsg.type === 'reasoning' && lastMsgType !== 'reasoning') {
-            console.log(`[Bot] Reasoning...`);
+          } else if (streamMsg.type === 'reasoning') {
+            if (lastMsgType !== 'reasoning') {
+              console.log(`[Bot] Reasoning...`);
+            }
+            reasoningBuffer += streamMsg.content || '';
             sawNonAssistantSinceLastUuid = true;
           } else if (streamMsg.type !== 'assistant') {
             sawNonAssistantSinceLastUuid = true;
           }
-          lastMsgType = streamMsg.type;
+          // Don't let stream_event overwrite lastMsgType -- it's noise between
+          // semantic types and would cause false type-transition triggers.
+          if (isSemanticType) lastMsgType = streamMsg.type;
           
           if (streamMsg.type === 'assistant') {
             const msgUuid = streamMsg.uuid;
@@ -1313,15 +1413,15 @@ export class LettaBot implements AgentSession {
         adapter.stopTypingIndicator?.(msg.chatId)?.catch(() => {});
       }
       lap('stream complete');
-      
-      if (!hookResponse && response.trim()) {
-        hookResponse = response;
-      }
 
-      // Handle no-reply marker
-      if (response.trim() === '<no-reply/>') {
-        sentAnyMessage = true;
-        response = '';
+      // Flush any trailing reasoning block (turn ended without a type transition)
+      if (reasoningBuffer.trim()) {
+        this.runReasoningHook({
+          reasoning: reasoningBuffer,
+          stepIndex: reasoningStepIndex,
+          agent: hookContextBase?.agent,
+        });
+        reasoningBuffer = '';
       }
 
       // Parse and execute XML directives (e.g. <actions><react emoji="eyes" /></actions>)
@@ -1331,6 +1431,12 @@ export class LettaBot implements AgentSession {
         if (await this.executeDirectives(directives, adapter, msg.chatId, msg.messageId)) {
           sentAnyMessage = true;
         }
+      }
+
+      // Handle no-reply marker AFTER directive parsing
+      if (response.trim() === '<no-reply/>') {
+        sentAnyMessage = true;
+        response = '';
       }
 
       // Detect unsupported multimodal
@@ -1395,7 +1501,7 @@ export class LettaBot implements AgentSession {
           console.error('[Bot] Stream received NO DATA - possible stuck state');
           await adapter.sendMessage({ 
             chatId: msg.chatId, 
-            text: '(Session interrupted. Try: lettabot reset-conversation)', 
+            text: '(No response received -- the connection may have dropped or the server may be busy. Please try again. If this persists, /reset will start a fresh conversation.)', 
             threadId: msg.threadId 
           });
         } else {
@@ -1403,10 +1509,9 @@ export class LettaBot implements AgentSession {
           if (hadToolActivity) {
             console.log('[Bot] Agent had tool activity but no assistant message - likely sent via tool');
           } else {
-            const convIdShort = this.store.conversationId?.slice(0, 8) || 'none';
             await adapter.sendMessage({ 
               chatId: msg.chatId, 
-              text: `(No response. Conversation: ${convIdShort}... Try: lettabot reset-conversation)`, 
+              text: '(The agent processed your message but didn\'t produce a visible response. This can happen with certain prompts. Try rephrasing or sending again.)', 
               threadId: msg.threadId 
             });
           }
