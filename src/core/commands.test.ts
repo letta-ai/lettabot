@@ -26,6 +26,10 @@ describe('parseCommand', () => {
     it('returns { command, args } for /model', () => {
       expect(parseCommand('/model')).toEqual({ command: 'model', args: '' });
     });
+
+    it('returns { command, args } for /cancel', () => {
+      expect(parseCommand('/cancel')).toEqual({ command: 'cancel', args: '' });
+    });
   });
 
   describe('invalid input', () => {
@@ -93,7 +97,7 @@ describe('COMMANDS', () => {
   });
 
   it('has exactly 6 commands', () => {
-    expect(COMMANDS).toHaveLength(6);
+    expect(COMMANDS).toHaveLength(7);
   });
 });
 

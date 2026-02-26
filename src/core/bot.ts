@@ -13,7 +13,7 @@ import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
-import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel } from '../tools/letta-api.js';
+import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel } from '../tools/letta-api.js';
 import { installSkillsToAgent, withAgentSkillsOnPath, getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
@@ -292,6 +292,7 @@ export class LettaBot implements AgentSession {
   private listeningGroupIds: Set<string> = new Set();
   private processing = false; // Global lock for shared mode
   private processingKeys: Set<string> = new Set(); // Per-key locks for per-channel mode
+  private cancelledKeys: Set<string> = new Set(); // Tracks keys where /cancel was issued
 
   // AskUserQuestion support: resolves when the next user message arrives.
   // In per-chat mode, keyed by convKey so each chat resolves independently.
@@ -1470,6 +1471,38 @@ export class LettaBot implements AgentSession {
           return `Conversation reset for ${scope}. Other conversations are unaffected. (Agent memory is preserved.)`;
         }
       }
+      case 'cancel': {
+        const convKey = channelId ? this.resolveConversationKey(channelId, chatId) : 'shared';
+
+        // Check if there's actually an active run for this conversation key
+        if (!this.processingKeys.has(convKey) && !this.processing) {
+          return '(Nothing to cancel -- no active run.)';
+        }
+
+        // Signal the stream loop to break
+        this.cancelledKeys.add(convKey);
+
+        // Abort client-side stream
+        const session = this.sessions.get(convKey);
+        if (session) {
+          session.abort().catch(() => {});
+          log.info(`/cancel - aborted session stream (key=${convKey})`);
+        }
+
+        // Cancel server-side run (conversation-scoped)
+        const convId = convKey === 'shared'
+          ? this.store.conversationId
+          : this.store.getConversationId(convKey);
+        if (convId) {
+          const ok = await cancelConversation(convId);
+          if (!ok) {
+            return '(Run cancelled locally, but server-side cancellation failed.)';
+          }
+        }
+
+        log.info(`/cancel - run cancelled (key=${convKey})`);
+        return '(Run cancelled.)';
+      }
       case 'model': {
         const agentId = this.store.agentId;
         if (!agentId) return 'No agent configured.';
@@ -1871,6 +1904,11 @@ export class LettaBot implements AgentSession {
       try {
         let firstChunkLogged = false;
         for await (const streamMsg of run.stream()) {
+          // Check for /cancel before processing each chunk
+          if (this.cancelledKeys.has(convKey)) {
+            log.info(`Stream cancelled by /cancel (key=${convKey})`);
+            break;
+          }
           if (!firstChunkLogged) { lap('first stream chunk'); firstChunkLogged = true; }
           receivedAnyData = true;
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
@@ -2000,7 +2038,7 @@ export class LettaBot implements AgentSession {
               || (trimmed.startsWith('<actions') && !trimmed.includes('</actions>'));
             // Strip any completed <actions> block from the streaming text
             const streamText = stripActionsBlock(response).trim();
-            if (canEdit && !mayBeHidden && !suppressDelivery && streamText.length > 0 && Date.now() - lastUpdate > 500) {
+            if (canEdit && !mayBeHidden && !suppressDelivery && !this.cancelledKeys.has(convKey) && streamText.length > 0 && Date.now() - lastUpdate > 500) {
               try {
                 const prefixedStream = this.prefixResponse(streamText);
                 if (messageId) {
@@ -2018,6 +2056,19 @@ export class LettaBot implements AgentSession {
           }
           
           if (streamMsg.type === 'result') {
+            // Discard cancelled run results -- the server flushes accumulated
+            // content from a previously cancelled run as the result for the
+            // next message. Discard it and retry so the message gets processed.
+            if (streamMsg.stopReason === 'cancelled') {
+              log.info(`Discarding cancelled run result (len=${typeof streamMsg.result === 'string' ? streamMsg.result.length : 0})`);
+              this.invalidateSession(convKey);
+              session = null;
+              if (!retried) {
+                return this.processMessage(msg, adapter, true);
+              }
+              break;
+            }
+
             const resultText = typeof streamMsg.result === 'string' ? streamMsg.result : '';
             if (resultText.trim().length > 0) {
               response = resultText;
@@ -2158,6 +2209,17 @@ export class LettaBot implements AgentSession {
       }
       lap('stream complete');
 
+      // If cancelled, clean up partial state and return early
+      if (this.cancelledKeys.has(convKey)) {
+        if (messageId) {
+          try {
+            await adapter.editMessage(msg.chatId, messageId, '(Run cancelled.)');
+          } catch { /* best effort */ }
+        }
+        log.info(`Skipping post-stream delivery -- cancelled (key=${convKey})`);
+        return;
+      }
+
       // Parse and execute XML directives (e.g. <actions><react emoji="eyes" /></actions>)
       await parseAndHandleDirectives();
 
@@ -2239,6 +2301,7 @@ export class LettaBot implements AgentSession {
       }
     } finally {
       // Session stays alive for reuse -- only invalidated on errors
+      this.cancelledKeys.delete(this.resolveConversationKey(msg.channel, msg.chatId));
     }
   }
 

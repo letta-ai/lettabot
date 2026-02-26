@@ -4,7 +4,7 @@
  * Shared command parsing and help text for all channels.
  */
 
-export const COMMANDS = ['status', 'heartbeat', 'reset', 'help', 'start', 'model'] as const;
+export const COMMANDS = ['status', 'heartbeat', 'reset', 'cancel', 'help', 'start', 'model'] as const;
 export type Command = typeof COMMANDS[number];
 
 export interface ParsedCommand {
@@ -18,6 +18,7 @@ Commands:
 /status - Show current status
 /heartbeat - Trigger heartbeat
 /reset - Reset conversation (keeps agent memory)
+/cancel - Abort the current agent run
 /model - Show current model and list available models
 /model <handle> - Switch to a different model
 /help - Show this message
