@@ -10,7 +10,22 @@
  * 3. process.cwd() (default - local development)
  */
 
-import { resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
+
+/**
+ * Resolve a working directory path into an absolute path.
+ * Supports `~` for home directory and normalizes relative paths.
+ */
+export function resolveWorkingDirPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return '/tmp/lettabot';
+  if (trimmed === '~') return homedir();
+  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+    return resolve(join(homedir(), trimmed.slice(2)));
+  }
+  return resolve(trimmed);
+}
 
 /**
  * Get the base directory for persistent data storage.
@@ -42,7 +57,7 @@ export function getDataDir(): string {
 export function getWorkingDir(): string {
   // Explicit WORKING_DIR always wins
   if (process.env.WORKING_DIR) {
-    return process.env.WORKING_DIR;
+    return resolveWorkingDirPath(process.env.WORKING_DIR);
   }
   
   // On Railway with volume, use volume/data subdirectory

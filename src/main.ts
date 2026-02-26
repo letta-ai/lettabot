@@ -23,7 +23,7 @@ import {
   serverModeLabel,
 } from './config/index.js';
 import { isLettaApiUrl } from './utils/server.js';
-import { getDataDir, getWorkingDir, hasRailwayVolume } from './utils/paths.js';
+import { getDataDir, getWorkingDir, hasRailwayVolume, resolveWorkingDirPath } from './utils/paths.js';
 import { parseCsvList, parseNonNegativeNumber } from './utils/parse.js';
 import { sleep } from './utils/time.js';
 import { createLogger, setLogLevel } from './logger.js';
@@ -576,8 +576,11 @@ async function main() {
     const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : false);
 
     // Create LettaBot for this agent
+    const resolvedWorkingDir = agentConfig.workingDir
+      ? resolveWorkingDirPath(agentConfig.workingDir)
+      : globalConfig.workingDir;
     const bot = new LettaBot({
-      workingDir: globalConfig.workingDir,
+      workingDir: resolvedWorkingDir,
       agentName: agentConfig.name,
       allowedTools: ensureRequiredTools(agentConfig.features?.allowedTools ?? globalConfig.allowedTools),
       disallowedTools: agentConfig.features?.disallowedTools ?? globalConfig.disallowedTools,
@@ -689,7 +692,7 @@ async function main() {
       agentKey: agentConfig.name,
       prompt: heartbeatConfig?.prompt || process.env.HEARTBEAT_PROMPT,
       promptFile: heartbeatConfig?.promptFile,
-      workingDir: globalConfig.workingDir,
+      workingDir: resolvedWorkingDir,
       target: parseHeartbeatTarget(heartbeatConfig?.target) || parseHeartbeatTarget(process.env.HEARTBEAT_TARGET),
     });
     if (heartbeatConfig?.enabled) {
@@ -732,7 +735,7 @@ async function main() {
     if (pollConfig.enabled && pollConfig.gmail.enabled && pollConfig.gmail.accounts.length > 0) {
       const pollingService = new PollingService(bot, {
         intervalMs: pollConfig.intervalMs,
-        workingDir: globalConfig.workingDir,
+        workingDir: resolvedWorkingDir,
         gmail: pollConfig.gmail,
       });
       pollingService.start();

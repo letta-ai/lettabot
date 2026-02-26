@@ -234,9 +234,10 @@ Each entry in `agents:` accepts:
 | `id` | string | No | Use existing agent ID (skips creation) |
 | `displayName` | string | No | Prefix outbound messages (e.g. `"💜 Signo"`) |
 | `model` | string | No | Model for agent creation |
+| `workingDir` | string | No | Working directory for this agent's SDK sessions (overrides global `LETTABOT_WORKING_DIR`) |
 | `conversations` | object | No | Conversation routing (mode, heartbeat, perChannel overrides) |
 | `channels` | object | No | Channel configs (same schema as top-level `channels:`). At least one agent must have channels. |
-| `features` | object | No | Per-agent features (cron, heartbeat, memfs, maxToolCalls) |
+| `features` | object | No | Per-agent features (cron, heartbeat, memfs, maxToolCalls, allowedTools, etc.) |
 | `polling` | object | No | Per-agent polling config (Gmail, etc.) |
 | `integrations` | object | No | Per-agent integrations (Google, etc.) |
 
@@ -296,7 +297,6 @@ The `server:` (including `server.api:`), `transcription:`, and `attachments:` se
 
 - Two agents cannot share the same channel type without ambiguous API routing ([#219](https://github.com/letta-ai/lettabot/issues/219))
 - WhatsApp/Signal session paths are not yet agent-scoped ([#220](https://github.com/letta-ai/lettabot/issues/220))
-- Heartbeat prompt and target are not yet configurable per-agent ([#221](https://github.com/letta-ai/lettabot/issues/221))
 
 ## Channel Configuration
 
@@ -598,6 +598,55 @@ Notes:
 - Reasoning display uses plain bold/italic markdown for better cross-channel compatibility (including Signal).
 - Display messages are informational; they do not replace the assistant response. Normal retry/error handling still applies if no assistant reply is produced.
 
+### Tool Access Control
+
+Control which tools the agent can use. Useful for restricting public-facing agents to read-only operations while giving personal agents full access.
+
+```yaml
+# Global defaults (apply to all agents unless overridden)
+features:
+  allowedTools: [Bash, Read, Edit, Write, Glob, Grep, Task, web_search, conversation_search]
+  disallowedTools: [EnterPlanMode, ExitPlanMode]
+```
+
+Per-agent override:
+
+```yaml
+agents:
+  - name: personal-bot
+    # Inherits global allowedTools (includes Bash, Edit, Write)
+
+  - name: public-bot
+    features:
+      allowedTools: [Read, Glob, Grep, web_search, conversation_search]  # Read-only
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.allowedTools` | string[] | `[Bash, Read, Edit, Write, Glob, Grep, Task, web_search, conversation_search]` | Tools the agent is allowed to use |
+| `features.disallowedTools` | string[] | `[EnterPlanMode, ExitPlanMode]` | Tools explicitly blocked |
+
+**Precedence:** Per-agent YAML > global YAML `features` > `ALLOWED_TOOLS` / `DISALLOWED_TOOLS` env var > hardcoded default.
+
+The `manage_todo` tool is always included regardless of configuration.
+
+### Per-Agent Working Directory
+
+Each agent can have its own working directory, which sets the `cwd` for SDK sessions, heartbeat, and polling services:
+
+```yaml
+agents:
+  - name: personal-bot
+    workingDir: ~/lettabot
+
+  - name: central-bot
+    workingDir: ~/central
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `workingDir` | string | `LETTABOT_WORKING_DIR` env var or process cwd | Working directory for this agent's sessions |
+
 ### No-Reply (Opt-Out)
 
 The agent can choose not to respond to a message by sending exactly:
@@ -839,6 +888,9 @@ Reference:
 | `LOG_LEVEL` | `server.logLevel` (fatal/error/warn/info/debug/trace). Overrides config. |
 | `LETTABOT_LOG_LEVEL` | Alias for `LOG_LEVEL` |
 | `LOG_FORMAT` | Set to `json` for structured JSON output (recommended for Railway/Docker) |
+| `ALLOWED_TOOLS` | `features.allowedTools` (comma-separated list) |
+| `DISALLOWED_TOOLS` | `features.disallowedTools` (comma-separated list) |
+| `LETTABOT_WORKING_DIR` | Agent working directory (overridden by per-agent `workingDir`) |
 | `TTS_PROVIDER` | TTS backend: `elevenlabs` (default) or `openai` |
 | `ELEVENLABS_API_KEY` | API key for ElevenLabs TTS |
 | `ELEVENLABS_VOICE_ID` | ElevenLabs voice ID (default: `21m00Tcm4TlvDq8ikWAM` / Rachel) |
