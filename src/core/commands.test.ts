@@ -22,6 +22,10 @@ describe('parseCommand', () => {
     it('returns "reset" for /reset', () => {
       expect(parseCommand('/reset')).toBe('reset');
     });
+
+    it('returns "cancel" for /cancel', () => {
+      expect(parseCommand('/cancel')).toBe('cancel');
+    });
   });
 
   describe('invalid input', () => {
@@ -74,8 +78,8 @@ describe('COMMANDS', () => {
     expect(COMMANDS).toContain('reset');
   });
 
-  it('has exactly 5 commands', () => {
-    expect(COMMANDS).toHaveLength(5);
+  it('has exactly 6 commands', () => {
+    expect(COMMANDS).toHaveLength(6);
   });
 });
 
