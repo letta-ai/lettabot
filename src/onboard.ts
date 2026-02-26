@@ -1538,6 +1538,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
       const agentId = await createAgent({
         systemPrompt: SYSTEM_PROMPT,
         memory: loadMemoryBlocks(config.agentName || 'LettaBot'),
+        tags: ['origin:lettabot'],
         ...(config.model ? { model: config.model } : {}),
       });
       
