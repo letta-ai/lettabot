@@ -262,6 +262,20 @@ describe('SDK session contract', () => {
     expect(vi.mocked(createSession)).toHaveBeenCalledTimes(1);
   });
 
+  it('does not pre-warm a shared session in per-chat mode', async () => {
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      conversationMode: 'per-chat',
+    });
+    bot.setAgentId('agent-contract-test');
+
+    await bot.warmSession();
+
+    expect(vi.mocked(createSession)).not.toHaveBeenCalled();
+    expect(vi.mocked(resumeSession)).not.toHaveBeenCalled();
+  });
+
   it('passes memfs: true to createSession when config sets memfs true', async () => {
     const mockSession = {
       initialize: vi.fn(async () => undefined),
@@ -376,6 +390,52 @@ describe('SDK session contract', () => {
 
     expect(botInternal.processingKeys.has('slack')).toBe(false);
     expect(processSpy).toHaveBeenCalledWith('slack');
+  });
+
+  it('LRU eviction in per-chat mode does not close active keys', async () => {
+    const createdSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-new',
+    };
+    vi.mocked(createSession).mockReturnValue(createdSession as never);
+
+    const activeSession = {
+      close: vi.fn(() => undefined),
+    };
+    const idleSession = {
+      close: vi.fn(() => undefined),
+    };
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      conversationMode: 'per-chat',
+      maxSessions: 2,
+    });
+    bot.setAgentId('agent-contract-test');
+
+    const botInternal = bot as any;
+    botInternal.sessions.set('telegram:active', activeSession);
+    botInternal.sessions.set('telegram:idle', idleSession);
+    botInternal.sessionLastUsed.set('telegram:active', 1);
+    botInternal.sessionLastUsed.set('telegram:idle', 2);
+    botInternal.processingKeys.add('telegram:active');
+
+    await botInternal._createSessionForKey('telegram:new', true, 0);
+
+    expect(activeSession.close).not.toHaveBeenCalled();
+    expect(idleSession.close).toHaveBeenCalledTimes(1);
+    expect(botInternal.sessions.has('telegram:active')).toBe(true);
+    expect(botInternal.sessions.has('telegram:idle')).toBe(false);
+    expect(botInternal.sessions.has('telegram:new')).toBe(true);
   });
 
   it('enriches opaque error via stream error event in sendToAgent', async () => {

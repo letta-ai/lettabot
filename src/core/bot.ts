@@ -1065,7 +1065,11 @@ export class LettaBot implements AgentSession {
       let oldestKey: string | null = null;
       let oldestTime = Infinity;
       for (const [k, ts] of this.sessionLastUsed) {
-        if (k !== key && ts < oldestTime && this.sessions.has(k)) {
+        if (k === key) continue;
+        if (!this.sessions.has(k)) continue;
+        // Never evict an active/in-flight key (can close a live stream).
+        if (this.processingKeys.has(k) || this.sessionCreationLocks.has(k)) continue;
+        if (ts < oldestTime) {
           oldestKey = k;
           oldestTime = ts;
         }
@@ -1078,6 +1082,9 @@ export class LettaBot implements AgentSession {
         this.sessionLastUsed.delete(oldestKey);
         this.sessionGenerations.delete(oldestKey);
         this.sessionCreationLocks.delete(oldestKey);
+      } else {
+        // All existing sessions are active; allow temporary overflow.
+        log.debug(`LRU session eviction skipped: all ${this.sessions.size} sessions are active/in-flight`);
       }
     }
 
@@ -1137,9 +1144,10 @@ export class LettaBot implements AgentSession {
     this.store.refresh();
     if (!this.store.agentId && !this.store.conversationId) return;
     try {
-      // In shared mode, warm the single session. In per-channel mode, warm nothing
-      // (sessions are created on first message per channel).
-      if (this.config.conversationMode !== 'per-channel') {
+      const mode = this.config.conversationMode || 'shared';
+      // In shared mode, warm the single session. In per-channel/per-chat modes,
+      // warm nothing (sessions are created on first message per key).
+      if (mode === 'shared') {
         await this.ensureSessionForKey('shared');
       }
     } catch (err) {
