@@ -163,7 +163,7 @@ export class SignalAdapter implements ChannelAdapter {
   private baseUrl: string;
   
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string) => Promise<string | null>;
   
   constructor(config: SignalConfig) {
     this.config = {
@@ -785,7 +785,7 @@ This code expires in 1 hour.`;
         if (command === 'help' || command === 'start') {
           await this.sendMessage({ chatId, text: HELP_TEXT });
         } else if (this.onCommand) {
-          const result = await this.onCommand(command);
+          const result = await this.onCommand(command, chatId);
           if (result) await this.sendMessage({ chatId, text: result });
         }
         return; // Don't pass commands to agent

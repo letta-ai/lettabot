@@ -49,6 +49,31 @@ describe('resolveConversationKey', () => {
   it('returns "shared" when conversationMode is undefined', () => {
     expect(resolveConversationKey('telegram', undefined, new Set())).toBe('shared');
   });
+
+  // --- per-chat mode ---
+
+  it('returns channel:chatId in per-chat mode', () => {
+    expect(resolveConversationKey('telegram', 'per-chat', new Set(), '12345')).toBe('telegram:12345');
+  });
+
+  it('normalizes channel name in per-chat mode', () => {
+    expect(resolveConversationKey('Telegram', 'per-chat', new Set(), '12345')).toBe('telegram:12345');
+  });
+
+  it('falls back to shared in per-chat mode when chatId is missing', () => {
+    expect(resolveConversationKey('telegram', 'per-chat', new Set())).toBe('shared');
+    expect(resolveConversationKey('telegram', 'per-chat', new Set(), undefined)).toBe('shared');
+  });
+
+  it('per-chat mode takes precedence over overrides', () => {
+    const overrides = new Set(['telegram']);
+    expect(resolveConversationKey('telegram', 'per-chat', overrides, '99')).toBe('telegram:99');
+  });
+
+  it('chatId is ignored in non-per-chat modes', () => {
+    expect(resolveConversationKey('telegram', 'shared', new Set(), '12345')).toBe('shared');
+    expect(resolveConversationKey('telegram', 'per-channel', new Set(), '12345')).toBe('telegram');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -104,5 +129,23 @@ describe('resolveHeartbeatConversationKey', () => {
     // Non-last-active heartbeat in shared mode always returns 'shared'
     const overrides = new Set(['slack']);
     expect(resolveHeartbeatConversationKey('shared', 'dedicated', overrides, 'slack')).toBe('shared');
+  });
+
+  // --- per-chat mode ---
+
+  it('returns channel:chatId in per-chat mode with last-active', () => {
+    expect(resolveHeartbeatConversationKey('per-chat', 'last-active', new Set(), 'telegram', '12345')).toBe('telegram:12345');
+  });
+
+  it('returns "heartbeat" in per-chat mode with dedicated', () => {
+    expect(resolveHeartbeatConversationKey('per-chat', 'dedicated', new Set(), 'telegram', '12345')).toBe('heartbeat');
+  });
+
+  it('falls back to shared in per-chat mode when chatId is missing', () => {
+    expect(resolveHeartbeatConversationKey('per-chat', 'last-active', new Set(), 'telegram', undefined)).toBe('shared');
+  });
+
+  it('falls back to "shared" in per-chat mode when no last-active target', () => {
+    expect(resolveHeartbeatConversationKey('per-chat', 'last-active', new Set(), undefined, undefined)).toBe('shared');
   });
 });

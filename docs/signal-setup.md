@@ -30,6 +30,12 @@ Link signal-cli to your existing Signal account without disrupting your phone ap
 signal-cli link -n "LettaBot"
 ```
 
+**Headless / SSH setup:** If you're running on a server without a display, pipe through `qrencode` to render the QR code in your terminal:
+
+```bash
+signal-cli link -n "LettaBot" | tee >(xargs -L 1 qrencode -t ANSI256UTF8)
+```
+
 This will display a `sgnl://linkdevice?uuid=...` URI. On your phone:
 1. Open Signal → Settings (tap your profile)
 2. Tap "Linked Devices"

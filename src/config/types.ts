@@ -64,9 +64,10 @@ export interface AgentConfig {
   };
   /** Conversation routing */
   conversations?: {
-    mode?: 'shared' | 'per-channel';  // Default: shared (single conversation across all channels)
+    mode?: 'shared' | 'per-channel' | 'per-chat';  // Default: shared (single conversation across all channels)
     heartbeat?: string;               // "dedicated" | "last-active" | "<channel>" (default: last-active)
     perChannel?: string[];            // Channels that should always have their own conversation
+    maxSessions?: number;             // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
   };
   /** Features for this agent */
   features?: {
@@ -142,9 +143,10 @@ export interface LettaBotConfig {
 
   // Conversation routing
   conversations?: {
-    mode?: 'shared' | 'per-channel';  // Default: shared (single conversation across all channels)
+    mode?: 'shared' | 'per-channel' | 'per-chat';  // Default: shared (single conversation across all channels)
     heartbeat?: string;               // "dedicated" | "last-active" | "<channel>" (default: last-active)
     perChannel?: string[];            // Channels that should always have their own conversation
+    maxSessions?: number;             // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
   };
 
   // Features
@@ -469,6 +471,24 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     const normalized: AgentConfig['channels'] = {};
     if (!channels) return normalized;
 
+    // Merge env vars into YAML blocks that are missing their key credential.
+    // Without this, `signal: enabled: true` + SIGNAL_PHONE_NUMBER env var
+    // silently fails because the env-var-only fallback (below) only fires
+    // when the YAML block is completely absent.
+    if (channels.telegram && !channels.telegram.token && process.env.TELEGRAM_BOT_TOKEN) {
+      channels.telegram.token = process.env.TELEGRAM_BOT_TOKEN;
+    }
+    if (channels.slack) {
+      if (!channels.slack.botToken && process.env.SLACK_BOT_TOKEN) channels.slack.botToken = process.env.SLACK_BOT_TOKEN;
+      if (!channels.slack.appToken && process.env.SLACK_APP_TOKEN) channels.slack.appToken = process.env.SLACK_APP_TOKEN;
+    }
+    if (channels.signal && !channels.signal.phone && process.env.SIGNAL_PHONE_NUMBER) {
+      channels.signal.phone = process.env.SIGNAL_PHONE_NUMBER;
+    }
+    if (channels.discord && !channels.discord.token && process.env.DISCORD_BOT_TOKEN) {
+      channels.discord.token = process.env.DISCORD_BOT_TOKEN;
+    }
+
     if (channels.telegram?.enabled !== false && channels.telegram?.token) {
       const telegram = { ...channels.telegram };
       normalizeLegacyGroupFields(telegram, `${sourcePath}.telegram`);
@@ -498,6 +518,19 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       const discord = { ...channels.discord };
       normalizeLegacyGroupFields(discord, `${sourcePath}.discord`);
       normalized.discord = discord;
+    }
+
+    // Warn when a channel block exists but was dropped due to missing credentials
+    const channelCredentials: Array<[string, unknown, boolean]> = [
+      ['telegram', channels.telegram, !!normalized.telegram],
+      ['slack', channels.slack, !!normalized.slack],
+      ['signal', channels.signal, !!normalized.signal],
+      ['discord', channels.discord, !!normalized.discord],
+    ];
+    for (const [name, raw, included] of channelCredentials) {
+      if (raw && (raw as Record<string, unknown>).enabled !== false && !included) {
+        console.warn(`[Config] Channel '${name}' is in ${sourcePath} but missing required credentials -- skipping. Check your lettabot.yaml or environment variables.`);
+      }
     }
 
     return normalized;

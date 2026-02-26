@@ -330,6 +330,7 @@ export class Store {
 
   /**
    * Set conversation ID for a specific key.
+   * TODO: consider TTL-based cleanup for per-chat conversation entries
    */
   setConversationId(key: string, id: string): void {
     const agent = this.agentData();

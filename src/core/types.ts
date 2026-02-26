@@ -155,9 +155,10 @@ export interface BotConfig {
   sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete files after send (default: false)
 
   // Conversation routing
-  conversationMode?: 'shared' | 'per-channel'; // Default: shared
+  conversationMode?: 'shared' | 'per-channel' | 'per-chat'; // Default: shared
   heartbeatConversation?: string; // "dedicated" | "last-active" | "<channel>" (default: last-active)
   conversationOverrides?: string[]; // Channels that always use their own conversation (shared mode)
+  maxSessions?: number; // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
 }
 
 /**

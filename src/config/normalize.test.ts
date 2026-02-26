@@ -305,6 +305,56 @@ describe('normalizeAgents', () => {
       expect(agents[0].channels.telegram?.token).toBe('yaml-token');
     });
 
+    it('should merge env var credential into YAML block missing it', () => {
+      process.env.SIGNAL_PHONE_NUMBER = '+15551234567';
+      process.env.DISCORD_BOT_TOKEN = 'env-discord-token';
+      process.env.TELEGRAM_BOT_TOKEN = 'env-tg-token';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {
+          signal: { enabled: true, selfChat: true, dmPolicy: 'pairing' },
+          discord: { enabled: true, dmPolicy: 'open' },
+          telegram: { enabled: true, dmPolicy: 'pairing' },
+        },
+      };
+
+      const agents = normalizeAgents(config);
+
+      // Env var should fill in the missing credential
+      expect(agents[0].channels.signal?.phone).toBe('+15551234567');
+      expect(agents[0].channels.signal?.dmPolicy).toBe('pairing');
+      expect(agents[0].channels.discord?.token).toBe('env-discord-token');
+      expect(agents[0].channels.discord?.dmPolicy).toBe('open');
+      expect(agents[0].channels.telegram?.token).toBe('env-tg-token');
+    });
+
+    it('should merge env var credential into YAML block missing it', () => {
+      process.env.SIGNAL_PHONE_NUMBER = '+15551234567';
+      process.env.DISCORD_BOT_TOKEN = 'env-discord-token';
+      process.env.TELEGRAM_BOT_TOKEN = 'env-tg-token';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {
+          signal: { enabled: true, selfChat: true, dmPolicy: 'pairing' },
+          discord: { enabled: true, dmPolicy: 'open' },
+          telegram: { enabled: true, dmPolicy: 'pairing' },
+        },
+      };
+
+      const agents = normalizeAgents(config);
+
+      // Env var should fill in the missing credential
+      expect(agents[0].channels.signal?.phone).toBe('+15551234567');
+      expect(agents[0].channels.signal?.dmPolicy).toBe('pairing');
+      expect(agents[0].channels.discord?.token).toBe('env-discord-token');
+      expect(agents[0].channels.discord?.dmPolicy).toBe('open');
+      expect(agents[0].channels.telegram?.token).toBe('env-tg-token');
+    });
+
     it('should not apply env vars in multi-agent mode', () => {
       process.env.TELEGRAM_BOT_TOKEN = 'env-token';
 
