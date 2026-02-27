@@ -13,6 +13,7 @@ import {
   getSetupFunction,
   type ChannelId 
 } from '../channels/setup.js';
+import { listGroupsFromArgs } from './group-listing.js';
 
 // ============================================================================
 // Status Helpers
@@ -258,12 +259,18 @@ export async function removeChannel(channelId?: string): Promise<void> {
 // Main Command Handler
 // ============================================================================
 
-export async function channelManagementCommand(subCommand?: string, channelName?: string): Promise<void> {
+export async function channelManagementCommand(subCommand?: string, channelName?: string, extraArgs: string[] = []): Promise<void> {
   switch (subCommand) {
     case 'list':
     case 'ls':
       await listChannels();
       break;
+    case 'list-groups':
+    case 'groups': {
+      const args = channelName ? [channelName, ...extraArgs] : extraArgs;
+      await listGroupsFromArgs(args);
+      break;
+    }
     case 'add':
       await addChannel(channelName);
       break;

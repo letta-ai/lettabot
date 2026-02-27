@@ -61,6 +61,30 @@ function isConversationMissingError(error: unknown): boolean {
 }
 
 /**
+ * Detect if a session initialization error indicates the agent doesn't exist.
+ * The SDK includes CLI stderr in the error message when the subprocess exits
+ * before sending an init message. We check for agent-not-found indicators in
+ * both the SDK-level message and the CLI stderr output it includes.
+ *
+ * This intentionally does NOT treat generic init failures (like "no init
+ * message received") as recoverable. Those can be transient SDK/process
+ * issues, and clearing persisted agent state in those cases can destroy
+ * valid mappings.
+ */
+function isAgentMissingFromInitError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  const agentMissingPatterns = [
+    /\bagent\b[^.\n]{0,80}\bnot found\b/,
+    /\bnot found\b[^.\n]{0,80}\bagent\b/,
+    /\bagent\b[^.\n]{0,80}\bdoes not exist\b/,
+    /\bunknown agent\b/,
+    /\bagent_not_found\b/,
+  ];
+  return agentMissingPatterns.some((pattern) => pattern.test(msg));
+}
+
+/**
  * Map a structured API error into a clear, user-facing message.
  * The `error` object comes from the SDK's new SDKErrorMessage type.
  */
@@ -1005,6 +1029,20 @@ export class LettaBot implements AgentSession {
     } catch (error) {
       // Close immediately so failed initialization cannot leak a subprocess.
       session.close();
+
+      // If the stored agent ID doesn't exist on the server (deleted externally,
+      // ghost agent from failed pairing, etc.), clear the stale ID and retry.
+      // The retry will hit the "else" branch and create a fresh agent.
+      // Uses bootstrapRetried to prevent infinite recursion if creation also fails.
+      if (this.store.agentId && !bootstrapRetried && isAgentMissingFromInitError(error)) {
+        log.warn(
+          `Agent ${this.store.agentId} appears missing from server, ` +
+          `clearing stale agent ID and recreating...`,
+        );
+        this.store.clearAgent();
+        return this._createSessionForKey(key, /* bootstrapRetried */ true, generation);
+      }
+
       throw error;
     }
 
