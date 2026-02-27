@@ -12,7 +12,7 @@ vi.mock('@letta-ai/letta-code-sdk', () => ({
 }));
 
 vi.mock('../tools/letta-api.js', () => ({
-  updateAgentName: vi.fn(),
+  updateAgentName: vi.fn().mockResolvedValue(undefined),
   getPendingApprovals: vi.fn(),
   rejectApproval: vi.fn(),
   cancelRuns: vi.fn(),
@@ -184,6 +184,95 @@ describe('SDK session contract', () => {
 
     await expect(bot.sendToAgent('will timeout')).rejects.toThrow('Session initialize (key=shared) timed out after 5ms');
     expect(mockSession.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('recreates agent after explicit agent-not-found initialize error', async () => {
+    delete process.env.LETTA_AGENT_ID;
+
+    const staleSession = {
+      initialize: vi.fn(async () => {
+        throw new Error('No init message received from subprocess. stderr: {"detail":"Agent agent-contract-test not found"}');
+      }),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-stale',
+    };
+
+    const recoveredSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'fresh response' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-recreated',
+      conversationId: 'conv-recreated',
+    };
+
+    vi.mocked(createAgent).mockResolvedValue('agent-recreated');
+    vi.mocked(createSession)
+      .mockReturnValueOnce(staleSession as never)
+      .mockReturnValueOnce(recoveredSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      agentName: 'ContractBot',
+    });
+    bot.setAgentId('agent-contract-test');
+
+    const response = await bot.sendToAgent('recover me');
+    expect(response).toBe('fresh response');
+    expect(staleSession.close).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createAgent)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createSession)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(createSession).mock.calls[0][0]).toBe('agent-contract-test');
+    expect(vi.mocked(createSession).mock.calls[1][0]).toBe('agent-recreated');
+  });
+
+  it('does not clear agent state on generic initialize failures', async () => {
+    const initFailure = new Error('No init message received from subprocess');
+    const failingSession = {
+      initialize: vi.fn(async () => {
+        throw initFailure;
+      }),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-keep',
+    };
+
+    vi.mocked(resumeSession).mockReturnValue(failingSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+    bot.setAgentId('agent-contract-test');
+    const botInternal = bot as unknown as { store: { conversationId: string | null } };
+    botInternal.store.conversationId = 'conv-keep';
+
+    await expect(bot.sendToAgent('should fail')).rejects.toThrow('No init message received from subprocess');
+    expect(failingSession.close).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createAgent)).not.toHaveBeenCalled();
+    expect(vi.mocked(createSession)).not.toHaveBeenCalled();
+    expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(1);
+    expect(bot.getStatus().agentId).toBe('agent-contract-test');
+    expect(bot.getStatus().conversationId).toBe('conv-keep');
   });
 
   it('invalidates retry session when fallback send fails after conversation-missing error', async () => {

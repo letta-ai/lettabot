@@ -401,6 +401,20 @@ export class Store {
     return stored !== current;
   }
 
+  /**
+   * Clear only the agent ID and all associated conversation IDs.
+   * The next ensureSessionForKey() call will create a fresh agent.
+   * Unlike reset(), this preserves other agent metadata (recovery attempts, etc.).
+   */
+  clearAgent(): void {
+    const agent = this.agentData();
+    agent.agentId = null;
+    agent.conversationId = null;
+    agent.conversations = undefined;
+    agent.baseUrl = undefined;
+    this.save();
+  }
+
   reset(): void {
     this.data.agents[this.agentName] = { agentId: null };
     this.save();
