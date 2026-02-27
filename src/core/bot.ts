@@ -1255,6 +1255,15 @@ export class LettaBot implements AgentSession {
     const self = this;
     const capturedConvKey = convKey; // Capture for closure
 
+    /** Check whether a string is parseable as complete JSON object/array. */
+    function isCompleteJson(s: string): boolean {
+      if (!s) return false;
+      // Quick check: must look like an object or array (avoids parsing bare literals)
+      const trimmed = s.trim();
+      if (trimmed[0] !== '{' && trimmed[0] !== '[') return false;
+      try { JSON.parse(s); return true; } catch { return false; }
+    }
+
     /** Merge tool argument strings, handling both delta and cumulative chunking. */
     function mergeToolArgs(existing: string, incoming: string): string {
       if (!incoming) return existing;
@@ -1311,6 +1320,17 @@ export class LettaBot implements AgentSession {
           const existing = pendingToolCalls.get(id);
           if (existing) {
             existing.accumulatedArgs = mergeToolArgs(existing.accumulatedArgs, incoming);
+          } else if (
+            // Rotating IDs: some models (e.g. Kimi k2.5) assign a new
+            // tool_call_id to every streaming delta for the same logical call.
+            // If the last pending entry's accumulated args aren't valid JSON
+            // yet, this is likely a continuation chunk -- merge into it.
+            lastPendingToolCallId &&
+            pendingToolCalls.has(lastPendingToolCallId) &&
+            !isCompleteJson(pendingToolCalls.get(lastPendingToolCallId)!.accumulatedArgs)
+          ) {
+            const lastPending = pendingToolCalls.get(lastPendingToolCallId)!;
+            lastPending.accumulatedArgs = mergeToolArgs(lastPending.accumulatedArgs, incoming);
           } else {
             pendingToolCalls.set(id, { msg, accumulatedArgs: incoming });
           }
