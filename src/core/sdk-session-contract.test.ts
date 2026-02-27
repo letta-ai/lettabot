@@ -158,6 +158,46 @@ describe('SDK session contract', () => {
     expect(toolCalls[0].toolInput).toEqual({ command: 'echo hi' });
   });
 
+  it('merges tool_call chunks with rotating IDs into a single call', async () => {
+    // Some models (e.g. Kimi k2.5) assign a new tool_call_id to every delta.
+    // The dedup logic should detect that the previous entry's accumulated args
+    // are incomplete JSON and merge the new chunk into it.
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'tool_call', toolCallId: 'rot-1', toolName: 'Bash', rawArguments: '{"comma' };
+          yield { type: 'tool_call', toolCallId: 'rot-2', toolName: 'Bash', rawArguments: 'nd":"ls' };
+          yield { type: 'tool_call', toolCallId: 'rot-3', toolName: 'Bash', rawArguments: ' -la"}' };
+          yield { type: 'assistant', content: 'done' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    const chunks: Array<Record<string, unknown>> = [];
+    for await (const msg of bot.streamToAgent('test')) {
+      chunks.push(msg as Record<string, unknown>);
+    }
+
+    const toolCalls = chunks.filter((m) => m.type === 'tool_call');
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0].toolCallId).toBe('rot-1');
+    expect(toolCalls[0].toolInput).toEqual({ command: 'ls -la' });
+  });
+
   it('closes session if initialize times out before first send', async () => {
     process.env.LETTA_SESSION_TIMEOUT_MS = '5';
 

@@ -1293,8 +1293,8 @@ export class LettaBot implements AgentSession {
       lastPendingToolCallId = null;
     }
 
-    let anonToolCallCounter = 0;
     let lastPendingToolCallId: string | null = null;
+    let anonToolCallCounter = 0;
 
     async function* dedupedStream(): AsyncGenerator<StreamMsg> {
       for await (const raw of session.stream()) {
@@ -1320,6 +1320,7 @@ export class LettaBot implements AgentSession {
           const existing = pendingToolCalls.get(id);
           if (existing) {
             existing.accumulatedArgs = mergeToolArgs(existing.accumulatedArgs, incoming);
+            lastPendingToolCallId = id;
           } else if (
             // Rotating IDs: some models (e.g. Kimi k2.5) assign a new
             // tool_call_id to every streaming delta for the same logical call.
@@ -1331,10 +1332,12 @@ export class LettaBot implements AgentSession {
           ) {
             const lastPending = pendingToolCalls.get(lastPendingToolCallId)!;
             lastPending.accumulatedArgs = mergeToolArgs(lastPending.accumulatedArgs, incoming);
+            // Don't update lastPendingToolCallId -- it already points at the
+            // entry we merged into (the rotating ID is discarded).
           } else {
             pendingToolCalls.set(id, { msg, accumulatedArgs: incoming });
+            lastPendingToolCallId = id;
           }
-          lastPendingToolCallId = id;
           continue; // buffer, don't yield yet
         }
 
