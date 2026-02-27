@@ -171,6 +171,7 @@ import { SlackAdapter } from './channels/slack.js';
 import { WhatsAppAdapter } from './channels/whatsapp/index.js';
 import { SignalAdapter } from './channels/signal.js';
 import { DiscordAdapter } from './channels/discord.js';
+import { MatrixAdapter } from './channels/matrix.js';
 import { GroupBatcher } from './core/group-batcher.js';
 import { printStartupBanner } from './core/banner.js';
 import { collectGroupBatchingConfig } from './core/group-batching-config.js';
@@ -452,6 +453,22 @@ function createChannelsForAgent(
       attachmentsDir,
       attachmentsMaxBytes,
       groups: agentConfig.channels.discord.groups,
+    }));
+  }
+
+  if (agentConfig.channels.matrix?.accessToken) {
+    adapters.push(new MatrixAdapter({
+      homeserverUrl: agentConfig.channels.matrix.homeserverUrl || 'https://matrix.org',
+      accessToken: agentConfig.channels.matrix.accessToken,
+      storagePath: agentConfig.channels.matrix.storagePath,
+      cryptoStoragePath: agentConfig.channels.matrix.cryptoStoragePath,
+      encryptionEnabled: agentConfig.channels.matrix.encryptionEnabled !== false,
+      autoJoinRooms: agentConfig.channels.matrix.autoJoinRooms !== false,
+      dmPolicy: agentConfig.channels.matrix.dmPolicy || 'pairing',
+      allowedUsers: agentConfig.channels.matrix.allowedUsers && agentConfig.channels.matrix.allowedUsers.length > 0
+        ? agentConfig.channels.matrix.allowedUsers
+        : undefined,
+      messagePrefix: agentConfig.channels.matrix.messagePrefix,
     }));
   }
 

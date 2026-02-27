@@ -10,7 +10,7 @@ import { saveConfig, syncProviders, isApiServerMode } from './config/index.js';
 import type { AgentConfig, LettaBotConfig, ProviderConfig } from './config/types.js';
 import { isLettaApiUrl } from './utils/server.js';
 import { parseCsvList, parseOptionalInt } from './utils/parse.js';
-import { CHANNELS, getChannelHint, isSignalCliInstalled, setupTelegram, setupSlack, setupDiscord, setupWhatsApp, setupSignal } from './channels/setup.js';
+import { CHANNELS, getChannelHint, isSignalCliInstalled, setupTelegram, setupSlack, setupDiscord, setupWhatsApp, setupSignal, setupMatrix } from './channels/setup.js';
 
 // ============================================================================
 // Non-Interactive Helpers
@@ -105,6 +105,17 @@ function readConfigFromEnv(existingConfig: any): any {
       listeningGroups: parseOptionalCsvList(process.env.SIGNAL_LISTENING_GROUPS)
         ?? existingConfig.channels?.signal?.listeningGroups,
     },
+    
+    matrix: {
+      enabled: !!process.env.MATRIX_ACCESS_TOKEN,
+      homeserverUrl: process.env.MATRIX_HOMESERVER_URL || existingConfig.channels?.matrix?.homeserverUrl || 'https://matrix.org',
+      accessToken: process.env.MATRIX_ACCESS_TOKEN || existingConfig.channels?.matrix?.accessToken,
+      encryptionEnabled: process.env.MATRIX_ENCRYPTION_ENABLED !== 'false',
+      autoJoinRooms: process.env.MATRIX_AUTO_JOIN_ROOMS !== 'false',
+      dmPolicy: process.env.MATRIX_DM_POLICY || existingConfig.channels?.matrix?.dmPolicy || 'pairing',
+      allowedUsers: process.env.MATRIX_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.matrix?.allowedUsers,
+      messagePrefix: process.env.MATRIX_MESSAGE_PREFIX || existingConfig.channels?.matrix?.messagePrefix,
+    },
   };
 }
 
@@ -184,6 +195,18 @@ async function saveConfigFromEnv(config: any, configPath: string, existingConfig
             groupPollIntervalMin: config.signal.groupPollIntervalMin,
             instantGroups: config.signal.instantGroups,
             listeningGroups: config.signal.listeningGroups,
+          }
+        } : {}),
+        ...(config.matrix.enabled ? {
+          matrix: {
+            enabled: true,
+            homeserverUrl: config.matrix.homeserverUrl,
+            accessToken: config.matrix.accessToken,
+            encryptionEnabled: config.matrix.encryptionEnabled,
+            autoJoinRooms: config.matrix.autoJoinRooms,
+            dmPolicy: config.matrix.dmPolicy,
+            allowedUsers: config.matrix.allowedUsers,
+            messagePrefix: config.matrix.messagePrefix,
           }
         } : {}),
       },
@@ -275,6 +298,16 @@ interface OnboardConfig {
     groupPollIntervalMin?: number;
     instantGroups?: string[];
     listeningGroups?: string[];
+  };
+  matrix: {
+    enabled: boolean;
+    homeserverUrl?: string;
+    accessToken?: string;
+    encryptionEnabled?: boolean;
+    autoJoinRooms?: boolean;
+    dmPolicy?: 'pairing' | 'allowlist' | 'open';
+    allowedUsers?: string[];
+    messagePrefix?: string;
   };
   
   // Google Workspace (via gog CLI)
@@ -737,6 +770,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
   if (config.discord.enabled) initialChannels.push('discord');
   if (config.whatsapp.enabled) initialChannels.push('whatsapp');
   if (config.signal.enabled) initialChannels.push('signal');
+  if (config.matrix.enabled) initialChannels.push('matrix');
   
   let channels: string[] = [];
   
@@ -776,6 +810,7 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
   config.discord.enabled = channels.includes('discord');
   config.whatsapp.enabled = channels.includes('whatsapp');
   config.signal.enabled = channels.includes('signal');
+  config.matrix.enabled = channels.includes('matrix');
   
   // Configure each selected channel using shared setup functions
   if (config.telegram.enabled) {
@@ -801,6 +836,11 @@ async function stepChannels(config: OnboardConfig, env: Record<string, string>):
   if (config.signal.enabled) {
     const result = await setupSignal(config.signal);
     Object.assign(config.signal, result);
+  }
+  
+  if (config.matrix.enabled) {
+    const result = await setupMatrix(config.matrix);
+    Object.assign(config.matrix, result);
   }
 }
 
@@ -1200,6 +1240,7 @@ function showSummary(config: OnboardConfig): void {
   if (config.discord.enabled) channels.push('Discord');
   if (config.whatsapp.enabled) channels.push(config.whatsapp.selfChat ? 'WhatsApp (self)' : 'WhatsApp');
   if (config.signal.enabled) channels.push(config.signal.selfChat ? 'Signal (self)' : 'Signal');
+  if (config.matrix.enabled) channels.push('Matrix');
   lines.push(`Channels:  ${channels.length > 0 ? channels.join(', ') : 'None'}`);
   
   // Features
@@ -1467,6 +1508,16 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
       selfChat: existingConfig.channels.signal?.selfChat ?? true, // Default true
       dmPolicy: existingConfig.channels.signal?.dmPolicy,
     },
+    matrix: {
+      enabled: existingConfig.channels.matrix?.enabled || false,
+      homeserverUrl: existingConfig.channels.matrix?.homeserverUrl || 'https://matrix.org',
+      accessToken: existingConfig.channels.matrix?.accessToken,
+      encryptionEnabled: existingConfig.channels.matrix?.encryptionEnabled ?? true,
+      autoJoinRooms: existingConfig.channels.matrix?.autoJoinRooms ?? true,
+      dmPolicy: existingConfig.channels.matrix?.dmPolicy,
+      allowedUsers: existingConfig.channels.matrix?.allowedUsers,
+      messagePrefix: existingConfig.channels.matrix?.messagePrefix,
+    },
     google: (() => {
       const existingAccounts = existingConfig.integrations?.google?.accounts
         ? existingConfig.integrations.google.accounts.map(a => ({
@@ -1684,6 +1735,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     config.discord.enabled ? `  ✓ Discord (${formatAccess(config.discord.dmPolicy, config.discord.allowedUsers)})` : '  ✗ Discord',
     config.whatsapp.enabled ? `  ✓ WhatsApp (${formatAccess(config.whatsapp.dmPolicy, config.whatsapp.allowedUsers)})` : '  ✗ WhatsApp',
     config.signal.enabled ? `  ✓ Signal (${formatAccess(config.signal.dmPolicy, config.signal.allowedUsers)})` : '  ✗ Signal',
+    config.matrix.enabled ? `  ✓ Matrix (${config.matrix.homeserverUrl})` : '  ✗ Matrix',
     '',
     'Integrations:',
     config.google.enabled && config.google.accounts.length > 0
@@ -1762,6 +1814,18 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
           groupPollIntervalMin: config.signal.groupPollIntervalMin,
           instantGroups: config.signal.instantGroups,
           listeningGroups: config.signal.listeningGroups,
+        }
+      } : {}),
+      ...(config.matrix.enabled ? {
+        matrix: {
+          enabled: true,
+          homeserverUrl: config.matrix.homeserverUrl,
+          accessToken: config.matrix.accessToken,
+          encryptionEnabled: config.matrix.encryptionEnabled,
+          autoJoinRooms: config.matrix.autoJoinRooms,
+          dmPolicy: config.matrix.dmPolicy,
+          allowedUsers: config.matrix.allowedUsers,
+          messagePrefix: config.matrix.messagePrefix,
         }
       } : {}),
     },
