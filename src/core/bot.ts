@@ -956,6 +956,11 @@ export class LettaBot implements AgentSession {
       ? this.store.conversationId
       : this.store.getConversationId(key);
 
+    // Propagate per-agent cron store path to CLI subprocesses (lettabot-schedule)
+    if (this.config.cronStorePath) {
+      process.env.CRON_STORE_PATH = this.config.cronStorePath;
+    }
+
     if (convId) {
       process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
       if (this.store.agentId) {

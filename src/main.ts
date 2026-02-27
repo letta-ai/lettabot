@@ -23,7 +23,7 @@ import {
   serverModeLabel,
 } from './config/index.js';
 import { isLettaApiUrl } from './utils/server.js';
-import { getDataDir, getWorkingDir, hasRailwayVolume, resolveWorkingDirPath } from './utils/paths.js';
+import { getCronDataDir, getDataDir, getWorkingDir, hasRailwayVolume, resolveWorkingDirPath } from './utils/paths.js';
 import { parseCsvList, parseNonNegativeNumber } from './utils/parse.js';
 import { sleep } from './utils/time.js';
 import { createLogger, setLogLevel } from './logger.js';
@@ -579,6 +579,14 @@ async function main() {
     const resolvedWorkingDir = agentConfig.workingDir
       ? resolveWorkingDirPath(agentConfig.workingDir)
       : globalConfig.workingDir;
+    // Per-agent cron store path: in multi-agent mode, each agent gets its own file
+    const cronStoreFilename = agents.length > 1
+      ? `cron-jobs-${agentConfig.name}.json`
+      : undefined;
+    const cronStorePath = cronStoreFilename
+      ? resolve(getCronDataDir(), cronStoreFilename)
+      : undefined;
+
     const bot = new LettaBot({
       workingDir: resolvedWorkingDir,
       agentName: agentConfig.name,
@@ -596,6 +604,7 @@ async function main() {
       conversationOverrides: agentConfig.conversations?.perChannel,
       maxSessions: agentConfig.conversations?.maxSessions,
       redaction: agentConfig.security?.redaction,
+      cronStorePath,
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
         googleEnabled: !!agentConfig.integrations?.google?.enabled || !!agentConfig.polling?.gmail?.enabled,
@@ -679,7 +688,7 @@ async function main() {
 
     // Per-agent cron
     if (agentConfig.features?.cron ?? globalConfig.cronEnabled) {
-      const cronService = new CronService(bot);
+      const cronService = new CronService(bot, cronStoreFilename ? { storePath: cronStoreFilename } : undefined);
       await cronService.start();
       services.cronServices.push(cronService);
     }

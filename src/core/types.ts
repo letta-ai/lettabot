@@ -155,6 +155,9 @@ export interface BotConfig {
   sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
   sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete files after send (default: false)
 
+  // Cron
+  cronStorePath?: string; // Resolved cron store path (per-agent in multi-agent mode)
+
   // Conversation routing
   conversationMode?: 'shared' | 'per-channel' | 'per-chat'; // Default: shared
   heartbeatConversation?: string; // "dedicated" | "last-active" | "<channel>" (default: last-active)
