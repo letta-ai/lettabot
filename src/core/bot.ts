@@ -1298,6 +1298,14 @@ export class LettaBot implements AgentSession {
     let lastPendingToolCallId: string | null = null;
 
     async function* dedupedStream(): AsyncGenerator<StreamMsg> {
+      // Diagnostic: detect stale events from a previous send/stream cycle (#423)
+      const preExisting = (session as any).streamQueue?.length ?? 0;
+      if (preExisting > 0) {
+        log.warn(`[StreamSync] ${preExisting} pre-existing events at stream start (key=${capturedConvKey})`, {
+          types: ((session as any).streamQueue || []).map((m: any) => m.type),
+        });
+      }
+
       for await (const raw of session.stream()) {
         const msg = raw as StreamMsg;
 
@@ -1348,6 +1356,14 @@ export class LettaBot implements AgentSession {
 
       // Flush remaining at generator end (shouldn't normally happen)
       yield* flushPending();
+
+      // Diagnostic: detect residue after stream completes (#423)
+      const residue = (session as any).streamQueue?.length ?? 0;
+      if (residue > 0) {
+        log.warn(`[StreamSync] ${residue} stale events after stream end (key=${capturedConvKey})`, {
+          types: ((session as any).streamQueue || []).map((m: any) => m.type),
+        });
+      }
     }
 
     return { session, stream: dedupedStream };
