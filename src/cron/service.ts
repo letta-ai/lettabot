@@ -5,7 +5,7 @@
  * Supports heartbeat check-ins and agent-managed cron jobs.
  */
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, watch, type FSWatcher } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, renameSync, watch, type FSWatcher } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import type { AgentSession } from '../core/interfaces.js';
 import type { CronJob, CronJobCreate, CronSchedule, CronConfig, HeartbeatConfig } from './types.js';
@@ -67,6 +67,7 @@ export class CronService {
       ? resolve(getCronDataDir(), config.storePath)
       : getCronStorePath();
     this.migrateLegacyStoreIfNeeded();
+    this.migrateFromGlobalStoreIfNeeded();
     this.loadJobs();
   }
 
@@ -84,6 +85,29 @@ export class CronService {
       logEvent('store_migrated', { from: legacyPath, to: this.storePath });
     } catch (e) {
       log.error('Failed to migrate legacy store:', e);
+    }
+  }
+
+  /**
+   * Multi-agent upgrade: if this agent has a per-agent storePath but the file
+   * doesn't exist yet, copy from the global cron-jobs.json as a starting point.
+   * Only the first agent to start gets the migration (others start empty).
+   */
+  private migrateFromGlobalStoreIfNeeded(): void {
+    if (!this.config.storePath) return; // Not in multi-agent mode
+    if (existsSync(this.storePath)) return; // Already has own store
+
+    const globalPath = getCronStorePath();
+    if (globalPath === this.storePath || !existsSync(globalPath)) return;
+
+    try {
+      mkdirSync(dirname(this.storePath), { recursive: true });
+      copyFileSync(globalPath, this.storePath);
+      // Rename global file so subsequent agents don't also copy it
+      renameSync(globalPath, globalPath + '.migrated');
+      logEvent('store_migrated_from_global', { from: globalPath, to: this.storePath });
+    } catch (e) {
+      log.error('Failed to migrate from global cron store:', e);
     }
   }
   

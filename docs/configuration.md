@@ -2,18 +2,36 @@
 
 Complete reference for LettaBot configuration options.
 
-## Config File Locations
+## Config Sources
 
-LettaBot checks these locations in order:
+LettaBot checks these sources in priority order:
 
-1. `LETTABOT_CONFIG` env var - Explicit path override
-2. `./lettabot.yaml` - Project-local (recommended)
-3. `./lettabot.yml` - Project-local alternate
-4. `~/.lettabot/config.yaml` - User global
-5. `~/.lettabot/config.yml` - User global alternate
+1. `LETTABOT_CONFIG_YAML` env var - Inline YAML or base64-encoded YAML (recommended for cloud/Docker)
+2. `LETTABOT_CONFIG` env var - Explicit file path override
+3. `./lettabot.yaml` - Project-local (recommended for local dev)
+4. `./lettabot.yml` - Project-local alternate
+5. `~/.lettabot/config.yaml` - User global
+6. `~/.lettabot/config.yml` - User global alternate
 
-For global installs (`npm install -g`), either:
-- Create `~/.lettabot/config.yaml`, or
+### Cloud / Docker Deployments
+
+On platforms where you can't include a config file (Railway, Fly.io, Render, etc.), use `LETTABOT_CONFIG_YAML` to pass your entire config as a single environment variable:
+
+```bash
+# Encode your local config as base64
+lettabot config encode
+
+# Or manually
+base64 < lettabot.yaml | tr -d '\n'
+```
+
+Set the output as `LETTABOT_CONFIG_YAML` on your platform. Raw YAML is also accepted (for platforms that support multi-line env vars).
+
+### Local Development
+
+For local installs, either:
+- Create `./lettabot.yaml` in your project, or
+- Create `~/.lettabot/config.yaml` for global config, or
 - Set `export LETTABOT_CONFIG=/path/to/your/config.yaml`
 
 ## Example Configuration

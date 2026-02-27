@@ -19,11 +19,13 @@ import {
   applyConfigToEnv,
   syncProviders,
   resolveConfigPath,
+  configSourceLabel,
+  hasInlineConfig,
   isDockerServerMode,
   serverModeLabel,
 } from './config/index.js';
 import { isLettaApiUrl } from './utils/server.js';
-import { getDataDir, getWorkingDir, hasRailwayVolume, resolveWorkingDirPath } from './utils/paths.js';
+import { getCronDataDir, getDataDir, getWorkingDir, hasRailwayVolume, resolveWorkingDirPath } from './utils/paths.js';
 import { parseCsvList, parseNonNegativeNumber } from './utils/parse.js';
 import { sleep } from './utils/time.js';
 import { createLogger, setLogLevel } from './logger.js';
@@ -31,8 +33,7 @@ import { createLogger, setLogLevel } from './logger.js';
 const log = createLogger('Config');
 
 const yamlConfig = loadAppConfigOrExit();
-const configSource = existsSync(resolveConfigPath()) ? resolveConfigPath() : 'defaults + environment variables';
-log.info(`Loaded from ${configSource}`);
+log.info(`Loaded from ${configSourceLabel()}`);
 if (yamlConfig.agents?.length) {
   log.info(`Mode: ${serverModeLabel(yamlConfig.server.mode)}, Agents: ${yamlConfig.agents.map(a => a.name).join(', ')}`);
 } else {
@@ -181,19 +182,21 @@ import { agentExists, findAgentByName, ensureNoToolApprovals } from './tools/let
 import { isVoiceMemoConfigured } from './skills/loader.js';
 // Skills are now installed to agent-scoped location after agent creation (see bot.ts)
 
-// Check if config exists (skip in Railway/Docker where env vars are used directly)
+// Check if config exists (skip when inline config, container deploy, or env vars are used)
 const configPath = resolveConfigPath();
 const isContainerDeploy = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RENDER || process.env.FLY_APP_NAME || process.env.DOCKER_DEPLOY);
-if (!existsSync(configPath) && !isContainerDeploy) {
+if (!existsSync(configPath) && !isContainerDeploy && !hasInlineConfig()) {
   log.info(`
 No config file found. Searched locations:
-  1. LETTABOT_CONFIG env var (not set)
-  2. ./lettabot.yaml (project-local - recommended)
-  3. ./lettabot.yml
-  4. ~/.lettabot/config.yaml (user global)
-  5. ~/.lettabot/config.yml
+  1. LETTABOT_CONFIG_YAML env var (inline YAML or base64 - recommended for cloud)
+  2. LETTABOT_CONFIG env var (file path)
+  3. ./lettabot.yaml (project-local - recommended for local dev)
+  4. ./lettabot.yml
+  5. ~/.lettabot/config.yaml (user global)
+  6. ~/.lettabot/config.yml
 
-Run "lettabot onboard" to create a config, or set LETTABOT_CONFIG=/path/to/config.yaml
+Run "lettabot onboard" to create a config, or set LETTABOT_CONFIG_YAML for cloud deploys.
+Encode your config: base64 < lettabot.yaml | tr -d '\\n'
 `);
   process.exit(1);
 }
@@ -579,6 +582,14 @@ async function main() {
     const resolvedWorkingDir = agentConfig.workingDir
       ? resolveWorkingDirPath(agentConfig.workingDir)
       : globalConfig.workingDir;
+    // Per-agent cron store path: in multi-agent mode, each agent gets its own file
+    const cronStoreFilename = agents.length > 1
+      ? `cron-jobs-${agentConfig.name}.json`
+      : undefined;
+    const cronStorePath = cronStoreFilename
+      ? resolve(getCronDataDir(), cronStoreFilename)
+      : undefined;
+
     const bot = new LettaBot({
       workingDir: resolvedWorkingDir,
       agentName: agentConfig.name,
@@ -596,6 +607,7 @@ async function main() {
       conversationOverrides: agentConfig.conversations?.perChannel,
       maxSessions: agentConfig.conversations?.maxSessions,
       redaction: agentConfig.security?.redaction,
+      cronStorePath,
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
         googleEnabled: !!agentConfig.integrations?.google?.enabled || !!agentConfig.polling?.gmail?.enabled,
@@ -679,7 +691,7 @@ async function main() {
 
     // Per-agent cron
     if (agentConfig.features?.cron ?? globalConfig.cronEnabled) {
-      const cronService = new CronService(bot);
+      const cronService = new CronService(bot, cronStoreFilename ? { storePath: cronStoreFilename } : undefined);
       await cronService.start();
       services.cronServices.push(cronService);
     }

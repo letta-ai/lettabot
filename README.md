@@ -376,7 +376,10 @@ By default, the agent is restricted to **read-only** operations:
 
 LettaBot supports pairing-based access control. When `TELEGRAM_DM_POLICY=pairing`:
 1. Unauthorized users get a pairing code
-2. You approve codes via `lettabot pairing approve telegram <CODE>`
+2. Approve codes via:
+   - **Web portal** at `https://your-host/portal` (recommended for cloud deploys)
+   - **CLI**: `lettabot pairing approve telegram <CODE>`
+   - **API**: `POST /api/v1/pairing/telegram/approve`
 3. Approved users can then chat with the bot
 
 ## Development

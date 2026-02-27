@@ -1,7 +1,11 @@
 /**
  * LettaBot Configuration I/O
  * 
- * Config file location: ~/.lettabot/config.yaml (or ./lettabot.yaml in project)
+ * Config sources (checked in priority order):
+ * 1. LETTABOT_CONFIG_YAML env var (inline YAML or base64-encoded YAML)
+ * 2. LETTABOT_CONFIG env var (file path)
+ * 3. ./lettabot.yaml or ./lettabot.yml (project-local)
+ * 4. ~/.lettabot/config.yaml or ~/.lettabot/config.yml (user global)
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -26,7 +30,52 @@ const CONFIG_PATHS = [
 const DEFAULT_CONFIG_PATH = join(homedir(), '.lettabot', 'config.yaml');
 
 /**
- * Find the config file path (first existing, or default)
+ * Whether inline config is available via LETTABOT_CONFIG_YAML env var.
+ * When set, this takes priority over all file-based config sources.
+ */
+export function hasInlineConfig(): boolean {
+  return !!process.env.LETTABOT_CONFIG_YAML;
+}
+
+/**
+ * Decode a value that may be raw YAML or base64-encoded YAML.
+ * Detection: if the value contains a colon, it's raw YAML (every valid config
+ * has key: value pairs). Otherwise it's base64 (which uses only [A-Za-z0-9+/=]).
+ */
+export function decodeYamlOrBase64(value: string): string {
+  if (value.includes(':')) {
+    return value;
+  }
+  return Buffer.from(value, 'base64').toString('utf-8');
+}
+
+/**
+ * Decode inline config from LETTABOT_CONFIG_YAML env var.
+ */
+function decodeInlineConfig(): string {
+  return decodeYamlOrBase64(process.env.LETTABOT_CONFIG_YAML!);
+}
+
+/**
+ * Human-readable label for where config was loaded from.
+ */
+export function configSourceLabel(): string {
+  if (hasInlineConfig()) return 'LETTABOT_CONFIG_YAML';
+  const path = resolveConfigPath();
+  return existsSync(path) ? path : 'defaults + environment variables';
+}
+
+/**
+ * Encode a YAML config file as a base64 string suitable for LETTABOT_CONFIG_YAML.
+ */
+export function encodeConfigForEnv(yamlContent: string): string {
+  return Buffer.from(yamlContent, 'utf-8').toString('base64');
+}
+
+/**
+ * Find the config file path (first existing, or default).
+ * Note: when LETTABOT_CONFIG_YAML is set, file-based config is bypassed
+ * entirely -- use hasInlineConfig() to check.
  * 
  * Priority:
  * 1. LETTABOT_CONFIG env var (explicit override)
@@ -102,10 +151,24 @@ function parseAndNormalizeConfig(content: string): LettaBotConfig {
 }
 
 /**
- * Load config from YAML file
+ * Load config from inline env var or YAML file
  */
 export function loadConfig(): LettaBotConfig {
   _lastLoadFailed = false;
+
+  // Inline config takes priority over file-based config
+  if (hasInlineConfig()) {
+    try {
+      const content = decodeInlineConfig();
+      return parseAndNormalizeConfig(content);
+    } catch (err) {
+      _lastLoadFailed = true;
+      log.error('Failed to parse LETTABOT_CONFIG_YAML:', err);
+      log.warn('Using default configuration. Check your YAML syntax.');
+      return { ...DEFAULT_CONFIG };
+    }
+  }
+
   const configPath = resolveConfigPath();
   
   if (!existsSync(configPath)) {
@@ -129,6 +192,18 @@ export function loadConfig(): LettaBotConfig {
  */
 export function loadConfigStrict(): LettaBotConfig {
   _lastLoadFailed = false;
+
+  // Inline config takes priority over file-based config
+  if (hasInlineConfig()) {
+    try {
+      const content = decodeInlineConfig();
+      return parseAndNormalizeConfig(content);
+    } catch (err) {
+      _lastLoadFailed = true;
+      throw err;
+    }
+  }
+
   const configPath = resolveConfigPath();
 
   if (!existsSync(configPath)) {

@@ -107,6 +107,8 @@ server:
 
 ### Docker Compose
 
+Run both the Letta server and LettaBot together:
+
 ```yaml
 services:
   letta:
@@ -123,14 +125,16 @@ services:
     depends_on:
       - letta
     environment:
-      - LETTA_BASE_URL=http://letta:8283
-    volumes:
-      - ./lettabot.yaml:/app/lettabot.yaml
-      - ./lettabot-agent.json:/app/lettabot-agent.json
+      - LETTABOT_CONFIG_YAML=${LETTABOT_CONFIG_YAML}
+      # Your YAML config should include: server.baseUrl: http://letta:8283
+    ports:
+      - "8080:8080"
 
 volumes:
   letta-data:
 ```
+
+For general Docker and cloud deployment (without a self-hosted Letta server), see [Cloud Deployment](./cloud-deploy.md).
 
 ## Troubleshooting
 

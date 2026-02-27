@@ -55,8 +55,8 @@ interface CronStore {
   jobs: CronJob[];
 }
 
-// Store path
-const STORE_PATH = getCronStorePath();
+// Store path (CRON_STORE_PATH env var set by bot.ts for per-agent scoping in multi-agent mode)
+const STORE_PATH = process.env.CRON_STORE_PATH || getCronStorePath();
 const LOG_PATH = getCronLogPath();
 
 function migrateLegacyStoreIfNeeded(): void {

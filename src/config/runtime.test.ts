@@ -73,4 +73,35 @@ describe('loadAppConfigOrExit', () => {
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('should mention LETTABOT_CONFIG_YAML when inline config is invalid', () => {
+    const originalInline = process.env.LETTABOT_CONFIG_YAML;
+    const originalPath = process.env.LETTABOT_CONFIG;
+
+    try {
+      process.env.LETTABOT_CONFIG_YAML = 'server:\n  api: port: 6702\n';
+      delete process.env.LETTABOT_CONFIG;
+
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const exit = (code: number): never => {
+        throw new Error(`exit:${code}`);
+      };
+
+      expect(() => loadAppConfigOrExit(exit)).toThrow('exit:1');
+      expect(errorSpy).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('Failed to load LETTABOT_CONFIG_YAML'),
+        expect.anything()
+      );
+      expect(errorSpy).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('Fix the errors above in LETTABOT_CONFIG_YAML')
+      );
+
+      errorSpy.mockRestore();
+    } finally {
+      process.env.LETTABOT_CONFIG_YAML = originalInline;
+      process.env.LETTABOT_CONFIG = originalPath;
+    }
+  });
 });

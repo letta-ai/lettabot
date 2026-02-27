@@ -1,6 +1,6 @@
 # Railway Deployment
 
-Deploy LettaBot to [Railway](https://railway.app) for always-on hosting.
+Deploy LettaBot to [Railway](https://railway.app) for always-on hosting. For other platforms (Fly.io, Docker, Render), see [Cloud Deployment](./cloud-deploy.md).
 
 ## One-Click Deploy
 
@@ -11,15 +11,33 @@ Deploy LettaBot to [Railway](https://railway.app) for always-on hosting.
 
 **No local setup required.** LettaBot automatically finds or creates your agent by name.
 
-## Environment Variables
+## Configuration
 
-### Required
+### Option A: Full YAML Config (Recommended)
+
+Use `LETTABOT_CONFIG_YAML` to pass your entire `lettabot.yaml` as a single base64-encoded environment variable. This gives you access to the full config schema (multi-agent, conversation routing, group policies, etc.) without managing dozens of individual env vars.
+
+```bash
+# Encode your local config
+base64 < lettabot.yaml | tr -d '\n'
+
+# Or use the CLI helper
+lettabot config encode
+```
+
+Set the output as `LETTABOT_CONFIG_YAML` in your Railway service variables. That's it -- no other env vars needed (everything is in the YAML).
+
+### Option B: Individual Environment Variables
+
+For simple setups (one channel, basic config), you can use individual env vars instead.
+
+#### Required
 
 | Variable | Description |
 |----------|-------------|
 | `LETTA_API_KEY` | Your Letta API key ([get one here](https://app.letta.com)) |
 
-### Channel Configuration (at least one required)
+#### Channel Configuration (at least one required)
 
 **Telegram:**
 ```
@@ -39,7 +57,7 @@ SLACK_BOT_TOKEN=xoxb-...
 SLACK_APP_TOKEN=xapp-...
 ```
 
-### Optional
+#### Optional
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -107,22 +125,38 @@ LettaBot automatically detects `RAILWAY_VOLUME_MOUNT_PATH` and uses it for persi
 
 ## Remote Pairing Approval
 
-When using `pairing` DM policy on Railway, you can approve new users via the HTTP API instead of the CLI:
+When using `pairing` DM policy on a cloud deployment, you need a way to approve new users without CLI access.
+
+### Web Portal
+
+Navigate to `https://your-app/portal` to access the admin portal. It provides a UI for managing pairing requests across all channels (Telegram, Discord, Slack).
+
+You'll need your `LETTABOT_API_KEY` to log in. The key is auto-generated on first boot and printed in logs. Set it as an environment variable for stable access across deploys:
+
+```bash
+# Railway
+# Set LETTABOT_API_KEY in service variables
+
+# Fly.io
+fly secrets set LETTABOT_API_KEY=your-key -a your-app
+```
+
+### API
+
+You can also approve pairings via the HTTP API:
 
 ```bash
 # List pending pairing requests for a channel
 curl -H "X-Api-Key: $LETTABOT_API_KEY" \
-  https://your-app.railway.app/api/v1/pairing/telegram
+  https://your-app/api/v1/pairing/telegram
 
 # Approve a pairing code
 curl -X POST \
   -H "X-Api-Key: $LETTABOT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"code": "ABCD1234"}' \
-  https://your-app.railway.app/api/v1/pairing/telegram/approve
+  https://your-app/api/v1/pairing/telegram/approve
 ```
-
-`LETTABOT_API_KEY` is auto-generated on first boot and printed in logs. Set it as a Railway variable for stable access across deploys.
 
 Alternatively, use `allowlist` DM policy and pre-configure allowed users in environment variables to skip pairing entirely.
 
