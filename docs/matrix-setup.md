@@ -171,6 +171,17 @@ matrix:
 
 Pairing messages will be displayed in French automatically.
 
+## Client Compatibility
+
+Lettabot works with all major Matrix clients:
+
+- ✅ **Element** (Web, Desktop, Mobile) - Full support
+- ✅ **FluffyChat** (Mobile) - Full support
+- ✅ **SchildiChat** - Full support
+- ⚠️ **Cinny** (Desktop) - Known issues with streaming messages and typing indicators in encrypted rooms
+
+**Note:** If you experience issues with message streaming or typing indicators, try a different Matrix client. Cinny has known bugs with E2EE message edits.
+
 ## Testing Your Setup
 
 1. Start the bot:
