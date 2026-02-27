@@ -210,3 +210,32 @@ describe('POST /api/v1/chat', () => {
     expect(events.find((e: any) => e.type === 'error').error).toBe('connection lost');
   });
 });
+
+describe('GET /portal', () => {
+  let server: http.Server;
+  let port: number;
+
+  beforeAll(async () => {
+    server = createApiServer(createMockRouter(), {
+      port: TEST_PORT,
+      apiKey: TEST_API_KEY,
+      host: '127.0.0.1',
+    });
+    await new Promise<void>((resolve) => {
+      if (server.listening) { resolve(); return; }
+      server.once('listening', resolve);
+    });
+    port = getPort(server);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('serves the pairing portal HTML without requiring an API key', async () => {
+    const res = await request(port, 'GET', '/portal');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.body).toContain('<title>LettaBot Portal</title>');
+  });
+});
