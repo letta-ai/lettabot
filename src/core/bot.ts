@@ -1881,6 +1881,7 @@ export class LettaBot implements AgentSession {
       // Stream response with delivery
       let response = '';
       let lastUpdate = 0; // Start at 0 so the first streaming edit fires immediately
+      let rateLimitedUntil = 0; // Timestamp until which we should avoid API calls (429 backoff)
       let messageId: string | null = null;
       let lastMsgType: string | null = null;
       let lastAssistantUuid: string | null = null;
@@ -1923,6 +1924,13 @@ export class LettaBot implements AgentSession {
         }
 
         if (!suppressDelivery && response.trim()) {
+          // Wait out any active rate limit before sending
+          const rlRemaining = rateLimitedUntil - Date.now();
+          if (rlRemaining > 0) {
+            const waitMs = Math.min(rlRemaining, 30_000);
+            log.info(`Waiting ${(waitMs / 1000).toFixed(1)}s for rate limit before finalize`);
+            await new Promise(resolve => setTimeout(resolve, waitMs));
+          }
           try {
             const prefixed = this.prefixResponse(response);
             if (messageId) {
@@ -2081,7 +2089,7 @@ export class LettaBot implements AgentSession {
               || (trimmed.startsWith('<actions') && !trimmed.includes('</actions>'));
             // Strip any completed <actions> block from the streaming text
             const streamText = stripActionsBlock(response).trim();
-            if (canEdit && !mayBeHidden && !suppressDelivery && !this.cancelledKeys.has(convKey) && streamText.length > 0 && Date.now() - lastUpdate > 500) {
+            if (canEdit && !mayBeHidden && !suppressDelivery && !this.cancelledKeys.has(convKey) && streamText.length > 0 && Date.now() - lastUpdate > 1500 && Date.now() > rateLimitedUntil) {
               try {
                 const prefixedStream = this.prefixResponse(streamText);
                 if (messageId) {
@@ -2091,8 +2099,16 @@ export class LettaBot implements AgentSession {
                   messageId = result.messageId;
                   sentAnyMessage = true;
                 }
-              } catch (editErr) {
+              } catch (editErr: any) {
                 log.warn('Streaming edit failed:', editErr instanceof Error ? editErr.message : editErr);
+                // Detect 429 rate limit and suppress further streaming edits
+                const errStr = String(editErr?.message ?? editErr);
+                const retryMatch = errStr.match(/retry after (\d+)/i);
+                if (errStr.includes('429') || retryMatch) {
+                  const retryAfter = retryMatch ? Number(retryMatch[1]) : 30;
+                  rateLimitedUntil = Date.now() + retryAfter * 1000;
+                  log.warn(`Rate limited -- suppressing streaming edits for ${retryAfter}s`);
+                }
               }
               lastUpdate = Date.now();
             }
@@ -2286,6 +2302,13 @@ export class LettaBot implements AgentSession {
       lap('directives done');
       // Send final response
       if (response.trim()) {
+        // Wait out any active rate limit before sending the final message
+        const rateLimitRemaining = rateLimitedUntil - Date.now();
+        if (rateLimitRemaining > 0) {
+          const waitMs = Math.min(rateLimitRemaining, 30_000); // Cap at 30s
+          log.info(`Waiting ${(waitMs / 1000).toFixed(1)}s for rate limit before final send`);
+          await new Promise(resolve => setTimeout(resolve, waitMs));
+        }
         const prefixedFinal = this.prefixResponse(response);
         try {
           if (messageId) {
