@@ -465,6 +465,30 @@ export async function cancelRuns(
 }
 
 /**
+ * Cancel active runs for a specific conversation.
+ * Scoped to a single conversation -- won't affect other channels/conversations.
+ */
+export async function cancelConversation(
+  conversationId: string
+): Promise<boolean> {
+  try {
+    const client = getClient();
+    await client.conversations.cancel(conversationId);
+    log.info(`Cancelled runs for conversation ${conversationId}`);
+    return true;
+  } catch (e) {
+    // 409 "No active runs to cancel" is expected when cancel fires before run starts
+    const err = e as { status?: number };
+    if (err?.status === 409) {
+      log.info(`No active runs to cancel for conversation ${conversationId} (409)`);
+      return true;
+    }
+    log.error(`Failed to cancel conversation ${conversationId}:`, e);
+    return false;
+  }
+}
+
+/**
  * Fetch the error detail from the latest failed run on an agent.
  * Returns the actual error detail from run metadata (which is more
  * descriptive than the opaque `stop_reason=error` wire message).

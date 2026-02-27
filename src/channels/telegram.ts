@@ -259,6 +259,13 @@ export class TelegramAdapter implements ChannelAdapter {
       }
     });
 
+    this.bot.command('cancel', async (ctx) => {
+      if (this.onCommand) {
+        const result = await this.onCommand('cancel', String(ctx.chat.id));
+        if (result) await ctx.reply(result);
+      }
+    });
+
     // Handle /model [handle]
     this.bot.command('model', async (ctx) => {
       if (this.onCommand) {
