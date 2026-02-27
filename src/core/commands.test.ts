@@ -3,24 +3,28 @@ import { parseCommand, COMMANDS, HELP_TEXT } from './commands.js';
 
 describe('parseCommand', () => {
   describe('valid commands', () => {
-    it('returns "status" for /status', () => {
-      expect(parseCommand('/status')).toBe('status');
+    it('returns { command, args } for /status', () => {
+      expect(parseCommand('/status')).toEqual({ command: 'status', args: '' });
     });
 
-    it('returns "heartbeat" for /heartbeat', () => {
-      expect(parseCommand('/heartbeat')).toBe('heartbeat');
+    it('returns { command, args } for /heartbeat', () => {
+      expect(parseCommand('/heartbeat')).toEqual({ command: 'heartbeat', args: '' });
     });
 
-    it('returns "help" for /help', () => {
-      expect(parseCommand('/help')).toBe('help');
+    it('returns { command, args } for /help', () => {
+      expect(parseCommand('/help')).toEqual({ command: 'help', args: '' });
     });
 
-    it('returns "start" for /start', () => {
-      expect(parseCommand('/start')).toBe('start');
+    it('returns { command, args } for /start', () => {
+      expect(parseCommand('/start')).toEqual({ command: 'start', args: '' });
     });
 
-    it('returns "reset" for /reset', () => {
-      expect(parseCommand('/reset')).toBe('reset');
+    it('returns { command, args } for /reset', () => {
+      expect(parseCommand('/reset')).toEqual({ command: 'reset', args: '' });
+    });
+
+    it('returns { command, args } for /model', () => {
+      expect(parseCommand('/model')).toEqual({ command: 'model', args: '' });
     });
   });
 
@@ -47,19 +51,33 @@ describe('parseCommand', () => {
   });
 
   describe('command parsing', () => {
-    it('handles commands with extra text after', () => {
-      expect(parseCommand('/status please')).toBe('status');
-      expect(parseCommand('/help me')).toBe('help');
+    it('captures trailing text as args', () => {
+      expect(parseCommand('/status please')).toEqual({ command: 'status', args: 'please' });
+      expect(parseCommand('/help me')).toEqual({ command: 'help', args: 'me' });
     });
 
     it('is case insensitive', () => {
-      expect(parseCommand('/STATUS')).toBe('status');
-      expect(parseCommand('/Help')).toBe('help');
-      expect(parseCommand('/HEARTBEAT')).toBe('heartbeat');
+      expect(parseCommand('/STATUS')).toEqual({ command: 'status', args: '' });
+      expect(parseCommand('/Help')).toEqual({ command: 'help', args: '' });
+      expect(parseCommand('/HEARTBEAT')).toEqual({ command: 'heartbeat', args: '' });
     });
 
-    it('handles commands with leading/trailing whitespace in args', () => {
-      expect(parseCommand('/status   ')).toBe('status');
+    it('handles commands with trailing whitespace', () => {
+      expect(parseCommand('/status   ')).toEqual({ command: 'status', args: '' });
+    });
+
+    it('parses /model with a handle argument', () => {
+      expect(parseCommand('/model anthropic/claude-sonnet-4-5-20250929')).toEqual({
+        command: 'model',
+        args: 'anthropic/claude-sonnet-4-5-20250929',
+      });
+    });
+
+    it('preserves multi-word args', () => {
+      expect(parseCommand('/model some handle with spaces')).toEqual({
+        command: 'model',
+        args: 'some handle with spaces',
+      });
     });
   });
 });
@@ -71,11 +89,11 @@ describe('COMMANDS', () => {
     expect(COMMANDS).toContain('reset');
     expect(COMMANDS).toContain('help');
     expect(COMMANDS).toContain('start');
-    expect(COMMANDS).toContain('reset');
+    expect(COMMANDS).toContain('model');
   });
 
-  it('has exactly 5 commands', () => {
-    expect(COMMANDS).toHaveLength(5);
+  it('has exactly 6 commands', () => {
+    expect(COMMANDS).toHaveLength(6);
   });
 });
 
@@ -84,6 +102,7 @@ describe('HELP_TEXT', () => {
     expect(HELP_TEXT).toContain('/status');
     expect(HELP_TEXT).toContain('/heartbeat');
     expect(HELP_TEXT).toContain('/help');
+    expect(HELP_TEXT).toContain('/model');
   });
 
   it('contains LettaBot branding', () => {

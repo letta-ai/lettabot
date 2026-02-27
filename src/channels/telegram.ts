@@ -44,7 +44,7 @@ export class TelegramAdapter implements ChannelAdapter {
   private attachmentsMaxBytes?: number;
   
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string, chatId?: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string, args?: string) => Promise<string | null>;
   
   constructor(config: TelegramConfig) {
     this.config = {
@@ -256,6 +256,15 @@ export class TelegramAdapter implements ChannelAdapter {
       if (this.onCommand) {
         const result = await this.onCommand('reset', String(ctx.chat.id));
         await ctx.reply(result || 'Reset complete');
+      }
+    });
+
+    // Handle /model [handle]
+    this.bot.command('model', async (ctx) => {
+      if (this.onCommand) {
+        const args = ctx.match?.trim() || undefined;
+        const result = await this.onCommand('model', String(ctx.chat.id), args);
+        await ctx.reply(result || 'No model info available');
       }
     });
     

@@ -56,7 +56,7 @@ export class DiscordAdapter implements ChannelAdapter {
   private attachmentsMaxBytes?: number;
 
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string, chatId?: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string, args?: string) => Promise<string | null>;
 
   constructor(config: DiscordConfig) {
     this.config = {
@@ -246,14 +246,16 @@ Ask the bot owner to approve with:
       if (!content && attachments.length === 0) return;
 
       if (content.startsWith('/')) {
-        const command = content.slice(1).split(/\s+/)[0]?.toLowerCase();
+        const parts = content.slice(1).split(/\s+/);
+        const command = parts[0]?.toLowerCase();
+        const cmdArgs = parts.slice(1).join(' ') || undefined;
         if (command === 'help' || command === 'start') {
           await message.channel.send(HELP_TEXT);
           return;
         }
         if (this.onCommand) {
-          if (command === 'status' || command === 'reset' || command === 'heartbeat') {
-            const result = await this.onCommand(command, message.channel.id);
+          if (command === 'status' || command === 'reset' || command === 'heartbeat' || command === 'model') {
+            const result = await this.onCommand(command, message.channel.id, cmdArgs);
             if (result) {
               await message.channel.send(result);
             }

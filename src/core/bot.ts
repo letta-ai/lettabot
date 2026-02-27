@@ -13,7 +13,7 @@ import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
-import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval, getLatestRunError } from '../tools/letta-api.js';
+import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel } from '../tools/letta-api.js';
 import { installSkillsToAgent, withAgentSkillsOnPath, getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
@@ -1358,7 +1358,7 @@ export class LettaBot implements AgentSession {
 
   registerChannel(adapter: ChannelAdapter): void {
     adapter.onMessage = (msg) => this.handleMessage(msg, adapter);
-    adapter.onCommand = (cmd, chatId) => this.handleCommand(cmd, adapter.id, chatId);
+    adapter.onCommand = (cmd, chatId, args) => this.handleCommand(cmd, adapter.id, chatId, args);
 
     // Wrap outbound methods when any redaction layer is active.
     // Secrets are enabled by default unless explicitly disabled.
@@ -1419,8 +1419,8 @@ export class LettaBot implements AgentSession {
   // Commands
   // =========================================================================
 
-  private async handleCommand(command: string, channelId?: string, chatId?: string): Promise<string | null> {
-    log.info(`Received: /${command}`);
+  private async handleCommand(command: string, channelId?: string, chatId?: string, args?: string): Promise<string | null> {
+    log.info(`Received: /${command}${args ? ` ${args}` : ''}`);
     switch (command) {
       case 'status': {
         const info = this.store.getInfo();
@@ -1469,6 +1469,32 @@ export class LettaBot implements AgentSession {
           const scope = this.config.conversationMode === 'per-chat' ? 'this chat' : 'this channel';
           return `Conversation reset for ${scope}. Other conversations are unaffected. (Agent memory is preserved.)`;
         }
+      }
+      case 'model': {
+        const agentId = this.store.agentId;
+        if (!agentId) return 'No agent configured.';
+
+        if (args) {
+          const success = await updateAgentModel(agentId, args);
+          if (success) {
+            return `Model updated to: ${args}`;
+          }
+          return 'Failed to update model. Check the handle is valid.\nUse /model to list available models.';
+        }
+
+        const current = await getAgentModel(agentId);
+        const { models: recommendedModels } = await import('../utils/model-selection.js');
+        const lines = [
+          `Current model: ${current || '(unknown)'}`,
+          '',
+          'Recommended models:',
+        ];
+        for (const m of recommendedModels) {
+          const marker = m.handle === current ? ' (current)' : '';
+          lines.push(`  ${m.label} - ${m.handle}${marker}`);
+        }
+        lines.push('', 'Use /model <handle> to switch.');
+        return lines.join('\n');
       }
       default:
         return null;
