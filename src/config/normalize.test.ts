@@ -33,6 +33,8 @@ describe('normalizeAgents', () => {
     'BLUESKY_HANDLE', 'BLUESKY_APP_PASSWORD', 'BLUESKY_SERVICE_URL', 'BLUESKY_APPVIEW_URL',
     'BLUESKY_NOTIFICATIONS_ENABLED', 'BLUESKY_NOTIFICATIONS_INTERVAL_SEC', 'BLUESKY_NOTIFICATIONS_LIMIT',
     'BLUESKY_NOTIFICATIONS_PRIORITY', 'BLUESKY_NOTIFICATIONS_REASONS',
+    'HEARTBEAT_ENABLED', 'HEARTBEAT_INTERVAL_MIN', 'HEARTBEAT_SKIP_RECENT_USER_MIN',
+    'CRON_ENABLED',
   ];
   const savedEnv: Record<string, string | undefined> = {};
 
@@ -368,6 +370,135 @@ describe('normalizeAgents', () => {
       const agents = normalizeAgents(config);
 
       expect(agents[0].channels.telegram).toBeUndefined();
+    });
+
+    it('should pick up heartbeat from env vars when YAML features is empty', () => {
+      process.env.HEARTBEAT_ENABLED = 'true';
+      process.env.HEARTBEAT_INTERVAL_MIN = '15';
+      process.env.HEARTBEAT_SKIP_RECENT_USER_MIN = '5';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.heartbeat).toEqual({
+        enabled: true,
+        intervalMin: 15,
+        skipRecentUserMin: 5,
+      });
+    });
+
+    it('should pick up cron from env vars when YAML features is empty', () => {
+      process.env.CRON_ENABLED = 'true';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.cron).toBe(true);
+    });
+
+    it('should merge env var heartbeat into existing YAML features', () => {
+      process.env.HEARTBEAT_ENABLED = 'true';
+      process.env.HEARTBEAT_INTERVAL_MIN = '20';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+        features: {
+          cron: true,
+          maxToolCalls: 50,
+        },
+      };
+
+      const agents = normalizeAgents(config);
+
+      // Env var heartbeat should merge in
+      expect(agents[0].features?.heartbeat).toEqual({
+        enabled: true,
+        intervalMin: 20,
+      });
+      // Existing YAML features should be preserved
+      expect(agents[0].features?.cron).toBe(true);
+      expect(agents[0].features?.maxToolCalls).toBe(50);
+    });
+
+    it('should not override YAML heartbeat with env vars', () => {
+      process.env.HEARTBEAT_ENABLED = 'true';
+      process.env.HEARTBEAT_INTERVAL_MIN = '99';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+        features: {
+          heartbeat: {
+            enabled: true,
+            intervalMin: 10,
+            skipRecentUserMin: 3,
+          },
+        },
+      };
+
+      const agents = normalizeAgents(config);
+
+      // YAML values should win
+      expect(agents[0].features?.heartbeat?.intervalMin).toBe(10);
+      expect(agents[0].features?.heartbeat?.skipRecentUserMin).toBe(3);
+    });
+
+    it('should handle heartbeat env var with defaults when interval not set', () => {
+      process.env.HEARTBEAT_ENABLED = 'true';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.heartbeat).toEqual({ enabled: true });
+    });
+
+    it('should not override YAML cron: false with env var', () => {
+      process.env.CRON_ENABLED = 'true';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+        features: {
+          cron: false,
+        },
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.cron).toBe(false);
+    });
+
+    it('should not enable heartbeat when env var is not true', () => {
+      process.env.HEARTBEAT_ENABLED = 'false';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.heartbeat).toBeUndefined();
     });
 
     it('should pick up all channel types from env vars', () => {

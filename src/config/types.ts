@@ -639,6 +639,33 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     };
   }
 
+  // Field-level env var fallback for features (heartbeat, cron).
+  // Unlike channels (all-or-nothing), features are independent toggles so we
+  // merge at the field level: env vars fill in fields missing from YAML.
+  const features = { ...config.features } as NonNullable<LettaBotConfig['features']>;
+
+  if (features.cron == null && process.env.CRON_ENABLED === 'true') {
+    features.cron = true;
+  }
+
+  if (!features.heartbeat && process.env.HEARTBEAT_ENABLED === 'true') {
+    const intervalMin = process.env.HEARTBEAT_INTERVAL_MIN
+      ? parseInt(process.env.HEARTBEAT_INTERVAL_MIN, 10)
+      : undefined;
+    const skipRecentUserMin = process.env.HEARTBEAT_SKIP_RECENT_USER_MIN
+      ? parseInt(process.env.HEARTBEAT_SKIP_RECENT_USER_MIN, 10)
+      : undefined;
+
+    features.heartbeat = {
+      enabled: true,
+      ...(Number.isFinite(intervalMin) ? { intervalMin } : {}),
+      ...(Number.isFinite(skipRecentUserMin) ? { skipRecentUserMin } : {}),
+    };
+  }
+
+  // Only pass features if there's actually something set
+  const hasFeatures = Object.keys(features).length > 0;
+
   return [{
     name: agentName,
     id,
@@ -646,7 +673,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     model,
     channels,
     conversations: config.conversations,
-    features: config.features,
+    features: hasFeatures ? features : config.features,
     polling: config.polling,
     integrations: config.integrations,
   }];
