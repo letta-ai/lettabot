@@ -170,6 +170,78 @@ describe('recoverOrphanedConversationApproval', () => {
     expect(mockConversationsMessagesCreate).not.toHaveBeenCalled();
   });
 
+  it('deduplicates identical tool_call_ids across multiple approval_request_messages', async () => {
+    // Simulate the server returning the same tool_call_id in multiple
+    // approval_request_messages (the root cause of #359).
+    mockConversationsMessagesList.mockReturnValue(mockPageIterator([
+      {
+        message_type: 'approval_request_message',
+        tool_calls: [{ tool_call_id: 'tc-dup', name: 'Bash' }],
+        run_id: 'run-dup',
+        id: 'msg-dup-1',
+      },
+      {
+        message_type: 'approval_request_message',
+        tool_calls: [{ tool_call_id: 'tc-dup', name: 'Bash' }],
+        run_id: 'run-dup',
+        id: 'msg-dup-2',
+      },
+      {
+        message_type: 'approval_request_message',
+        tool_calls: [{ tool_call_id: 'tc-dup', name: 'Bash' }],
+        run_id: 'run-dup',
+        id: 'msg-dup-3',
+      },
+    ]));
+    mockRunsRetrieve.mockResolvedValue({ status: 'failed', stop_reason: 'error' });
+    mockConversationsMessagesCreate.mockResolvedValue({});
+    mockRunsList.mockReturnValue(mockPageIterator([]));
+
+    const resultPromise = recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await resultPromise;
+
+    expect(result.recovered).toBe(true);
+    // Should only send ONE denial despite three identical approval_request_messages
+    expect(mockConversationsMessagesCreate).toHaveBeenCalledOnce();
+    const approvals = mockConversationsMessagesCreate.mock.calls[0][1].messages[0].approvals;
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].tool_call_id).toBe('tc-dup');
+  });
+
+  it('continues recovery if batch denial API call fails', async () => {
+    // Two runs with approvals -- first batch fails, second should still succeed
+    mockConversationsMessagesList.mockReturnValue(mockPageIterator([
+      {
+        message_type: 'approval_request_message',
+        tool_calls: [{ tool_call_id: 'tc-fail', name: 'Bash' }],
+        run_id: 'run-fail',
+        id: 'msg-fail',
+      },
+      {
+        message_type: 'approval_request_message',
+        tool_calls: [{ tool_call_id: 'tc-ok', name: 'Read' }],
+        run_id: 'run-ok',
+        id: 'msg-ok',
+      },
+    ]));
+    mockRunsRetrieve.mockResolvedValue({ status: 'failed', stop_reason: 'error' });
+    mockConversationsMessagesCreate
+      .mockRejectedValueOnce(new Error('400 BadRequestError'))
+      .mockResolvedValueOnce({});
+    mockRunsList.mockReturnValue(mockPageIterator([]));
+
+    const resultPromise = recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await resultPromise;
+
+    // Second run still recovered despite first failing
+    expect(result.recovered).toBe(true);
+    expect(result.details).toContain('Failed to deny');
+    expect(result.details).toContain('Denied 1 approval(s) from failed run run-ok');
+    expect(mockConversationsMessagesCreate).toHaveBeenCalledTimes(2);
+  });
+
   it('reports cancel failure accurately', async () => {
     mockConversationsMessagesList.mockReturnValue(mockPageIterator([
       {

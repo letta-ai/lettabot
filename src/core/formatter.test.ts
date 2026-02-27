@@ -181,20 +181,11 @@ describe('formatMessageEnvelope', () => {
       expect(result).toContain('**Mentioned**: yes');
     });
 
-    it('includes directives hint for group chats', () => {
-      const msg = createMessage({ isGroup: true });
-      const result = formatMessageEnvelope(msg);
-      expect(result).toContain('Response Directives');
-      expect(result).toContain('<no-reply/>');
-      expect(result).toContain('<actions>');
-    });
-
-    it('includes directives hint for DMs', () => {
-      const msg = createMessage({ isGroup: false });
-      const result = formatMessageEnvelope(msg);
-      expect(result).toContain('Response Directives');
-      expect(result).toContain('<no-reply/>');
-      expect(result).toContain('<actions>');
+    it('does not include per-message directive hints (covered by system prompt)', () => {
+      const groupMsg = createMessage({ isGroup: true });
+      const dmMsg = createMessage({ isGroup: false });
+      expect(formatMessageEnvelope(groupMsg)).not.toContain('Response Directives');
+      expect(formatMessageEnvelope(dmMsg)).not.toContain('Response Directives');
     });
   });
 

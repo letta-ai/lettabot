@@ -18,6 +18,7 @@ import { installSkillsToAgent, withAgentSkillsOnPath, getAgentSkillExecutableDir
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
 import { loadMemoryBlocks } from './memory.js';
+import { redactOutbound } from './redact.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { parseDirectives, stripActionsBlock, type Directive } from './directives.js';
 import { resolveEmoji } from './emoji.js';
@@ -1065,7 +1066,11 @@ export class LettaBot implements AgentSession {
       let oldestKey: string | null = null;
       let oldestTime = Infinity;
       for (const [k, ts] of this.sessionLastUsed) {
-        if (k !== key && ts < oldestTime && this.sessions.has(k)) {
+        if (k === key) continue;
+        if (!this.sessions.has(k)) continue;
+        // Never evict an active/in-flight key (can close a live stream).
+        if (this.processingKeys.has(k) || this.sessionCreationLocks.has(k)) continue;
+        if (ts < oldestTime) {
           oldestKey = k;
           oldestTime = ts;
         }
@@ -1078,6 +1083,9 @@ export class LettaBot implements AgentSession {
         this.sessionLastUsed.delete(oldestKey);
         this.sessionGenerations.delete(oldestKey);
         this.sessionCreationLocks.delete(oldestKey);
+      } else {
+        // All existing sessions are active; allow temporary overflow.
+        log.debug(`LRU session eviction skipped: all ${this.sessions.size} sessions are active/in-flight`);
       }
     }
 
@@ -1137,9 +1145,10 @@ export class LettaBot implements AgentSession {
     this.store.refresh();
     if (!this.store.agentId && !this.store.conversationId) return;
     try {
-      // In shared mode, warm the single session. In per-channel mode, warm nothing
-      // (sessions are created on first message per channel).
-      if (this.config.conversationMode !== 'per-channel') {
+      const mode = this.config.conversationMode || 'shared';
+      // In shared mode, warm the single session. In per-channel/per-chat modes,
+      // warm nothing (sessions are created on first message per key).
+      if (mode === 'shared') {
         await this.ensureSessionForKey('shared');
       }
     } catch (err) {
@@ -1281,15 +1290,31 @@ export class LettaBot implements AgentSession {
         yield { ...pending.msg, toolInput };
       }
       pendingToolCalls.clear();
+      lastPendingToolCallId = null;
     }
+
+    let anonToolCallCounter = 0;
+    let lastPendingToolCallId: string | null = null;
 
     async function* dedupedStream(): AsyncGenerator<StreamMsg> {
       for await (const raw of session.stream()) {
         const msg = raw as StreamMsg;
 
         if (msg.type === 'tool_call') {
-          const id = msg.toolCallId;
-          if (!id) { yield msg; continue; }
+          let id = msg.toolCallId;
+          if (!id) {
+            // Tool calls without IDs (e.g., from models that don't emit
+            // tool_call_id on subsequent argument chunks) still need to be
+            // accumulated. Assign a synthetic ID so they enter the buffer.
+            // If tool name matches the most recent pending call, treat this as
+            // a continuation even when the first chunk had a real toolCallId.
+            const currentPending = lastPendingToolCallId ? pendingToolCalls.get(lastPendingToolCallId) : null;
+            if (lastPendingToolCallId && currentPending && (currentPending.msg.toolName || 'unknown') === (msg.toolName || 'unknown')) {
+              id = lastPendingToolCallId;
+            } else {
+              id = `__anon_${++anonToolCallCounter}__`;
+            }
+          }
 
           const incoming = (msg as StreamMsg & { rawArguments?: string }).rawArguments || '';
           const existing = pendingToolCalls.get(id);
@@ -1298,6 +1323,7 @@ export class LettaBot implements AgentSession {
           } else {
             pendingToolCalls.set(id, { msg, accumulatedArgs: incoming });
           }
+          lastPendingToolCallId = id;
           continue; // buffer, don't yield yet
         }
 
@@ -1333,6 +1359,19 @@ export class LettaBot implements AgentSession {
   registerChannel(adapter: ChannelAdapter): void {
     adapter.onMessage = (msg) => this.handleMessage(msg, adapter);
     adapter.onCommand = (cmd, chatId) => this.handleCommand(cmd, adapter.id, chatId);
+
+    // Wrap outbound methods when any redaction layer is active.
+    // Secrets are enabled by default unless explicitly disabled.
+    const redactionConfig = this.config.redaction;
+    const shouldRedact = redactionConfig?.secrets !== false || redactionConfig?.pii === true;
+    if (shouldRedact) {
+      const origSend = adapter.sendMessage.bind(adapter);
+      adapter.sendMessage = (msg) => origSend({ ...msg, text: redactOutbound(msg.text, redactionConfig) });
+
+      const origEdit = adapter.editMessage.bind(adapter);
+      adapter.editMessage = (chatId, messageId, text) => origEdit(chatId, messageId, redactOutbound(text, redactionConfig));
+    }
+
     this.channels.set(adapter.id, adapter);
     log.info(`Registered channel: ${adapter.name}`);
   }
@@ -2225,8 +2264,9 @@ export class LettaBot implements AgentSession {
 
   async sendToAgent(
     text: string,
-    _context?: TriggerContext
+    context?: TriggerContext
   ): Promise<string> {
+    const isSilent = context?.outputMode === 'silent';
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
     
@@ -2270,6 +2310,9 @@ export class LettaBot implements AgentSession {
             break;
           }
         }
+        if (isSilent && response.trim()) {
+          log.info(`Silent mode: collected ${response.length} chars (not delivered)`);
+        }
         return response;
       } catch (error) {
         // Invalidate on stream errors so next call gets a fresh subprocess
@@ -2287,7 +2330,7 @@ export class LettaBot implements AgentSession {
    */
   async *streamToAgent(
     text: string,
-    _context?: TriggerContext
+    context?: TriggerContext
   ): AsyncGenerator<StreamMsg> {
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);

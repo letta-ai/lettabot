@@ -6,7 +6,7 @@
  */
 
 import type { ChannelAdapter } from './types.js';
-import type { InboundAttachment, InboundMessage, OutboundMessage } from '../core/types.js';
+import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
 import { applySignalGroupGating } from './signal/group-gating.js';
 import type { DmPolicy } from '../pairing/types.js';
 import {
@@ -305,6 +305,36 @@ This code expires in 1 hour.`;
     };
   }
   
+  async sendFile(file: OutboundFile): Promise<{ messageId: string }> {
+    const params: Record<string, unknown> = {
+      attachment: [file.filePath],
+    };
+
+    // Include caption as the message text
+    if (file.caption) {
+      params.message = file.caption;
+    }
+
+    if (this.config.phoneNumber) {
+      params.account = this.config.phoneNumber;
+    }
+
+    const target = file.chatId === 'note-to-self' ? this.config.phoneNumber : file.chatId;
+
+    if (target.startsWith('group:')) {
+      params.groupId = target.slice('group:'.length);
+    } else {
+      params.recipient = [target];
+    }
+
+    const result = await this.rpcRequest<{ timestamp?: number }>('send', params);
+    const timestamp = result?.timestamp;
+
+    return {
+      messageId: timestamp ? String(timestamp) : 'unknown',
+    };
+  }
+
   getDmPolicy(): string {
     return this.config.dmPolicy || 'pairing';
   }

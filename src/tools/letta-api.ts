@@ -668,6 +668,7 @@ export async function recoverOrphanedConversationApproval(
       runId: string;
     }
     const unresolvedByRun = new Map<string, UnresolvedApproval[]>();
+    const seenToolCallIds = new Set<string>();
     
     for (const msg of messages) {
       if (msg.message_type !== 'approval_request_message') continue;
@@ -678,6 +679,9 @@ export async function recoverOrphanedConversationApproval(
       
       for (const tc of toolCalls) {
         if (!tc.tool_call_id || resolvedToolCalls.has(tc.tool_call_id)) continue;
+        // Skip duplicate tool_call_ids across multiple approval_request_messages
+        if (seenToolCallIds.has(tc.tool_call_id)) continue;
+        seenToolCallIds.add(tc.tool_call_id);
         
         const key = runId || 'unknown';
         if (!unresolvedByRun.has(key)) unresolvedByRun.set(key, []);
@@ -731,13 +735,19 @@ export async function recoverOrphanedConversationApproval(
             reason: `Auto-denied: originating run was ${status}/${stopReason}`,
           }));
           
-          await client.conversations.messages.create(conversationId, {
-            messages: [{
-              type: 'approval',
-              approvals: approvalResponses,
-            }],
-            streaming: false,
-          });
+          try {
+            await client.conversations.messages.create(conversationId, {
+              messages: [{
+                type: 'approval',
+                approvals: approvalResponses,
+              }],
+              streaming: false,
+            });
+          } catch (batchError) {
+            log.warn(`Failed to submit approval denial batch for run ${runId} (${approvals.length} tool call(s)):`, batchError);
+            details.push(`Failed to deny ${approvals.length} approval(s) from run ${runId}`);
+            continue;
+          }
           
           // The denial triggers a new agent run server-side. Wait for it to
           // settle before returning, otherwise the caller retries immediately
