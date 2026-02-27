@@ -38,7 +38,7 @@ agent:
 
 # Conversation routing (optional)
 conversations:
-  mode: shared                   # "shared" (default) or "per-channel"
+  mode: shared                   # "shared" | "per-channel" | "per-chat"
   heartbeat: last-active         # "dedicated" | "last-active" | "<channel>"
 
 # Channel configurations
@@ -243,20 +243,59 @@ Each entry in `agents:` accepts:
 
 ### Conversation Routing
 
-Conversation routing controls which incoming messages share a Letta conversation.
+Conversation routing controls which incoming messages share a Letta conversation. Agent memory (blocks) is always shared -- only the message history is isolated.
 
 ```yaml
 conversations:
-  mode: shared            # shared (default) or per-channel
-  heartbeat: last-active  # per-channel mode, or shared mode with perChannel overrides
+  mode: shared            # "shared" | "per-channel" | "per-chat"
+  heartbeat: last-active  # "dedicated" | "last-active" | "<channel>"
+  maxSessions: 10         # per-chat only: max concurrent sessions (LRU eviction)
   perChannel:
     - bluesky             # always separate, even in shared mode
 ```
 
-- **mode: shared** (default) keeps one shared conversation across all channels.
-- **mode: per-channel** creates an independent conversation per channel.
-- **perChannel** lets you keep most channels shared while carving out specific channels to run independently.
-- **heartbeat**: `dedicated`, `last-active`, or a specific channel name. Applies in per-channel mode and in shared mode with perChannel overrides.
+**Modes:**
+
+| Mode | Key | Description |
+|------|-----|-------------|
+| `shared` (default) | `"shared"` | One conversation across all channels and all chats |
+| `per-channel` | `"telegram"`, `"discord"`, etc. | One conversation per channel adapter. All Telegram groups share one conversation, all Discord channels share another. |
+| `per-chat` | `"telegram:12345"` | One conversation per unique chat within each channel. Every DM and group gets its own isolated message history. |
+
+**`per-chat` mode details:**
+
+Each active chat runs its own CLI subprocess. To prevent unbounded growth, sessions are LRU-evicted when the pool hits `maxSessions` (default: 10). When an evicted chat sends another message, the session is cheaply recreated from the stored conversation ID -- no message history is lost.
+
+```yaml
+conversations:
+  mode: per-chat
+  maxSessions: 20        # optional, default 10
+```
+
+The `/reset` command in per-chat mode only clears the conversation for the chat it was issued from, not the entire channel.
+
+**`perChannel` overrides:**
+
+In `shared` mode, you can carve out specific channels to run independently while keeping the rest shared:
+
+```yaml
+conversations:
+  mode: shared
+  perChannel:
+    - bluesky             # Bluesky gets its own conversation; everything else shares one
+```
+
+**`heartbeat`:** Controls which conversation background triggers (heartbeats) use:
+- `last-active` -- use the most recently active conversation
+- `dedicated` -- use a separate `"heartbeat"` conversation key
+- `<channel>` -- use a specific channel name (e.g., `telegram`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `conversations.mode` | `'shared'` \| `'per-channel'` \| `'per-chat'` | `'shared'` | Conversation isolation level |
+| `conversations.heartbeat` | `'last-active'` \| `'dedicated'` \| string | `'last-active'` | Which conversation heartbeats target |
+| `conversations.maxSessions` | number | `10` | Max concurrent sessions in per-chat mode (LRU eviction) |
+| `conversations.perChannel` | string[] | `[]` | Channels to isolate even in shared mode |
 
 ### How it works
 
@@ -333,28 +372,9 @@ The deprecated `groupPollIntervalMin` (minutes) still works for backward compati
 
 ### Conversation Routing
 
-By default, all channels share a single conversation. You can split conversations per channel adapter.
+See [Conversation Routing](#conversation-routing) under Multi-Agent Configuration for the full reference, including `shared`, `per-channel`, and `per-chat` modes.
 
-**Single-agent config:**
-```yaml
-conversations:
-  mode: shared        # "shared" (default) or "per-channel"
-  heartbeat: last-active  # "dedicated" | "last-active" | "<channel>"
-```
-
-**Multi-agent config:**
-```yaml
-agents:
-  - name: work-assistant
-    conversations:
-      mode: per-channel
-      heartbeat: dedicated
-```
-
-Notes:
-- `per-channel` means one conversation per **channel adapter** (telegram/slack/discord/etc), not per chat/user.
-- Agent memory remains shared across channels; only the conversation history is separated.
-- `heartbeat` controls which conversation background triggers use: a dedicated stream, the last active channel, or an explicit channel name.
+In single-agent configs, `conversations:` goes at the top level. In multi-agent configs, it goes inside each agent entry.
 
 ### Group Modes
 
