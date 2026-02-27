@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { parseChannelArgs, resolveAgentConfig } from './group-listing.js';
+import { parseChannelArgs, resolveAgentConfig, resolveListingTokens } from './group-listing.js';
 
 // ── parseChannelArgs ─────────────────────────────────────────────────────────
 
@@ -39,12 +39,24 @@ describe('parseChannelArgs', () => {
     expect(parseChannelArgs(['--channel'])).toEqual({ error: 'Missing value for --channel' });
   });
 
+  it('returns error for --channel when next token is another flag', () => {
+    expect(parseChannelArgs(['--channel', '--agent', 'MyAgent'])).toEqual({
+      error: 'Missing value for --channel',
+    });
+  });
+
   it('returns error for -c with no value', () => {
     expect(parseChannelArgs(['-c'])).toEqual({ error: 'Missing value for --channel' });
   });
 
   it('returns error for --agent with no value', () => {
     expect(parseChannelArgs(['--agent'])).toEqual({ error: 'Missing value for --agent' });
+  });
+
+  it('returns error for --agent when next token is another flag', () => {
+    expect(parseChannelArgs(['--agent', '--channel', 'slack'])).toEqual({
+      error: 'Missing value for --agent',
+    });
   });
 
   it('returns error for unexpected extra positional argument', () => {
@@ -107,5 +119,55 @@ describe('resolveAgentConfig', () => {
 
     consoleSpy.mockRestore();
     exitSpy.mockRestore();
+  });
+});
+
+// ── resolveListingTokens ─────────────────────────────────────────────────────
+
+describe('resolveListingTokens', () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('uses env fallback when no agent is selected', () => {
+    vi.stubEnv('DISCORD_BOT_TOKEN', 'env-discord');
+    vi.stubEnv('SLACK_BOT_TOKEN', 'env-slack');
+
+    const result = resolveListingTokens(undefined, undefined);
+    expect(result).toEqual({
+      discordToken: 'env-discord',
+      slackToken: 'env-slack',
+    });
+  });
+
+  it('does not fall back to env when an agent is selected', () => {
+    vi.stubEnv('DISCORD_BOT_TOKEN', 'env-discord');
+    vi.stubEnv('SLACK_BOT_TOKEN', 'env-slack');
+
+    const result = resolveListingTokens({ name: 'A', channels: {} } as any, 'A');
+    expect(result).toEqual({
+      discordToken: undefined,
+      slackToken: undefined,
+    });
+  });
+
+  it('uses selected agent tokens when present', () => {
+    vi.stubEnv('DISCORD_BOT_TOKEN', 'env-discord');
+    vi.stubEnv('SLACK_BOT_TOKEN', 'env-slack');
+
+    const result = resolveListingTokens(
+      {
+        name: 'A',
+        channels: {
+          discord: { enabled: true, token: 'agent-discord' },
+          slack: { enabled: true, botToken: 'agent-slack' },
+        },
+      } as any,
+      'A',
+    );
+    expect(result).toEqual({
+      discordToken: 'agent-discord',
+      slackToken: 'agent-slack',
+    });
   });
 });

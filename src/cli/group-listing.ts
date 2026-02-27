@@ -162,6 +162,25 @@ export function resolveAgentConfig(agentName?: string): AgentConfig | undefined 
   process.exit(1);
 }
 
+export function resolveListingTokens(
+  agentConfig: AgentConfig | undefined,
+  agentName?: string,
+): { discordToken?: string; slackToken?: string } {
+  // When an agent is explicitly selected, only use that agent's configured tokens.
+  // Do not fall back to global env vars (prevents cross-agent token leakage).
+  if (agentName) {
+    return {
+      discordToken: agentConfig?.channels?.discord?.token,
+      slackToken: agentConfig?.channels?.slack?.botToken,
+    };
+  }
+
+  return {
+    discordToken: agentConfig?.channels?.discord?.token || process.env.DISCORD_BOT_TOKEN,
+    slackToken: agentConfig?.channels?.slack?.botToken || process.env.SLACK_BOT_TOKEN,
+  };
+}
+
 // ── Arg Parsing ──────────────────────────────────────────────────────────────
 
 export function parseChannelArgs(args: string[]): { channel?: string; agent?: string; error?: string } {
@@ -173,13 +192,13 @@ export function parseChannelArgs(args: string[]): { channel?: string; agent?: st
     const next = args[i + 1];
 
     if (arg === '--channel' || arg === '-c') {
-      if (!next) return { error: 'Missing value for --channel' };
+      if (!next || next.startsWith('-')) return { error: 'Missing value for --channel' };
       channel = next.toLowerCase();
       i++;
       continue;
     }
     if (arg === '--agent') {
-      if (!next) return { error: 'Missing value for --agent' };
+      if (!next || next.startsWith('-')) return { error: 'Missing value for --agent' };
       agent = next;
       i++;
       continue;
@@ -202,9 +221,7 @@ export function parseChannelArgs(args: string[]): { channel?: string; agent?: st
 export async function listGroups(channel?: string, agentName?: string): Promise<void> {
   const agentConfig = resolveAgentConfig(agentName);
 
-  // Resolve tokens from agent config or fall back to env vars
-  const discordToken = agentConfig?.channels?.discord?.token || process.env.DISCORD_BOT_TOKEN;
-  const slackToken = agentConfig?.channels?.slack?.botToken || process.env.SLACK_BOT_TOKEN;
+  const { discordToken, slackToken } = resolveListingTokens(agentConfig, agentName);
 
   if (channel) {
     switch (channel) {
