@@ -242,6 +242,34 @@ describe('recoverOrphanedConversationApproval', () => {
     expect(mockConversationsMessagesCreate).toHaveBeenCalledTimes(2);
   });
 
+  it('retries denial with corrected tool_call_id when server reports ID mismatch', async () => {
+    mockConversationsMessagesList.mockReturnValue(mockPageIterator([
+      {
+        message_type: 'approval_request_message',
+        tool_calls: [{ tool_call_id: 'tc-stale', name: 'Bash' }],
+        run_id: 'run-mismatch',
+        id: 'msg-mismatch',
+      },
+    ]));
+    mockRunsRetrieve.mockResolvedValue({ status: 'failed', stop_reason: 'error' });
+    // First call fails with a server error that includes the correct ID
+    mockConversationsMessagesCreate
+      .mockRejectedValueOnce(new Error("Expected '['tc-correct']' but got '['tc-stale']'"))
+      .mockResolvedValueOnce({});
+    mockRunsList.mockReturnValue(mockPageIterator([]));
+
+    const resultPromise = recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await resultPromise;
+
+    expect(result.recovered).toBe(true);
+    // Should have been called twice: original + retry with corrected ID
+    expect(mockConversationsMessagesCreate).toHaveBeenCalledTimes(2);
+    const retryApprovals = mockConversationsMessagesCreate.mock.calls[1][1].messages[0].approvals;
+    expect(retryApprovals).toHaveLength(1);
+    expect(retryApprovals[0].tool_call_id).toBe('tc-correct');
+  });
+
   it('reports cancel failure accurately', async () => {
     mockConversationsMessagesList.mockReturnValue(mockPageIterator([
       {
