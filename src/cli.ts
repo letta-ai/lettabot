@@ -97,21 +97,49 @@ async function configure() {
   }
 }
 
+async function configEncode() {
+  const { resolveConfigPath, encodeConfigForEnv } = await import('./config/index.js');
+  const configPath = resolveConfigPath();
+
+  if (!existsSync(configPath)) {
+    console.error(`No config file found at ${configPath}`);
+    process.exit(1);
+  }
+
+  const content = readFileSync(configPath, 'utf-8');
+  const encoded = encodeConfigForEnv(content);
+  console.log('Set this environment variable on your cloud platform:\n');
+  console.log(`LETTABOT_CONFIG_YAML=${encoded}`);
+  console.log(`\nSource: ${configPath} (${content.length} bytes -> ${encoded.length} chars base64)`);
+}
+
+async function configDecode() {
+  if (!process.env.LETTABOT_CONFIG_YAML) {
+    console.error('LETTABOT_CONFIG_YAML is not set');
+    process.exit(1);
+  }
+
+  const { decodeYamlOrBase64 } = await import('./config/index.js');
+  console.log(decodeYamlOrBase64(process.env.LETTABOT_CONFIG_YAML));
+}
+
 async function server() {
-  const { resolveConfigPath } = await import('./config/index.js');
+  const { resolveConfigPath, hasInlineConfig } = await import('./config/index.js');
   const configPath = resolveConfigPath();
   
-  // Check if configured
-  if (!existsSync(configPath)) {
+  // Check if configured (inline config or file)
+  if (!existsSync(configPath) && !hasInlineConfig()) {
     console.log(`
 No config file found. Searched locations:
-  1. LETTABOT_CONFIG env var (not set)
-  2. ./lettabot.yaml (project-local - recommended)
-  3. ./lettabot.yml
-  4. ~/.lettabot/config.yaml (user global)
-  5. ~/.lettabot/config.yml
+  1. LETTABOT_CONFIG_YAML env var (inline YAML or base64 - recommended for cloud)
+  2. LETTABOT_CONFIG env var (file path)
+  3. ./lettabot.yaml (project-local - recommended for local dev)
+  4. ./lettabot.yml
+  5. ~/.lettabot/config.yaml (user global)
+  6. ~/.lettabot/config.yml
 
-Run "lettabot onboard" to create a config, or set LETTABOT_CONFIG=/path/to/config.yaml
+Run "lettabot onboard" to create a config, or set LETTABOT_CONFIG_YAML for cloud deploys.
+Encode your config: cat lettabot.yaml | base64
 `);
     process.exit(1);
   }
@@ -190,6 +218,8 @@ Commands:
   onboard              Setup wizard (integrations, skills, configuration)
   server               Start the bot server
   configure            View and edit configuration
+  config encode        Encode config file as base64 for LETTABOT_CONFIG_YAML
+  config decode        Decode and print LETTABOT_CONFIG_YAML env var
   model                Interactive model selector
   model show           Show current agent model
   model set <handle>   Set model by handle (e.g., anthropic/claude-sonnet-4-5-20250929)
@@ -224,6 +254,7 @@ Examples:
   lettabot pairing approve telegram ABCD1234 # Approve a pairing code
 
 Environment:
+  LETTABOT_CONFIG_YAML    Inline YAML or base64-encoded config (for cloud deploys)
   LETTA_API_KEY           API key from app.letta.com
   TELEGRAM_BOT_TOKEN      Bot token from @BotFather
   TELEGRAM_DM_POLICY      DM access policy (pairing, allowlist, open)
@@ -270,7 +301,13 @@ async function main() {
       
     case 'configure':
     case 'config':
-      await configure();
+      if (subCommand === 'encode') {
+        await configEncode();
+      } else if (subCommand === 'decode') {
+        await configDecode();
+      } else {
+        await configure();
+      }
       break;
       
     case 'skills': {

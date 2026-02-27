@@ -484,6 +484,13 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
       return;
     }
 
+    // Route: GET /portal - Admin portal for pairing approvals
+    if ((req.url === '/portal' || req.url === '/portal/') && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(portalHtml);
+      return;
+    }
+
     // Route: 404 Not Found
     sendError(res, 404, 'Not found');
   });
@@ -569,3 +576,173 @@ function sendError(res: http.ServerResponse, status: number, message: string, fi
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(response));
 }
+
+/**
+ * Admin portal HTML - self-contained page for pairing approvals
+ */
+const portalHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LettaBot Portal</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0a0a; color: #e0e0e0; min-height: 100vh; }
+  .container { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 18px; font-weight: 600; margin-bottom: 24px; color: #fff; }
+  h1 span { color: #666; font-weight: 400; }
+
+  /* Auth */
+  .auth { background: #141414; border: 1px solid #222; border-radius: 8px; padding: 24px; margin-bottom: 24px; }
+  .auth label { display: block; font-size: 13px; color: #888; margin-bottom: 8px; }
+  .auth input { width: 100%; padding: 10px 12px; background: #0a0a0a; border: 1px solid #333; border-radius: 6px; color: #fff; font-size: 14px; font-family: monospace; }
+  .auth input:focus { outline: none; border-color: #555; }
+  .auth button { margin-top: 12px; padding: 8px 20px; background: #fff; color: #000; border: none; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
+  .auth button:hover { background: #ddd; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tab { padding: 6px 14px; background: #141414; border: 1px solid #222; border-radius: 6px; font-size: 13px; cursor: pointer; color: #888; }
+  .tab:hover { color: #ccc; border-color: #333; }
+  .tab.active { background: #1a1a1a; color: #fff; border-color: #444; }
+  .tab .count { background: #333; color: #aaa; font-size: 11px; padding: 1px 6px; border-radius: 10px; margin-left: 6px; }
+  .tab.active .count { background: #fff; color: #000; }
+
+  /* Table */
+  .requests { background: #141414; border: 1px solid #222; border-radius: 8px; overflow: hidden; }
+  .request { display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid #1a1a1a; gap: 16px; }
+  .request:last-child { border-bottom: none; }
+  .code { font-family: monospace; font-size: 15px; font-weight: 600; color: #fff; min-width: 90px; }
+  .meta { flex: 1; }
+  .meta .name { font-size: 13px; color: #ccc; }
+  .meta .time { font-size: 12px; color: #555; margin-top: 2px; }
+  .approve-btn { padding: 6px 16px; background: #1a7f37; color: #fff; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  .approve-btn:hover { background: #238636; }
+  .approve-btn:disabled { background: #333; color: #666; cursor: default; }
+
+  /* Empty */
+  .empty { padding: 40px 16px; text-align: center; color: #555; font-size: 14px; }
+
+  /* Toast */
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); padding: 10px 20px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .toast.ok { background: #1a7f37; color: #fff; }
+  .toast.err { background: #d1242f; color: #fff; }
+
+  /* Status bar */
+  .status { font-size: 12px; color: #444; text-align: center; margin-top: 16px; }
+
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>LettaBot <span>Portal</span></h1>
+
+  <div class="auth" id="auth">
+    <label for="key">API Key</label>
+    <input type="password" id="key" placeholder="Paste your LETTABOT_API_KEY" autocomplete="off" onkeydown="if(event.key==='Enter')login()">
+    <button onclick="login()">Connect</button>
+  </div>
+
+  <div id="app" class="hidden">
+    <div class="tabs" id="tabs"></div>
+    <div class="requests" id="list"></div>
+    <div class="status" id="status"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const CHANNELS = ['telegram', 'discord', 'slack'];
+let apiKey = sessionStorage.getItem('lbkey') || '';
+let activeChannel = 'telegram';
+let data = {};
+let refreshTimer;
+
+function login() {
+  apiKey = document.getElementById('key').value.trim();
+  if (!apiKey) return;
+  sessionStorage.setItem('lbkey', apiKey);
+  init();
+}
+
+async function init() {
+  document.getElementById('auth').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  await refresh();
+  refreshTimer = setInterval(refresh, 10000);
+}
+
+async function apiFetch(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { 'X-Api-Key': apiKey, 'Content-Type': 'application/json', ...opts.headers } });
+  if (res.status === 401) { sessionStorage.removeItem('lbkey'); apiKey = ''; document.getElementById('auth').classList.remove('hidden'); document.getElementById('app').classList.add('hidden'); clearInterval(refreshTimer); toast('Invalid API key', true); throw new Error('Unauthorized'); }
+  return res;
+}
+
+async function refresh() {
+  for (const ch of CHANNELS) {
+    try {
+      const res = await apiFetch('/api/v1/pairing/' + ch);
+      const json = await res.json();
+      data[ch] = json.requests || [];
+    } catch (e) { if (e.message === 'Unauthorized') return; data[ch] = []; }
+  }
+  renderTabs();
+  renderList();
+  document.getElementById('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+function renderTabs() {
+  const el = document.getElementById('tabs');
+  el.innerHTML = CHANNELS.map(ch => {
+    const n = (data[ch] || []).length;
+    const cls = ch === activeChannel ? 'tab active' : 'tab';
+    const count = n > 0 ? '<span class="count">' + n + '</span>' : '';
+    return '<div class="' + cls + '" onclick="switchTab(\\'' + ch + '\\')">' + ch.charAt(0).toUpperCase() + ch.slice(1) + count + '</div>';
+  }).join('');
+}
+
+function renderList() {
+  const el = document.getElementById('list');
+  const items = data[activeChannel] || [];
+  if (items.length === 0) { el.innerHTML = '<div class="empty">No pending pairing requests</div>'; return; }
+  el.innerHTML = items.map(r => {
+    const name = r.meta?.username ? '@' + r.meta.username : r.meta?.firstName || 'User ' + r.id;
+    const ago = timeAgo(r.createdAt);
+    return '<div class="request"><div class="code">' + esc(r.code) + '</div><div class="meta"><div class="name">' + esc(name) + '</div><div class="time">' + ago + '</div></div><button class="approve-btn" onclick="approve(\\'' + activeChannel + '\\',\\'' + r.code + '\\', this)">Approve</button></div>';
+  }).join('');
+}
+
+function switchTab(ch) { activeChannel = ch; renderTabs(); renderList(); }
+
+async function approve(channel, code, btn) {
+  btn.disabled = true; btn.textContent = '...';
+  try {
+    const res = await apiFetch('/api/v1/pairing/' + channel + '/approve', { method: 'POST', body: JSON.stringify({ code }) });
+    const json = await res.json();
+    if (json.success) { toast('Approved'); await refresh(); }
+    else { toast(json.error || 'Failed', true); btn.disabled = false; btn.textContent = 'Approve'; }
+  } catch (e) { toast('Error: ' + e.message, true); btn.disabled = false; btn.textContent = 'Approve'; }
+}
+
+function toast(msg, err) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.className = 'toast show ' + (err ? 'err' : 'ok');
+  setTimeout(() => el.className = 'toast', 2500);
+}
+
+function timeAgo(iso) {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return s + 's ago'; if (s < 3600) return Math.floor(s/60) + 'm ago';
+  return Math.floor(s/3600) + 'h ago';
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+if (apiKey) init();
+</script>
+</body>
+</html>`;
+
