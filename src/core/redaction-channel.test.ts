@@ -35,6 +35,7 @@ describe('channel redaction wrapping', () => {
       sendMessage: sendSpy,
       editMessage: vi.fn(async () => {}),
       sendTypingIndicator: vi.fn(async () => {}),
+      getFormatterHints: () => ({ supportsReactions: false, supportsFiles: false }),
     };
 
     bot.registerChannel(adapter);
