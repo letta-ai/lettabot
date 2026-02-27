@@ -64,21 +64,24 @@ function isConversationMissingError(error: unknown): boolean {
  * Detect if a session initialization error indicates the agent doesn't exist.
  * The SDK includes CLI stderr in the error message when the subprocess exits
  * before sending an init message. We check for agent-not-found indicators in
- * both the SDK-level message and the CLI stderr output it now includes.
+ * both the SDK-level message and the CLI stderr output it includes.
  *
- * The "no init message received" fallback catches cases where the SDK hasn't
- * been updated yet -- any init failure is treated as potentially recoverable
- * rather than looping the error forever.
+ * This intentionally does NOT treat generic init failures (like "no init
+ * message received") as recoverable. Those can be transient SDK/process
+ * issues, and clearing persisted agent state in those cases can destroy
+ * valid mappings.
  */
 function isAgentMissingFromInitError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const msg = error.message.toLowerCase();
-  // SDK now appends CLI stderr -- look for agent 404 indicators
-  if (msg.includes('not found') && msg.includes('agent')) return true;
-  if (msg.includes('404')) return true;
-  // Generic init failure (pre-SDK-fix or non-404 subprocess crash)
-  if (msg.includes('no init message received')) return true;
-  return false;
+  const agentMissingPatterns = [
+    /\bagent\b[^.\n]{0,80}\bnot found\b/,
+    /\bnot found\b[^.\n]{0,80}\bagent\b/,
+    /\bagent\b[^.\n]{0,80}\bdoes not exist\b/,
+    /\bunknown agent\b/,
+    /\bagent_not_found\b/,
+  ];
+  return agentMissingPatterns.some((pattern) => pattern.test(msg));
 }
 
 /**
