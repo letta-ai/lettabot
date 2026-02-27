@@ -22,7 +22,7 @@ On platforms where you can't include a config file (Railway, Fly.io, Render, etc
 lettabot config encode
 
 # Or manually
-cat lettabot.yaml | base64
+base64 < lettabot.yaml | tr -d '\n'
 ```
 
 Set the output as `LETTABOT_CONFIG_YAML` on your platform. Raw YAML is also accepted (for platforms that support multi-line env vars).

@@ -19,7 +19,7 @@ Cloud platforms typically don't support config files directly. LettaBot solves t
 lettabot config encode
 
 # Or manually
-cat lettabot.yaml | base64
+base64 < lettabot.yaml | tr -d '\n'
 ```
 
 Set the output as `LETTABOT_CONFIG_YAML` on your platform. This is the only env var you need -- everything (API key, channels, features) is in the YAML.
@@ -44,7 +44,7 @@ LettaBot includes a Dockerfile for containerized deployment.
 docker build -t lettabot .
 
 docker run -d \
-  -e LETTABOT_CONFIG_YAML=$(cat lettabot.yaml | base64) \
+  -e LETTABOT_CONFIG_YAML="$(base64 < lettabot.yaml | tr -d '\n')" \
   -p 8080:8080 \
   lettabot
 ```
@@ -75,7 +75,7 @@ fly auth login
 fly launch
 
 # Set your config
-fly secrets set LETTABOT_CONFIG_YAML=$(cat lettabot.yaml | base64)
+fly secrets set LETTABOT_CONFIG_YAML="$(base64 < lettabot.yaml | tr -d '\n')"
 
 # Set a stable API key (optional, prevents regeneration across deploys)
 fly secrets set LETTABOT_API_KEY=$(openssl rand -hex 32)

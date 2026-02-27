@@ -196,7 +196,7 @@ No config file found. Searched locations:
   6. ~/.lettabot/config.yml
 
 Run "lettabot onboard" to create a config, or set LETTABOT_CONFIG_YAML for cloud deploys.
-Encode your config: cat lettabot.yaml | base64
+Encode your config: base64 < lettabot.yaml | tr -d '\\n'
 `);
   process.exit(1);
 }

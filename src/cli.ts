@@ -8,10 +8,18 @@
  *   lettabot configure  - Configure settings
  */
 
-// Config loaded from lettabot.yaml
+// Config loaded from lettabot.yaml (lazily, so debug/help commands can run with broken config)
+import type { LettaBotConfig } from './config/index.js';
 import { loadAppConfigOrExit, applyConfigToEnv, serverModeLabel } from './config/index.js';
-const config = loadAppConfigOrExit();
-applyConfigToEnv(config);
+let cachedConfig: LettaBotConfig | null = null;
+
+function getConfig(): LettaBotConfig {
+  if (!cachedConfig) {
+    cachedConfig = loadAppConfigOrExit();
+    applyConfigToEnv(cachedConfig);
+  }
+  return cachedConfig;
+}
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { getCronStorePath, getDataDir, getLegacyCronStorePath, getWorkingDir } from './utils/paths.js';
@@ -44,6 +52,7 @@ import { onboard } from './onboard.js';
 async function configure() {
   const p = await import('@clack/prompts');
   const { resolveConfigPath } = await import('./config/index.js');
+  const config = getConfig();
   
   p.intro('🤖 LettaBot Configuration');
 
@@ -139,7 +148,7 @@ No config file found. Searched locations:
   6. ~/.lettabot/config.yml
 
 Run "lettabot onboard" to create a config, or set LETTABOT_CONFIG_YAML for cloud deploys.
-Encode your config: cat lettabot.yaml | base64
+Encode your config: base64 < lettabot.yaml | tr -d '\\n'
 `);
     process.exit(1);
   }
@@ -269,6 +278,7 @@ Environment:
 }
 
 function getDefaultTodoAgentKey(): string {
+  const config = getConfig();
   const configuredName =
     (config.agent?.name?.trim())
     || (config.agents?.length && config.agents[0].name?.trim())
@@ -285,6 +295,19 @@ function getDefaultTodoAgentKey(): string {
 }
 
 async function main() {
+  // Most commands expect config-derived env vars to be applied.
+  // Skip bootstrap for help/no-command and config encode/decode so these still work
+  // when the current config is broken.
+  if (
+    command &&
+    command !== 'help' &&
+    command !== '-h' &&
+    command !== '--help' &&
+    !(command === 'config' && (subCommand === 'encode' || subCommand === 'decode'))
+  ) {
+    getConfig();
+  }
+
   switch (command) {
     case 'onboard':
     case 'setup':
@@ -457,6 +480,7 @@ async function main() {
     
     case 'reset-conversation': {
       const p = await import('@clack/prompts');
+      const config = getConfig();
       
       p.intro('Reset Conversation');
 

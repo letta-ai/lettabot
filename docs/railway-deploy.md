@@ -19,7 +19,7 @@ Use `LETTABOT_CONFIG_YAML` to pass your entire `lettabot.yaml` as a single base6
 
 ```bash
 # Encode your local config
-cat lettabot.yaml | base64
+base64 < lettabot.yaml | tr -d '\n'
 
 # Or use the CLI helper
 lettabot config encode
