@@ -735,6 +735,7 @@ export async function recoverOrphanedConversationApproval(
             reason: `Auto-denied: originating run was ${status}/${stopReason}`,
           }));
           
+          let submitSucceeded = false;
           try {
             await client.conversations.messages.create(conversationId, {
               messages: [{
@@ -743,10 +744,40 @@ export async function recoverOrphanedConversationApproval(
               }],
               streaming: false,
             });
-          } catch (batchError) {
-            log.warn(`Failed to submit approval denial batch for run ${runId} (${approvals.length} tool call(s)):`, batchError);
-            details.push(`Failed to deny ${approvals.length} approval(s) from run ${runId}`);
-            continue;
+            submitSucceeded = true;
+          } catch (submitErr) {
+            // The server's active approval may have a different tool_call_id than
+            // what's in the conversation messages (stale history mismatch).
+            // If the error tells us the correct ID, retry once with it.
+            const errMsg = submitErr instanceof Error ? submitErr.message : String(submitErr);
+            const expectedMatch = errMsg.match(/Expected '\['([^']+)'\]/);
+            if (expectedMatch) {
+              const correctToolCallId = expectedMatch[1];
+              log.info(`Retrying denial for run ${runId} with corrected tool_call_id ${correctToolCallId.slice(0, 12)}...`);
+              try {
+                await client.conversations.messages.create(conversationId, {
+                  messages: [{
+                    type: 'approval',
+                    approvals: [{
+                      approve: false as const,
+                      tool_call_id: correctToolCallId,
+                      type: 'approval' as const,
+                      reason: `Auto-denied: originating run was ${status}/${stopReason}`,
+                    }],
+                  }],
+                  streaming: false,
+                });
+                submitSucceeded = true;
+              } catch (retryErr) {
+                const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+                log.warn(`Retry with corrected ID also failed for run ${runId}: ${retryMsg}`);
+              }
+            }
+            if (!submitSucceeded) {
+              log.warn(`Failed to submit approval denial for run ${runId}:`, errMsg);
+              details.push(`Failed to deny approval(s) from run ${runId}`);
+              continue;
+            }
           }
           
           // The denial triggers a new agent run server-side. Wait for it to
