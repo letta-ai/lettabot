@@ -21,6 +21,7 @@ import {
   resolveConfigPath,
   isDockerServerMode,
   serverModeLabel,
+  wasLoadedFromFleetConfig,
 } from './config/index.js';
 import { isLettaApiUrl } from './utils/server.js';
 import { getDataDir, getWorkingDir, hasRailwayVolume, resolveWorkingDirPath } from './utils/paths.js';
@@ -190,10 +191,13 @@ No config file found. Searched locations:
   1. LETTABOT_CONFIG env var (not set)
   2. ./lettabot.yaml (project-local - recommended)
   3. ./lettabot.yml
-  4. ~/.lettabot/config.yaml (user global)
-  5. ~/.lettabot/config.yml
+  4. ./agents.yml (fleet config from lettactl)
+  5. ./agents.yaml
+  6. ~/.lettabot/config.yaml (user global)
+  7. ~/.lettabot/config.yml
 
 Run "lettabot onboard" to create a config, or set LETTABOT_CONFIG=/path/to/config.yaml
+Or use an agents.yml from lettactl with a lettabot: section on your agent.
 `);
   process.exit(1);
 }
@@ -627,8 +631,10 @@ async function main() {
       }
     }
 
-    // Container deploy: discover by name under an inter-process lock to avoid startup races.
-    if (!initialStatus.agentId && isContainerDeploy) {
+    // Discover agent by name under an inter-process lock to avoid startup races.
+    // Enabled for container deploys and when config was loaded from fleet format
+    // (agents.yml) where lettactl apply already created the agent on the server.
+    if (!initialStatus.agentId && (isContainerDeploy || wasLoadedFromFleetConfig())) {
       try {
         await withDiscoveryLock(agentConfig.name, async () => {
           // Re-read status after lock acquisition in case another instance already set it.

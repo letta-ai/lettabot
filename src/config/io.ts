@@ -10,6 +10,7 @@ import { dirname, join, resolve } from 'node:path';
 import YAML from 'yaml';
 import type { LettaBotConfig, ProviderConfig } from './types.js';
 import { DEFAULT_CONFIG, canonicalizeServerMode, isApiServerMode, isDockerServerMode } from './types.js';
+import { isFleetConfig, fleetConfigToLettaBotConfig, setLoadedFromFleetConfig } from './fleet-adapter.js';
 import { LETTA_API_URL } from '../auth/oauth.js';
 
 import { createLogger } from '../logger.js';
@@ -19,6 +20,8 @@ const log = createLogger('Config');
 const CONFIG_PATHS = [
   resolve(process.cwd(), 'lettabot.yaml'),           // Project-local
   resolve(process.cwd(), 'lettabot.yml'),            // Project-local alt
+  resolve(process.cwd(), 'agents.yml'),              // Fleet config
+  resolve(process.cwd(), 'agents.yaml'),             // Fleet config alt
   join(homedir(), '.lettabot', 'config.yaml'),       // User global
   join(homedir(), '.lettabot', 'config.yml'),        // User global alt
 ];
@@ -27,13 +30,15 @@ const DEFAULT_CONFIG_PATH = join(homedir(), '.lettabot', 'config.yaml');
 
 /**
  * Find the config file path (first existing, or default)
- * 
+ *
  * Priority:
  * 1. LETTABOT_CONFIG env var (explicit override)
  * 2. ./lettabot.yaml (project-local)
  * 3. ./lettabot.yml (project-local alt)
- * 4. ~/.lettabot/config.yaml (user global)
- * 5. ~/.lettabot/config.yml (user global alt)
+ * 4. ./agents.yml (fleet config from lettactl)
+ * 5. ./agents.yaml (fleet config alt)
+ * 6. ~/.lettabot/config.yaml (user global)
+ * 7. ~/.lettabot/config.yml (user global alt)
  */
 export function resolveConfigPath(): string {
   // Environment variable takes priority
@@ -61,16 +66,42 @@ function hasObject(value: unknown): value is Record<string, unknown> {
 }
 
 function parseAndNormalizeConfig(content: string): LettaBotConfig {
-  const parsed = YAML.parse(content) as Partial<LettaBotConfig>;
+  const parsed = YAML.parse(content);
+
+  // Fleet config detection: agents.yml from lettactl with llm_config/system_prompt
+  if (isFleetConfig(parsed)) {
+    const converted = fleetConfigToLettaBotConfig(parsed as Record<string, unknown>);
+    setLoadedFromFleetConfig(true);
+
+    // Merge with defaults and canonicalize server mode (same as native path)
+    const merged = {
+      ...DEFAULT_CONFIG,
+      ...converted,
+      server: { ...DEFAULT_CONFIG.server, ...converted.server },
+      agent: { ...DEFAULT_CONFIG.agent, ...converted.agent },
+      channels: { ...DEFAULT_CONFIG.channels, ...converted.channels },
+    };
+
+    return {
+      ...merged,
+      server: {
+        ...merged.server,
+        mode: canonicalizeServerMode(merged.server.mode),
+      },
+    };
+  }
+
+  setLoadedFromFleetConfig(false);
+  const typedParsed = parsed as Partial<LettaBotConfig>;
 
   // Fix instantGroups: YAML parses large numeric IDs (e.g. Discord snowflakes)
   // as JavaScript numbers, losing precision for values > Number.MAX_SAFE_INTEGER.
   // Re-extract from document AST to preserve the original string representation.
-  fixLargeGroupIds(content, parsed);
+  fixLargeGroupIds(content, typedParsed);
 
   // Reject ambiguous API server configuration. During migration from top-level
   // `api` to `server.api`, having both can silently drop fields.
-  if (hasObject(parsed.api) && hasObject(parsed.server) && hasObject(parsed.server.api)) {
+  if (hasObject(typedParsed.api) && hasObject(typedParsed.server) && hasObject(typedParsed.server.api)) {
     throw new Error(
       'Conflicting API config: both top-level `api` and `server.api` are set. Remove top-level `api` and keep only `server.api`.'
     );
@@ -79,10 +110,10 @@ function parseAndNormalizeConfig(content: string): LettaBotConfig {
   // Merge with defaults and canonicalize server mode.
   const merged = {
     ...DEFAULT_CONFIG,
-    ...parsed,
-    server: { ...DEFAULT_CONFIG.server, ...parsed.server },
-    agent: { ...DEFAULT_CONFIG.agent, ...parsed.agent },
-    channels: { ...DEFAULT_CONFIG.channels, ...parsed.channels },
+    ...typedParsed,
+    server: { ...DEFAULT_CONFIG.server, ...typedParsed.server },
+    agent: { ...DEFAULT_CONFIG.agent, ...typedParsed.agent },
+    channels: { ...DEFAULT_CONFIG.channels, ...typedParsed.channels },
   };
 
   const config = {
