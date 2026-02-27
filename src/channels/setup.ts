@@ -18,6 +18,7 @@ export const CHANNELS = [
   { id: 'discord', displayName: 'Discord', hint: 'Bot token + Message Content intent' },
   { id: 'whatsapp', displayName: 'WhatsApp', hint: 'QR code pairing' },
   { id: 'signal', displayName: 'Signal', hint: 'signal-cli daemon' },
+  { id: 'matrix', displayName: 'Matrix', hint: 'E2EE support, works with any homeserver' },
 ] as const;
 
 export type ChannelId = typeof CHANNELS[number]['id'];
@@ -56,6 +57,9 @@ const GROUP_ID_HINTS: Record<ChannelId, string> = {
     '(e.g., 120363123456@g.us).',
   signal:
     'Group IDs appear in bot logs on first group message.',
+  matrix:
+    'Room IDs appear in bot logs on first message\n' +
+    '(e.g., !abc123:matrix.org).',
 };
 
 // ============================================================================
@@ -562,6 +566,94 @@ export async function setupSignal(existing?: any): Promise<any> {
   };
 }
 
+export async function setupMatrix(existing?: any): Promise<any> {
+  p.note(
+    '1. Create a Matrix account on any homeserver (matrix.org, etc.)\n' +
+    '2. Get an access token:\n' +
+    '   • Element: Settings → Help & About → Access Token\n' +
+    '   • Or run: lettabot matrix-login\n' +
+    '3. Copy the homeserver URL (e.g., https://matrix.org)\n' +
+    '4. Copy the access token',
+    'Matrix Setup'
+  );
+  
+  const homeserverUrl = await p.text({
+    message: 'Homeserver URL',
+    placeholder: 'https://matrix.org',
+    initialValue: existing?.homeserverUrl || 'https://matrix.org',
+  });
+  
+  if (p.isCancel(homeserverUrl)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+  
+  const accessToken = await p.text({
+    message: 'Access Token',
+    placeholder: 'From Element or matrix-login',
+    initialValue: existing?.accessToken || '',
+  });
+  
+  if (p.isCancel(accessToken)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+  
+  const encryptionEnabled = await p.confirm({
+    message: 'Enable E2EE encryption?',
+    initialValue: existing?.encryptionEnabled !== false,
+  });
+  
+  if (p.isCancel(encryptionEnabled)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+  
+  const dmPolicy = await p.select({
+    message: 'Who can message the bot?',
+    options: [
+      { value: 'pairing', label: 'Pairing (recommended)', hint: 'Requires CLI approval' },
+      { value: 'allowlist', label: 'Allowlist only', hint: 'Specific Matrix IDs' },
+      { value: 'open', label: 'Open', hint: 'Anyone (not recommended)' },
+    ],
+    initialValue: existing?.dmPolicy || 'pairing',
+  });
+  
+  if (p.isCancel(dmPolicy)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+  
+  let allowedUsers: string[] | undefined;
+  
+  if (dmPolicy === 'pairing') {
+    p.log.info('Users will get a code. Approve with: lettabot pairing approve matrix CODE');
+  } else if (dmPolicy === 'allowlist') {
+    const users = await p.text({
+      message: 'Allowed Matrix user IDs (comma-separated)',
+      placeholder: '@user1:matrix.org,@user2:matrix.org',
+      initialValue: existing?.allowedUsers?.join(',') || '',
+    });
+    
+    if (p.isCancel(users)) {
+      p.cancel('Cancelled');
+      process.exit(0);
+    }
+    
+    allowedUsers = users ? (users as string).split(',').map(s => s.trim()).filter(Boolean) : undefined;
+  }
+  
+  return {
+    enabled: true,
+    homeserverUrl,
+    accessToken,
+    encryptionEnabled,
+    autoJoinRooms: true,
+    dmPolicy,
+    allowedUsers,
+  };
+}
+
 /** Get the setup function for a channel */
 export function getSetupFunction(id: ChannelId): (existing?: any) => Promise<any> {
   const setupFunctions: Record<ChannelId, (existing?: any) => Promise<any>> = {
@@ -570,6 +662,7 @@ export function getSetupFunction(id: ChannelId): (existing?: any) => Promise<any
     discord: setupDiscord,
     whatsapp: setupWhatsApp,
     signal: setupSignal,
+    matrix: setupMatrix,
   };
   return setupFunctions[id];
 }

@@ -63,6 +63,7 @@ export interface AgentConfig {
     whatsapp?: WhatsAppConfig;
     signal?: SignalConfig;
     discord?: DiscordConfig;
+    matrix?: MatrixConfig;
   };
   /** Conversation routing */
   conversations?: {
@@ -150,6 +151,7 @@ export interface LettaBotConfig {
     whatsapp?: WhatsAppConfig;
     signal?: SignalConfig;
     discord?: DiscordConfig;
+    matrix?: MatrixConfig;
   };
 
   // Conversation routing
@@ -352,6 +354,19 @@ export interface DiscordConfig {
   groups?: Record<string, GroupConfig>;  // Per-guild/channel settings, "*" for defaults
 }
 
+export interface MatrixConfig {
+  enabled: boolean;
+  homeserverUrl?: string;
+  accessToken?: string;
+  storagePath?: string;
+  cryptoStoragePath?: string;
+  encryptionEnabled?: boolean;
+  autoJoinRooms?: boolean;
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
+  allowedUsers?: string[];
+  messagePrefix?: string;
+}
+
 /**
  * Telegram MTProto (user account) configuration.
  * Uses TDLib for user account mode instead of Bot API.
@@ -543,6 +558,9 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       normalizeLegacyGroupFields(discord, `${sourcePath}.discord`);
       normalized.discord = discord;
     }
+    if (channels.matrix?.enabled !== false && channels.matrix?.accessToken) {
+      normalized.matrix = channels.matrix;
+    }
 
     // Warn when a channel block exists but was dropped due to missing credentials
     const channelCredentials: Array<[string, unknown, boolean]> = [
@@ -636,6 +654,18 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       token: process.env.DISCORD_BOT_TOKEN,
       dmPolicy: (process.env.DISCORD_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
       allowedUsers: parseList(process.env.DISCORD_ALLOWED_USERS),
+    };
+  }
+  if (!channels.matrix && process.env.MATRIX_ACCESS_TOKEN) {
+    channels.matrix = {
+      enabled: true,
+      homeserverUrl: process.env.MATRIX_HOMESERVER_URL || 'https://matrix.org',
+      accessToken: process.env.MATRIX_ACCESS_TOKEN,
+      encryptionEnabled: process.env.MATRIX_ENCRYPTION_ENABLED !== 'false',
+      autoJoinRooms: process.env.MATRIX_AUTO_JOIN_ROOMS !== 'false',
+      dmPolicy: (process.env.MATRIX_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.MATRIX_ALLOWED_USERS),
+      messagePrefix: process.env.MATRIX_MESSAGE_PREFIX,
     };
   }
 
