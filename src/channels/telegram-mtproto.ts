@@ -78,7 +78,7 @@ export class TelegramMTProtoAdapter implements ChannelAdapter {
   private pendingPairingApprovals = new Map<number, { code: string; userId: string; username: string }>();
 
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string, chatId?: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string, args?: string) => Promise<string | null>;
 
   constructor(config: TelegramMTProtoConfig) {
     this.config = {

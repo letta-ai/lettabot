@@ -40,7 +40,7 @@ export class SlackAdapter implements ChannelAdapter {
   private attachmentsMaxBytes?: number;
   
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string, chatId?: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string, args?: string) => Promise<string | null>;
   
   constructor(config: SlackConfig) {
     this.config = config;
@@ -114,12 +114,12 @@ export class SlackAdapter implements ChannelAdapter {
       }
       
       // Handle slash commands
-      const command = parseCommand(text);
-      if (command) {
-        if (command === 'help' || command === 'start') {
+      const parsed = parseCommand(text);
+      if (parsed) {
+        if (parsed.command === 'help' || parsed.command === 'start') {
           await say(await markdownToSlackMrkdwn(HELP_TEXT));
         } else if (this.onCommand) {
-          const result = await this.onCommand(command, channelId);
+          const result = await this.onCommand(parsed.command, channelId, parsed.args || undefined);
           if (result) await say(await markdownToSlackMrkdwn(result));
         }
         return; // Don't pass commands to agent
@@ -231,12 +231,12 @@ export class SlackAdapter implements ChannelAdapter {
       }
       
       // Handle slash commands
-      const command = parseCommand(text);
-      if (command) {
-        if (command === 'help' || command === 'start') {
+      const parsed = parseCommand(text);
+      if (parsed) {
+        if (parsed.command === 'help' || parsed.command === 'start') {
           await this.sendMessage({ chatId: channelId, text: HELP_TEXT, threadId: threadTs });
         } else if (this.onCommand) {
-          const result = await this.onCommand(command, channelId);
+          const result = await this.onCommand(parsed.command, channelId, parsed.args || undefined);
           if (result) await this.sendMessage({ chatId: channelId, text: result, threadId: threadTs });
         }
         return; // Don't pass commands to agent

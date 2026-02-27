@@ -163,7 +163,7 @@ export class SignalAdapter implements ChannelAdapter {
   private baseUrl: string;
   
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string, chatId?: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string, args?: string) => Promise<string | null>;
   
   constructor(config: SignalConfig) {
     this.config = {
@@ -810,12 +810,12 @@ This code expires in 1 hour.`;
       }
       
       // Handle slash commands
-      const command = parseCommand(messageText);
-      if (command) {
-        if (command === 'help' || command === 'start') {
+      const parsed = parseCommand(messageText);
+      if (parsed) {
+        if (parsed.command === 'help' || parsed.command === 'start') {
           await this.sendMessage({ chatId, text: HELP_TEXT });
         } else if (this.onCommand) {
-          const result = await this.onCommand(command, chatId);
+          const result = await this.onCommand(parsed.command, chatId, parsed.args || undefined);
           if (result) await this.sendMessage({ chatId, text: result });
         }
         return; // Don't pass commands to agent

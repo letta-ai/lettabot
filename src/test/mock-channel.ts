@@ -17,7 +17,7 @@ export class MockChannelAdapter implements ChannelAdapter {
   private responseResolvers: Array<(msg: OutboundMessage) => void> = [];
   
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string, args?: string) => Promise<string | null>;
   
   async start(): Promise<void> {
     this.running = true;
@@ -74,12 +74,12 @@ export class MockChannelAdapter implements ChannelAdapter {
     const chatId = options.chatId || 'test-chat-123';
     
     // Handle slash commands locally (like real channels do)
-    const command = parseCommand(text);
-    if (command) {
-      if (command === 'help' || command === 'start') {
+    const parsed = parseCommand(text);
+    if (parsed) {
+      if (parsed.command === 'help' || parsed.command === 'start') {
         return HELP_TEXT;
       } else if (this.onCommand) {
-        const result = await this.onCommand(command);
+        const result = await this.onCommand(parsed.command, chatId, parsed.args || undefined);
         return result || '(No response)';
       }
       return '(Command not handled)';
