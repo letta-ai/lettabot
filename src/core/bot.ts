@@ -10,7 +10,9 @@ import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { extname, resolve, join } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
-import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
+import type { BotConfig, InboundMessage, TriggerContext, StreamMsg } from './types.js';
+import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError, formatApiErrorForUser } from './errors.js';
+import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
 import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel } from '../tools/letta-api.js';
@@ -29,112 +31,6 @@ import { syncTodosFromTool } from '../todo/store.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Bot');
-/**
- * Detect if an error is a 409 CONFLICT from an orphaned approval.
- */
-function isApprovalConflictError(error: unknown): boolean {
-  if (error instanceof Error) {
-    const msg = error.message.toLowerCase();
-    if (msg.includes('waiting for approval')) return true;
-    if (msg.includes('conflict') && msg.includes('approval')) return true;
-  }
-  const statusError = error as { status?: number };
-  if (statusError?.status === 409) return true;
-  return false;
-}
-
-/**
- * Detect if an error indicates a missing conversation or agent.
- * Only these errors should trigger the "create new conversation" fallback.
- * Auth, network, and protocol errors should NOT be retried.
- */
-function isConversationMissingError(error: unknown): boolean {
-  if (error instanceof Error) {
-    const msg = error.message.toLowerCase();
-    if (msg.includes('not found')) return true;
-    if (msg.includes('conversation') && (msg.includes('missing') || msg.includes('does not exist'))) return true;
-    if (msg.includes('agent') && msg.includes('not found')) return true;
-  }
-  const statusError = error as { status?: number };
-  if (statusError?.status === 404) return true;
-  return false;
-}
-
-/**
- * Detect if a session initialization error indicates the agent doesn't exist.
- * The SDK includes CLI stderr in the error message when the subprocess exits
- * before sending an init message. We check for agent-not-found indicators in
- * both the SDK-level message and the CLI stderr output it includes.
- *
- * This intentionally does NOT treat generic init failures (like "no init
- * message received") as recoverable. Those can be transient SDK/process
- * issues, and clearing persisted agent state in those cases can destroy
- * valid mappings.
- */
-function isAgentMissingFromInitError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const msg = error.message.toLowerCase();
-  const agentMissingPatterns = [
-    /\bagent\b[^.\n]{0,80}\bnot found\b/,
-    /\bnot found\b[^.\n]{0,80}\bagent\b/,
-    /\bagent\b[^.\n]{0,80}\bdoes not exist\b/,
-    /\bunknown agent\b/,
-    /\bagent_not_found\b/,
-  ];
-  return agentMissingPatterns.some((pattern) => pattern.test(msg));
-}
-
-/**
- * Map a structured API error into a clear, user-facing message.
- * The `error` object comes from the SDK's new SDKErrorMessage type.
- */
-function formatApiErrorForUser(error: { message: string; stopReason: string; apiError?: Record<string, unknown> }): string {
-  const msg = error.message.toLowerCase();
-  const apiError = error.apiError || {};
-  const apiMsg = (typeof apiError.message === 'string' ? apiError.message : '').toLowerCase();
-  const reasons: string[] = Array.isArray(apiError.reasons) ? apiError.reasons : [];
-
-  // Billing / credits exhausted
-  if (msg.includes('out of credits') || apiMsg.includes('out of credits')) {
-    return '(Out of credits for hosted inference. Add credits or enable auto-recharge at app.letta.com/settings/organization/usage.)';
-  }
-
-  // Rate limiting / usage exceeded (429)
-  if (msg.includes('rate limit') || msg.includes('429') || msg.includes('usage limit')
-    || apiMsg.includes('rate limit') || apiMsg.includes('usage limit')) {
-    if (reasons.includes('premium-usage-exceeded') || msg.includes('hosted model usage limit')) {
-      return '(Rate limited -- your Letta Cloud usage limit has been exceeded. Check your plan at app.letta.com.)';
-    }
-    const reasonStr = reasons.length > 0 ? `: ${reasons.join(', ')}` : '';
-    return `(Rate limited${reasonStr}. Try again in a moment.)`;
-  }
-
-  // 409 CONFLICT (concurrent request on same conversation)
-  if (msg.includes('conflict') || msg.includes('409') || msg.includes('another request is currently being processed')) {
-    return '(Another request is still processing on this conversation. Wait a moment and try again.)';
-  }
-
-  // Authentication
-  if (msg.includes('401') || msg.includes('403') || msg.includes('unauthorized') || msg.includes('forbidden')) {
-    return '(Authentication failed -- check your API key in lettabot.yaml.)';
-  }
-
-  // Agent/conversation not found
-  if (msg.includes('not found') || msg.includes('404')) {
-    return '(Agent or conversation not found -- the configured agent may have been deleted. Try re-onboarding.)';
-  }
-
-  // Server errors
-  if (msg.includes('500') || msg.includes('502') || msg.includes('503') || msg.includes('internal server error')) {
-    return '(Letta API server error -- try again in a moment.)';
-  }
-
-  // Fallback: use the actual error message (truncated for safety)
-  const detail = error.message.length > 200 ? error.message.slice(0, 200) + '...' : error.message;
-  const trimmed = detail.replace(/[.\s]+$/, '');
-  return `(Agent error: ${trimmed}. Try sending your message again.)`;
-}
-
 const SUPPORTED_IMAGE_MIMES = new Set([
   'image/png', 'image/jpeg', 'image/gif', 'image/webp',
 ]);
@@ -224,21 +120,7 @@ async function buildMultimodalMessage(
   return content.length > 1 ? content : formattedText;
 }
 
-// ---------------------------------------------------------------------------
-// Stream message type with toolCallId/uuid for dedup
-// ---------------------------------------------------------------------------
-export interface StreamMsg {
-  type: string;
-  content?: string;
-  toolCallId?: string;
-  toolName?: string;
-  uuid?: string;
-  isError?: boolean;
-  result?: string;
-  success?: boolean;
-  error?: string;
-  [key: string]: unknown;
-}
+export { type StreamMsg } from './types.js';
 
 export function isResponseDeliverySuppressed(msg: Pick<InboundMessage, 'isListeningMode'>): boolean {
   return msg.isListeningMode === true;
@@ -368,233 +250,6 @@ export class LettaBot implements AgentSession {
     return `${this.config.displayName}: ${text}`;
   }
 
-  // ---- Tool call display ----
-
-  /**
-   * Pretty display config for known tools.
-   * `header`: bold verb shown to the user (e.g., "Searching")
-   * `argKeys`: ordered preference list of fields to extract from toolInput
-   *            or tool_result JSON as the detail line
-   * `format`: optional -- 'code' wraps the detail in backticks
-   */
-  private static readonly TOOL_DISPLAY_MAP: Record<string, {
-    header: string;
-    argKeys: string[];
-    format?: 'code';
-    /** For 'code' format: if the first argKey value exceeds this length,
-     *  fall back to the next argKey shown as plain text instead. */
-    adaptiveCodeThreshold?: number;
-    /** Dynamic header based on tool input. When provided, the return value
-     *  replaces `header` entirely and no argKey detail is appended. */
-    headerFn?: (input: Record<string, unknown>) => string;
-  }> = {
-    web_search:          { header: 'Searching',      argKeys: ['query'] },
-    fetch_webpage:       { header: 'Reading',         argKeys: ['url'] },
-    Bash:                { header: 'Running',          argKeys: ['command', 'description'], format: 'code', adaptiveCodeThreshold: 80 },
-    Read:                { header: 'Reading',          argKeys: ['file_path'] },
-    Edit:                { header: 'Editing',          argKeys: ['file_path'] },
-    Write:               { header: 'Writing',          argKeys: ['file_path'] },
-    Glob:                { header: 'Finding files',    argKeys: ['pattern'] },
-    Grep:                { header: 'Searching code',   argKeys: ['pattern'] },
-    Task:                { header: 'Delegating',       argKeys: ['description'] },
-    conversation_search: { header: 'Searching conversation history', argKeys: ['query'] },
-    archival_memory_search: { header: 'Searching archival memory', argKeys: ['query'] },
-    run_code:            { header: 'Running code',     argKeys: ['code'], format: 'code' },
-    note:                { header: 'Taking note',      argKeys: ['title', 'content'] },
-    manage_todo:         { header: 'Updating todos',   argKeys: [] },
-    TodoWrite:           { header: 'Updating todos',   argKeys: [] },
-    Skill:               {
-      header: 'Loading skill',
-      argKeys: ['skill'],
-      headerFn: (input) => {
-        const skill = input.skill as string | undefined;
-        const command = (input.command as string | undefined) || (input.args as string | undefined);
-        if (command === 'unload') return skill ? `Unloading ${skill}` : 'Unloading skill';
-        if (command === 'refresh') return 'Refreshing skills';
-        return skill ? `Loading ${skill}` : 'Loading skill';
-      },
-    },
-  };
-
-  /**
-   * Format a tool call for channel display.
-   *
-   * Known tools get a pretty verb-based header (e.g., **Searching**).
-   * Unknown tools fall back to **Tool**\n<name> (<args>).
-   *
-   * When toolInput is empty (SDK streaming limitation -- the CLI only
-   * forwards the first chunk before args are accumulated), we fall back
-   * to extracting the detail from the tool_result content.
-   */
-  private formatToolCallDisplay(streamMsg: StreamMsg, toolResult?: StreamMsg): string {
-    const name = streamMsg.toolName || 'unknown';
-    const display = LettaBot.TOOL_DISPLAY_MAP[name];
-
-    if (display) {
-      // --- Dynamic header path (e.g., Skill tool with load/unload/refresh modes) ---
-      if (display.headerFn) {
-        const input = (streamMsg.toolInput as Record<string, unknown> | undefined) ?? {};
-        return `**${display.headerFn(input)}**`;
-      }
-
-      // --- Custom display path ---
-      const detail = this.extractToolDetail(display.argKeys, streamMsg, toolResult);
-      if (detail) {
-        let formatted: string;
-        if (display.format === 'code' && display.adaptiveCodeThreshold) {
-          // Adaptive: short values get code format, long values fall back to
-          // the next argKey as plain text (e.g., Bash shows `command` for short
-          // commands, but the human-readable `description` for long ones).
-          if (detail.length <= display.adaptiveCodeThreshold) {
-            formatted = `\`${detail}\``;
-          } else {
-            const fallback = this.extractToolDetail(display.argKeys.slice(1), streamMsg, toolResult);
-            formatted = fallback || detail.slice(0, display.adaptiveCodeThreshold) + '...';
-          }
-        } else {
-          formatted = display.format === 'code' ? `\`${detail}\`` : detail;
-        }
-        return `**${display.header}**\n${formatted}`;
-      }
-      return `**${display.header}**`;
-    }
-
-    // --- Generic fallback for unknown tools ---
-    let params = this.abbreviateToolInput(streamMsg);
-    if (!params && toolResult?.content) {
-      params = this.extractInputFromToolResult(toolResult.content);
-    }
-    return params ? `**Tool**\n${name} (${params})` : `**Tool**\n${name}`;
-  }
-
-  /**
-   * Extract the first matching detail string from a tool call's input or
-   * the subsequent tool_result content (fallback for empty toolInput).
-   */
-  private extractToolDetail(
-    argKeys: string[],
-    streamMsg: StreamMsg,
-    toolResult?: StreamMsg,
-  ): string {
-    if (argKeys.length === 0) return '';
-
-    // 1. Try toolInput (primary -- when SDK provides args)
-    const input = streamMsg.toolInput as Record<string, unknown> | undefined;
-    if (input && typeof input === 'object') {
-      for (const key of argKeys) {
-        const val = input[key];
-        if (typeof val === 'string' && val.length > 0) {
-          return val.length > 120 ? val.slice(0, 117) + '...' : val;
-        }
-      }
-    }
-
-    // 2. Try tool_result content (fallback for empty toolInput)
-    if (toolResult?.content) {
-      try {
-        const parsed = JSON.parse(toolResult.content);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          for (const key of argKeys) {
-            const val = (parsed as Record<string, unknown>)[key];
-            if (typeof val === 'string' && val.length > 0) {
-              return val.length > 120 ? val.slice(0, 117) + '...' : val;
-            }
-          }
-        }
-      } catch { /* non-JSON result -- skip */ }
-    }
-
-    return '';
-  }
-
-  /**
-   * Extract a brief parameter summary from a tool call's input.
-   * Used only by the generic fallback display path.
-   */
-  private abbreviateToolInput(streamMsg: StreamMsg): string {
-    const input = streamMsg.toolInput as Record<string, unknown> | undefined;
-    if (!input || typeof input !== 'object') return '';
-    // Filter out undefined/null values (SDK yields {raw: undefined} for partial chunks)
-    const entries = Object.entries(input).filter(([, v]) => v != null).slice(0, 2);
-    return entries
-      .map(([k, v]) => {
-        let str: string;
-        try {
-          str = typeof v === 'string' ? v : (JSON.stringify(v) ?? String(v));
-        } catch {
-          str = String(v);
-        }
-        const truncated = str.length > 80 ? str.slice(0, 77) + '...' : str;
-        return `${k}: ${truncated}`;
-      })
-      .join(', ');
-  }
-
-  /**
-   * Fallback: extract input parameters from a tool_result's content.
-   * Some tools echo their input in the result (e.g., web_search includes
-   * `query`). Used only by the generic fallback display path.
-   */
-  private extractInputFromToolResult(content: string): string {
-    try {
-      const parsed = JSON.parse(content);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return '';
-
-      const inputKeys = ['query', 'input', 'prompt', 'url', 'search_query', 'text'];
-      const parts: string[] = [];
-
-      for (const key of inputKeys) {
-        const val = (parsed as Record<string, unknown>)[key];
-        if (typeof val === 'string' && val.length > 0) {
-          const truncated = val.length > 80 ? val.slice(0, 77) + '...' : val;
-          parts.push(`${key}: ${truncated}`);
-          if (parts.length >= 2) break;
-        }
-      }
-
-      return parts.join(', ');
-    } catch {
-      return '';
-    }
-  }
-
-  /**
-   * Format reasoning text for channel display, respecting truncation config.
-   * Returns { text, parseMode? } -- Telegram gets HTML with <blockquote> to
-   * bypass telegramify-markdown (which adds unwanted spaces to blockquotes).
-   * Signal falls back to italic (no blockquote support).
-   * Discord/Slack use markdown blockquotes.
-   */
-  private formatReasoningDisplay(text: string, channelId?: string): { text: string; parseMode?: string } {
-    const maxChars = this.config.display?.reasoningMaxChars ?? 0;
-    // Trim leading whitespace from each line -- the API often includes leading
-    // spaces in reasoning chunks that look wrong in channel output.
-    const cleaned = text.split('\n').map(line => line.trimStart()).join('\n').trim();
-    const truncated = maxChars > 0 && cleaned.length > maxChars
-      ? cleaned.slice(0, maxChars) + '...'
-      : cleaned;
-
-    if (channelId === 'signal') {
-      // Signal: no blockquote support, use italic
-      return { text: `**Thinking**\n_${truncated}_` };
-    }
-    if (channelId === 'telegram' || channelId === 'telegram-mtproto') {
-      // Telegram: use HTML blockquote to bypass telegramify-markdown spacing
-      const escaped = truncated
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-      return {
-        text: `<blockquote expandable><b>Thinking</b>\n${escaped}</blockquote>`,
-        parseMode: 'HTML',
-      };
-    }
-    // Discord, Slack, etc: markdown blockquote
-    const lines = truncated.split('\n');
-    const quoted = lines.map(line => `> ${line}`).join('\n');
-    return { text: `> **Thinking**\n${quoted}` };
-  }
-
   // =========================================================================
   // Session options (shared by processMessage and sendToAgent)
   // =========================================================================
@@ -703,30 +358,6 @@ export class LettaBot implements AgentSession {
    * Format AskUserQuestion questions as a single channel message.
    * Displays each question with numbered options for the user to choose from.
    */
-  private formatQuestionsForChannel(questions: Array<{
-    question: string;
-    header: string;
-    options: Array<{ label: string; description: string }>;
-    multiSelect: boolean;
-  }>): string {
-    const parts: string[] = [];
-    for (const q of questions) {
-      parts.push(`**${q.question}**`);
-      parts.push('');
-      for (let i = 0; i < q.options.length; i++) {
-        parts.push(`${i + 1}. **${q.options[i].label}**`);
-        parts.push(`   ${q.options[i].description}`);
-      }
-      if (q.multiSelect) {
-        parts.push('');
-        parts.push('_(You can select multiple options)_');
-      }
-    }
-    parts.push('');
-    parts.push('_Reply with your choice (number, name, or your own answer)._');
-    return parts.join('\n');
-  }
-
   // =========================================================================
   // Session lifecycle helpers
   // =========================================================================
@@ -1844,7 +1475,7 @@ export class LettaBot implements AgentSession {
           options: Array<{ label: string; description: string }>;
           multiSelect: boolean;
         }>;
-        const questionText = this.formatQuestionsForChannel(questions);
+        const questionText = formatQuestionsForChannel(questions);
         log.info(`AskUserQuestion: sending ${questions.length} question(s) to ${msg.channel}:${msg.chatId}`);
         await adapter.sendMessage({ chatId: msg.chatId, text: questionText, threadId: msg.threadId });
 
@@ -1986,7 +1617,7 @@ export class LettaBot implements AgentSession {
             log.info(`Reasoning: ${reasoningBuffer.trim()}`);
             if (this.config.display?.showReasoning && !suppressDelivery) {
               try {
-                const reasoning = this.formatReasoningDisplay(reasoningBuffer, adapter.id);
+                const reasoning = formatReasoningDisplay(reasoningBuffer, adapter.id, this.config.display?.reasoningMaxChars);
                 await adapter.sendMessage({ chatId: msg.chatId, text: reasoning.text, threadId: msg.threadId, parseMode: reasoning.parseMode });
                 // Note: display messages don't set sentAnyMessage -- they're informational,
                 // not a substitute for an assistant response. Error handling and retry must
@@ -2019,7 +1650,7 @@ export class LettaBot implements AgentSession {
             // Display tool call (args are fully accumulated by dedupedStream buffer-and-flush)
             if (this.config.display?.showToolCalls && !suppressDelivery) {
               try {
-                const text = this.formatToolCallDisplay(streamMsg);
+                const text = formatToolCallDisplay(streamMsg);
                 await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
               } catch (err) {
                 log.warn('Failed to send tool call display:', err instanceof Error ? err.message : err);

@@ -175,6 +175,23 @@ export interface LastMessageTarget {
   updatedAt: string;
 }
 
+// ---------------------------------------------------------------------------
+// Stream message type (used by processMessage, sendToAgent, gateway)
+// ---------------------------------------------------------------------------
+
+export interface StreamMsg {
+  type: string;
+  content?: string;
+  toolCallId?: string;
+  toolName?: string;
+  uuid?: string;
+  isError?: boolean;
+  result?: string;
+  success?: boolean;
+  error?: string;
+  [key: string]: unknown;
+}
+
 /**
  * Agent store - persists the single agent ID
  */
