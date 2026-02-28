@@ -84,6 +84,16 @@ export interface InboundMessage {
   isBatch?: boolean;                  // Is this a batched group message?
   batchedMessages?: InboundMessage[]; // Original individual messages (for batch formatting)
   isListeningMode?: boolean;          // Listening mode: agent processes for memory but response is suppressed
+  formatterHints?: FormatterHints;    // Channel capabilities for directive rendering
+}
+
+/**
+ * Channel capability hints for per-message directive rendering
+ */
+export interface FormatterHints {
+  supportsReactions?: boolean;
+  supportsFiles?: boolean;
+  formatHint?: string;
 }
 
 /**

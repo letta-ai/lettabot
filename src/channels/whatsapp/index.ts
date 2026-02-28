@@ -836,6 +836,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
           isListeningMode,
           replyToUser: extracted.replyContext?.senderE164,
           attachments: extracted.attachments,
+          formatterHints: this.getFormatterHints(),
         });
       }
     }
@@ -1000,6 +1001,14 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
   getDmPolicy(): string {
     return this.config.dmPolicy || 'pairing';
+  }
+
+  getFormatterHints() {
+    return {
+      supportsReactions: false,
+      supportsFiles: true,
+      formatHint: 'WhatsApp: *bold* _italic_ `code` — NO: headers, code fences, links, tables',
+    };
   }
 
   supportsEditing(): boolean {

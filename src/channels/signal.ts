@@ -339,6 +339,14 @@ This code expires in 1 hour.`;
     return this.config.dmPolicy || 'pairing';
   }
 
+  getFormatterHints() {
+    return {
+      supportsReactions: true,
+      supportsFiles: false,
+      formatHint: 'ONLY: *bold* _italic_ `code` — NO: headers, code fences, links, quotes, tables',
+    };
+  }
+
   supportsEditing(): boolean {
     return false;
   }
@@ -868,6 +876,7 @@ This code expires in 1 hour.`;
         wasMentioned,
         isListeningMode,
         attachments: collectedAttachments.length > 0 ? collectedAttachments : undefined,
+        formatterHints: this.getFormatterHints(),
       };
       
       this.onMessage?.(msg).catch((err) => {

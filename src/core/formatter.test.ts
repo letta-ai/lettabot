@@ -181,38 +181,67 @@ describe('formatMessageEnvelope', () => {
       expect(result).toContain('**Mentioned**: yes');
     });
 
-    it('does not include per-message directive hints (covered by system prompt)', () => {
-      const groupMsg = createMessage({ isGroup: true });
-      const dmMsg = createMessage({ isGroup: false });
-      expect(formatMessageEnvelope(groupMsg)).not.toContain('Response Directives');
-      expect(formatMessageEnvelope(dmMsg)).not.toContain('Response Directives');
+    it('includes <actions> directives when reactions are supported', () => {
+      const msg = createMessage({
+        isGroup: false,
+        formatterHints: { supportsReactions: true },
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('Response Directives');
+      expect(result).toContain('<no-reply/>');
+      expect(result).toContain('<actions>');
+    });
+
+    it('omits <actions> directives when reactions are not supported', () => {
+      const msg = createMessage({ isGroup: false });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('Response Directives');
+      expect(result).toContain('<no-reply/>');
+      expect(result).not.toContain('<react');
+    });
+
+    it('shows file directive only when files supported', () => {
+      const msg = createMessage({
+        formatterHints: { supportsFiles: true },
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('<send-file');
+    });
+
+    it('omits file directive when files not supported', () => {
+      const msg = createMessage({
+        formatterHints: { supportsFiles: false },
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).not.toContain('<send-file');
+    });
+
+    it('shows minimal directives in listening mode', () => {
+      const msg = createMessage({
+        isGroup: true,
+        isListeningMode: true,
+        formatterHints: { supportsReactions: true },
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('<no-reply/>');
+      expect(result).toContain('react to show you saw this');
+      expect(result).not.toContain('react and reply');
     });
   });
 
   describe('format hints', () => {
-    it('includes Slack format hint', () => {
-      const msg = createMessage({ channel: 'slack' });
+    it('includes format hint when provided via formatterHints', () => {
+      const msg = createMessage({
+        formatterHints: { formatHint: 'MarkdownV2: *bold* _italic_' },
+      });
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('**Format support**: Markdown (auto-converted to Slack mrkdwn):');
+      expect(result).toContain('**Format support**: MarkdownV2: *bold* _italic_');
     });
 
-    it('includes Telegram format hint', () => {
-      const msg = createMessage({ channel: 'telegram' });
+    it('omits Format support line when no formatHint is set', () => {
+      const msg = createMessage({});
       const result = formatMessageEnvelope(msg);
-      expect(result).toContain('**Format support**: MarkdownV2:');
-    });
-
-    it('includes WhatsApp format hint', () => {
-      const msg = createMessage({ channel: 'whatsapp' });
-      const result = formatMessageEnvelope(msg);
-      expect(result).toContain('**Format support**:');
-      expect(result).toContain('NO: headers');
-    });
-
-    it('includes Signal format hint', () => {
-      const msg = createMessage({ channel: 'signal' });
-      const result = formatMessageEnvelope(msg);
-      expect(result).toContain('**Format support**: ONLY:');
+      expect(result).not.toContain('**Format support**');
     });
   });
 

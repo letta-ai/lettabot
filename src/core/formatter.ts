@@ -13,17 +13,7 @@ export const SYSTEM_REMINDER_TAG = 'system-reminder';
 export const SYSTEM_REMINDER_OPEN = `<${SYSTEM_REMINDER_TAG}>`;
 export const SYSTEM_REMINDER_CLOSE = `</${SYSTEM_REMINDER_TAG}>`;
 
-/**
- * Channel format hints - tells the agent what formatting syntax to use
- * Each channel has different markdown support - hints help agent format appropriately.
- */
-const CHANNEL_FORMATS: Record<string, string> = {
-  slack: 'Markdown (auto-converted to Slack mrkdwn): **bold** _italic_ `code` [links](url) ```code blocks``` - NO: headers, tables',
-  discord: '**bold** *italic* `code` [links](url) ```code blocks``` - NO: headers, tables',
-  telegram: 'MarkdownV2: *bold* _italic_ `code` [links](url) - NO: headers, tables',
-  whatsapp: '*bold* _italic_ `code` - NO: headers, code fences, links, tables',
-  signal: 'ONLY: *bold* _italic_ `code` - NO: headers, code fences, links, quotes, tables',
-};
+// Channel format hints are now provided per-message via formatterHints on InboundMessage.
 
 export interface EnvelopeOptions {
   timezone?: 'local' | 'utc' | string;  // IANA timezone or 'local'/'utc'
@@ -229,7 +219,7 @@ function buildMetadataLines(msg: InboundMessage, options: EnvelopeOptions): stri
   lines.push(`- **Timestamp**: ${formatTimestamp(msg.timestamp, options)}`);
 
   // Format support hint
-  const formatHint = CHANNEL_FORMATS[msg.channel];
+  const formatHint = msg.formatterHints?.formatHint;
   if (formatHint) {
     lines.push(`- **Format support**: ${formatHint}`);
   }
@@ -256,7 +246,13 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
     if (msg.wasMentioned) {
       lines.push(`- **Mentioned**: yes`);
     }
-    lines.push(`- **Hint**: Use \`<no-reply/>\` to skip replying, \`<actions>\` for reactions/voice`);
+    if (msg.isListeningMode) {
+      lines.push(`- **Mode**: Listen only — observe and update memories, do not send text replies`);
+    } else if (msg.formatterHints?.supportsReactions) {
+      lines.push(`- **Hint**: See Response Directives below for \`<no-reply/>\` and \`<actions>\``);
+    } else {
+      lines.push(`- **Hint**: See Response Directives below for \`<no-reply/>\``);
+    }
   } else {
     lines.push(`- **Type**: Direct message`);
   }
@@ -296,6 +292,56 @@ export function buildSessionContext(options: SessionContextOptions): string[] {
   }
   if (options.serverUrl) {
     lines.push(`- **Server**: ${options.serverUrl}`);
+  }
+
+  return lines;
+}
+
+/**
+ * Build context-aware Response Directives based on channel capabilities and chat type.
+ * In listening mode, shows minimal directives. In normal mode, shows the full set
+ * filtered by what the channel actually supports.
+ */
+function buildResponseDirectives(msg: InboundMessage): string[] {
+  const lines: string[] = [];
+  const supportsReactions = msg.formatterHints?.supportsReactions ?? false;
+  const supportsFiles = msg.formatterHints?.supportsFiles ?? false;
+  const isGroup = !!msg.isGroup;
+  const isListeningMode = msg.isListeningMode ?? false;
+
+  // Listening mode: minimal directives only
+  if (isListeningMode) {
+    lines.push(`- \`<no-reply/>\` — acknowledge without replying (recommended)`);
+    if (supportsReactions) {
+      lines.push(`- \`<actions><react emoji="eyes" /></actions>\` — react to show you saw this`);
+    }
+    return lines;
+  }
+
+  // no-reply
+  if (isGroup) {
+    lines.push(`- \`<no-reply/>\` — skip replying when the message isn't directed at you`);
+  } else {
+    lines.push(`- \`<no-reply/>\` — skip replying when the message doesn't need a response`);
+  }
+
+  // actions/react (only if channel supports it)
+  if (supportsReactions) {
+    lines.push(`- \`<actions><react emoji="thumbsup" /></actions>\` — react without sending text (executes silently)`);
+    lines.push(`- \`<actions><react emoji="eyes" /></actions>Your text here\` — react and reply`);
+    if (isGroup) {
+      lines.push(`- \`<actions><react emoji="fire" message="123" /></actions>\` — react to a specific message`);
+    }
+    lines.push(`- Emoji names: eyes, thumbsup, heart, fire, tada, clap — or unicode`);
+    lines.push(`- Prefer directives over tool calls for reactions (faster and cheaper)`);
+  }
+
+  // voice memo (always available -- TTS config is server-side)
+  lines.push(`- \`<actions><voice>Your message here</voice></actions>\` — send a voice memo via TTS`);
+
+  // file sending (only if channel supports it)
+  if (supportsFiles) {
+    lines.push(`- \`<send-file path="/path/to/file.png" kind="image" />\` — send a file (restricted to configured directory)`);
   }
 
   return lines;
@@ -351,6 +397,9 @@ export function formatMessageEnvelope(
     sections.push(`## Chat Context\n${contextLines.join('\n')}`);
   }
 
+  // Channel-aware response directives
+  const directiveLines = buildResponseDirectives(msg);
+  sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
   // Build the full system-reminder block
   const reminderContent = sections.join('\n\n');
   const reminder = `${SYSTEM_REMINDER_OPEN}\n${reminderContent}\n${SYSTEM_REMINDER_CLOSE}`;
@@ -418,8 +467,15 @@ export function formatGroupBatchEnvelope(
   });
 
   // Format hint
-  const formatHint = CHANNEL_FORMATS[first.channel];
+  const formatHint = first.formatterHints?.formatHint;
   const hint = formatHint ? `\n(Format: ${formatHint})` : '';
 
-  return `${header}\n${lines.join('\n')}${hint}`;
+  // Compact directives for batch
+  const supportsReactions = first.formatterHints?.supportsReactions ?? false;
+  const directiveParts = isListeningMode
+    ? [`\`<no-reply/>\` to acknowledge`, ...(supportsReactions ? [`\`<actions><react emoji="eyes" /></actions>\` to react`] : [])]
+    : [`\`<no-reply/>\` to skip replying`, ...(supportsReactions ? [`\`<actions><react emoji="thumbsup" /></actions>\` to react`] : [])];
+  const directives = `\n(Directives: ${directiveParts.join(', ')})`;
+
+  return `${header}\n${lines.join('\n')}${hint}${directives}`;
 }
