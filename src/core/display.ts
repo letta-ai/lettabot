@@ -35,7 +35,7 @@ const TOOL_DISPLAY_MAP: Record<string, {
   Edit:                { header: 'Editing',          argKeys: ['file_path'] },
   Write:               { header: 'Writing',          argKeys: ['file_path'] },
   Glob:                { header: 'Finding files',    argKeys: ['pattern'] },
-  Grep:                { header: 'Searching code',   argKeys: ['pattern'] },
+  Grep:                { header: 'Searching files',   argKeys: ['pattern'] },
   Task:                { header: 'Delegating',       argKeys: ['description'] },
   conversation_search: { header: 'Searching conversation history', argKeys: ['query'] },
   archival_memory_search: { header: 'Searching archival memory', argKeys: ['query'] },
