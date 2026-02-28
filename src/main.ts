@@ -609,6 +609,7 @@ async function main() {
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
       conversationOverrides: agentConfig.conversations?.perChannel,
       maxSessions: agentConfig.conversations?.maxSessions,
+      reuseSession: agentConfig.conversations?.reuseSession,
       redaction: agentConfig.security?.redaction,
       cronStorePath,
       skills: {

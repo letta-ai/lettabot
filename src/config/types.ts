@@ -70,6 +70,7 @@ export interface AgentConfig {
     heartbeat?: string;               // "dedicated" | "last-active" | "<channel>" (default: last-active)
     perChannel?: string[];            // Channels that should always have their own conversation
     maxSessions?: number;             // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
+    reuseSession?: boolean;           // Reuse SDK subprocess across messages (default: true). Set false to eliminate stream state bleed.
   };
   /** Features for this agent */
   features?: {
@@ -158,6 +159,7 @@ export interface LettaBotConfig {
     heartbeat?: string;               // "dedicated" | "last-active" | "<channel>" (default: last-active)
     perChannel?: string[];            // Channels that should always have their own conversation
     maxSessions?: number;             // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
+    reuseSession?: boolean;           // Reuse SDK subprocess across messages (default: true). Set false to eliminate stream state bleed.
   };
 
   // Features
