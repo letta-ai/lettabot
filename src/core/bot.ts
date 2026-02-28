@@ -2082,7 +2082,7 @@ export class LettaBot implements AgentSession {
             
             // Live-edit streaming for channels that support it
             // Hold back streaming edits while response could still be <no-reply/> or <actions> block
-            const canEdit = adapter.supportsEditing?.() ?? true;
+            const canEdit = adapter.supportsEditing?.() ?? false;
             const trimmed = response.trim();
             const mayBeHidden = '<no-reply/>'.startsWith(trimmed)
               || '<actions>'.startsWith(trimmed)

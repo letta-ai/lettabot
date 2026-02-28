@@ -27,6 +27,7 @@ export interface TelegramConfig {
   token: string;
   dmPolicy?: DmPolicy;           // 'pairing' (default), 'allowlist', or 'open'
   allowedUsers?: number[];       // Telegram user IDs (config allowlist)
+  streaming?: boolean;           // Stream responses via progressive message edits (default: false)
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
   mentionPatterns?: string[];    // Regex patterns for mention detection
@@ -600,6 +601,10 @@ export class TelegramAdapter implements ChannelAdapter {
     return { messageId: String(result.message_id) };
   }
   
+  supportsEditing(): boolean {
+    return this.config.streaming ?? false;
+  }
+
   async editMessage(chatId: string, messageId: string, text: string): Promise<void> {
     const { markdownToTelegramV2 } = await import('./telegram-format.js');
     try {

@@ -65,17 +65,20 @@ channels:
     enabled: true
     token: "123456:ABC-DEF..."
     dmPolicy: pairing
+    # streaming: true             # Opt-in: progressively edit messages as tokens arrive
 
   slack:
     enabled: true
     botToken: xoxb-...
     appToken: xapp-...
     dmPolicy: pairing
+    # streaming: true
 
   discord:
     enabled: true
     token: "..."
     dmPolicy: pairing
+    # streaming: true
 
   whatsapp:
     enabled: true
@@ -368,6 +371,7 @@ All channels share these common options:
 | `instantGroups` | string[] | Group/channel IDs that bypass debounce entirely (legacy) |
 | `groups` | object | Per-group configuration map (use `*` as default) |
 | `mentionPatterns` | string[] | Extra regex patterns for mention detection (Telegram/WhatsApp/Signal) |
+| `streaming` | boolean | Stream responses via progressive message edits (default: false; Telegram/Discord/Slack only) |
 
 ### Group Message Debouncing
 

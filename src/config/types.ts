@@ -273,6 +273,7 @@ export interface TelegramConfig {
   token?: string;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
+  streaming?: boolean;              // Stream responses via progressive message edits (default: false)
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Group chat IDs that bypass batching
@@ -299,6 +300,7 @@ export interface SlackConfig {
   botToken?: string;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
+  streaming?: boolean;              // Stream responses via progressive message edits (default: false)
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Channel IDs that bypass batching
@@ -345,6 +347,7 @@ export interface DiscordConfig {
   token?: string;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
+  streaming?: boolean;              // Stream responses via progressive message edits (default: false)
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Guild/server IDs or channel IDs that bypass batching
