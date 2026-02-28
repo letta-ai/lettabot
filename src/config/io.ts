@@ -1,7 +1,11 @@
 /**
  * LettaBot Configuration I/O
  * 
- * Config file location: ~/.lettabot/config.yaml (or ./lettabot.yaml in project)
+ * Config sources (checked in priority order):
+ * 1. LETTABOT_CONFIG_YAML env var (inline YAML or base64-encoded YAML)
+ * 2. LETTABOT_CONFIG env var (file path)
+ * 3. ./lettabot.yaml or ./lettabot.yml (project-local)
+ * 4. ~/.lettabot/config.yaml or ~/.lettabot/config.yml (user global)
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -12,6 +16,9 @@ import type { LettaBotConfig, ProviderConfig } from './types.js';
 import { DEFAULT_CONFIG, canonicalizeServerMode, isApiServerMode, isDockerServerMode } from './types.js';
 import { LETTA_API_URL } from '../auth/oauth.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Config');
 // Config file locations (checked in order)
 const CONFIG_PATHS = [
   resolve(process.cwd(), 'lettabot.yaml'),           // Project-local
@@ -23,7 +30,52 @@ const CONFIG_PATHS = [
 const DEFAULT_CONFIG_PATH = join(homedir(), '.lettabot', 'config.yaml');
 
 /**
- * Find the config file path (first existing, or default)
+ * Whether inline config is available via LETTABOT_CONFIG_YAML env var.
+ * When set, this takes priority over all file-based config sources.
+ */
+export function hasInlineConfig(): boolean {
+  return !!process.env.LETTABOT_CONFIG_YAML;
+}
+
+/**
+ * Decode a value that may be raw YAML or base64-encoded YAML.
+ * Detection: if the value contains a colon, it's raw YAML (every valid config
+ * has key: value pairs). Otherwise it's base64 (which uses only [A-Za-z0-9+/=]).
+ */
+export function decodeYamlOrBase64(value: string): string {
+  if (value.includes(':')) {
+    return value;
+  }
+  return Buffer.from(value, 'base64').toString('utf-8');
+}
+
+/**
+ * Decode inline config from LETTABOT_CONFIG_YAML env var.
+ */
+function decodeInlineConfig(): string {
+  return decodeYamlOrBase64(process.env.LETTABOT_CONFIG_YAML!);
+}
+
+/**
+ * Human-readable label for where config was loaded from.
+ */
+export function configSourceLabel(): string {
+  if (hasInlineConfig()) return 'LETTABOT_CONFIG_YAML';
+  const path = resolveConfigPath();
+  return existsSync(path) ? path : 'defaults + environment variables';
+}
+
+/**
+ * Encode a YAML config file as a base64 string suitable for LETTABOT_CONFIG_YAML.
+ */
+export function encodeConfigForEnv(yamlContent: string): string {
+  return Buffer.from(yamlContent, 'utf-8').toString('base64');
+}
+
+/**
+ * Find the config file path (first existing, or default).
+ * Note: when LETTABOT_CONFIG_YAML is set, file-based config is bypassed
+ * entirely -- use hasInlineConfig() to check.
  * 
  * Priority:
  * 1. LETTABOT_CONFIG env var (explicit override)
@@ -92,17 +144,31 @@ function parseAndNormalizeConfig(content: string): LettaBotConfig {
 
   // Deprecation warning: top-level api should be moved under server
   if (config.api && !config.server.api) {
-    console.warn('[Config] WARNING: Top-level `api:` is deprecated. Move it under `server:`.');
+    log.warn('WARNING: Top-level `api:` is deprecated. Move it under `server:`.');
   }
 
   return config;
 }
 
 /**
- * Load config from YAML file
+ * Load config from inline env var or YAML file
  */
 export function loadConfig(): LettaBotConfig {
   _lastLoadFailed = false;
+
+  // Inline config takes priority over file-based config
+  if (hasInlineConfig()) {
+    try {
+      const content = decodeInlineConfig();
+      return parseAndNormalizeConfig(content);
+    } catch (err) {
+      _lastLoadFailed = true;
+      log.error('Failed to parse LETTABOT_CONFIG_YAML:', err);
+      log.warn('Using default configuration. Check your YAML syntax.');
+      return { ...DEFAULT_CONFIG };
+    }
+  }
+
   const configPath = resolveConfigPath();
   
   if (!existsSync(configPath)) {
@@ -114,8 +180,8 @@ export function loadConfig(): LettaBotConfig {
     return parseAndNormalizeConfig(content);
   } catch (err) {
     _lastLoadFailed = true;
-    console.error(`[Config] Failed to load ${configPath}:`, err);
-    console.warn('[Config] Using default configuration. Check your YAML syntax and field locations.');
+    log.error(`Failed to load ${configPath}:`, err);
+    log.warn('Using default configuration. Check your YAML syntax and field locations.');
     return { ...DEFAULT_CONFIG };
   }
 }
@@ -126,6 +192,18 @@ export function loadConfig(): LettaBotConfig {
  */
 export function loadConfigStrict(): LettaBotConfig {
   _lastLoadFailed = false;
+
+  // Inline config takes priority over file-based config
+  if (hasInlineConfig()) {
+    try {
+      const content = decodeInlineConfig();
+      return parseAndNormalizeConfig(content);
+    } catch (err) {
+      _lastLoadFailed = true;
+      throw err;
+    }
+  }
+
   const configPath = resolveConfigPath();
 
   if (!existsSync(configPath)) {
@@ -160,7 +238,7 @@ export function saveConfig(config: Partial<LettaBotConfig> & Pick<LettaBotConfig
   });
   
   writeFileSync(configPath, content, 'utf-8');
-  console.log(`[Config] Saved to ${configPath}`);
+  log.info(`Saved to ${configPath}`);
 }
 
 /**
@@ -349,6 +427,36 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
     env.ATTACHMENTS_MAX_AGE_DAYS = String(config.attachments.maxAgeDays);
   }
 
+  // TTS (text-to-speech for voice memos)
+  if (config.tts?.provider) {
+    env.TTS_PROVIDER = config.tts.provider;
+  }
+  if (config.tts?.apiKey) {
+    // Set the provider-specific key based on provider
+    const provider = config.tts.provider || 'elevenlabs';
+    if (provider === 'elevenlabs') {
+      env.ELEVENLABS_API_KEY = config.tts.apiKey;
+    } else if (provider === 'openai') {
+      env.OPENAI_API_KEY = config.tts.apiKey;
+    }
+  }
+  if (config.tts?.voiceId) {
+    const provider = config.tts.provider || 'elevenlabs';
+    if (provider === 'elevenlabs') {
+      env.ELEVENLABS_VOICE_ID = config.tts.voiceId;
+    } else if (provider === 'openai') {
+      env.OPENAI_TTS_VOICE = config.tts.voiceId;
+    }
+  }
+  if (config.tts?.model) {
+    const provider = config.tts.provider || 'elevenlabs';
+    if (provider === 'elevenlabs') {
+      env.ELEVENLABS_MODEL_ID = config.tts.model;
+    } else if (provider === 'openai') {
+      env.OPENAI_TTS_MODEL = config.tts.model;
+    }
+  }
+
   // API server (server.api is canonical, top-level api is deprecated fallback)
   const apiConfig = config.server.api ?? config.api;
   if (apiConfig?.port !== undefined) {
@@ -417,7 +525,7 @@ export async function syncProviders(config: Partial<LettaBotConfig> & Pick<Letta
           },
           body: JSON.stringify({ api_key: provider.apiKey }),
         });
-        console.log(`[Config] Updated provider: ${provider.name}`);
+        log.info(`Updated provider: ${provider.name}`);
       } else {
         // Create new
         await fetch(`${baseUrl}/v1/providers`, {
@@ -432,10 +540,10 @@ export async function syncProviders(config: Partial<LettaBotConfig> & Pick<Letta
             api_key: provider.apiKey,
           }),
         });
-        console.log(`[Config] Created provider: ${provider.name}`);
+        log.info(`Created provider: ${provider.name}`);
       }
     } catch (err) {
-      console.error(`[Config] Failed to sync provider ${provider.name}:`, err);
+      log.error(`Failed to sync provider ${provider.name}:`, err);
     }
   }
 }

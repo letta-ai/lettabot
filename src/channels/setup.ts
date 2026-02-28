@@ -494,9 +494,9 @@ export async function setupSignal(existing?: any): Promise<any> {
   
   p.note(
     'See docs/signal-setup.md for detailed instructions.\n' +
-    'Requires signal-cli registered with your phone number.\n\n' +
-    '⚠️  Security: Has full access to your Signal account.\n' +
-    'Can see all messages and send as you.',
+    'Recommended: Link as secondary device (signal-cli link -n "LettaBot")\n' +
+    'This keeps your phone\'s Signal app working normally.\n\n' +
+    'Requires signal-cli registered or linked with your phone number.',
     'Signal Setup'
   );
   

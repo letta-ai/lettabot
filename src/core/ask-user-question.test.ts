@@ -8,36 +8,7 @@
  */
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-
-// ---------------------------------------------------------------------------
-// 1. formatQuestionsForChannel (extracted for testability)
-// ---------------------------------------------------------------------------
-
-// Mirror the private method's logic so we can test it directly.
-// If the shape drifts, the type-check on bot.ts will catch it.
-function formatQuestionsForChannel(questions: Array<{
-  question: string;
-  header: string;
-  options: Array<{ label: string; description: string }>;
-  multiSelect: boolean;
-}>): string {
-  const parts: string[] = [];
-  for (const q of questions) {
-    parts.push(`**${q.question}**`);
-    parts.push('');
-    for (let i = 0; i < q.options.length; i++) {
-      parts.push(`${i + 1}. **${q.options[i].label}**`);
-      parts.push(`   ${q.options[i].description}`);
-    }
-    if (q.multiSelect) {
-      parts.push('');
-      parts.push('_(You can select multiple options)_');
-    }
-  }
-  parts.push('');
-  parts.push('_Reply with your choice (number, name, or your own answer)._');
-  return parts.join('\n');
-}
+import { formatQuestionsForChannel } from './display.js';
 
 describe('formatQuestionsForChannel', () => {
   test('single question with 2 options', () => {

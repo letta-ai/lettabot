@@ -12,6 +12,9 @@ import { buildModelOptions, handleModelSelection, getBillingTier } from '../util
 import { isLettaApiUrl } from '../utils/server.js';
 import { Store } from '../core/store.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Model');
 /**
  * Get agent ID from store file (supports v1 and v2 formats)
  */
@@ -26,15 +29,15 @@ function getAgentId(): string | null {
 export async function modelShow(): Promise<void> {
   const agentId = getAgentId();
   if (!agentId) {
-    console.error('No agent found. Run `lettabot server` first to create an agent.');
+    log.error('No agent found. Run `lettabot server` first to create an agent.');
     process.exit(1);
   }
 
   const model = await getAgentModel(agentId);
   if (model) {
-    console.log(`Agent model: ${model}`);
+    log.info(`Agent model: ${model}`);
   } else {
-    console.error('Could not retrieve agent model. Check your connection and API key.');
+    log.error('Could not retrieve agent model. Check your connection and API key.');
     process.exit(1);
   }
 }
@@ -45,16 +48,16 @@ export async function modelShow(): Promise<void> {
 export async function modelSet(handle: string): Promise<void> {
   const agentId = getAgentId();
   if (!agentId) {
-    console.error('No agent found. Run `lettabot server` first to create an agent.');
+    log.error('No agent found. Run `lettabot server` first to create an agent.');
     process.exit(1);
   }
 
-  console.log(`Setting model to: ${handle}`);
+  log.info(`Setting model to: ${handle}`);
   const success = await updateAgentModel(agentId, handle);
   if (success) {
-    console.log(`Model updated to: ${handle}`);
+    log.info(`Model updated to: ${handle}`);
   } else {
-    console.error('Failed to update model. Check the handle is valid and try again.');
+    log.error('Failed to update model. Check the handle is valid and try again.');
     process.exit(1);
   }
 }
@@ -67,7 +70,7 @@ export async function modelInteractive(): Promise<void> {
 
   const agentId = getAgentId();
   if (!agentId) {
-    console.error('No agent found. Run `lettabot server` first to create an agent.');
+    log.error('No agent found. Run `lettabot server` first to create an agent.');
     process.exit(1);
   }
 
@@ -141,8 +144,8 @@ export async function modelCommand(subCommand?: string, arg?: string): Promise<v
       break;
     case 'set':
       if (!arg) {
-        console.error('Usage: lettabot model set <handle>');
-        console.error('Example: lettabot model set anthropic/claude-sonnet-4-5-20250929');
+        log.error('Usage: lettabot model set <handle>');
+        log.error('Example: lettabot model set anthropic/claude-sonnet-4-5-20250929');
         process.exit(1);
       }
       await modelSet(arg);
@@ -152,8 +155,8 @@ export async function modelCommand(subCommand?: string, arg?: string): Promise<v
       await modelInteractive();
       break;
     default:
-      console.error(`Unknown subcommand: ${subCommand}`);
-      console.error('Usage: lettabot model [show|set <handle>]');
+      log.error(`Unknown subcommand: ${subCommand}`);
+      log.error('Usage: lettabot model [show|set <handle>]');
       process.exit(1);
   }
 }

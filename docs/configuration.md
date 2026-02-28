@@ -2,18 +2,36 @@
 
 Complete reference for LettaBot configuration options.
 
-## Config File Locations
+## Config Sources
 
-LettaBot checks these locations in order:
+LettaBot checks these sources in priority order:
 
-1. `LETTABOT_CONFIG` env var - Explicit path override
-2. `./lettabot.yaml` - Project-local (recommended)
-3. `./lettabot.yml` - Project-local alternate
-4. `~/.lettabot/config.yaml` - User global
-5. `~/.lettabot/config.yml` - User global alternate
+1. `LETTABOT_CONFIG_YAML` env var - Inline YAML or base64-encoded YAML (recommended for cloud/Docker)
+2. `LETTABOT_CONFIG` env var - Explicit file path override
+3. `./lettabot.yaml` - Project-local (recommended for local dev)
+4. `./lettabot.yml` - Project-local alternate
+5. `~/.lettabot/config.yaml` - User global
+6. `~/.lettabot/config.yml` - User global alternate
 
-For global installs (`npm install -g`), either:
-- Create `~/.lettabot/config.yaml`, or
+### Cloud / Docker Deployments
+
+On platforms where you can't include a config file (Railway, Fly.io, Render, etc.), use `LETTABOT_CONFIG_YAML` to pass your entire config as a single environment variable:
+
+```bash
+# Encode your local config as base64
+lettabot config encode
+
+# Or manually
+base64 < lettabot.yaml | tr -d '\n'
+```
+
+Set the output as `LETTABOT_CONFIG_YAML` on your platform. Raw YAML is also accepted (for platforms that support multi-line env vars).
+
+### Local Development
+
+For local installs, either:
+- Create `./lettabot.yaml` in your project, or
+- Create `~/.lettabot/config.yaml` for global config, or
 - Set `export LETTABOT_CONFIG=/path/to/your/config.yaml`
 
 ## Example Configuration
@@ -38,7 +56,7 @@ agent:
 
 # Conversation routing (optional)
 conversations:
-  mode: shared                   # "shared" (default) or "per-channel"
+  mode: shared                   # "shared" | "per-channel" | "per-chat"
   heartbeat: last-active         # "dedicated" | "last-active" | "<channel>"
 
 # Channel configurations
@@ -47,17 +65,20 @@ channels:
     enabled: true
     token: "123456:ABC-DEF..."
     dmPolicy: pairing
+    # streaming: true             # Opt-in: progressively edit messages as tokens arrive
 
   slack:
     enabled: true
     botToken: xoxb-...
     appToken: xapp-...
     dmPolicy: pairing
+    # streaming: true
 
   discord:
     enabled: true
     token: "..."
     dmPolicy: pairing
+    # streaming: true
 
   whatsapp:
     enabled: true
@@ -115,6 +136,42 @@ attachments:
 | `server.mode` | `'api'` \| `'docker'` | Connection mode (legacy aliases: `'cloud'`, `'selfhosted'`) |
 | `server.apiKey` | string | API key for Letta API |
 | `server.baseUrl` | string | URL for Docker/custom server (e.g., `http://localhost:8283`) |
+| `server.logLevel` | `'fatal'` \| `'error'` \| `'warn'` \| `'info'` \| `'debug'` \| `'trace'` | Log verbosity. Default: `info`. Env vars `LOG_LEVEL` / `LETTABOT_LOG_LEVEL` override. |
+
+### Logging
+
+LettaBot uses structured logging via [pino](https://getpino.io). In local dev, output is human-readable with colored timestamps and `[Module]` prefixes. In production (Railway/Docker), set `LOG_FORMAT=json` for structured JSON output that works with log aggregation tools.
+
+**Log levels** -- set in config or via environment variable (env takes precedence):
+
+```yaml
+server:
+  logLevel: info    # fatal | error | warn | info | debug | trace
+```
+
+```bash
+LOG_LEVEL=debug npm run dev       # verbose output for debugging
+LOG_FORMAT=json npm start         # structured JSON for production
+```
+
+**Debug logging** -- to enable verbose per-channel debug output (replaces the old `DEBUG_WHATSAPP=1` flag):
+
+```bash
+LOG_LEVEL=debug npm run dev
+```
+
+**Output formats:**
+
+Local dev (default) -- single-line colored output:
+```
+[23:22:37] INFO: [Bot] Session subprocess ready
+[23:22:37] WARN: [WhatsApp] Socket not available for access control
+```
+
+Production (`LOG_FORMAT=json`) -- structured JSON:
+```json
+{"level":30,"time":1234567890,"module":"Bot","msg":"Session subprocess ready"}
+```
 
 ### Docker Server Mode
 
@@ -208,12 +265,69 @@ Each entry in `agents:` accepts:
 | `id` | string | No | Use existing agent ID (skips creation) |
 | `displayName` | string | No | Prefix outbound messages (e.g. `"💜 Signo"`) |
 | `model` | string | No | Model for agent creation |
-| `conversations` | object | No | Conversation routing config (shared vs per-channel) |
+| `workingDir` | string | No | Working directory for this agent's SDK sessions (overrides global `LETTABOT_WORKING_DIR`) |
+| `conversations` | object | No | Conversation routing (mode, heartbeat, perChannel overrides) |
 | `channels` | object | No | Channel configs (same schema as top-level `channels:`). At least one agent must have channels. |
-| `features` | object | No | Per-agent features (cron, heartbeat, memfs, maxToolCalls) |
+| `features` | object | No | Per-agent features (cron, heartbeat, memfs, maxToolCalls, allowedTools, etc.) |
 | `hooks` | object | No | Message hooks for this agent (preMessage/postMessage) |
 | `polling` | object | No | Per-agent polling config (Gmail, etc.) |
 | `integrations` | object | No | Per-agent integrations (Google, etc.) |
+
+### Conversation Routing
+
+Conversation routing controls which incoming messages share a Letta conversation. Agent memory (blocks) is always shared -- only the message history is isolated.
+
+```yaml
+conversations:
+  mode: shared            # "shared" | "per-channel" | "per-chat"
+  heartbeat: last-active  # "dedicated" | "last-active" | "<channel>"
+  maxSessions: 10         # per-chat only: max concurrent sessions (LRU eviction)
+  perChannel:
+    - bluesky             # always separate, even in shared mode
+```
+
+**Modes:**
+
+| Mode | Key | Description |
+|------|-----|-------------|
+| `shared` (default) | `"shared"` | One conversation across all channels and all chats |
+| `per-channel` | `"telegram"`, `"discord"`, etc. | One conversation per channel adapter. All Telegram groups share one conversation, all Discord channels share another. |
+| `per-chat` | `"telegram:12345"` | One conversation per unique chat within each channel. Every DM and group gets its own isolated message history. |
+
+**`per-chat` mode details:**
+
+Each active chat runs its own CLI subprocess. To prevent unbounded growth, sessions are LRU-evicted when the pool hits `maxSessions` (default: 10). When an evicted chat sends another message, the session is cheaply recreated from the stored conversation ID -- no message history is lost.
+
+```yaml
+conversations:
+  mode: per-chat
+  maxSessions: 20        # optional, default 10
+```
+
+The `/reset` command in per-chat mode only clears the conversation for the chat it was issued from, not the entire channel.
+
+**`perChannel` overrides:**
+
+In `shared` mode, you can carve out specific channels to run independently while keeping the rest shared:
+
+```yaml
+conversations:
+  mode: shared
+  perChannel:
+    - bluesky             # Bluesky gets its own conversation; everything else shares one
+```
+
+**`heartbeat`:** Controls which conversation background triggers (heartbeats) use:
+- `last-active` -- use the most recently active conversation
+- `dedicated` -- use a separate `"heartbeat"` conversation key
+- `<channel>` -- use a specific channel name (e.g., `telegram`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `conversations.mode` | `'shared'` \| `'per-channel'` \| `'per-chat'` | `'shared'` | Conversation isolation level |
+| `conversations.heartbeat` | `'last-active'` \| `'dedicated'` \| string | `'last-active'` | Which conversation heartbeats target |
+| `conversations.maxSessions` | number | `10` | Max concurrent sessions in per-chat mode (LRU eviction) |
+| `conversations.perChannel` | string[] | `[]` | Channels to isolate even in shared mode |
 
 ### How it works
 
@@ -254,7 +368,6 @@ The `server:` (including `server.api:`), `transcription:`, and `attachments:` se
 
 - Two agents cannot share the same channel type without ambiguous API routing ([#219](https://github.com/letta-ai/lettabot/issues/219))
 - WhatsApp/Signal session paths are not yet agent-scoped ([#220](https://github.com/letta-ai/lettabot/issues/220))
-- Heartbeat prompt and target are not yet configurable per-agent ([#221](https://github.com/letta-ai/lettabot/issues/221))
 
 ## Channel Configuration
 
@@ -269,6 +382,7 @@ All channels share these common options:
 | `instantGroups` | string[] | Group/channel IDs that bypass debounce entirely (legacy) |
 | `groups` | object | Per-group configuration map (use `*` as default) |
 | `mentionPatterns` | string[] | Extra regex patterns for mention detection (Telegram/WhatsApp/Signal) |
+| `streaming` | boolean | Stream responses via progressive message edits (default: false; Telegram/Discord/Slack only) |
 
 ### Group Message Debouncing
 
@@ -291,28 +405,9 @@ The deprecated `groupPollIntervalMin` (minutes) still works for backward compati
 
 ### Conversation Routing
 
-By default, all channels share a single conversation. You can split conversations per channel adapter.
+See [Conversation Routing](#conversation-routing) under Multi-Agent Configuration for the full reference, including `shared`, `per-channel`, and `per-chat` modes.
 
-**Single-agent config:**
-```yaml
-conversations:
-  mode: shared        # "shared" (default) or "per-channel"
-  heartbeat: last-active  # "dedicated" | "last-active" | "<channel>"
-```
-
-**Multi-agent config:**
-```yaml
-agents:
-  - name: work-assistant
-    conversations:
-      mode: per-channel
-      heartbeat: dedicated
-```
-
-Notes:
-- `per-channel` means one conversation per **channel adapter** (telegram/slack/discord/etc), not per chat/user.
-- Agent memory remains shared across channels; only the conversation history is separated.
-- `heartbeat` controls which conversation background triggers use: a dedicated stream, the last active channel, or an explicit channel name.
+In single-agent configs, `conversations:` goes at the top level. In multi-agent configs, it goes inside each agent entry.
 
 ### Group Modes
 
@@ -466,6 +561,21 @@ Precedence: `prompt` (inline YAML) > `HEARTBEAT_PROMPT` (env var) > `promptFile`
 | `features.heartbeat.prompt` | string | _(none)_ | Custom heartbeat prompt text |
 | `features.heartbeat.promptFile` | string | _(none)_ | Path to prompt file (relative to working dir) |
 
+### Send-File Directory
+
+The `<send-file>` [response directive](./directives.md) allows the agent to send files to channels. For security, file paths are restricted to a configurable directory:
+
+```yaml
+features:
+  sendFileDir: ./data/outbound   # Default: agent working directory
+```
+
+Only files inside this directory (and its subdirectories) can be sent. Paths that resolve outside it are blocked. This prevents prompt injection attacks from exfiltrating sensitive files.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.sendFileDir` | string | _(workingDir)_ | Directory that `<send-file>` paths must be inside |
+
 ### Cron Jobs
 
 ```yaml
@@ -507,6 +617,88 @@ LETTABOT_MEMFS=true npm start
 - **Windows paths** ([letta-ai/letta-code#914](https://github.com/letta-ai/letta-code/issues/914)): Path separator issues on Windows have been fixed in Letta Code, but ensure you're on the latest version.
 
 For more details, see the [Letta Code memory documentation](https://docs.letta.com/letta-code/memory/) and the [Context Repositories blog post](https://www.letta.com/blog/context-repositories).
+
+### Display Tool Calls and Reasoning
+
+Show optional "what the agent is doing" messages directly in channel output.
+
+```yaml
+features:
+  display:
+    showToolCalls: true
+    showReasoning: false
+    reasoningMaxChars: 1200
+```
+
+In multi-agent configs, set this per agent:
+
+```yaml
+agents:
+  - name: work-assistant
+    features:
+      display:
+        showToolCalls: true
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.display.showToolCalls` | boolean | `false` | Show tool invocation summaries in chat output |
+| `features.display.showReasoning` | boolean | `false` | Show model reasoning/thinking text in chat output |
+| `features.display.reasoningMaxChars` | number | `0` | Truncate reasoning to N chars (`0` = no limit) |
+
+Notes:
+- Tool call display filters out empty/null input fields and shows the final args for the tool call.
+- Reasoning display uses plain bold/italic markdown for better cross-channel compatibility (including Signal).
+- Display messages are informational; they do not replace the assistant response. Normal retry/error handling still applies if no assistant reply is produced.
+
+### Tool Access Control
+
+Control which tools the agent can use. Useful for restricting public-facing agents to read-only operations while giving personal agents full access.
+
+```yaml
+# Global defaults (apply to all agents unless overridden)
+features:
+  allowedTools: [Bash, Read, Edit, Write, Glob, Grep, Task, web_search, conversation_search]
+  disallowedTools: [EnterPlanMode, ExitPlanMode]
+```
+
+Per-agent override:
+
+```yaml
+agents:
+  - name: personal-bot
+    # Inherits global allowedTools (includes Bash, Edit, Write)
+
+  - name: public-bot
+    features:
+      allowedTools: [Read, Glob, Grep, web_search, conversation_search]  # Read-only
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.allowedTools` | string[] | `[Bash, Read, Edit, Write, Glob, Grep, Task, web_search, conversation_search]` | Tools the agent is allowed to use |
+| `features.disallowedTools` | string[] | `[EnterPlanMode, ExitPlanMode]` | Tools explicitly blocked |
+
+**Precedence:** Per-agent YAML > global YAML `features` > `ALLOWED_TOOLS` / `DISALLOWED_TOOLS` env var > hardcoded default.
+
+The `manage_todo` tool is always included regardless of configuration.
+
+### Per-Agent Working Directory
+
+Each agent can have its own working directory, which sets the `cwd` for SDK sessions, heartbeat, and polling services:
+
+```yaml
+agents:
+  - name: personal-bot
+    workingDir: ~/lettabot
+
+  - name: central-bot
+    workingDir: ~/central
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `workingDir` | string | `LETTABOT_WORKING_DIR` env var or process cwd | Working directory for this agent's sessions |
 
 ### No-Reply (Opt-Out)
 
@@ -630,6 +822,36 @@ transcription:
   model: whisper-1     # Default
 ```
 
+## Text-to-Speech (TTS) Configuration
+
+Voice memo generation via the `<voice>` directive. The agent can reply with voice notes on Telegram and WhatsApp:
+
+```yaml
+tts:
+  provider: elevenlabs    # "elevenlabs" (default) or "openai"
+  apiKey: sk_475a...      # Provider API key
+  voiceId: 21m00Tcm4TlvDq8ikWAM  # Voice selection (see below)
+  model: eleven_multilingual_v2   # Optional model override
+```
+
+**ElevenLabs** (default):
+- `voiceId` is an ElevenLabs voice ID. Default: `21m00Tcm4TlvDq8ikWAM` (Rachel). Browse voices at [elevenlabs.io/voice-library](https://elevenlabs.io/voice-library).
+- `model` defaults to `eleven_multilingual_v2`.
+
+**OpenAI**:
+- `voiceId` is one of: `alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`. Default: `alloy`.
+- `model` defaults to `tts-1`. Use `tts-1-hd` for higher quality.
+
+The agent uses the `<voice>` directive in responses:
+
+```xml
+<actions>
+  <voice>Hey, here's a quick voice reply!</voice>
+</actions>
+```
+
+The `lettabot-tts` CLI tool is also available for background tasks (heartbeats, cron).
+
 ## Attachments Configuration
 
 ```yaml
@@ -732,9 +954,15 @@ data: {"type":"result","success":true}
 
 **Multi-agent:** In multi-agent configs, use the `agent` field to target a specific agent by name. Omit it to use the first agent. A 404 is returned if the agent name doesn't match any configured agent.
 
+### OpenAI-Compatible Endpoint
+
+The API server also exposes `/v1/chat/completions` and `/v1/models` -- a drop-in OpenAI-compatible API. Use it with the OpenAI Python/Node SDK, Open WebUI, or any compatible client. See the [OpenAI-Compatible API docs](openai-compat.md) for details.
+
 ## Environment Variables
 
-Environment variables override config file values:
+Environment variables serve as fallbacks and can fill in missing credentials. If a channel block exists in YAML but is missing its key credential (e.g., `signal: enabled: true` without `phone`), the corresponding env var (e.g., `SIGNAL_PHONE_NUMBER`) will be merged in. YAML values always take priority -- env vars never overwrite values already set in the config file.
+
+Reference:
 
 | Env Variable | Config Equivalent |
 |--------------|-------------------|
@@ -755,5 +983,17 @@ Environment variables override config file values:
 | `OPENAI_API_KEY` | `transcription.apiKey` |
 | `GMAIL_ACCOUNT` | `polling.gmail.account` (comma-separated list allowed) |
 | `POLLING_INTERVAL_MS` | `polling.intervalMs` |
+| `LOG_LEVEL` | `server.logLevel` (fatal/error/warn/info/debug/trace). Overrides config. |
+| `LETTABOT_LOG_LEVEL` | Alias for `LOG_LEVEL` |
+| `LOG_FORMAT` | Set to `json` for structured JSON output (recommended for Railway/Docker) |
+| `ALLOWED_TOOLS` | `features.allowedTools` (comma-separated list) |
+| `DISALLOWED_TOOLS` | `features.disallowedTools` (comma-separated list) |
+| `LETTABOT_WORKING_DIR` | Agent working directory (overridden by per-agent `workingDir`) |
+| `TTS_PROVIDER` | TTS backend: `elevenlabs` (default) or `openai` |
+| `ELEVENLABS_API_KEY` | API key for ElevenLabs TTS |
+| `ELEVENLABS_VOICE_ID` | ElevenLabs voice ID (default: `21m00Tcm4TlvDq8ikWAM` / Rachel) |
+| `ELEVENLABS_MODEL_ID` | ElevenLabs model (default: `eleven_multilingual_v2`) |
+| `OPENAI_TTS_VOICE` | OpenAI TTS voice (default: `alloy`) |
+| `OPENAI_TTS_MODEL` | OpenAI TTS model (default: `tts-1`) |
 
 See [SKILL.md](../SKILL.md) for complete environment variable reference.

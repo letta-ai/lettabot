@@ -65,7 +65,7 @@ describe('applyGroupGating', () => {
       expect(result.reason).toBe('group-not-in-allowlist');
     });
 
-    it('allows group when no allowlist configured', () => {
+    it('rejects group when no groups config (no config = no groups)', () => {
       const result = applyGroupGating(createParams({
         groupsConfig: undefined,
         msg: createMessage({
@@ -73,8 +73,8 @@ describe('applyGroupGating', () => {
         }),
       }));
 
-      // No allowlist = allowed (open mode)
-      expect(result.shouldProcess).toBe(true);
+      expect(result.shouldProcess).toBe(false);
+      expect(result.reason).toBe('no-groups-config');
     });
   });
 

@@ -3,13 +3,13 @@
  * lettabot-channels - Discover channels across platforms
  *
  * Usage:
- *   lettabot-channels list [--channel discord|slack]
+ *   lettabot-channels list [--channel discord|slack] [--agent name]
  *
  * The agent can use this CLI via Bash to discover channel IDs
  * for sending messages with lettabot-message.
  */
 
-// Config loaded from lettabot.yaml
+// Config loaded from lettabot.yaml (sets env vars for token fallback)
 import { loadAppConfigOrExit, applyConfigToEnv } from '../config/index.js';
 const config = loadAppConfigOrExit();
 applyConfigToEnv(config);
@@ -25,6 +25,7 @@ Commands:
 
 List options:
   --channel, -c <name>    Platform to list: discord, slack (default: all configured)
+  --agent <name>          Agent name from lettabot.yaml (reads tokens from that agent's config)
 
 Examples:
   # List channels for all configured platforms
@@ -36,7 +37,10 @@ Examples:
   # List Slack channels only
   lettabot-channels list --channel slack
 
-Environment variables:
+  # List channels for a specific agent (multi-agent setup)
+  lettabot-channels list --agent MyAgent
+
+Environment variables (used as fallback when --agent is not specified):
   DISCORD_BOT_TOKEN       Required for Discord channel listing
   SLACK_BOT_TOKEN         Required for Slack channel listing
 

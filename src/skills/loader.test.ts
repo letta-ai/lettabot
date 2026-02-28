@@ -2,13 +2,14 @@
  * Skills Loader Tests
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   getAgentSkillsDir,
   FEATURE_SKILLS,
+  isVoiceMemoConfigured,
 } from './loader.js';
 
 describe('skills loader', () => {
@@ -51,6 +52,23 @@ describe('skills loader', () => {
       expect(FEATURE_SKILLS.google).toBeDefined();
       expect(FEATURE_SKILLS.google).toContain('gog');
       expect(FEATURE_SKILLS.google).toContain('google');
+    });
+
+    it('has tts feature with voice-memo skill', () => {
+      expect(FEATURE_SKILLS.tts).toBeDefined();
+      expect(FEATURE_SKILLS.tts).toContain('voice-memo');
+    });
+  });
+
+  describe('isVoiceMemoConfigured', () => {
+    it('defaults to elevenlabs and requires ELEVENLABS_API_KEY', () => {
+      expect(isVoiceMemoConfigured({})).toBe(false);
+      expect(isVoiceMemoConfigured({ ELEVENLABS_API_KEY: 'test' })).toBe(true);
+    });
+
+    it('supports openai provider and requires OPENAI_API_KEY', () => {
+      expect(isVoiceMemoConfigured({ TTS_PROVIDER: 'openai' })).toBe(false);
+      expect(isVoiceMemoConfigured({ TTS_PROVIDER: 'openai', OPENAI_API_KEY: 'test' })).toBe(true);
     });
   });
 
@@ -143,6 +161,55 @@ describe('skills loader', () => {
       const { readFileSync } = require('node:fs');
       const content = readFileSync(join(dest, 'SKILL.md'), 'utf-8');
       expect(content).toBe('target version');
+    });
+  });
+
+  describe('loadAllSkills precedence', () => {
+    it('prefers global skills over bundled skills for the same name', async () => {
+      const originalHome = process.env.HOME;
+      const originalUserProfile = process.env.USERPROFILE;
+      const originalCwd = process.cwd();
+      const tempHome = mkdtempSync(join(tmpdir(), 'lettabot-home-test-'));
+      const tempProject = mkdtempSync(join(tmpdir(), 'lettabot-project-test-'));
+
+      try {
+        process.env.HOME = tempHome;
+        process.env.USERPROFILE = tempHome;
+        process.chdir(tempProject);
+
+        const globalVoiceMemoDir = join(tempHome, '.letta', 'skills', 'voice-memo');
+        mkdirSync(globalVoiceMemoDir, { recursive: true });
+        writeFileSync(
+          join(globalVoiceMemoDir, 'SKILL.md'),
+          [
+            '---',
+            'name: voice-memo',
+            'description: global override',
+            '---',
+            '',
+            '# Global override',
+            '',
+          ].join('\n'),
+        );
+
+        vi.resetModules();
+        const mod = await import('./loader.js');
+        const skills = mod.loadAllSkills();
+        const voiceMemo = skills.find((skill: any) => skill.name === 'voice-memo');
+        const expectedPath = join(tempHome, '.letta', 'skills', 'voice-memo', 'SKILL.md');
+
+        expect(voiceMemo).toBeDefined();
+        expect(voiceMemo!.description).toBe('global override');
+        expect(voiceMemo!.filePath).toContain(expectedPath);
+      } finally {
+        process.chdir(originalCwd);
+        if (originalHome === undefined) delete process.env.HOME;
+        else process.env.HOME = originalHome;
+        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+        else process.env.USERPROFILE = originalUserProfile;
+        rmSync(tempHome, { recursive: true, force: true });
+        rmSync(tempProject, { recursive: true, force: true });
+      }
     });
   });
 });

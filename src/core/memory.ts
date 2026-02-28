@@ -8,6 +8,9 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import matter from 'gray-matter';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Memory');
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Try dist/memories first, fall back to src/memories
 const MEMORIES_DIR = existsSync(join(__dirname, '..', 'memories'))
@@ -29,7 +32,7 @@ export interface MemoryBlock {
  */
 export function loadMemoryBlocks(agentName = 'LettaBot'): MemoryBlock[] {
   if (!existsSync(MEMORIES_DIR)) {
-    console.warn(`[Memory] No memories directory found at ${MEMORIES_DIR}`);
+    log.warn(`No memories directory found at ${MEMORIES_DIR}`);
     return [];
   }
   

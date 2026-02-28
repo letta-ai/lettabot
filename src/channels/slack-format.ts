@@ -6,6 +6,9 @@
  * provide a conservative fallback if it is missing or fails at runtime.
  */
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Slack');
 type SlackifyFn = (markdown: string) => string;
 
 let slackifyFn: SlackifyFn | null = null;
@@ -36,7 +39,7 @@ async function loadSlackify(): Promise<SlackifyFn | null> {
     } catch (e) {
       slackifyLoadFailed = true;
       const reason = e instanceof Error ? e.message : String(e);
-      console.warn(`[Slack] slackify-markdown unavailable; using fallback formatter (${reason})`);
+      log.warn(`slackify-markdown unavailable; using fallback formatter (${reason})`);
       return null;
     }
   })();
@@ -56,7 +59,7 @@ export async function markdownToSlackMrkdwn(markdown: string): Promise<string> {
   try {
     return converter(markdown);
   } catch (e) {
-    console.error('[Slack] Markdown conversion failed, using fallback:', e);
+    log.error('Markdown conversion failed, using fallback:', e);
     return fallbackMarkdownToSlackMrkdwn(markdown);
   }
 }

@@ -9,6 +9,9 @@ import { installSkillDeps } from './install.js';
 import { hasBinary, GLOBAL_SKILLS_DIR, SKILLS_SH_DIR } from './loader.js';
 import type { NodeManager, SkillStatus } from './types.js';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Wizard');
 // Skills in working directory (where Letta Code looks)
 const WORKING_DIR = process.env.WORKING_DIR || '/tmp/lettabot';
 const WORKING_SKILLS_DIR = join(WORKING_DIR, '.skills');
@@ -205,14 +208,14 @@ export async function listSkills(): Promise<void> {
   const summary = getSkillsSummary([WORKING_SKILLS_DIR]);
   
   if (summary.total === 0) {
-    console.log('\nNo skills installed.\n');
-    console.log('Install skills from ClawdHub:');
-    console.log('  npm run skill:install weather');
-    console.log('  npm run skill:install obsidian\n');
+    log.info('No skills installed.');
+    log.info('Install skills from ClawdHub:');
+    log.info('  npm run skill:install weather');
+    log.info('  npm run skill:install obsidian');
     return;
   }
   
-  console.log(`\n📦 Installed Skills (${summary.total}):\n`);
+  log.info(`📦 Installed Skills (${summary.total}):`);
   
   for (const status of summary.skills) {
     const emoji = status.skill.emoji || '🧩';
@@ -239,17 +242,17 @@ export async function listSkills(): Promise<void> {
       statusText = '';
     }
     
-    console.log(`  ${statusIcon} ${emoji} ${name}${statusText}`);
+    log.info(`  ${statusIcon} ${emoji} ${name}${statusText}`);
     if (desc) {
-      console.log(`      ${desc}`);
+      log.info(`      ${desc}`);
     }
   }
   
-  console.log(`\nEligible: ${summary.eligible}/${summary.total}`);
+  log.info(`Eligible: ${summary.eligible}/${summary.total}`);
   if (summary.missingDeps > 0) {
-    console.log(`Run 'npm run skills' to install missing dependencies.\n`);
+    log.info(`Run 'npm run skills' to install missing dependencies.`);
   } else {
-    console.log('');
+    log.info('');
   }
 }
 
@@ -264,36 +267,36 @@ export async function showStatus(): Promise<void> {
   const enabledNames = new Set(enabledSummary.skills.map(s => s.skill.name));
   const availableToImport = availableSummary.skills.filter(s => !enabledNames.has(s.skill.name));
   
-  console.log('\n📊 Skills Status:\n');
+  log.info('📊 Skills Status:');
   
   // Currently enabled (agent-scoped)
-  console.log(`  Enabled (${enabledSummary.total}):`);
+  log.info(`  Enabled (${enabledSummary.total}):`);
   if (enabledSummary.total === 0) {
-    console.log('    (none)');
+    log.info('    (none)');
   } else {
     for (const status of enabledSummary.skills) {
       const emoji = status.skill.emoji || '🧩';
       const name = status.skill.name;
       const icon = status.eligible ? '✓' : '✗';
-      console.log(`    ${icon} ${emoji} ${name}`);
+      log.info(`    ${icon} ${emoji} ${name}`);
     }
   }
   
-  console.log('');
+  log.info('');
   
   // Available to import
-  console.log(`  Available to import (${availableToImport.length}):`);
+  log.info(`  Available to import (${availableToImport.length}):`);
   if (availableToImport.length === 0) {
-    console.log('    (none)');
+    log.info('    (none)');
   } else {
     for (const status of availableToImport) {
       const emoji = status.skill.emoji || '🧩';
       const name = status.skill.name;
-      console.log(`    ${emoji} ${name}`);
+      log.info(`    ${emoji} ${name}`);
     }
   }
   
-  console.log('');
-  console.log(`  To enable: lettabot skills enable <name>`);
-  console.log(`  Skills dir: ${WORKING_SKILLS_DIR}\n`);
+  log.info('');
+  log.info(`  To enable: lettabot skills enable <name>`);
+  log.info(`  Skills dir: ${WORKING_SKILLS_DIR}`);
 }

@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.env
+.env.*
+lettabot.yaml
+lettabot.yml
+lettabot-agent.json
+data/
+*.log
+.skills/

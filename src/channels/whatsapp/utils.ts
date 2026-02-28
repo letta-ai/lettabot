@@ -14,6 +14,9 @@
  * jidToE164("1234567890@s.whatsapp.net") // "1234567890"
  * jidToE164("1234567890:50@s.whatsapp.net") // "1234567890"
  */
+import { createLogger } from '../../logger.js';
+
+const log = createLogger('WhatsApp');
 export function jidToE164(jid: string): string {
   return jid.replace(/@.*/, "").replace(/:\d+$/, "");
 }
@@ -123,7 +126,7 @@ export function createGroupMetaCache(): GroupMetaCache {
         cache.set(jid, entry);
         return entry;
       } catch (err) {
-        console.warn(`[WhatsApp] Failed to fetch group metadata for ${jid}:`, err);
+        log.warn(`Failed to fetch group metadata for ${jid}:`, err);
         // Return empty entry with TTL (prevents repeated failed fetches)
         return { expires: Date.now() + TTL_MS };
       }

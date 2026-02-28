@@ -9,6 +9,9 @@
  * Convert markdown to Telegram MarkdownV2 format.
  * Handles proper escaping of special characters.
  */
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Telegram');
 export async function markdownToTelegramV2(markdown: string): Promise<string> {
   try {
     // Dynamic import to handle ESM module
@@ -16,7 +19,7 @@ export async function markdownToTelegramV2(markdown: string): Promise<string> {
     // Use 'keep' strategy to preserve blockquotes (>) and other unsupported elements
     return telegramifyMarkdown(markdown, 'keep');
   } catch (e) {
-    console.error('[Telegram] Markdown conversion failed, using escape fallback:', e);
+    log.error('Markdown conversion failed, using escape fallback:', e);
     // Fallback: escape special characters manually (loses formatting)
     return escapeMarkdownV2(markdown);
   }

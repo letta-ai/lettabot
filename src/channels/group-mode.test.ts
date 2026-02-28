@@ -3,8 +3,8 @@ import { isGroupAllowed, isGroupUserAllowed, resolveGroupAllowedUsers, resolveGr
 
 describe('group-mode helpers', () => {
   describe('isGroupAllowed', () => {
-    it('allows when groups config is missing', () => {
-      expect(isGroupAllowed(undefined, ['group-1'])).toBe(true);
+    it('rejects when groups config is missing (no config = no groups)', () => {
+      expect(isGroupAllowed(undefined, ['group-1'])).toBe(false);
     });
 
     it('rejects when groups config is empty (explicit empty allowlist)', () => {

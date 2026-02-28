@@ -1,10 +1,14 @@
 /**
  * Group Listing Helpers
  *
- * Shared helper for listing group/channel IDs across platforms.
+ * Shared module for listing group/channel IDs across platforms.
+ * Used by both the `lettabot channels list-groups` CLI subcommand
+ * and the standalone `lettabot-channels` binary.
  */
 
 import { loadAppConfigOrExit, normalizeAgents, type AgentConfig } from '../config/index.js';
+
+// ── Types ────────────────────────────────────────────────────────────────────
 
 interface DiscordGuild {
   id: string;
@@ -23,6 +27,7 @@ interface SlackChannel {
   is_member: boolean;
 }
 
+// Discord channel types that are text-based
 const DISCORD_TEXT_CHANNEL_TYPES = new Set([
   0,  // GUILD_TEXT
   2,  // GUILD_VOICE
@@ -30,6 +35,8 @@ const DISCORD_TEXT_CHANNEL_TYPES = new Set([
   13, // GUILD_STAGE_VOICE
   15, // GUILD_FORUM
 ]);
+
+// ── Platform Listing ─────────────────────────────────────────────────────────
 
 async function listDiscord(token?: string): Promise<void> {
   const discordToken = token || process.env.DISCORD_BOT_TOKEN;
@@ -89,6 +96,7 @@ async function listSlack(token?: string): Promise<void> {
   const allChannels: SlackChannel[] = [];
   let cursor = '';
 
+  // Cursor-based pagination for workspaces with >1000 channels
   while (true) {
     const params = new URLSearchParams({
       types: 'public_channel,private_channel',
@@ -135,8 +143,10 @@ function printUnsupported(platform: string): void {
   console.log(`${platform}: Channel listing not supported (platform does not expose a bot-visible channel list).`);
 }
 
-function resolveAgentConfig(agentName?: string): AgentConfig | null {
-  if (!agentName) return null;
+// ── Agent Config Resolution ──────────────────────────────────────────────────
+
+export function resolveAgentConfig(agentName?: string): AgentConfig | undefined {
+  if (!agentName) return undefined;
 
   const config = loadAppConfigOrExit();
   const agents = normalizeAgents(config);
@@ -145,51 +155,73 @@ function resolveAgentConfig(agentName?: string): AgentConfig | null {
   if (exact) return exact;
 
   const lower = agentName.toLowerCase();
-  return agents.find(a => a.name.toLowerCase() === lower) || null;
+  const found = agents.find(a => a.name.toLowerCase() === lower);
+  if (found) return found;
+
+  console.error(`Agent "${agentName}" not found in config`);
+  process.exit(1);
 }
 
-function parseChannelArgs(args: string[]): { channel?: string; agent?: string; error?: string } {
+export function resolveListingTokens(
+  agentConfig: AgentConfig | undefined,
+  agentName?: string,
+): { discordToken?: string; slackToken?: string } {
+  // When an agent is explicitly selected, only use that agent's configured tokens.
+  // Do not fall back to global env vars (prevents cross-agent token leakage).
+  if (agentName) {
+    return {
+      discordToken: agentConfig?.channels?.discord?.token,
+      slackToken: agentConfig?.channels?.slack?.botToken,
+    };
+  }
+
+  return {
+    discordToken: agentConfig?.channels?.discord?.token || process.env.DISCORD_BOT_TOKEN,
+    slackToken: agentConfig?.channels?.slack?.botToken || process.env.SLACK_BOT_TOKEN,
+  };
+}
+
+// ── Arg Parsing ──────────────────────────────────────────────────────────────
+
+export function parseChannelArgs(args: string[]): { channel?: string; agent?: string; error?: string } {
   let channel: string | undefined;
   let agent: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     const next = args[i + 1];
-    if ((arg === '--channel' || arg === '-c') && next) {
+
+    if (arg === '--channel' || arg === '-c') {
+      if (!next || next.startsWith('-')) return { error: 'Missing value for --channel' };
       channel = next.toLowerCase();
       i++;
       continue;
     }
-    if (arg === '--channel' || arg === '-c') {
-      return { error: 'Missing value for --channel' };
-    }
-    if (arg === '--agent' && next) {
+    if (arg === '--agent') {
+      if (!next || next.startsWith('-')) return { error: 'Missing value for --agent' };
       agent = next;
       i++;
       continue;
     }
-    if (arg === '--agent') {
-      return { error: 'Missing value for --agent' };
-    }
-    if (!arg.startsWith('-') && !channel) {
-      channel = arg.toLowerCase();
+    if (!arg.startsWith('-')) {
+      if (!channel) {
+        channel = arg.toLowerCase();
+      } else {
+        return { error: `Unexpected argument: ${arg}` };
+      }
+      continue;
     }
   }
 
   return { channel, agent };
 }
 
+// ── Main Entry Points ────────────────────────────────────────────────────────
+
 export async function listGroups(channel?: string, agentName?: string): Promise<void> {
   const agentConfig = resolveAgentConfig(agentName);
 
-  if (agentName && !agentConfig) {
-    console.error(`Agent "${agentName}" not found in config`);
-    process.exit(1);
-  }
-
-  // Resolve tokens from agent config or fall back to env vars
-  const discordToken = agentConfig?.channels?.discord?.token || process.env.DISCORD_BOT_TOKEN;
-  const slackToken = agentConfig?.channels?.slack?.botToken || process.env.SLACK_BOT_TOKEN;
+  const { discordToken, slackToken } = resolveListingTokens(agentConfig, agentName);
 
   if (channel) {
     switch (channel) {

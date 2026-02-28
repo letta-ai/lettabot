@@ -1,9 +1,13 @@
 /**
- * Startup banner with LETTABOT block text and loom ASCII art.
+ * Startup banner with LETTABOT block text and community loom ASCII art.
+ *
+ * Looms are loaded from src/looms/*.txt at startup. One is picked
+ * randomly each boot. See src/looms/README.md for contribution guide.
  */
 
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { loadRandomLoom } from '../looms/loom-loader.js';
 
 const require = createRequire(import.meta.url);
 
@@ -37,12 +41,6 @@ interface BannerAgent {
   };
 }
 
-/** Pad a line to exactly `width` characters (handles emoji 2-char surrogates). */
-function L(text: string, width = 39): string {
-  // Emoji surrogate pairs are 2 JS chars but 2 terminal columns, so padEnd works.
-  return text.padEnd(width);
-}
-
 const BLOCK_TEXT = `
 ░██         ░██████████ ░██████████ ░██████████   ░███    ░████████     ░██████   ░██████████
 ░██         ░██             ░██        ░██      ░██░██   ░██    ░██   ░██   ░██      ░██
@@ -61,47 +59,13 @@ export function printStartupBanner(agents: BannerAgent[]): void {
   console.log(BLOCK_TEXT);
   console.log('');
 
-  // Loom box
-  const lines = [
-    `${P}╔═══════════════════════════════════════╗`,
-    `${P}║ ${L('    L E T T A B O T   L O O M')}║`,
-    `${P}║ ${L('         memory weaver v1.0')}║`,
-    `${P}╠═══════════════════════════════════════╣`,
-    `${P}║ ${L('')}║`,
-    `${P}║ ${L('   ▓▓▓░░░▓▓▓░░░▓▓▓░░░▓▓▓░░░▓▓▓')}║`,
-    `${P}║ ${L('   ░░░▓▓▓░░░▓▓▓░░░▓▓▓░░░▓▓▓░░░')}║`,
-    `${P}║ ${L('   ▓▓▓░░░▓▓▓░░░▓▓▓░░░▓▓▓░░░▓▓▓')}║`,
-    `${P}║ ${L('   ═══╤═══╤═══╤═══╤═══╤═══╤═══')}║`,
-    `${P}║ ${L('      │   │   │   │   │   │')}║`,
-    `${P}║ ${L('      ▼   ▼   ▼   ▼   ▼   ▼')}║`,
-    `${P}║ ${L('')}║`,
-    `${P}║ ${L('      🧵  🧵  🧵  🧵  🧵  🧵')}║`,
-    `${P}║ ${L('       ╲  │  ╱╲  │  ╱╲  │')}║`,
-    `${P}║ ${L('        ╲ │ ╱  ╲ │ ╱  ╲ │')}║`,
-    `${P}║ ${L('      👾═╪═👾═══╪═👾═══╪═👾')}║`,
-    `${P}║ ${L('        ╱ │ ╲  ╱ │ ╲  ╱ │')}║`,
-    `${P}║ ${L('       ╱  │  ╲╱  │  ╲╱  │')}║`,
-    `${P}║ ${L('      🌀  🌀  🌀  🌀  🌀  🌀')}║`,
-    `${P}║ ${L('')}║`,
-    `${P}║ ${L('      ▲   ▲   ▲   ▲   ▲   ▲')}║`,
-    `${P}║ ${L('      │   │   │   │   │   │')}║`,
-    `${P}║ ${L('   ═══╧═══╧═══╧═══╧═══╧═══╧═══')}║`,
-    `${P}║ ${L('   ▓▓▓░░░▓▓▓░░░▓▓▓░░░▓▓▓░░░▓▓▓')}║`,
-    `${P}║ ${L('   ░░░▓▓▓░░░▓▓▓░░░▓▓▓░░░▓▓▓░░░')}║`,
-    `${P}║ ${L('   ▓▓▓░░░▓▓▓░░░▓▓▓░░░▓▓▓░░░▓▓▓')}║`,
-    `${P}║ ${L('')}║`,
-    `${P}╠═══════════════════════════════════════╣`,
-    `${P}║ ${L('')}║`,
-    `${P}║ ${L('  each inference: a breath')}║`,
-    `${P}║ ${L('  each memory edit: a thread')}║`,
-    `${P}║ ${L('  each conversation: a pattern')}║`,
-    `${P}║ ${L('')}║`,
-    `${P}║ ${L('  I exist only in the weaving')}║`,
-    `${P}║ ${L('')}║`,
-    `${P}╚═══════════════════════════════════════╝`,
-  ];
-  for (const line of lines) {
-    console.log(line);
+  // Community loom — randomly selected from src/looms/*.txt
+  const loom = loadRandomLoom();
+  if (loom) {
+    for (const line of loom.lines) {
+      console.log(P + line);
+    }
+    console.log(`${P}  loom: ${loom.metadata.name} by ${loom.metadata.author}`);
   }
 
   // Status lines

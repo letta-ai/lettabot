@@ -4,7 +4,7 @@
 
 import { existsSync, readdirSync, readFileSync, mkdirSync, cpSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { join, resolve } from 'node:path';
+import { join, resolve, delimiter } from 'node:path';
 import matter from 'gray-matter';
 import type { SkillEntry, ClawdbotMetadata } from './types.js';
 
@@ -17,6 +17,9 @@ export const SKILLS_SH_DIR = join(HOME, '.agents', 'skills'); // skills.sh globa
 // Bundled skills from the lettabot repo itself
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Skills');
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const BUNDLED_SKILLS_DIR = resolve(__dirname, '../../skills'); // lettabot/skills/
 
@@ -25,6 +28,91 @@ export const BUNDLED_SKILLS_DIR = resolve(__dirname, '../../skills'); // lettabo
  */
 export function getAgentSkillsDir(agentId: string): string {
   return join(HOME, '.letta', 'agents', agentId, 'skills');
+}
+
+/**
+ * Resolve subdirectories that contain executable skill files.
+ */
+function resolveSkillExecutableDirs(skillsDir: string): string[] {
+  // Only add dirs that contain at least one executable (non-.md) file
+  return readdirSync(skillsDir, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .map(d => join(skillsDir, d.name))
+    .filter(dir => {
+      try {
+        return readdirSync(dir).some(f => !f.endsWith('.md'));
+      } catch { return false; }
+    });
+}
+
+/**
+ * Get executable skill directories for a specific agent.
+ */
+export function getAgentSkillExecutableDirs(agentId: string): string[] {
+  const skillsDir = getAgentSkillsDir(agentId);
+  if (!existsSync(skillsDir)) return [];
+  return resolveSkillExecutableDirs(skillsDir);
+}
+
+/**
+ * Temporarily prepend agent skill directories to PATH for one async operation.
+ *
+ * PATH is process-global, so serialize PATH mutations to avoid races when
+ * multiple sessions initialize concurrently.
+ */
+let _pathMutationQueue: Promise<void> = Promise.resolve();
+async function withPathMutationLock<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = _pathMutationQueue;
+  let release!: () => void;
+  _pathMutationQueue = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+export async function withAgentSkillsOnPath<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
+  const skillDirs = getAgentSkillExecutableDirs(agentId);
+  if (skillDirs.length === 0) {
+    return fn();
+  }
+
+  return withPathMutationLock(async () => {
+    const originalPath = process.env.PATH || '';
+    const originalParts = originalPath.split(delimiter).filter(Boolean);
+    const existing = new Set(originalParts);
+    const prepend = skillDirs.filter((dir) => !existing.has(dir));
+
+    if (prepend.length > 0) {
+      process.env.PATH = [...prepend, ...originalParts].join(delimiter);
+      log.info(`Added ${prepend.length} skill dir(s) to PATH: ${prepend.join(', ')}`);
+    }
+
+    try {
+      return await fn();
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+}
+
+/**
+ * Whether TTS credentials are configured enough to use voice-memo skill.
+ */
+export function isVoiceMemoConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  const provider = (env.TTS_PROVIDER || 'elevenlabs').toLowerCase();
+  if (provider === 'openai') {
+    return !!env.OPENAI_API_KEY;
+  }
+  if (provider === 'elevenlabs') {
+    return !!env.ELEVENLABS_API_KEY;
+  }
+  return false;
 }
 
 /**
@@ -87,7 +175,7 @@ export function parseSkillFile(filePath: string): SkillEntry | null {
       clawdbot,
     };
   } catch (e) {
-    console.error(`Failed to parse skill at ${filePath}:`, e);
+    log.error(`Failed to parse skill at ${filePath}:`, e);
     return null;
   }
 }
@@ -115,7 +203,7 @@ export function loadSkillsFromDir(skillsDir: string): SkillEntry[] {
       }
     }
   } catch (e) {
-    console.error(`Failed to load skills from ${skillsDir}:`, e);
+    log.error(`Failed to load skills from ${skillsDir}:`, e);
   }
   
   return skills;
@@ -155,7 +243,10 @@ export function loadAllSkills(agentId?: string | null): SkillEntry[] {
   // skills.sh global installs (lowest priority)
   dirs.push(SKILLS_SH_DIR);
   
-  // Global skills
+  // Bundled skills (ship with the project in skills/)
+  dirs.push(BUNDLED_SKILLS_DIR);
+
+  // Global skills (override bundled defaults)
   dirs.push(GLOBAL_SKILLS_DIR);
   
   // Agent-scoped skills (middle priority)
@@ -193,7 +284,7 @@ function installSkillsFromDir(sourceDir: string, targetDir: string): string[] {
       }
     }
   } catch (e) {
-    console.error(`[Skills] Failed to install from ${sourceDir}:`, e);
+    log.error(`Failed to install from ${sourceDir}:`, e);
   }
   
   return installed;
@@ -205,6 +296,7 @@ function installSkillsFromDir(sourceDir: string, targetDir: string): string[] {
 export const FEATURE_SKILLS: Record<string, string[]> = {
   cron: ['scheduling'],      // Scheduling handles both one-off reminders and recurring cron jobs
   google: ['gog', 'google'], // Installed when Google/Gmail is configured
+  tts: ['voice-memo'],       // Voice memo replies via lettabot-tts helper
 };
 
 /**
@@ -239,6 +331,7 @@ function installSpecificSkills(
 export interface SkillsInstallConfig {
   cronEnabled?: boolean;
   googleEnabled?: boolean;  // Gmail polling or Google integration
+  ttsEnabled?: boolean;     // Voice memo replies via TTS providers
   additionalSkills?: string[]; // Explicitly enabled skills
 }
 
@@ -258,25 +351,32 @@ export function installSkillsToWorkingDir(workingDir: string, config: SkillsInst
   mkdirSync(targetDir, { recursive: true });
   
   // Collect skills to install based on enabled features
-  const skillsToInstall: string[] = [];
+  const requestedSkills: string[] = [];
   
   // Cron skills (always if cron is enabled)
   if (config.cronEnabled) {
-    skillsToInstall.push(...FEATURE_SKILLS.cron);
+    requestedSkills.push(...FEATURE_SKILLS.cron);
   }
   
   // Google skills (if Gmail polling or Google is configured)
   if (config.googleEnabled) {
-    skillsToInstall.push(...FEATURE_SKILLS.google);
+    requestedSkills.push(...FEATURE_SKILLS.google);
+  }
+
+  // Voice memo skill (if TTS is configured)
+  if (config.ttsEnabled) {
+    requestedSkills.push(...FEATURE_SKILLS.tts);
   }
   
   // Additional explicitly enabled skills
   if (config.additionalSkills?.length) {
-    skillsToInstall.push(...config.additionalSkills);
+    requestedSkills.push(...config.additionalSkills);
   }
+
+  const skillsToInstall = Array.from(new Set(requestedSkills));
   
   if (skillsToInstall.length === 0) {
-    console.log('[Skills] No feature-gated skills to install');
+    log.info('No feature-gated skills to install');
     return;
   }
   
@@ -287,7 +387,7 @@ export function installSkillsToWorkingDir(workingDir: string, config: SkillsInst
   const installed = installSpecificSkills(skillsToInstall, sourceDirs, targetDir);
   
   if (installed.length > 0) {
-    console.log(`[Skills] Installed ${installed.length} skill(s): ${installed.join(', ')}`);
+    log.info(`Installed ${installed.length} skill(s): ${installed.join(', ')}`);
   }
 }
 
@@ -307,22 +407,29 @@ export function installSkillsToAgent(agentId: string, config: SkillsInstallConfi
   mkdirSync(targetDir, { recursive: true });
   
   // Collect skills to install based on enabled features
-  const skillsToInstall: string[] = [];
+  const requestedSkills: string[] = [];
   
   // Cron skills (always if cron is enabled)
   if (config.cronEnabled) {
-    skillsToInstall.push(...FEATURE_SKILLS.cron);
+    requestedSkills.push(...FEATURE_SKILLS.cron);
   }
   
   // Google skills (if Gmail polling or Google is configured)
   if (config.googleEnabled) {
-    skillsToInstall.push(...FEATURE_SKILLS.google);
+    requestedSkills.push(...FEATURE_SKILLS.google);
+  }
+
+  // Voice memo skill (if TTS is configured)
+  if (config.ttsEnabled) {
+    requestedSkills.push(...FEATURE_SKILLS.tts);
   }
   
   // Additional explicitly enabled skills
   if (config.additionalSkills?.length) {
-    skillsToInstall.push(...config.additionalSkills);
+    requestedSkills.push(...config.additionalSkills);
   }
+
+  const skillsToInstall = Array.from(new Set(requestedSkills));
   
   if (skillsToInstall.length === 0) {
     return; // No skills to install - silent return
@@ -335,6 +442,6 @@ export function installSkillsToAgent(agentId: string, config: SkillsInstallConfi
   const installed = installSpecificSkills(skillsToInstall, sourceDirs, targetDir);
   
   if (installed.length > 0) {
-    console.log(`[Skills] Installed ${installed.length} skill(s) to agent: ${installed.join(', ')}`);
+    log.info(`Installed ${installed.length} skill(s) to agent: ${installed.join(', ')}`);
   }
 }

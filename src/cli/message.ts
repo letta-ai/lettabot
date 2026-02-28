@@ -13,6 +13,7 @@
 // Config loaded from lettabot.yaml
 import { loadAppConfigOrExit, applyConfigToEnv, resolveConfigPath, normalizeAgents, type AgentConfig } from '../config/index.js';
 import { dirname } from 'node:path';
+import { loadApiKey } from '../api/auth.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { loadLastTarget } from './shared.js';
 import { MessageHookRunner } from '../core/hooks.js';
@@ -289,15 +290,12 @@ async function sendViaApi(
   options: {
     text?: string;
     filePath?: string;
-    kind?: 'image' | 'file';
+    kind?: 'image' | 'file' | 'audio';
   }
 ): Promise<void> {
   const apiUrl = process.env.LETTABOT_API_URL || 'http://localhost:8080';
-  const apiKey = process.env.LETTABOT_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('LETTABOT_API_KEY not set. Check bot server logs for the key.');
-  }
+  // Resolve API key: env var > lettabot-api.json (never generate -- that's the server's job)
+  const apiKey = loadApiKey();
 
   // Check if file exists
   if (options.filePath && !existsSync(options.filePath)) {
@@ -394,7 +392,7 @@ async function sendToChannel(channel: string, chatId: string, text: string): Pro
 async function sendCommand(args: string[]): Promise<void> {
   let text = '';
   let filePath = '';
-  let kind: 'image' | 'file' | undefined = undefined;
+  let kind: 'image' | 'file' | 'audio' | undefined = undefined;
   let channel = '';
   let chatId = '';
   let agentName = '';
@@ -418,6 +416,8 @@ async function sendCommand(args: string[]): Promise<void> {
       i++;
     } else if (arg === '--image') {
       kind = 'image';
+    } else if (arg === '--voice') {
+      kind = 'audio';
     } else if ((arg === '--channel' || arg === '-c' || arg === '-C') && next) {
       channel = next;
       i++;
@@ -521,6 +521,7 @@ Send options:
   --text, -t <text>       Message text (or caption when used with --file)
   --file, -f <path>       File path (optional, for file messages)
   --image                 Treat file as image (vs document)
+  --voice                 Treat file as voice note (sends as native voice memo)
   --channel, -c <name>    Channel: telegram, slack, whatsapp, discord (default: last used)
   --chat, --to <id>       Chat/conversation ID (default: last messaged)
   --agent, --agent-name <name>  Agent name for hook context (required in multi-agent)
@@ -543,6 +544,9 @@ Examples:
   # Send to specific WhatsApp chat
   lettabot-message send --file report.pdf --text "Report attached" --channel whatsapp --chat "+1555@s.whatsapp.net"
 
+  # Send voice note
+  lettabot-message send --file voice.ogg --voice
+
   # Short form
   lettabot-message send -t "Done!" -f doc.pdf -c telegram
 
@@ -551,7 +555,7 @@ Environment variables:
   SLACK_BOT_TOKEN         Required for Slack
   DISCORD_BOT_TOKEN       Required for Discord
   SIGNAL_PHONE_NUMBER     Required for Signal (text only, no files)
-  LETTABOT_API_KEY        Required for file sending (telegram, slack, discord, whatsapp) and WhatsApp text
+  LETTABOT_API_KEY        Required for file sending (telegram, slack, discord, whatsapp) and WhatsApp text (auto-read from lettabot-api.json if not set)
   LETTABOT_API_URL        API server URL (default: http://localhost:8080)
   SIGNAL_CLI_REST_API_URL Signal daemon URL (default: http://127.0.0.1:8090)
   LETTABOT_AGENT_NAME     Agent name for CLI hook context

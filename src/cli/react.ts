@@ -14,37 +14,7 @@ import { loadAppConfigOrExit, applyConfigToEnv } from '../config/index.js';
 const config = loadAppConfigOrExit();
 applyConfigToEnv(config);
 import { loadLastTarget } from './shared.js';
-
-const EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
-  eyes: '👀',
-  thumbsup: '👍',
-  thumbs_up: '👍',
-  '+1': '👍',
-  heart: '❤️',
-  fire: '🔥',
-  smile: '😄',
-  laughing: '😆',
-  tada: '🎉',
-  clap: '👏',
-  ok_hand: '👌',
-};
-
-const UNICODE_TO_ALIAS = new Map<string, string>(
-  Object.entries(EMOJI_ALIAS_TO_UNICODE).map(([name, value]) => [value, name])
-);
-
-function parseAlias(input: string): string | null {
-  const match = input.match(/^:([^:]+):$/);
-  return match ? match[1] : null;
-}
-
-function resolveEmoji(input: string): { unicode?: string; slackName?: string } {
-  const alias = parseAlias(input);
-  if (alias) {
-    return { unicode: EMOJI_ALIAS_TO_UNICODE[alias], slackName: alias };
-  }
-  return { unicode: input, slackName: UNICODE_TO_ALIAS.get(input) };
-}
+import { resolveEmoji } from '../core/emoji.js';
 
 async function addTelegramReaction(chatId: string, messageId: string, emoji: string): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -111,21 +81,20 @@ async function addDiscordReaction(chatId: string, messageId: string, emoji: stri
 }
 
 async function addReaction(channel: string, chatId: string, messageId: string, emoji: string): Promise<void> {
-  const { unicode, slackName } = resolveEmoji(emoji);
+  const { unicode, alias } = resolveEmoji(emoji);
   const channelName = channel.toLowerCase();
 
   switch (channelName) {
     case 'telegram': {
-      if (!unicode) throw new Error('Unknown emoji alias for Telegram');
       return addTelegramReaction(chatId, messageId, unicode);
     }
     case 'slack': {
-      const name = slackName || parseAlias(emoji)?.replace(/:/g, '') || '';
+      // Slack needs the text name (without colons), not Unicode
+      const name = alias || emoji.replace(/^:|:$/g, '');
       if (!name) throw new Error('Unknown emoji alias for Slack');
       return addSlackReaction(chatId, messageId, name);
     }
     case 'discord': {
-      if (!unicode) throw new Error('Unknown emoji alias for Discord');
       return addDiscordReaction(chatId, messageId, unicode);
     }
     default:

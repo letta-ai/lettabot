@@ -95,6 +95,7 @@ export class GroupBatcher {
       isListeningMode: messages.every((m) => m.isListeningMode === true) ? true : undefined,
       isBatch: true,
       batchedMessages: messages,
+      formatterHints: last.formatterHints,
     };
 
     this.onFlush(batchMsg, adapter);

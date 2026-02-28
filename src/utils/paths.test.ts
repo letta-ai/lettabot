@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import {
   getCronDataDir,
   getCronLogPath,
   getCronStorePath,
   getLegacyCronStorePath,
+  getWorkingDir,
+  resolveWorkingDirPath,
 } from './paths.js';
 
 const TEST_ENV_KEYS = [
@@ -68,5 +71,34 @@ describe('cron path resolution', () => {
 
   it('keeps legacy cron path behavior for migration', () => {
     expect(getLegacyCronStorePath()).toBe(resolve(process.cwd(), 'cron-jobs.json'));
+  });
+});
+
+describe('working directory path resolution', () => {
+  beforeEach(() => {
+    clearPathEnv();
+  });
+
+  afterEach(() => {
+    clearPathEnv();
+    for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
+      if (value !== undefined) {
+        process.env[key] = value;
+      }
+    }
+  });
+
+  it('expands ~ in configured WORKING_DIR', () => {
+    process.env.WORKING_DIR = '~/lettabot-work';
+    expect(getWorkingDir()).toBe(resolve(homedir(), 'lettabot-work'));
+  });
+
+  it('resolves relative WORKING_DIR to absolute path', () => {
+    process.env.WORKING_DIR = 'tmp/lettabot';
+    expect(getWorkingDir()).toBe(resolve('tmp/lettabot'));
+  });
+
+  it('expands ~ for per-agent workingDir values', () => {
+    expect(resolveWorkingDirPath('~/agent-work')).toBe(resolve(homedir(), 'agent-work'));
   });
 });

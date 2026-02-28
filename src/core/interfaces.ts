@@ -9,7 +9,7 @@
 import type { ChannelAdapter } from '../channels/types.js';
 import type { InboundMessage, TriggerContext } from './types.js';
 import type { GroupBatcher } from './group-batcher.js';
-import type { StreamMsg } from './bot.js';
+import type { StreamMsg } from './types.js';
 
 export interface AgentSession {
   /** Register a channel adapter */
@@ -37,7 +37,7 @@ export interface AgentSession {
   deliverToChannel(channelId: string, chatId: string, options: {
     text?: string;
     filePath?: string;
-    kind?: 'image' | 'file';
+    kind?: 'image' | 'file' | 'audio';
   }): Promise<string | undefined>;
 
   /** Get agent status */
@@ -67,7 +67,7 @@ export interface MessageDeliverer {
   deliverToChannel(channelId: string, chatId: string, options: {
     text?: string;
     filePath?: string;
-    kind?: 'image' | 'file';
+    kind?: 'image' | 'file' | 'audio';
   }): Promise<string | undefined>;
 }
 

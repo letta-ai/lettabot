@@ -14,6 +14,9 @@ import { writeFileSync, readFileSync, unlinkSync, mkdirSync, readdirSync } from 
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Transcription');
 // Whisper API limit is 25MB, we use 20MB to be safe
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 // Chunk duration in seconds (10 minutes)
@@ -59,7 +62,7 @@ function isFfmpegAvailable(): boolean {
       ffmpegAvailable = true;
     } catch {
       ffmpegAvailable = false;
-      console.warn('[Transcription] ffmpeg not found - audio conversion will be skipped');
+      log.warn('ffmpeg not found - audio conversion will be skipped');
     }
   }
   return ffmpegAvailable;
@@ -91,7 +94,7 @@ export async function transcribeAudio(
       // Tier 1: Try format mapping first (just rename, no conversion)
       const mapped = FORMAT_MAP[ext];
       if (mapped) {
-        console.log(`[Transcription] Trying .${ext} as .${mapped} (no conversion)`);
+        log.info(`Trying .${ext} as .${mapped} (no conversion)`);
         finalExt = mapped;
         
         // Try without conversion first
@@ -99,20 +102,20 @@ export async function transcribeAudio(
           const text = await attemptTranscription(finalBuffer, filename, finalExt);
           return { success: true, text };
         } catch (renameError) {
-          console.log(`[Transcription] Rename approach failed: ${renameError instanceof Error ? renameError.message : renameError}`);
+          log.info(`Rename approach failed: ${renameError instanceof Error ? renameError.message : renameError}`);
           
           // Tier 2: Try ffmpeg conversion if available
           if (isFfmpegAvailable()) {
-            console.log(`[Transcription] Attempting ffmpeg conversion .${ext} → .mp3`);
+            log.info(`Attempting ffmpeg conversion .${ext} → .mp3`);
             try {
               finalBuffer = convertAudioToMp3(audioBuffer, ext);
               finalExt = 'mp3';
               const text = await attemptTranscription(finalBuffer, filename, finalExt);
-              console.log(`[Transcription] Success after conversion, text length: ${text?.length || 0}`);
+              log.info(`Success after conversion, text length: ${text?.length || 0}`);
               return { success: true, text };
             } catch (conversionError: unknown) {
               // Both approaches failed
-              console.error(`[Transcription] Failed after conversion:`, conversionError);
+              log.error(`Failed after conversion:`, conversionError);
               const errorMsg = conversionError instanceof Error 
                 ? conversionError.message 
                 : (conversionError ? String(conversionError) : 'Unknown error after conversion');
@@ -134,7 +137,7 @@ export async function transcribeAudio(
       } else {
         // No mapping available
         if (isFfmpegAvailable()) {
-          console.log(`[Transcription] Converting .${ext} to .mp3 with ffmpeg`);
+          log.info(`Converting .${ext} to .mp3 with ffmpeg`);
           finalBuffer = convertAudioToMp3(audioBuffer, ext);
           finalExt = 'mp3';
         } else {
@@ -149,7 +152,7 @@ export async function transcribeAudio(
     
     // Check file size and chunk if needed
     if (finalBuffer.length > MAX_FILE_SIZE) {
-      console.log(`[Transcription] File too large (${(finalBuffer.length / 1024 / 1024).toFixed(1)}MB), splitting into chunks`);
+      log.info(`File too large (${(finalBuffer.length / 1024 / 1024).toFixed(1)}MB), splitting into chunks`);
       const text = await transcribeInChunks(finalBuffer, finalExt);
       return { success: true, text };
     }
@@ -216,7 +219,7 @@ async function transcribeInChunks(audioBuffer: Buffer, ext: string): Promise<str
       .filter(f => f.startsWith('chunk-') && f.endsWith('.mp3'))
       .sort();
     
-    console.log(`[Transcription] Split into ${chunkFiles.length} chunks`);
+    log.info(`Split into ${chunkFiles.length} chunks`);
     
     if (chunkFiles.length === 0) {
       throw new Error('Failed to split audio into chunks');
@@ -228,7 +231,7 @@ async function transcribeInChunks(audioBuffer: Buffer, ext: string): Promise<str
       const chunkPath = join(tempDir, chunkFiles[i]);
       const chunkBuffer = readFileSync(chunkPath);
       
-      console.log(`[Transcription] Transcribing chunk ${i + 1}/${chunkFiles.length} (${(chunkBuffer.length / 1024).toFixed(0)}KB)`);
+      log.info(`Transcribing chunk ${i + 1}/${chunkFiles.length} (${(chunkBuffer.length / 1024).toFixed(0)}KB)`);
       
       const text = await attemptTranscription(chunkBuffer, chunkFiles[i], 'mp3');
       if (text.trim()) {
@@ -238,7 +241,7 @@ async function transcribeInChunks(audioBuffer: Buffer, ext: string): Promise<str
     
     // Combine transcriptions
     const combined = transcriptions.join(' ');
-    console.log(`[Transcription] Combined ${transcriptions.length} chunks into ${combined.length} chars`);
+    log.info(`Combined ${transcriptions.length} chunks into ${combined.length} chars`);
     
     return combined;
   } finally {
@@ -280,7 +283,7 @@ function convertAudioToMp3(audioBuffer: Buffer, inputExt: string): Buffer {
     
     // Read output
     const converted = readFileSync(outputPath);
-    console.log(`[Transcription] Converted ${audioBuffer.length} bytes → ${converted.length} bytes`);
+    log.info(`Converted ${audioBuffer.length} bytes → ${converted.length} bytes`);
     return converted;
   } finally {
     // Cleanup temp files
@@ -348,11 +351,11 @@ function normalizeFilename(filename: string): string {
   // Map to supported format if we have a mapping
   const mapped = FORMAT_MAP[ext];
   if (mapped) {
-    console.log(`[Transcription] Mapping .${ext} → .${mapped}`);
+    log.info(`Mapping .${ext} → .${mapped}`);
     return filename.replace(new RegExp(`\\.${ext}$`, 'i'), `.${mapped}`);
   }
   
   // Default fallback - try as ogg
-  console.warn(`[Transcription] Unknown format .${ext}, trying as .ogg`);
+  log.warn(`Unknown format .${ext}, trying as .ogg`);
   return filename.replace(/\.[^.]+$/, '.ogg');
 }

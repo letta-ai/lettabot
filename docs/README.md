@@ -5,15 +5,17 @@ LettaBot is a multi-channel AI assistant powered by [Letta](https://letta.com) t
 ## Guides
 
 - [Getting Started](./getting-started.md) - Installation and basic setup
-- [Docker Server Setup](./selfhosted-setup.md) - Run with your own Letta server
+- [Cloud Deployment](./cloud-deploy.md) - Deploy to Fly.io, Railway, Docker, or any cloud platform
+- [Self-Hosted Letta Server](./selfhosted-setup.md) - Run with your own Letta server (instead of Letta API)
 - [Configuration Reference](./configuration.md) - All config options
 - [Commands Reference](./commands.md) - Bot commands reference
 - [CLI Tools](./cli-tools.md) - Agent/operator CLI tools
 - [Chat API](./configuration.md#chat-endpoint) - HTTP endpoint for programmatic agent access
+- [Open WebUI Setup](./openwebui-setup.md) - Web chat UI via OpenAI-compatible API
 - [Response Directives](./directives.md) - XML action directives (reactions, etc.)
 - [Scheduling Tasks](./cron-setup.md) - Cron jobs and heartbeats
 - [Gmail Pub/Sub](./gmail-pubsub.md) - Email notifications integration
-- [Railway Deployment](./railway-deploy.md) - Deploy to Railway
+- [Railway Deployment](./railway-deploy.md) - Railway-specific setup (one-click deploy, volumes)
 - [Releasing](./releasing.md) - How to create releases
 
 ### Channel Setup

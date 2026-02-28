@@ -9,22 +9,17 @@ import * as p from '@clack/prompts';
 import { saveConfig, syncProviders, isApiServerMode } from './config/index.js';
 import type { AgentConfig, LettaBotConfig, ProviderConfig } from './config/types.js';
 import { isLettaApiUrl } from './utils/server.js';
+import { parseCsvList, parseOptionalInt } from './utils/parse.js';
 import { CHANNELS, getChannelHint, isSignalCliInstalled, setupTelegram, setupSlack, setupDiscord, setupWhatsApp, setupSignal } from './channels/setup.js';
 
 // ============================================================================
 // Non-Interactive Helpers
 // ============================================================================
 
-function parseCsvList(value?: string): string[] | undefined {
+function parseOptionalCsvList(value?: string): string[] | undefined {
   if (!value) return undefined;
-  const items = value.split(',').map(s => s.trim()).filter(Boolean);
+  const items = parseCsvList(value);
   return items.length > 0 ? items : undefined;
-}
-
-function parseOptionalInt(value?: string): number | undefined {
-  if (!value) return undefined;
-  const parsed = parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function readConfigFromEnv(existingConfig: any): any {
@@ -43,9 +38,9 @@ function readConfigFromEnv(existingConfig: any): any {
         ?? existingConfig.channels?.telegram?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.TELEGRAM_GROUP_POLL_INTERVAL_MIN)
         ?? existingConfig.channels?.telegram?.groupPollIntervalMin,
-      instantGroups: parseCsvList(process.env.TELEGRAM_INSTANT_GROUPS)
+      instantGroups: parseOptionalCsvList(process.env.TELEGRAM_INSTANT_GROUPS)
         ?? existingConfig.channels?.telegram?.instantGroups,
-      listeningGroups: parseCsvList(process.env.TELEGRAM_LISTENING_GROUPS)
+      listeningGroups: parseOptionalCsvList(process.env.TELEGRAM_LISTENING_GROUPS)
         ?? existingConfig.channels?.telegram?.listeningGroups,
     },
     
@@ -59,9 +54,9 @@ function readConfigFromEnv(existingConfig: any): any {
         ?? existingConfig.channels?.slack?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.SLACK_GROUP_POLL_INTERVAL_MIN)
         ?? existingConfig.channels?.slack?.groupPollIntervalMin,
-      instantGroups: parseCsvList(process.env.SLACK_INSTANT_GROUPS)
+      instantGroups: parseOptionalCsvList(process.env.SLACK_INSTANT_GROUPS)
         ?? existingConfig.channels?.slack?.instantGroups,
-      listeningGroups: parseCsvList(process.env.SLACK_LISTENING_GROUPS)
+      listeningGroups: parseOptionalCsvList(process.env.SLACK_LISTENING_GROUPS)
         ?? existingConfig.channels?.slack?.listeningGroups,
     },
     
@@ -74,9 +69,9 @@ function readConfigFromEnv(existingConfig: any): any {
         ?? existingConfig.channels?.discord?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.DISCORD_GROUP_POLL_INTERVAL_MIN)
         ?? existingConfig.channels?.discord?.groupPollIntervalMin,
-      instantGroups: parseCsvList(process.env.DISCORD_INSTANT_GROUPS)
+      instantGroups: parseOptionalCsvList(process.env.DISCORD_INSTANT_GROUPS)
         ?? existingConfig.channels?.discord?.instantGroups,
-      listeningGroups: parseCsvList(process.env.DISCORD_LISTENING_GROUPS)
+      listeningGroups: parseOptionalCsvList(process.env.DISCORD_LISTENING_GROUPS)
         ?? existingConfig.channels?.discord?.listeningGroups,
     },
     
@@ -89,9 +84,9 @@ function readConfigFromEnv(existingConfig: any): any {
         ?? existingConfig.channels?.whatsapp?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.WHATSAPP_GROUP_POLL_INTERVAL_MIN)
         ?? existingConfig.channels?.whatsapp?.groupPollIntervalMin,
-      instantGroups: parseCsvList(process.env.WHATSAPP_INSTANT_GROUPS)
+      instantGroups: parseOptionalCsvList(process.env.WHATSAPP_INSTANT_GROUPS)
         ?? existingConfig.channels?.whatsapp?.instantGroups,
-      listeningGroups: parseCsvList(process.env.WHATSAPP_LISTENING_GROUPS)
+      listeningGroups: parseOptionalCsvList(process.env.WHATSAPP_LISTENING_GROUPS)
         ?? existingConfig.channels?.whatsapp?.listeningGroups,
     },
     
@@ -105,9 +100,9 @@ function readConfigFromEnv(existingConfig: any): any {
         ?? existingConfig.channels?.signal?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.SIGNAL_GROUP_POLL_INTERVAL_MIN)
         ?? existingConfig.channels?.signal?.groupPollIntervalMin,
-      instantGroups: parseCsvList(process.env.SIGNAL_INSTANT_GROUPS)
+      instantGroups: parseOptionalCsvList(process.env.SIGNAL_INSTANT_GROUPS)
         ?? existingConfig.channels?.signal?.instantGroups,
-      listeningGroups: parseCsvList(process.env.SIGNAL_LISTENING_GROUPS)
+      listeningGroups: parseOptionalCsvList(process.env.SIGNAL_LISTENING_GROUPS)
         ?? existingConfig.channels?.signal?.listeningGroups,
     },
   };
@@ -290,7 +285,7 @@ interface OnboardConfig {
   cron: boolean;
 
   // Transcription (voice messages)
-  transcription: { enabled: boolean; apiKey?: string; model?: string };
+  transcription: { enabled: boolean; provider?: 'openai' | 'mistral'; apiKey?: string; model?: string };
 }
 
 const isPlaceholder = (val?: string) => !val || /^(your_|sk-\.\.\.|placeholder|example)/i.test(val);
@@ -665,6 +660,7 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
             });
             if (!p.isCancel(enableTranscription) && enableTranscription) {
               config.transcription.enabled = true;
+              config.transcription.provider = 'openai';
               config.transcription.apiKey = providerKey;
             }
           }
@@ -838,23 +834,39 @@ async function stepFeatures(config: OnboardConfig): Promise<void> {
 // Voice Transcription Setup
 // ============================================================================
 
-async function stepTranscription(config: OnboardConfig): Promise<void> {
-  // Skip if already configured from the providers step
-  if (config.transcription.enabled && config.transcription.apiKey) return;
+async function stepTranscription(config: OnboardConfig, forcePrompt?: boolean): Promise<void> {
+  // Skip if already configured (e.g. from OpenAI shortcut in stepProviders)
+  if (!forcePrompt && config.transcription.enabled && config.transcription.apiKey) return;
 
   const setupTranscription = await p.confirm({
-    message: 'Enable voice message transcription? (uses OpenAI Whisper)',
+    message: 'Enable voice message transcription?',
     initialValue: config.transcription.enabled,
   });
   if (p.isCancel(setupTranscription)) { p.cancel('Setup cancelled'); process.exit(0); }
   config.transcription.enabled = setupTranscription;
 
   if (setupTranscription) {
-    const existingKey = process.env.OPENAI_API_KEY;
+    const providerChoice = await p.select({
+      message: 'Transcription provider',
+      options: [
+        { value: 'openai', label: 'OpenAI Whisper', hint: 'whisper-1' },
+        { value: 'mistral', label: 'Mistral Voxtral', hint: 'voxtral-mini-latest' },
+      ],
+      initialValue: config.transcription.provider || 'openai',
+    });
+    if (p.isCancel(providerChoice)) { p.cancel('Setup cancelled'); process.exit(0); }
+    config.transcription.provider = providerChoice as 'openai' | 'mistral';
+
+    const isMistral = config.transcription.provider === 'mistral';
+    // Check env vars first, then check if key was already entered for LLM provider
+    const existingKey = isMistral
+      ? process.env.MISTRAL_API_KEY
+      : (process.env.OPENAI_API_KEY || config.providers?.find(p => p.id === 'openai')?.apiKey);
+    const providerLabel = isMistral ? 'Mistral' : 'OpenAI';
 
     const apiKey = await p.text({
-      message: 'OpenAI API Key (for Whisper transcription)',
-      placeholder: 'sk-...',
+      message: `${providerLabel} API Key`,
+      placeholder: isMistral ? '' : 'sk-...',
       initialValue: existingKey || '',
       validate: (v) => {
         if (!v) return 'API key is required for voice transcription';
@@ -1197,7 +1209,10 @@ function showSummary(config: OnboardConfig): void {
   lines.push(`Features:  ${features.length > 0 ? features.join(', ') : 'None'}`);
   
   // Transcription
-  lines.push(`Voice:     ${config.transcription.enabled ? 'Enabled (OpenAI Whisper)' : 'Disabled'}`);
+  const voiceLabel = config.transcription.enabled
+    ? `Enabled (${config.transcription.provider === 'mistral' ? 'Mistral Voxtral' : 'OpenAI Whisper'})`
+    : 'Disabled';
+  lines.push(`Voice:     ${voiceLabel}`);
 
   // Google
   if (config.google.enabled) {
@@ -1243,7 +1258,7 @@ async function reviewLoop(config: OnboardConfig, env: Record<string, string>): P
     }
     else if (choice === 'channels') await stepChannels(config, env);
     else if (choice === 'features') await stepFeatures(config);
-    else if (choice === 'transcription') await stepTranscription(config);
+    else if (choice === 'transcription') await stepTranscription(config, true);
     else if (choice === 'google') await stepGoogle(config);
   }
 }
@@ -1473,7 +1488,8 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     },
     cron: existingConfig.features?.cron || false,
     transcription: {
-      enabled: !!existingConfig.transcription?.apiKey || !!process.env.OPENAI_API_KEY,
+      enabled: !!existingConfig.transcription?.apiKey || !!process.env.OPENAI_API_KEY || !!process.env.MISTRAL_API_KEY,
+      provider: existingConfig.transcription?.provider || 'openai',
       apiKey: existingConfig.transcription?.apiKey,
       model: existingConfig.transcription?.model,
     },
@@ -1512,7 +1528,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   if (config.agentChoice === 'new' && !config.agentId) {
     const { createAgent } = await import('@letta-ai/letta-code-sdk');
     const { updateAgentName, ensureNoToolApprovals } = await import('./tools/letta-api.js');
-    const { installSkillsToAgent } = await import('./skills/loader.js');
+    const { installSkillsToAgent, isVoiceMemoConfigured } = await import('./skills/loader.js');
     const { loadMemoryBlocks } = await import('./core/memory.js');
     const { SYSTEM_PROMPT } = await import('./core/system-prompt.js');
     
@@ -1522,6 +1538,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
       const agentId = await createAgent({
         systemPrompt: SYSTEM_PROMPT,
         memory: loadMemoryBlocks(config.agentName || 'LettaBot'),
+        tags: ['origin:lettabot'],
         ...(config.model ? { model: config.model } : {}),
       });
       
@@ -1529,9 +1546,11 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
       if (config.agentName) {
         await updateAgentName(agentId, config.agentName).catch(() => {});
       }
+      const ttsEnv = { ...process.env, ...env };
       installSkillsToAgent(agentId, {
         cronEnabled: config.cron,
         googleEnabled: config.google.enabled,
+        ttsEnabled: isVoiceMemoConfigured(ttsEnv),
       });
       
       // Disable tool approvals
@@ -1639,7 +1658,11 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   }
 
   if (config.transcription.enabled && config.transcription.apiKey) {
-    env.OPENAI_API_KEY = config.transcription.apiKey;
+    if (config.transcription.provider === 'mistral') {
+      env.MISTRAL_API_KEY = config.transcription.apiKey;
+    } else {
+      env.OPENAI_API_KEY = config.transcription.apiKey;
+    }
   }
 
   // Helper to format access control status
@@ -1670,7 +1693,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     'Features:',
     config.heartbeat.enabled ? `  ✓ Heartbeat (${config.heartbeat.interval}min)` : '  ✗ Heartbeat',
     config.cron ? '  ✓ Cron jobs' : '  ✗ Cron jobs',
-    config.transcription.enabled ? '  ✓ Voice transcription (OpenAI Whisper)' : '  ✗ Voice transcription',
+    config.transcription.enabled ? `  ✓ Voice transcription (${config.transcription.provider === 'mistral' ? 'Mistral Voxtral' : 'OpenAI Whisper'})` : '  ✗ Voice transcription',
   ].join('\n');
   
   p.note(summary, 'Configuration Summary');
@@ -1782,7 +1805,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     agents: [agentConfig],
     ...(config.transcription.enabled && config.transcription.apiKey ? {
       transcription: {
-        provider: 'openai' as const,
+        provider: config.transcription.provider || 'openai',
         apiKey: config.transcription.apiKey,
         ...(config.transcription.model ? { model: config.transcription.model } : {}),
       },

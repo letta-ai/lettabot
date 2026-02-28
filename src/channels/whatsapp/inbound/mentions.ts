@@ -5,6 +5,9 @@
  * Based on OpenClaw's mention detection patterns.
  */
 
+import { createLogger } from '../../../logger.js';
+
+const log = createLogger('WhatsApp');
 export interface MentionConfig {
   /** Regex patterns to detect mentions (e.g., ["@?bot", "@?lettabot"]) */
   mentionPatterns: string[];
@@ -122,7 +125,7 @@ export function detectMention(params: {
         return { wasMentioned: true, implicitMention: false, method: 'regex' };
       }
     } catch (err) {
-      console.warn(`[WhatsApp] Invalid mention pattern: ${pattern}`, err);
+      log.warn(`Invalid mention pattern: ${pattern}`, err);
     }
   }
 

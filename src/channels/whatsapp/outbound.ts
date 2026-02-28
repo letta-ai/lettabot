@@ -10,6 +10,9 @@ import type { WAMessage } from '@whiskeysockets/baileys';
 import { isLid } from "./utils.js";
 import { basename } from "node:path";
 
+import { createLogger } from '../../logger.js';
+
+const log = createLogger('WhatsApp');
 /**
  * LID (Linked Identifier) mapping for message sending.
  * Maps LID addresses to real JIDs.
@@ -76,7 +79,7 @@ export function resolveSendJid(
   }
 
   // FAIL SAFE: Cannot resolve LID - don't send to unknown address
-  console.error(`[WhatsApp] Cannot resolve LID: ${chatId}`);
+  log.error(`Cannot resolve LID: ${chatId}`);
   throw new Error("Cannot send to unknown LID - no mapping found");
 }
 
@@ -144,7 +147,7 @@ export async function sendWhatsAppMessage(
 
     return { messageId };
   } catch (error) {
-    console.error("[WhatsApp] sendMessage error:", error);
+    log.error("sendMessage error:", error);
     throw error;
   }
 }
@@ -211,7 +214,7 @@ export async function sendReadReceipt(
     ]);
   } catch (err) {
     // Ignore read receipt errors - not critical
-    console.warn(`[WhatsApp] Failed to send read receipt for ${messageId}:`, err);
+    log.warn(`Failed to send read receipt for ${messageId}:`, err);
   }
 }
 
@@ -241,10 +244,14 @@ export async function sendWhatsAppFile(
   const caption = file.caption || undefined;
   const fileName = basename(file.filePath);
 
-  const payload =
-    file.kind === "image"
-      ? { image: { url: file.filePath }, caption }
-      : { document: { url: file.filePath }, mimetype: "application/octet-stream", caption, fileName };
+  let payload;
+  if (file.kind === "image") {
+    payload = { image: { url: file.filePath }, caption };
+  } else if (file.kind === "audio") {
+    payload = { audio: { url: file.filePath }, ptt: true };
+  } else {
+    payload = { document: { url: file.filePath }, mimetype: "application/octet-stream", caption, fileName };
+  }
 
   try {
     // Send file
@@ -272,7 +279,7 @@ export async function sendWhatsAppFile(
 
     return { messageId };
   } catch (error) {
-    console.error("[WhatsApp] sendFile error:", error);
+    log.error("sendFile error:", error);
     throw error;
   }
 }

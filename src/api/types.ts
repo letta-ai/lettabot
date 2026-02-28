@@ -23,7 +23,7 @@ export interface SendFileRequest {
   chatId: string;
   filePath: string;  // Temporary file path on server
   caption?: string;
-  kind?: 'image' | 'file';
+  kind?: 'image' | 'file' | 'audio';
   threadId?: string;
 }
 

@@ -163,6 +163,16 @@ export interface InboundMessage {
   isBatch?: boolean;                  // Is this a batched group message?
   batchedMessages?: InboundMessage[]; // Original individual messages (for batch formatting)
   isListeningMode?: boolean;          // Listening mode: agent processes for memory but response is suppressed
+  formatterHints?: FormatterHints;    // Channel capabilities for directive rendering
+}
+
+/**
+ * Channel capability hints for per-message directive rendering
+ */
+export interface FormatterHints {
+  supportsReactions?: boolean;
+  supportsFiles?: boolean;
+  formatHint?: string;
 }
 
 /**
@@ -173,6 +183,10 @@ export interface OutboundMessage {
   text: string;
   replyToMessageId?: string;
   threadId?: string;  // Slack thread_ts
+  /** When set, tells the adapter which parse mode to use (e.g., 'MarkdownV2',
+   *  'HTML') and to skip its default markdown conversion. Adapters that don't
+   *  support the specified mode ignore this and fall back to default. */
+  parseMode?: string;
 }
 
 /**
@@ -183,7 +197,7 @@ export interface OutboundFile {
   filePath: string;
   caption?: string;
   threadId?: string;
-  kind?: 'image' | 'file';
+  kind?: 'image' | 'file' | 'audio';
 }
 
 /**
@@ -192,6 +206,7 @@ export interface OutboundFile {
 export interface SkillsConfig {
   cronEnabled?: boolean;
   googleEnabled?: boolean;
+  ttsEnabled?: boolean;
   additionalSkills?: string[];
 }
 
@@ -209,6 +224,11 @@ export interface BotConfig {
 
   // Display
   displayName?: string; // Prefix outbound messages (e.g. "💜 Signo")
+  display?: {
+    showToolCalls?: boolean;      // Show tool invocations in channel output
+    showReasoning?: boolean;      // Show agent reasoning/thinking in channel output
+    reasoningMaxChars?: number;   // Truncate reasoning to N chars (default: 0 = no limit)
+  };
 
   // Skills
   skills?: SkillsConfig;
@@ -220,11 +240,20 @@ export interface BotConfig {
   memfs?: boolean; // true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
 
   // Security
+  redaction?: import('./redact.js').RedactionConfig;
   allowedUsers?: string[];  // Empty = allow all
+  sendFileDir?: string;     // Restrict <send-file> directive to this directory (default: data/outbound)
+  sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
+  sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete files after send (default: false)
+
+  // Cron
+  cronStorePath?: string; // Resolved cron store path (per-agent in multi-agent mode)
 
   // Conversation routing
-  conversationMode?: 'shared' | 'per-channel'; // Default: shared
+  conversationMode?: 'shared' | 'per-channel' | 'per-chat'; // Default: shared
   heartbeatConversation?: string; // "dedicated" | "last-active" | "<channel>" (default: last-active)
+  conversationOverrides?: string[]; // Channels that always use their own conversation (shared mode)
+  maxSessions?: number; // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
 }
 
 /**
@@ -235,6 +264,23 @@ export interface LastMessageTarget {
   chatId: string;
   messageId?: string;
   updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Stream message type (used by processMessage, sendToAgent, gateway)
+// ---------------------------------------------------------------------------
+
+export interface StreamMsg {
+  type: string;
+  content?: string;
+  toolCallId?: string;
+  toolName?: string;
+  uuid?: string;
+  isError?: boolean;
+  result?: string;
+  success?: boolean;
+  error?: string;
+  [key: string]: unknown;
 }
 
 /**

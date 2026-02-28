@@ -19,7 +19,38 @@ brew install signal-cli
 
 ### 2. Register Your Phone Number
 
-You need a phone number that can receive SMS for verification.
+You have two options:
+
+#### Option A: Link as Secondary Device (Recommended)
+
+Link signal-cli to your existing Signal account without disrupting your phone app:
+
+```bash
+# Generate a linking QR code/URI
+signal-cli link -n "LettaBot"
+```
+
+**Headless / SSH setup:** If you're running on a server without a display, pipe through `qrencode` to render the QR code in your terminal:
+
+```bash
+signal-cli link -n "LettaBot" | tee >(xargs -L 1 qrencode -t ANSI256UTF8)
+```
+
+This will display a `sgnl://linkdevice?uuid=...` URI. On your phone:
+1. Open Signal → Settings (tap your profile)
+2. Tap "Linked Devices"
+3. Tap "Link New Device" (+ button)
+4. Scan the QR code or enter the URI
+
+**Benefits:**
+- Your phone's Signal app continues to work normally
+- Bot runs as a linked device (like Signal Desktop)
+- Both your phone and the bot receive messages
+- You can unlink the bot anytime from your phone
+
+#### Option B: Primary Registration (Dedicated Number Only)
+
+Register signal-cli as the primary device (requires a dedicated phone number):
 
 ```bash
 # Request verification code (sent via SMS)
@@ -29,7 +60,7 @@ signal-cli -a +1XXXXXXXXXX register
 signal-cli -a +1XXXXXXXXXX verify CODE
 ```
 
-**Note:** You can only have one Signal client per number. Registering signal-cli will log out your Signal mobile app. Consider using a secondary number.
+**Warning:** This will log out your Signal mobile app. Only use this option with a dedicated bot number, not your personal number.
 
 ## Configuration
 

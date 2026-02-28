@@ -109,11 +109,13 @@ That's it! Message your bot on Telegram.
 
 ## Voice Messages
 
-LettaBot can transcribe voice messages using OpenAI Whisper. Voice messages are automatically converted to text and sent to the agent with a `[Voice message]:` prefix.
+LettaBot can transcribe voice messages using either OpenAI Whisper or Mistral Voxtral. Voice messages are automatically converted to text and sent to the agent with a `[Voice message]:` prefix.
 
 **Supported channels:** Telegram, WhatsApp, Signal, Slack, Discord
 
 ### Configuration
+
+**Option 1: OpenAI Whisper**
 
 Add your OpenAI API key to `lettabot.yaml`:
 
@@ -130,7 +132,23 @@ Or set via environment variable:
 export OPENAI_API_KEY=sk-...
 ```
 
-If no API key is configured, voice messages are silently ignored.
+**Option 2: Mistral Voxtral** (2x faster, 2x cheaper)
+
+Add your Mistral API key to `lettabot.yaml`:
+
+```yaml
+transcription:
+  provider: mistral
+  apiKey: ...
+```
+
+Or set via environment variable:
+
+```bash
+export MISTRAL_API_KEY=...
+```
+
+If no API key is configured, users will receive an error message with a link to this section.
 
 ## Skills
 LettaBot is compatible with [skills.sh](https://skills.sh) and [Clawdhub](https://clawdhub.com/). 
@@ -323,6 +341,19 @@ Any LettaBot agent can also be directly chatted with through [Letta Code](https:
 letta --agent <agent_id>
 ```
 
+## OpenAI-Compatible API
+
+LettaBot exposes `/v1/chat/completions` and `/v1/models` endpoints, so you can use any OpenAI SDK or compatible frontend (like [Open WebUI](https://github.com/open-webui/open-webui)) to chat with your agents:
+
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"model": "lettabot", "messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+Supports sync and streaming responses. See the [full documentation](docs/openai-compat.md) for Python/Node SDK examples and details.
+
 ## Security
 
 ### Network Architecture
@@ -348,7 +379,10 @@ By default, the agent is restricted to **read-only** operations:
 
 LettaBot supports pairing-based access control. When `TELEGRAM_DM_POLICY=pairing`:
 1. Unauthorized users get a pairing code
-2. You approve codes via `lettabot pairing approve telegram <CODE>`
+2. Approve codes via:
+   - **Web portal** at `https://your-host/portal` (recommended for cloud deploys)
+   - **CLI**: `lettabot pairing approve telegram <CODE>`
+   - **API**: `POST /api/v1/pairing/telegram/approve`
 3. Approved users can then chat with the bot
 
 ## Development
@@ -433,6 +467,7 @@ Check the [ADE](https://app.letta.com) to see if your agent is attempting to use
 - [Getting Started](docs/getting-started.md)
 - [Docker Server Setup](docs/selfhosted-setup.md) - Run with your own Letta server
 - [Configuration Reference](docs/configuration.md)
+- [OpenAI-Compatible API](docs/openai-compat.md)
 - [Slack Setup](docs/slack-setup.md)
 - [Discord Setup](docs/discord-setup.md)
 - [WhatsApp Setup](docs/whatsapp-setup.md)

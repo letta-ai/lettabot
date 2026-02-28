@@ -6,6 +6,9 @@
  * 2. Letta API: Uses apiKey, optional BYOK providers
  */
 
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Config');
 export type ServerMode = 'api' | 'docker' | 'cloud' | 'selfhosted';
 export type CanonicalServerMode = 'api' | 'docker';
 
@@ -43,6 +46,18 @@ export function serverModeLabel(mode?: ServerMode): string {
 }
 
 /**
+ * Display configuration for tool calls and reasoning in channel output.
+ */
+export interface DisplayConfig {
+  /** Show tool invocations in channel output (default: false) */
+  showToolCalls?: boolean;
+  /** Show agent reasoning/thinking in channel output (default: false) */
+  showReasoning?: boolean;
+  /** Truncate reasoning to N characters (default: 0 = no limit) */
+  reasoningMaxChars?: number;
+}
+
+/**
  * Configuration for a single agent in multi-agent mode.
  * Each agent has its own name, channels, and features.
  */
@@ -55,6 +70,8 @@ export interface AgentConfig {
   displayName?: string;
   /** Model for initial agent creation */
   model?: string;
+  /** Working directory for this agent's SDK sessions (overrides global) */
+  workingDir?: string;
   /** Channels this agent connects to */
   channels: {
     telegram?: TelegramConfig;
@@ -66,8 +83,10 @@ export interface AgentConfig {
   };
   /** Conversation routing */
   conversations?: {
-    mode?: 'shared' | 'per-channel';  // Default: shared (single conversation across all channels)
+    mode?: 'shared' | 'per-channel' | 'per-chat';  // Default: shared (single conversation across all channels)
     heartbeat?: string;               // "dedicated" | "last-active" | "<channel>" (default: last-active)
+    perChannel?: string[];            // Channels that should always have their own conversation
+    maxSessions?: number;             // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
   };
   /** Features for this agent */
   features?: {
@@ -82,6 +101,19 @@ export interface AgentConfig {
     };
     memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
     maxToolCalls?: number;
+    sendFileDir?: string;    // Restrict <send-file> directive to this directory (default: data/outbound)
+    sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
+    sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete after send (default: false)
+    display?: DisplayConfig;
+    allowedTools?: string[];       // Per-agent tool whitelist (overrides global/env ALLOWED_TOOLS)
+    disallowedTools?: string[];    // Per-agent tool blocklist (overrides global/env DISALLOWED_TOOLS)
+  };
+  /** Security settings */
+  security?: {
+    redaction?: {
+      secrets?: boolean;
+      pii?: boolean;
+    };
   };
   /** Message hooks for this agent */
   hooks?: MessageHooksConfig;
@@ -103,6 +135,8 @@ export interface LettaBotConfig {
     baseUrl?: string;
     // Only for api mode
     apiKey?: string;
+    // Log level (fatal|error|warn|info|debug|trace). Env vars LOG_LEVEL / LETTABOT_LOG_LEVEL override.
+    logLevel?: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace';
     // API server config (port, host, CORS) — canonical location
     api?: {
       port?: number;       // Default: 8080 (or PORT env var)
@@ -139,8 +173,10 @@ export interface LettaBotConfig {
 
   // Conversation routing
   conversations?: {
-    mode?: 'shared' | 'per-channel';  // Default: shared (single conversation across all channels)
+    mode?: 'shared' | 'per-channel' | 'per-chat';  // Default: shared (single conversation across all channels)
     heartbeat?: string;               // "dedicated" | "last-active" | "<channel>" (default: last-active)
+    perChannel?: string[];            // Channels that should always have their own conversation
+    maxSessions?: number;             // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
   };
 
   // Features
@@ -157,6 +193,12 @@ export interface LettaBotConfig {
     inlineImages?: boolean;   // Send images directly to the LLM (default: true). Set false to only send file paths.
     memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
     maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)
+    sendFileDir?: string;   // Restrict <send-file> directive to this directory (default: data/outbound)
+    sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
+    sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete after send (default: false)
+    display?: DisplayConfig;  // Show tool calls / reasoning in channel output
+    allowedTools?: string[];       // Global tool whitelist (overridden by per-agent, falls back to ALLOWED_TOOLS env)
+    disallowedTools?: string[];    // Global tool blocklist (overridden by per-agent, falls back to DISALLOWED_TOOLS env)
   };
 
   // Message hooks (applies to all agents unless overridden)
@@ -172,13 +214,27 @@ export interface LettaBotConfig {
     google?: GoogleConfig;
   };
 
-  // Transcription (voice messages)
+  // Transcription (inbound voice messages)
   transcription?: TranscriptionConfig;
+
+  // Text-to-speech (outbound voice memos)
+  tts?: TtsConfig;
 
   // Attachment handling
   attachments?: {
     maxMB?: number;
     maxAgeDays?: number;
+  };
+
+  // Security
+  security?: {
+    /** Outbound message redaction (catches leaked secrets/PII before channel delivery) */
+    redaction?: {
+      /** Redact common secret patterns (API keys, tokens, bearer tokens). Default: true */
+      secrets?: boolean;
+      /** Redact PII patterns (emails, phone numbers). Default: false */
+      pii?: boolean;
+    };
   };
 
   // API server (health checks, CLI messaging)
@@ -190,10 +246,17 @@ export interface LettaBotConfig {
   };
 }
 
+export interface TtsConfig {
+  provider?: 'elevenlabs' | 'openai';  // Default: 'elevenlabs'
+  apiKey?: string;                      // Falls back to ELEVENLABS_API_KEY or OPENAI_API_KEY env var
+  voiceId?: string;                     // ElevenLabs voice ID or OpenAI voice name
+  model?: string;                       // Model ID (provider-specific defaults)
+}
+
 export interface TranscriptionConfig {
-  provider: 'openai';  // Only OpenAI supported currently
-  apiKey?: string;     // Falls back to OPENAI_API_KEY env var
-  model?: string;      // Defaults to 'whisper-1'
+  provider: 'openai' | 'mistral';
+  apiKey?: string;     // Falls back to OPENAI_API_KEY or MISTRAL_API_KEY env var
+  model?: string;      // Defaults to 'whisper-1' (OpenAI) or 'voxtral-mini-latest' (Mistral)
 }
 
 export interface PollingYamlConfig {
@@ -232,6 +295,7 @@ export interface TelegramConfig {
   token?: string;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
+  streaming?: boolean;              // Stream responses via progressive message edits (default: false)
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Group chat IDs that bypass batching
@@ -258,6 +322,7 @@ export interface SlackConfig {
   botToken?: string;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
+  streaming?: boolean;              // Stream responses via progressive message edits (default: false)
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Channel IDs that bypass batching
@@ -304,6 +369,7 @@ export interface DiscordConfig {
   token?: string;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
+  streaming?: boolean;              // Stream responses via progressive message edits (default: false)
   groupDebounceSec?: number;      // Debounce interval in seconds (default: 5, 0 = immediate)
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Guild/server IDs or channel IDs that bypass batching
@@ -366,7 +432,7 @@ function warnGroupConfigDeprecation(path: string, detail: string): void {
   const key = `${path}:${detail}`;
   if (warnedGroupConfigDeprecations.has(key)) return;
   warnedGroupConfigDeprecations.add(key);
-  console.warn(`[Config] WARNING: ${path} ${detail}`);
+  log.warn(`WARNING: ${path} ${detail}`);
 }
 
 function normalizeLegacyGroupFields(
@@ -454,6 +520,24 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     const normalized: AgentConfig['channels'] = {};
     if (!channels) return normalized;
 
+    // Merge env vars into YAML blocks that are missing their key credential.
+    // Without this, `signal: enabled: true` + SIGNAL_PHONE_NUMBER env var
+    // silently fails because the env-var-only fallback (below) only fires
+    // when the YAML block is completely absent.
+    if (channels.telegram && !channels.telegram.token && process.env.TELEGRAM_BOT_TOKEN) {
+      channels.telegram.token = process.env.TELEGRAM_BOT_TOKEN;
+    }
+    if (channels.slack) {
+      if (!channels.slack.botToken && process.env.SLACK_BOT_TOKEN) channels.slack.botToken = process.env.SLACK_BOT_TOKEN;
+      if (!channels.slack.appToken && process.env.SLACK_APP_TOKEN) channels.slack.appToken = process.env.SLACK_APP_TOKEN;
+    }
+    if (channels.signal && !channels.signal.phone && process.env.SIGNAL_PHONE_NUMBER) {
+      channels.signal.phone = process.env.SIGNAL_PHONE_NUMBER;
+    }
+    if (channels.discord && !channels.discord.token && process.env.DISCORD_BOT_TOKEN) {
+      channels.discord.token = process.env.DISCORD_BOT_TOKEN;
+    }
+
     if (channels.telegram?.enabled !== false && channels.telegram?.token) {
       const telegram = { ...channels.telegram };
       normalizeLegacyGroupFields(telegram, `${sourcePath}.telegram`);
@@ -483,6 +567,19 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       const discord = { ...channels.discord };
       normalizeLegacyGroupFields(discord, `${sourcePath}.discord`);
       normalized.discord = discord;
+    }
+
+    // Warn when a channel block exists but was dropped due to missing credentials
+    const channelCredentials: Array<[string, unknown, boolean]> = [
+      ['telegram', channels.telegram, !!normalized.telegram],
+      ['slack', channels.slack, !!normalized.slack],
+      ['signal', channels.signal, !!normalized.signal],
+      ['discord', channels.discord, !!normalized.discord],
+    ];
+    for (const [name, raw, included] of channelCredentials) {
+      if (raw && (raw as Record<string, unknown>).enabled !== false && !included) {
+        log.warn(`Channel '${name}' is in ${sourcePath} but missing required credentials -- skipping. Check your lettabot.yaml or environment variables.`);
+      }
     }
 
     return normalized;
@@ -568,6 +665,33 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     };
   }
 
+  // Field-level env var fallback for features (heartbeat, cron).
+  // Unlike channels (all-or-nothing), features are independent toggles so we
+  // merge at the field level: env vars fill in fields missing from YAML.
+  const features = { ...config.features } as NonNullable<LettaBotConfig['features']>;
+
+  if (features.cron == null && process.env.CRON_ENABLED === 'true') {
+    features.cron = true;
+  }
+
+  if (!features.heartbeat && process.env.HEARTBEAT_ENABLED === 'true') {
+    const intervalMin = process.env.HEARTBEAT_INTERVAL_MIN
+      ? parseInt(process.env.HEARTBEAT_INTERVAL_MIN, 10)
+      : undefined;
+    const skipRecentUserMin = process.env.HEARTBEAT_SKIP_RECENT_USER_MIN
+      ? parseInt(process.env.HEARTBEAT_SKIP_RECENT_USER_MIN, 10)
+      : undefined;
+
+    features.heartbeat = {
+      enabled: true,
+      ...(Number.isFinite(intervalMin) ? { intervalMin } : {}),
+      ...(Number.isFinite(skipRecentUserMin) ? { skipRecentUserMin } : {}),
+    };
+  }
+
+  // Only pass features if there's actually something set
+  const hasFeatures = Object.keys(features).length > 0;
+
   return [{
     name: agentName,
     id,
@@ -576,7 +700,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     channels,
     hooks: config.hooks,
     conversations: config.conversations,
-    features: config.features,
+    features: hasFeatures ? features : config.features,
     polling: config.polling,
     integrations: config.integrations,
   }];

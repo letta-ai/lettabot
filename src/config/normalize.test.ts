@@ -1,4 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// Mock the logger so log.warn/error route through console (tests spy on console)
+vi.mock('../logger.js', () => ({
+  createLogger: () => ({
+    fatal: (...args: unknown[]) => console.error(...args),
+    error: (...args: unknown[]) => console.error(...args),
+    warn: (...args: unknown[]) => console.warn(...args),
+    info: (...args: unknown[]) => console.log(...args),
+    debug: (...args: unknown[]) => console.log(...args),
+    trace: (...args: unknown[]) => console.log(...args),
+    pino: {},
+  }),
+}));
+
 import {
   normalizeAgents,
   canonicalizeServerMode,
@@ -9,6 +23,38 @@ import {
 } from './types.js';
 
 describe('normalizeAgents', () => {
+  const envVars = [
+    'TELEGRAM_BOT_TOKEN', 'TELEGRAM_DM_POLICY', 'TELEGRAM_ALLOWED_USERS',
+    'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_DM_POLICY', 'SLACK_ALLOWED_USERS',
+    'WHATSAPP_ENABLED', 'WHATSAPP_SELF_CHAT_MODE', 'WHATSAPP_DM_POLICY', 'WHATSAPP_ALLOWED_USERS',
+    'SIGNAL_PHONE_NUMBER', 'SIGNAL_SELF_CHAT_MODE', 'SIGNAL_DM_POLICY', 'SIGNAL_ALLOWED_USERS',
+    'DISCORD_BOT_TOKEN', 'DISCORD_DM_POLICY', 'DISCORD_ALLOWED_USERS',
+    'BLUESKY_WANTED_DIDS', 'BLUESKY_WANTED_COLLECTIONS', 'BLUESKY_JETSTREAM_URL', 'BLUESKY_CURSOR',
+    'BLUESKY_HANDLE', 'BLUESKY_APP_PASSWORD', 'BLUESKY_SERVICE_URL', 'BLUESKY_APPVIEW_URL',
+    'BLUESKY_NOTIFICATIONS_ENABLED', 'BLUESKY_NOTIFICATIONS_INTERVAL_SEC', 'BLUESKY_NOTIFICATIONS_LIMIT',
+    'BLUESKY_NOTIFICATIONS_PRIORITY', 'BLUESKY_NOTIFICATIONS_REASONS',
+    'HEARTBEAT_ENABLED', 'HEARTBEAT_INTERVAL_MIN', 'HEARTBEAT_SKIP_RECENT_USER_MIN',
+    'CRON_ENABLED',
+  ];
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of envVars) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of envVars) {
+      if (savedEnv[key] !== undefined) {
+        process.env[key] = savedEnv[key];
+      } else {
+        delete process.env[key];
+      }
+    }
+  });
+
   it('canonicalizes legacy server mode aliases', () => {
     expect(canonicalizeServerMode('cloud')).toBe('api');
     expect(canonicalizeServerMode('api')).toBe('api');
@@ -229,32 +275,6 @@ describe('normalizeAgents', () => {
   });
 
   describe('env var fallback (container deploys)', () => {
-    const envVars = [
-      'TELEGRAM_BOT_TOKEN', 'TELEGRAM_DM_POLICY', 'TELEGRAM_ALLOWED_USERS',
-      'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_DM_POLICY', 'SLACK_ALLOWED_USERS',
-      'WHATSAPP_ENABLED', 'WHATSAPP_SELF_CHAT_MODE', 'WHATSAPP_DM_POLICY', 'WHATSAPP_ALLOWED_USERS',
-      'SIGNAL_PHONE_NUMBER', 'SIGNAL_SELF_CHAT_MODE', 'SIGNAL_DM_POLICY', 'SIGNAL_ALLOWED_USERS',
-      'DISCORD_BOT_TOKEN', 'DISCORD_DM_POLICY', 'DISCORD_ALLOWED_USERS',
-    ];
-    const savedEnv: Record<string, string | undefined> = {};
-
-    beforeEach(() => {
-      for (const key of envVars) {
-        savedEnv[key] = process.env[key];
-        delete process.env[key];
-      }
-    });
-
-    afterEach(() => {
-      for (const key of envVars) {
-        if (savedEnv[key] !== undefined) {
-          process.env[key] = savedEnv[key];
-        } else {
-          delete process.env[key];
-        }
-      }
-    });
-
     it('should pick up channels from env vars when YAML has none', () => {
       process.env.TELEGRAM_BOT_TOKEN = 'env-telegram-token';
       process.env.DISCORD_BOT_TOKEN = 'env-discord-token';
@@ -287,6 +307,56 @@ describe('normalizeAgents', () => {
       expect(agents[0].channels.telegram?.token).toBe('yaml-token');
     });
 
+    it('should merge env var credential into YAML block missing it', () => {
+      process.env.SIGNAL_PHONE_NUMBER = '+15551234567';
+      process.env.DISCORD_BOT_TOKEN = 'env-discord-token';
+      process.env.TELEGRAM_BOT_TOKEN = 'env-tg-token';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {
+          signal: { enabled: true, selfChat: true, dmPolicy: 'pairing' },
+          discord: { enabled: true, dmPolicy: 'open' },
+          telegram: { enabled: true, dmPolicy: 'pairing' },
+        },
+      };
+
+      const agents = normalizeAgents(config);
+
+      // Env var should fill in the missing credential
+      expect(agents[0].channels.signal?.phone).toBe('+15551234567');
+      expect(agents[0].channels.signal?.dmPolicy).toBe('pairing');
+      expect(agents[0].channels.discord?.token).toBe('env-discord-token');
+      expect(agents[0].channels.discord?.dmPolicy).toBe('open');
+      expect(agents[0].channels.telegram?.token).toBe('env-tg-token');
+    });
+
+    it('should merge env var credential into YAML block missing it', () => {
+      process.env.SIGNAL_PHONE_NUMBER = '+15551234567';
+      process.env.DISCORD_BOT_TOKEN = 'env-discord-token';
+      process.env.TELEGRAM_BOT_TOKEN = 'env-tg-token';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {
+          signal: { enabled: true, selfChat: true, dmPolicy: 'pairing' },
+          discord: { enabled: true, dmPolicy: 'open' },
+          telegram: { enabled: true, dmPolicy: 'pairing' },
+        },
+      };
+
+      const agents = normalizeAgents(config);
+
+      // Env var should fill in the missing credential
+      expect(agents[0].channels.signal?.phone).toBe('+15551234567');
+      expect(agents[0].channels.signal?.dmPolicy).toBe('pairing');
+      expect(agents[0].channels.discord?.token).toBe('env-discord-token');
+      expect(agents[0].channels.discord?.dmPolicy).toBe('open');
+      expect(agents[0].channels.telegram?.token).toBe('env-tg-token');
+    });
+
     it('should not apply env vars in multi-agent mode', () => {
       process.env.TELEGRAM_BOT_TOKEN = 'env-token';
 
@@ -300,6 +370,135 @@ describe('normalizeAgents', () => {
       const agents = normalizeAgents(config);
 
       expect(agents[0].channels.telegram).toBeUndefined();
+    });
+
+    it('should pick up heartbeat from env vars when YAML features is empty', () => {
+      process.env.HEARTBEAT_ENABLED = 'true';
+      process.env.HEARTBEAT_INTERVAL_MIN = '15';
+      process.env.HEARTBEAT_SKIP_RECENT_USER_MIN = '5';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.heartbeat).toEqual({
+        enabled: true,
+        intervalMin: 15,
+        skipRecentUserMin: 5,
+      });
+    });
+
+    it('should pick up cron from env vars when YAML features is empty', () => {
+      process.env.CRON_ENABLED = 'true';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.cron).toBe(true);
+    });
+
+    it('should merge env var heartbeat into existing YAML features', () => {
+      process.env.HEARTBEAT_ENABLED = 'true';
+      process.env.HEARTBEAT_INTERVAL_MIN = '20';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+        features: {
+          cron: true,
+          maxToolCalls: 50,
+        },
+      };
+
+      const agents = normalizeAgents(config);
+
+      // Env var heartbeat should merge in
+      expect(agents[0].features?.heartbeat).toEqual({
+        enabled: true,
+        intervalMin: 20,
+      });
+      // Existing YAML features should be preserved
+      expect(agents[0].features?.cron).toBe(true);
+      expect(agents[0].features?.maxToolCalls).toBe(50);
+    });
+
+    it('should not override YAML heartbeat with env vars', () => {
+      process.env.HEARTBEAT_ENABLED = 'true';
+      process.env.HEARTBEAT_INTERVAL_MIN = '99';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+        features: {
+          heartbeat: {
+            enabled: true,
+            intervalMin: 10,
+            skipRecentUserMin: 3,
+          },
+        },
+      };
+
+      const agents = normalizeAgents(config);
+
+      // YAML values should win
+      expect(agents[0].features?.heartbeat?.intervalMin).toBe(10);
+      expect(agents[0].features?.heartbeat?.skipRecentUserMin).toBe(3);
+    });
+
+    it('should handle heartbeat env var with defaults when interval not set', () => {
+      process.env.HEARTBEAT_ENABLED = 'true';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.heartbeat).toEqual({ enabled: true });
+    });
+
+    it('should not override YAML cron: false with env var', () => {
+      process.env.CRON_ENABLED = 'true';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+        features: {
+          cron: false,
+        },
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.cron).toBe(false);
+    });
+
+    it('should not enable heartbeat when env var is not true', () => {
+      process.env.HEARTBEAT_ENABLED = 'false';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.heartbeat).toBeUndefined();
     });
 
     it('should pick up all channel types from env vars', () => {

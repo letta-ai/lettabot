@@ -107,6 +107,8 @@ server:
 
 ### Docker Compose
 
+Run both the Letta server and LettaBot together:
+
 ```yaml
 services:
   letta:
@@ -123,14 +125,16 @@ services:
     depends_on:
       - letta
     environment:
-      - LETTA_BASE_URL=http://letta:8283
-    volumes:
-      - ./lettabot.yaml:/app/lettabot.yaml
-      - ./lettabot-agent.json:/app/lettabot-agent.json
+      - LETTABOT_CONFIG_YAML=${LETTABOT_CONFIG_YAML}
+      # Your YAML config should include: server.baseUrl: http://letta:8283
+    ports:
+      - "8080:8080"
 
 volumes:
   letta-data:
 ```
+
+For general Docker and cloud deployment (without a self-hosted Letta server), see [Cloud Deployment](./cloud-deploy.md).
 
 ## Troubleshooting
 
@@ -149,6 +153,12 @@ curl http://localhost:8283/v1/health
 ### Agent Stuck / Not Responding
 
 If the bot hangs after sending a message:
+
+**What LettaBot already does automatically**
+
+- For terminal runs with no assistant output, LettaBot attempts one recovery/retry cycle.
+- If the failure is an approval-related conflict, LettaBot scans the same conversation for unresolved approvals, auto-denies orphaned ones, cancels active runs for that same conversation, then retries once.
+- For generic `409 conflict` ("another request is currently being processed"), LettaBot does not blindly retry; it returns a clear "wait and try again" message.
 
 **1. Check for pending tool approvals**
 
