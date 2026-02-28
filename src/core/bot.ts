@@ -199,6 +199,7 @@ export class LettaBot implements AgentSession {
   private processing = false; // Global lock for shared mode
   private processingKeys: Set<string> = new Set(); // Per-key locks for per-channel mode
   private cancelledKeys: Set<string> = new Set(); // Tracks keys where /cancel was issued
+  private sendSequence = 0; // Monotonic counter for desync diagnostics
 
   // AskUserQuestion support: resolves when the next user message arrives.
   // In per-chat mode, keyed by convKey so each chat resolves independently.
@@ -1505,6 +1506,8 @@ export class LettaBot implements AgentSession {
     let session: Session | null = null;
     try {
       const convKey = this.resolveConversationKey(msg.channel, msg.chatId);
+      const seq = ++this.sendSequence;
+      log.info(`processMessage seq=${seq} key=${convKey} retried=${retried} user=${msg.userId} text=${(msg.text || '').slice(0, 80)}`);
       const run = await this.runSession(messageToSend, { retried, canUseTool, convKey });
       lap('session send');
       session = run.session;
@@ -1761,11 +1764,23 @@ export class LettaBot implements AgentSession {
 
             const resultText = typeof streamMsg.result === 'string' ? streamMsg.result : '';
             if (resultText.trim().length > 0) {
-              response = resultText;
+              // Guard against n-1 desync: if we accumulated assistant text via
+              // streaming and the result carries different content, the result
+              // likely belongs to a prior run that leaked through the SDK's
+              // stream queue. Prefer the real-time streamed content.
+              if (response.trim().length > 0 && resultText.trim() !== response.trim()) {
+                log.warn(
+                  `Result text diverges from streamed content ` +
+                  `(resultLen=${resultText.length}, streamLen=${response.length}). ` +
+                  `Preferring streamed content to avoid n-1 desync.`
+                );
+              } else {
+                response = resultText;
+              }
             }
             const hasResponse = response.trim().length > 0;
             const isTerminalError = streamMsg.success === false || !!streamMsg.error;
-            log.info(`Stream result: success=${streamMsg.success}, hasResponse=${hasResponse}, resultLen=${resultText.length}`);
+            log.info(`Stream result: seq=${seq} success=${streamMsg.success}, hasResponse=${hasResponse}, resultLen=${resultText.length}, responsePreview=${response.trim().slice(0, 60)}`);
             log.info(`Stream message counts:`, msgTypeCounts);
             if (streamMsg.error) {
               const detail = resultText.trim();
@@ -1997,8 +2012,14 @@ export class LettaBot implements AgentSession {
         log.error('Failed to send error message to channel:', sendError);
       }
     } finally {
-      // Session stays alive for reuse -- only invalidated on errors
-      this.cancelledKeys.delete(this.resolveConversationKey(msg.channel, msg.chatId));
+      const finalConvKey = this.resolveConversationKey(msg.channel, msg.chatId);
+      // When session reuse is disabled, invalidate after every message to
+      // eliminate any possibility of stream state bleed between sequential
+      // sends. Costs ~5s subprocess init overhead per message.
+      if (this.config.reuseSession === false) {
+        this.invalidateSession(finalConvKey);
+      }
+      this.cancelledKeys.delete(finalConvKey);
     }
   }
 
