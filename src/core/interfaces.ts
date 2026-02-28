@@ -9,7 +9,7 @@
 import type { ChannelAdapter } from '../channels/types.js';
 import type { InboundMessage, TriggerContext } from './types.js';
 import type { GroupBatcher } from './group-batcher.js';
-import type { StreamMsg } from './bot.js';
+import type { StreamMsg } from './types.js';
 
 export interface AgentSession {
   /** Register a channel adapter */
