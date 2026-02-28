@@ -6,7 +6,7 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import { validateApiKey } from './auth.js';
-import type { SendMessageRequest, SendMessageResponse, SendFileResponse, ChatRequest, ChatResponse, PairingListResponse, PairingApproveRequest, PairingApproveResponse } from './types.js';
+import type { SendMessageRequest, SendMessageResponse, SendFileResponse, ChatRequest, ChatResponse, AsyncChatResponse, PairingListResponse, PairingApproveRequest, PairingApproveResponse } from './types.js';
 import { listPairingRequests, approvePairingCode } from '../pairing/store.js';
 import { parseMultipart } from './multipart.js';
 import type { AgentRouter } from '../core/interfaces.js';
@@ -222,6 +222,77 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         };
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(chatRes));
+      }
+      return;
+    }
+
+    // Route: POST /api/v1/chat/async (fire-and-forget: returns 202, processes in background)
+    if (req.url === '/api/v1/chat/async' && req.method === 'POST') {
+      try {
+        if (!validateApiKey(req.headers, options.apiKey)) {
+          sendError(res, 401, 'Unauthorized');
+          return;
+        }
+
+        const contentType = req.headers['content-type'] || '';
+        if (!contentType.includes('application/json')) {
+          sendError(res, 400, 'Content-Type must be application/json');
+          return;
+        }
+
+        const body = await readBody(req, MAX_BODY_SIZE);
+        let chatReq: ChatRequest;
+        try {
+          chatReq = JSON.parse(body);
+        } catch {
+          sendError(res, 400, 'Invalid JSON body');
+          return;
+        }
+
+        if (!chatReq.message || typeof chatReq.message !== 'string') {
+          sendError(res, 400, 'Missing required field: message');
+          return;
+        }
+
+        if (chatReq.message.length > MAX_TEXT_LENGTH) {
+          sendError(res, 400, `Message too long (max ${MAX_TEXT_LENGTH} chars)`);
+          return;
+        }
+
+        const agentName = chatReq.agent;
+        const agentNames = deliverer.getAgentNames();
+        const resolvedName = agentName || agentNames[0];
+
+        if (agentName && !agentNames.includes(agentName)) {
+          sendError(res, 404, `Agent not found: ${agentName}. Available: ${agentNames.join(', ')}`);
+          return;
+        }
+
+        console.log(`[API] Async chat request for agent "${resolvedName}": ${chatReq.message.slice(0, 100)}...`);
+
+        // Return 202 immediately
+        const asyncRes: AsyncChatResponse = {
+          success: true,
+          status: 'queued',
+          agentName: resolvedName,
+        };
+        res.writeHead(202, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(asyncRes));
+
+        // Process in background (detached promise)
+        const context = { type: 'webhook' as const, outputMode: 'silent' as const };
+        deliverer.sendToAgent(agentName, chatReq.message, context).catch((error: any) => {
+          console.error(`[API] Async chat background error for agent "${resolvedName}":`, error);
+        });
+      } catch (error: any) {
+        console.error('[API] Async chat error:', error);
+        const asyncRes: AsyncChatResponse = {
+          success: false,
+          status: 'error',
+          error: error.message || 'Internal server error',
+        };
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(asyncRes));
       }
       return;
     }
