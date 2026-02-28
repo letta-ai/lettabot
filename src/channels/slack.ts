@@ -24,6 +24,7 @@ export interface SlackConfig {
   appToken: string;       // xapp-... (for Socket Mode)
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[]; // Slack user IDs (e.g., U01234567)
+  streaming?: boolean;    // Stream responses via progressive message edits (default: false)
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
   groups?: Record<string, GroupModeConfig>;  // Per-channel settings
@@ -326,6 +327,10 @@ export class SlackAdapter implements ChannelAdapter {
     return { messageId: ts };
   }
   
+  supportsEditing(): boolean {
+    return this.config.streaming ?? false;
+  }
+
   async editMessage(chatId: string, messageId: string, text: string): Promise<void> {
     if (!this.app) throw new Error('Slack not started');
 

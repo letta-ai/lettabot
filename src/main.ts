@@ -365,6 +365,7 @@ function createChannelsForAgent(
       allowedUsers: agentConfig.channels.telegram!.allowedUsers && agentConfig.channels.telegram!.allowedUsers.length > 0
         ? agentConfig.channels.telegram!.allowedUsers.map(u => typeof u === 'string' ? parseInt(u, 10) : u)
         : undefined,
+      streaming: agentConfig.channels.telegram!.streaming,
       attachmentsDir,
       attachmentsMaxBytes,
       groups: agentConfig.channels.telegram!.groups,
@@ -396,6 +397,7 @@ function createChannelsForAgent(
       allowedUsers: agentConfig.channels.slack.allowedUsers && agentConfig.channels.slack.allowedUsers.length > 0
         ? agentConfig.channels.slack.allowedUsers
         : undefined,
+      streaming: agentConfig.channels.slack.streaming,
       attachmentsDir,
       attachmentsMaxBytes,
       groups: agentConfig.channels.slack.groups,
@@ -452,6 +454,7 @@ function createChannelsForAgent(
       allowedUsers: agentConfig.channels.discord.allowedUsers && agentConfig.channels.discord.allowedUsers.length > 0
         ? agentConfig.channels.discord.allowedUsers
         : undefined,
+      streaming: agentConfig.channels.discord.streaming,
       attachmentsDir,
       attachmentsMaxBytes,
       groups: agentConfig.channels.discord.groups,

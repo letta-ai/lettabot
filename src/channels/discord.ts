@@ -26,6 +26,7 @@ export interface DiscordConfig {
   token: string;
   dmPolicy?: DmPolicy;      // 'pairing' (default), 'allowlist', or 'open'
   allowedUsers?: string[];  // Discord user IDs
+  streaming?: boolean;      // Stream responses via progressive message edits (default: false)
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
   groups?: Record<string, GroupModeConfig>;  // Per-guild/channel settings
@@ -414,7 +415,7 @@ Ask the bot owner to approve with:
   }
 
   supportsEditing(): boolean {
-    return true;
+    return this.config.streaming ?? false;
   }
 
   private async handleReactionEvent(
