@@ -10,7 +10,7 @@ import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { extname, resolve, join } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
-import type { BotConfig, InboundMessage, TriggerContext, StreamMsg, MessageHookContext, MessageHooksConfig, ReasoningHookContext, ToolCallHookContext, ToolResultHookContext } from './types.js';
+import type { BotConfig, InboundMessage, TriggerContext, StreamMsg, MessageHookContext, MessageHooksConfig, ToolCallHookContext, ToolResultHookContext } from './types.js';
 import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError, formatApiErrorForUser } from './errors.js';
 import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
@@ -272,8 +272,8 @@ export class LettaBot implements AgentSession {
     };
   }
 
-  private async runPreMessageHook(ctx: MessageHookContext): Promise<SendMessage | undefined> {
-    if (!this.hookRunner || !this.hooksConfig?.preMessage) return undefined;
+  private async runPreMessageHook(ctx: MessageHookContext): Promise<import('./hooks.js').PreHookResult> {
+    if (!this.hookRunner || !this.hooksConfig?.preMessage) return {};
     return this.hookRunner.runPre(this.hooksConfig.preMessage, ctx);
   }
 
@@ -282,9 +282,9 @@ export class LettaBot implements AgentSession {
     return this.hookRunner.runPost(this.hooksConfig.postMessage, ctx);
   }
 
-  private runReasoningHook(ctx: ReasoningHookContext): void {
+  private runReasoningHook(ctx: MessageHookContext): void {
     if (!this.hookRunner || !this.hooksConfig?.postReasoning) return;
-    this.hookRunner.runReasoning(this.hooksConfig.postReasoning, ctx).catch(err => {
+    this.hookRunner.runPostReasoning(this.hooksConfig.postReasoning, ctx).catch(err => {
       log.warn('Reasoning hook error:', err instanceof Error ? err.message : err);
     });
   }
@@ -1576,6 +1576,7 @@ export class LettaBot implements AgentSession {
       const preMessageContext: MessageHookContext = {
         stage: 'pre',
         isHeartbeat: false,
+        isRetry: retried,
         suppressDelivery,
         trigger: triggerContext,
         inboundMessage: msg,
@@ -1586,8 +1587,12 @@ export class LettaBot implements AgentSession {
           conversationKey: convKey,
         },
       };
-      const modifiedMessage = await this.runPreMessageHook(preMessageContext);
-      const finalMessageToSend = modifiedMessage || messageToSend;
+      const preHookResult = await this.runPreMessageHook(preMessageContext);
+      if (preHookResult.skip) {
+        log.info('preMessage hook returned skip — aborting agent call');
+        return;
+      }
+      const finalMessageToSend = preHookResult.message ?? messageToSend;
       hookMessage = finalMessageToSend;
 
       const run = await this.runSession(finalMessageToSend, { retried, canUseTool, convKey });
@@ -1773,6 +1778,12 @@ export class LettaBot implements AgentSession {
             // Run reasoning hook
             if (streamMsg.content) {
               this.runReasoningHook({
+                stage: 'postReasoning',
+                isHeartbeat: false,
+                suppressDelivery,
+                trigger: triggerContext,
+                inboundMessage: msg,
+                message: messageToSend,
                 reasoning: streamMsg.content,
                 stepIndex: 0, // TODO: track reasoning step index
                 agent: this.buildHookContextBase(),
@@ -2248,12 +2259,16 @@ export class LettaBot implements AgentSession {
       return override ?? currentResponse;
     };
 
-    const hookOverride = await this.runPreMessageHook({
+    const preResult = await this.runPreMessageHook({
       ...hookContextBase,
       stage: 'pre',
       message: hookMessage,
     });
-    if (hookOverride) hookMessage = hookOverride;
+    if (preResult.skip) {
+      log.info('preMessage hook returned skip — aborting sendToAgent call');
+      return '';
+    }
+    if (preResult.message) hookMessage = preResult.message;
 
     try {
       const { stream } = await this.runSession(hookMessage, { convKey });
@@ -2351,12 +2366,16 @@ export class LettaBot implements AgentSession {
       });
     };
 
-    const hookOverride = await this.runPreMessageHook({
+    const preResult = await this.runPreMessageHook({
       ...hookContextBase,
       stage: 'pre',
       message: hookMessage,
     });
-    if (hookOverride) hookMessage = hookOverride;
+    if (preResult.skip) {
+      log.info('preMessage hook returned skip — aborting heartbeat call');
+      return;
+    }
+    if (preResult.message) hookMessage = preResult.message;
 
     try {
       const { stream } = await this.runSession(hookMessage, { convKey });

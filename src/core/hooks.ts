@@ -2,17 +2,25 @@ import { existsSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { SendMessage } from '@letta-ai/letta-code-sdk';
-import type { HookHandlerConfig, MessageHookContext, ReasoningHookContext, ToolCallHookContext, ToolResultHookContext } from './types.js';
+import type { HookHandlerConfig, MessageHookContext, ToolCallHookContext, ToolResultHookContext } from './types.js';
 
 type HookModule = {
   preMessage?: (ctx: MessageHookContext) => Promise<unknown> | unknown;
+  postReasoning?: (ctx: MessageHookContext) => Promise<unknown> | unknown;
   postMessage?: (ctx: MessageHookContext) => Promise<unknown> | unknown;
-  postReasoning?: (ctx: ReasoningHookContext) => Promise<unknown> | unknown;
   postToolCall?: (ctx: ToolCallHookContext) => Promise<unknown> | unknown;
   postToolResult?: (ctx: ToolResultHookContext) => Promise<unknown> | unknown;
 };
 
+export type PreHookResult = {
+  skip?: boolean;
+  message?: SendMessage;
+};
+
 const DEFAULT_HOOK_MODE: HookHandlerConfig['mode'] = 'await';
+// Default timeout for await-mode hooks. Prevents a hanging hook from blocking
+// the message pipeline indefinitely. Set timeoutMs: 0 in config to disable.
+const DEFAULT_AWAIT_TIMEOUT_MS = 5000;
 
 function normalizeConfigs(config: HookHandlerConfig | HookHandlerConfig[] | undefined): HookHandlerConfig[] {
   if (!config) return [];
@@ -100,9 +108,10 @@ export class MessageHookRunner {
   }
 
   private async invokeHook(
-    stage: 'preMessage' | 'postMessage',
+    stage: 'preMessage' | 'postReasoning' | 'postMessage',
     config: HookHandlerConfig,
     ctx: MessageHookContext,
+    effectiveTimeoutMs?: number,
   ): Promise<unknown> {
     const module = await this.loadModule(config.file);
     if (!module || typeof module[stage] !== 'function') {
@@ -110,7 +119,7 @@ export class MessageHookRunner {
     }
 
     try {
-      return await this.invokeWithTimeout(module[stage]!(ctx), config.timeoutMs);
+      return await this.invokeWithTimeout(module[stage]!(ctx), effectiveTimeoutMs);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       console.warn(`[Hooks] ${stage} failed: ${detail}`);
@@ -122,8 +131,9 @@ export class MessageHookRunner {
    * Run preMessage hooks in order, chaining message overrides.
    * Each hook receives the (possibly modified) message from the previous hook.
    * Hooks with mode:'parallel' are fire-and-forget and do not affect the chain.
+   * If any await-mode hook returns `{ skip: true }`, processing stops immediately.
    */
-  async runPre(config: HookHandlerConfig | HookHandlerConfig[] | undefined, ctx: MessageHookContext): Promise<SendMessage | undefined> {
+  async runPre(config: HookHandlerConfig | HookHandlerConfig[] | undefined, ctx: MessageHookContext): Promise<PreHookResult> {
     const configs = normalizeConfigs(config);
     let current: SendMessage | undefined;
     for (const cfg of configs) {
@@ -133,11 +143,15 @@ export class MessageHookRunner {
         void this.invokeHook('preMessage', cfg, hookCtx);
         continue;
       }
-      const result = await this.invokeHook('preMessage', cfg, hookCtx);
+      const timeoutMs = cfg.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
+      const result = await this.invokeHook('preMessage', cfg, hookCtx, timeoutMs);
+      if (result && typeof result === 'object' && !Array.isArray(result) && (result as Record<string, unknown>).skip === true) {
+        return { skip: true };
+      }
       const extracted = extractSendMessage(result);
       if (extracted !== undefined) current = extracted;
     }
-    return current;
+    return current !== undefined ? { message: current } : {};
   }
 
   /**
@@ -155,28 +169,23 @@ export class MessageHookRunner {
         void this.invokeHook('postMessage', cfg, hookCtx);
         continue;
       }
-      const result = await this.invokeHook('postMessage', cfg, hookCtx);
+      const timeoutMs = cfg.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
+      const result = await this.invokeHook('postMessage', cfg, hookCtx, timeoutMs);
       const extracted = extractResponseText(result);
       if (extracted !== undefined) current = extracted;
     }
     return current;
   }
 
-  async runReasoning(config: HookHandlerConfig | HookHandlerConfig[] | undefined, ctx: ReasoningHookContext): Promise<void> {
+  async runPostReasoning(config: HookHandlerConfig | HookHandlerConfig[] | undefined, ctx: MessageHookContext): Promise<void> {
     for (const cfg of normalizeConfigs(config)) {
-      const module = await this.loadModule(cfg.file);
-      if (!module || typeof module.postReasoning !== 'function') continue;
       const mode = cfg.mode ?? DEFAULT_HOOK_MODE;
-      const task = module.postReasoning(ctx);
+      const timeoutMs = cfg.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
       if (mode === 'parallel') {
-        void this.invokeWithTimeout(task, cfg.timeoutMs);
+        void this.invokeHook('postReasoning', cfg, ctx);
         continue;
       }
-      try {
-        await this.invokeWithTimeout(task, cfg.timeoutMs);
-      } catch (err) {
-        console.warn(`[Hooks] postReasoning failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      await this.invokeHook('postReasoning', cfg, ctx, timeoutMs);
     }
   }
 
@@ -185,13 +194,14 @@ export class MessageHookRunner {
       const module = await this.loadModule(cfg.file);
       if (!module || typeof module.postToolCall !== 'function') continue;
       const mode = cfg.mode ?? DEFAULT_HOOK_MODE;
+      const timeoutMs = cfg.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
       const task = module.postToolCall(ctx);
       if (mode === 'parallel') {
-        void this.invokeWithTimeout(task, cfg.timeoutMs);
+        void this.invokeWithTimeout(task, timeoutMs);
         continue;
       }
       try {
-        await this.invokeWithTimeout(task, cfg.timeoutMs);
+        await this.invokeWithTimeout(task, timeoutMs);
       } catch (err) {
         console.warn(`[Hooks] postToolCall failed: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -203,13 +213,14 @@ export class MessageHookRunner {
       const module = await this.loadModule(cfg.file);
       if (!module || typeof module.postToolResult !== 'function') continue;
       const mode = cfg.mode ?? DEFAULT_HOOK_MODE;
+      const timeoutMs = cfg.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
       const task = module.postToolResult(ctx);
       if (mode === 'parallel') {
-        void this.invokeWithTimeout(task, cfg.timeoutMs);
+        void this.invokeWithTimeout(task, timeoutMs);
         continue;
       }
       try {
-        await this.invokeWithTimeout(task, cfg.timeoutMs);
+        await this.invokeWithTimeout(task, timeoutMs);
       } catch (err) {
         console.warn(`[Hooks] postToolResult failed: ${err instanceof Error ? err.message : String(err)}`);
       }

@@ -62,9 +62,11 @@ export interface MessageHooksConfig {
 }
 
 export interface MessageHookContext {
-  stage: 'pre' | 'post';
+  stage: 'pre' | 'postReasoning' | 'post';
   isHeartbeat: boolean;
   suppressDelivery: boolean;
+  /** Whether this message is a retry of a previously failed turn */
+  isRetry?: boolean;
   trigger?: TriggerContext;
   inboundMessage?: InboundMessage;
   formattedText?: string;
@@ -72,19 +74,10 @@ export interface MessageHookContext {
   response?: string;
   delivered?: boolean;
   error?: string;
-  agent?: {
-    id?: string | null;
-    name?: string;
-    conversationId?: string | null;
-    conversationKey?: string;
-  };
-}
-
-export interface ReasoningHookContext {
-  /** The full content of this reasoning block */
-  reasoning: string;
-  /** Which reasoning block this is within the turn (0-based) */
-  stepIndex: number;
+  /** Reasoning content — populated for postReasoning stage only */
+  reasoning?: string;
+  /** Which reasoning block within the turn (0-based) — postReasoning stage only */
+  stepIndex?: number;
   agent?: {
     id?: string | null;
     name?: string;
