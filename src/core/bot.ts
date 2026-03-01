@@ -1732,6 +1732,19 @@ export class LettaBot implements AgentSession {
                 log.warn('Failed to send reasoning display:', err instanceof Error ? err.message : err);
               }
             }
+            // Fire postReasoning hook once per complete accumulated block
+            this.runReasoningHook({
+              stage: 'postReasoning',
+              turnId,
+              isHeartbeat: false,
+              suppressDelivery,
+              trigger: triggerContext,
+              inboundMessage: msg,
+              message: messageToSend,
+              reasoning: reasoningBuffer,
+              stepIndex: reasoningStepIndex++,
+              agent: this.buildHookContextBase(),
+            });
             reasoningBuffer = '';
           }
 
@@ -1789,24 +1802,9 @@ export class LettaBot implements AgentSession {
               log.info(`Reasoning...`);
             }
             sawNonAssistantSinceLastUuid = true;
-            // Accumulate reasoning content for display
-            if (this.config.display?.showReasoning) {
+            // Accumulate when needed for display or the postReasoning hook
+            if (this.config.display?.showReasoning || this.hooksConfig?.postReasoning) {
               reasoningBuffer += streamMsg.content || '';
-            }
-            // Run reasoning hook
-            if (streamMsg.content) {
-              this.runReasoningHook({
-                stage: 'postReasoning',
-                turnId,
-                isHeartbeat: false,
-                suppressDelivery,
-                trigger: triggerContext,
-                inboundMessage: msg,
-                message: messageToSend,
-                reasoning: streamMsg.content,
-                stepIndex: reasoningStepIndex++,
-                agent: this.buildHookContextBase(),
-              });
             }
           } else if (streamMsg.type === 'error') {
             // SDK now surfaces error detail that was previously dropped.
