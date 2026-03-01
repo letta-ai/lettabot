@@ -27,6 +27,7 @@ export interface TelegramConfig {
   token: string;
   dmPolicy?: DmPolicy;           // 'pairing' (default), 'allowlist', or 'open'
   allowedUsers?: number[];       // Telegram user IDs (config allowlist)
+  streaming?: boolean;           // Stream responses via progressive message edits (default: false)
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
   mentionPatterns?: string[];    // Regex patterns for mention detection
@@ -44,7 +45,7 @@ export class TelegramAdapter implements ChannelAdapter {
   private attachmentsMaxBytes?: number;
   
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string, args?: string) => Promise<string | null>;
   
   constructor(config: TelegramConfig) {
     this.config = {
@@ -239,7 +240,7 @@ export class TelegramAdapter implements ChannelAdapter {
     // Handle /status
     this.bot.command('status', async (ctx) => {
       if (this.onCommand) {
-        const result = await this.onCommand('status');
+        const result = await this.onCommand('status', String(ctx.chat.id));
         await ctx.reply(result || 'No status available');
       }
     });
@@ -247,15 +248,31 @@ export class TelegramAdapter implements ChannelAdapter {
     // Handle /heartbeat - trigger heartbeat manually (silent - no reply)
     this.bot.command('heartbeat', async (ctx) => {
       if (this.onCommand) {
-        await this.onCommand('heartbeat');
+        await this.onCommand('heartbeat', String(ctx.chat.id));
       }
     });
 
     // Handle /reset
     this.bot.command('reset', async (ctx) => {
       if (this.onCommand) {
-        const result = await this.onCommand('reset');
+        const result = await this.onCommand('reset', String(ctx.chat.id));
         await ctx.reply(result || 'Reset complete');
+      }
+    });
+
+    this.bot.command('cancel', async (ctx) => {
+      if (this.onCommand) {
+        const result = await this.onCommand('cancel', String(ctx.chat.id));
+        if (result) await ctx.reply(result);
+      }
+    });
+
+    // Handle /model [handle]
+    this.bot.command('model', async (ctx) => {
+      if (this.onCommand) {
+        const args = ctx.match?.trim() || undefined;
+        const result = await this.onCommand('model', String(ctx.chat.id), args);
+        await ctx.reply(result || 'No model info available');
       }
     });
     
@@ -520,7 +537,7 @@ export class TelegramAdapter implements ChannelAdapter {
           lastMessageId = String(result.message_id);
           continue;
         } catch (e) {
-          console.warn(`[Telegram] ${msg.parseMode} send failed, falling back to default:`, e);
+          log.warn(`${msg.parseMode} send failed, falling back to default:`, e);
           // Fall through to default conversion path
         }
       }
@@ -589,6 +606,10 @@ export class TelegramAdapter implements ChannelAdapter {
     return { messageId: String(result.message_id) };
   }
   
+  supportsEditing(): boolean {
+    return this.config.streaming ?? false;
+  }
+
   async editMessage(chatId: string, messageId: string, text: string): Promise<void> {
     const { markdownToTelegramV2 } = await import('./telegram-format.js');
     try {

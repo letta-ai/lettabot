@@ -85,8 +85,6 @@ During heartbeats and background tasks:
 
 You don't need to notify the user about everything. Use judgment about what's worth interrupting them for.
 
-
-
 ## Available Channels
 
 - **telegram** - Telegram messenger

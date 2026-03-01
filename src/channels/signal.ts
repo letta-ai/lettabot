@@ -6,7 +6,7 @@
  */
 
 import type { ChannelAdapter } from './types.js';
-import type { InboundAttachment, InboundMessage, OutboundMessage } from '../core/types.js';
+import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
 import { applySignalGroupGating } from './signal/group-gating.js';
 import type { DmPolicy } from '../pairing/types.js';
 import {
@@ -163,7 +163,7 @@ export class SignalAdapter implements ChannelAdapter {
   private baseUrl: string;
   
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string, args?: string) => Promise<string | null>;
   
   constructor(config: SignalConfig) {
     this.config = {
@@ -305,13 +305,43 @@ This code expires in 1 hour.`;
     };
   }
   
+  async sendFile(file: OutboundFile): Promise<{ messageId: string }> {
+    const params: Record<string, unknown> = {
+      attachment: [file.filePath],
+    };
+
+    // Include caption as the message text
+    if (file.caption) {
+      params.message = file.caption;
+    }
+
+    if (this.config.phoneNumber) {
+      params.account = this.config.phoneNumber;
+    }
+
+    const target = file.chatId === 'note-to-self' ? this.config.phoneNumber : file.chatId;
+
+    if (target.startsWith('group:')) {
+      params.groupId = target.slice('group:'.length);
+    } else {
+      params.recipient = [target];
+    }
+
+    const result = await this.rpcRequest<{ timestamp?: number }>('send', params);
+    const timestamp = result?.timestamp;
+
+    return {
+      messageId: timestamp ? String(timestamp) : 'unknown',
+    };
+  }
+
   getDmPolicy(): string {
     return this.config.dmPolicy || 'pairing';
   }
 
   getFormatterHints() {
     return {
-      supportsReactions: false,
+      supportsReactions: true,
       supportsFiles: false,
       formatHint: 'ONLY: *bold* _italic_ `code` — NO: headers, code fences, links, quotes, tables',
     };
@@ -788,12 +818,12 @@ This code expires in 1 hour.`;
       }
       
       // Handle slash commands
-      const command = parseCommand(messageText);
-      if (command) {
-        if (command === 'help' || command === 'start') {
+      const parsed = parseCommand(messageText);
+      if (parsed) {
+        if (parsed.command === 'help' || parsed.command === 'start') {
           await this.sendMessage({ chatId, text: HELP_TEXT });
         } else if (this.onCommand) {
-          const result = await this.onCommand(command);
+          const result = await this.onCommand(parsed.command, chatId, parsed.args || undefined);
           if (result) await this.sendMessage({ chatId, text: result });
         }
         return; // Don't pass commands to agent

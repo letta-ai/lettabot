@@ -9,7 +9,7 @@
 
 import type { AgentSession, AgentRouter } from './interfaces.js';
 import type { TriggerContext } from './types.js';
-import type { StreamMsg } from './bot.js';
+import type { StreamMsg } from './types.js';
 
 import { createLogger } from '../logger.js';
 

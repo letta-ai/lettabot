@@ -465,6 +465,30 @@ export async function cancelRuns(
 }
 
 /**
+ * Cancel active runs for a specific conversation.
+ * Scoped to a single conversation -- won't affect other channels/conversations.
+ */
+export async function cancelConversation(
+  conversationId: string
+): Promise<boolean> {
+  try {
+    const client = getClient();
+    await client.conversations.cancel(conversationId);
+    log.info(`Cancelled runs for conversation ${conversationId}`);
+    return true;
+  } catch (e) {
+    // 409 "No active runs to cancel" is expected when cancel fires before run starts
+    const err = e as { status?: number };
+    if (err?.status === 409) {
+      log.info(`No active runs to cancel for conversation ${conversationId} (409)`);
+      return true;
+    }
+    log.error(`Failed to cancel conversation ${conversationId}:`, e);
+    return false;
+  }
+}
+
+/**
  * Fetch the error detail from the latest failed run on an agent.
  * Returns the actual error detail from run metadata (which is more
  * descriptive than the opaque `stop_reason=error` wire message).
@@ -492,7 +516,7 @@ export async function getLatestRunError(
     if (conversationId
       && typeof run.conversation_id === 'string'
       && run.conversation_id !== conversationId) {
-      console.warn('[Letta API] Latest run lookup returned a different conversation, skipping enrichment');
+      log.warn('Latest run lookup returned a different conversation, skipping enrichment');
       return null;
     }
 
@@ -506,10 +530,10 @@ export async function getLatestRunError(
     const isApprovalError = detail.toLowerCase().includes('waiting for approval')
       || detail.toLowerCase().includes('approve or deny');
 
-    console.log(`[Letta API] Latest run error: ${detail.slice(0, 150)}${isApprovalError ? ' [approval]' : ''}`);
+    log.info(`Latest run error: ${detail.slice(0, 150)}${isApprovalError ? ' [approval]' : ''}`);
     return { message: detail, stopReason, isApprovalError };
   } catch (e) {
-    console.warn('[Letta API] Failed to fetch latest run error:', e instanceof Error ? e.message : e);
+    log.warn('Failed to fetch latest run error:', e instanceof Error ? e.message : e);
     return null;
   }
 }
@@ -538,7 +562,7 @@ async function listActiveConversationRunIds(
     }
     return runIds;
   } catch (e) {
-    console.warn('[Letta API] Failed to list active conversation runs:', e instanceof Error ? e.message : e);
+    log.warn('Failed to list active conversation runs:', e instanceof Error ? e.message : e);
     return [];
   }
 }
@@ -639,7 +663,7 @@ export async function recoverOrphanedConversationApproval(
     // List recent messages from the conversation to find orphaned approvals.
     // Default: 50 (fast path). Deep scan: 500 (for conversations with many approvals).
     const scanLimit = deepScan ? 500 : 50;
-    console.log(`[Letta API] Scanning ${scanLimit} messages for orphaned approvals...`);
+    log.info(`Scanning ${scanLimit} messages for orphaned approvals...`);
     const messagesPage = await client.conversations.messages.list(conversationId, { limit: scanLimit });
     const messages: Array<Record<string, unknown>> = [];
     for await (const msg of messagesPage) {
@@ -668,6 +692,7 @@ export async function recoverOrphanedConversationApproval(
       runId: string;
     }
     const unresolvedByRun = new Map<string, UnresolvedApproval[]>();
+    const seenToolCallIds = new Set<string>();
     
     for (const msg of messages) {
       if (msg.message_type !== 'approval_request_message') continue;
@@ -678,6 +703,9 @@ export async function recoverOrphanedConversationApproval(
       
       for (const tc of toolCalls) {
         if (!tc.tool_call_id || resolvedToolCalls.has(tc.tool_call_id)) continue;
+        // Skip duplicate tool_call_ids across multiple approval_request_messages
+        if (seenToolCallIds.has(tc.tool_call_id)) continue;
+        seenToolCallIds.add(tc.tool_call_id);
         
         const key = runId || 'unknown';
         if (!unresolvedByRun.has(key)) unresolvedByRun.set(key, []);
@@ -731,13 +759,19 @@ export async function recoverOrphanedConversationApproval(
             reason: `Auto-denied: originating run was ${status}/${stopReason}`,
           }));
           
-          await client.conversations.messages.create(conversationId, {
-            messages: [{
-              type: 'approval',
-              approvals: approvalResponses,
-            }],
-            streaming: false,
-          });
+          try {
+            await client.conversations.messages.create(conversationId, {
+              messages: [{
+                type: 'approval',
+                approvals: approvalResponses,
+              }],
+              streaming: false,
+            });
+          } catch (batchError) {
+            log.warn(`Failed to submit approval denial batch for run ${runId} (${approvals.length} tool call(s)):`, batchError);
+            details.push(`Failed to deny ${approvals.length} approval(s) from run ${runId}`);
+            continue;
+          }
           
           // The denial triggers a new agent run server-side. Wait for it to
           // settle before returning, otherwise the caller retries immediately

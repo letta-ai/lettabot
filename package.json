@@ -22,6 +22,7 @@
     "start": "node dist/main.js",
     "test": "vitest",
     "test:run": "vitest run --exclude 'e2e/**'",
+    "lint:console": "bash scripts/no-console.sh",
     "test:e2e": "vitest run e2e/",
     "skills": "tsx src/cli.ts skills",
     "skills:list": "tsx src/cli.ts skills list",
@@ -66,7 +67,7 @@
   "dependencies": {
     "@clack/prompts": "^0.11.0",
     "@hapi/boom": "^10.0.1",
-    "@letta-ai/letta-client": "^1.7.8",
+    "@letta-ai/letta-client": "^1.7.9",
     "@letta-ai/letta-code-sdk": "^0.1.6",
     "@types/express": "^5.0.6",
     "@types/node": "^25.0.10",

@@ -1,5 +1,5 @@
 import type { LettaBotConfig } from './types.js';
-import { loadConfigStrict, resolveConfigPath } from './io.js';
+import { configSourceLabel, loadConfigStrict } from './io.js';
 
 import { createLogger } from '../logger.js';
 
@@ -14,9 +14,9 @@ export function loadAppConfigOrExit(exitFn: ExitFn = process.exit): LettaBotConf
   try {
     return loadConfigStrict();
   } catch (err) {
-    const configPath = resolveConfigPath();
-    log.error(`Failed to load ${configPath}:`, err);
-    log.error(`Fix the errors above in ${configPath} and restart.`);
+    const source = configSourceLabel();
+    log.error(`Failed to load ${source}:`, err);
+    log.error(`Fix the errors above in ${source} and restart.`);
     return exitFn(1);
   }
 }

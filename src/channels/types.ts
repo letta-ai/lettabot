@@ -33,7 +33,7 @@ export interface ChannelAdapter {
   
   // Event handlers (set by bot core)
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string, args?: string) => Promise<string | null>;
 }
 
 /**

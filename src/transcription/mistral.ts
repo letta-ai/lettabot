@@ -6,12 +6,14 @@
  */
 
 import { loadConfig } from '../config/index.js';
+import { createLogger } from '../logger.js';
 import { execSync } from 'node:child_process';
 import { writeFileSync, readFileSync, unlinkSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { TranscriptionResult } from './openai.js';
 
+const log = createLogger('Mistral');
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const CHUNK_DURATION_SECONDS = 600;
 
@@ -83,7 +85,7 @@ function convertAudioToMp3(audioBuffer: Buffer, inputExt: string): Buffer {
       timeout: 30000,
     });
     const converted = readFileSync(outputPath);
-    console.log(`[Transcription] Converted ${audioBuffer.length} bytes → ${converted.length} bytes`);
+    log.info(`Converted ${audioBuffer.length} bytes → ${converted.length} bytes`);
     return converted;
   } finally {
     try { unlinkSync(inputPath); } catch {}
@@ -151,13 +153,13 @@ async function transcribeInChunks(audioBuffer: Buffer, ext: string): Promise<str
       throw new Error('Failed to split audio into chunks');
     }
 
-    console.log(`[Transcription] Split into ${chunkFiles.length} chunks`);
+    log.info(`Split into ${chunkFiles.length} chunks`);
 
     const transcriptions: string[] = [];
     for (let i = 0; i < chunkFiles.length; i++) {
       const chunkPath = join(tempDir, chunkFiles[i]);
       const chunkBuffer = readFileSync(chunkPath);
-      console.log(`[Transcription] Transcribing chunk ${i + 1}/${chunkFiles.length} (${(chunkBuffer.length / 1024).toFixed(0)}KB)`);
+      log.info(`Transcribing chunk ${i + 1}/${chunkFiles.length} (${(chunkBuffer.length / 1024).toFixed(0)}KB)`);
       const text = await attemptTranscription(chunkBuffer, chunkFiles[i]);
       if (text.trim()) {
         transcriptions.push(text.trim());
@@ -165,7 +167,7 @@ async function transcribeInChunks(audioBuffer: Buffer, ext: string): Promise<str
     }
 
     const combined = transcriptions.join(' ');
-    console.log(`[Transcription] Combined ${transcriptions.length} chunks into ${combined.length} chars`);
+    log.info(`Combined ${transcriptions.length} chunks into ${combined.length} chars`);
     return combined;
   } finally {
     try {
@@ -199,19 +201,19 @@ export async function transcribeAudio(
     if (NEEDS_CONVERSION.includes(ext)) {
       const mapped = FORMAT_MAP[ext];
       if (mapped) {
-        console.log(`[Transcription] Trying .${ext} as .${mapped} (no conversion)`);
+        log.info(`Trying .${ext} as .${mapped} (no conversion)`);
         finalFilename = filename.replace(/\.[^.]+$/, `.${mapped}`);
 
         try {
           const text = await attemptTranscription(finalBuffer, finalFilename);
           return { success: true, text };
         } catch {
-          console.log(`[Transcription] Rename approach failed for .${ext}`);
+          log.info(`Rename approach failed for .${ext}`);
         }
       }
 
       if (isFfmpegAvailable()) {
-        console.log(`[Transcription] Converting .${ext} → .mp3 with ffmpeg`);
+        log.info(`Converting .${ext} → .mp3 with ffmpeg`);
         finalBuffer = convertAudioToMp3(audioBuffer, ext);
         finalFilename = filename.replace(/\.[^.]+$/, '.mp3');
       } else {
@@ -226,7 +228,7 @@ export async function transcribeAudio(
     // Check file size and chunk if needed
     if (finalBuffer.length > MAX_FILE_SIZE) {
       const finalExt = finalFilename.split('.').pop()?.toLowerCase() || 'ogg';
-      console.log(`[Transcription] File too large (${(finalBuffer.length / 1024 / 1024).toFixed(1)}MB), splitting into chunks`);
+      log.info(`File too large (${(finalBuffer.length / 1024 / 1024).toFixed(1)}MB), splitting into chunks`);
       const text = await transcribeInChunks(finalBuffer, finalExt);
       return { success: true, text };
     }

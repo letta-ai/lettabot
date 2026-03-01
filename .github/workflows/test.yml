@@ -20,6 +20,9 @@ jobs:
       
       - name: Install dependencies
         run: npm ci
+
+      - name: Lint runtime console usage
+        run: npm run lint:console
       
       - name: Build
         run: npm run build
@@ -40,6 +43,9 @@ jobs:
       
       - name: Install dependencies
         run: npm ci
+
+      - name: Lint runtime console usage
+        run: npm run lint:console
       
       - name: Build
         run: npm run build

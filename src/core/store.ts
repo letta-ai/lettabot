@@ -330,6 +330,7 @@ export class Store {
 
   /**
    * Set conversation ID for a specific key.
+   * TODO: consider TTL-based cleanup for per-chat conversation entries
    */
   setConversationId(key: string, id: string): void {
     const agent = this.agentData();
@@ -398,6 +399,20 @@ export class Store {
     const current = (currentBaseUrl || 'https://api.letta.com').replace(/\/$/, '');
 
     return stored !== current;
+  }
+
+  /**
+   * Clear only the agent ID and all associated conversation IDs.
+   * The next ensureSessionForKey() call will create a fresh agent.
+   * Unlike reset(), this preserves other agent metadata (recovery attempts, etc.).
+   */
+  clearAgent(): void {
+    const agent = this.agentData();
+    agent.agentId = null;
+    agent.conversationId = null;
+    agent.conversations = undefined;
+    agent.baseUrl = undefined;
+    this.save();
   }
 
   reset(): void {

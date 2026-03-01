@@ -181,13 +181,6 @@ describe('formatMessageEnvelope', () => {
       expect(result).toContain('**Mentioned**: yes');
     });
 
-    it('includes directives hint for group chats', () => {
-      const msg = createMessage({ isGroup: true });
-      const result = formatMessageEnvelope(msg);
-      expect(result).toContain('Response Directives');
-      expect(result).toContain('<no-reply/>');
-    });
-
     it('includes <actions> directives when reactions are supported', () => {
       const msg = createMessage({
         isGroup: false,
@@ -196,7 +189,42 @@ describe('formatMessageEnvelope', () => {
       const result = formatMessageEnvelope(msg);
       expect(result).toContain('Response Directives');
       expect(result).toContain('<no-reply/>');
-      expect(result).toContain('<actions>');
+    });
+
+    it('omits <actions> directives when reactions are not supported', () => {
+      const msg = createMessage({ isGroup: false });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('Response Directives');
+      expect(result).toContain('<no-reply/>');
+      expect(result).not.toContain('<react');
+    });
+
+    it('shows file directive only when files supported', () => {
+      const msg = createMessage({
+        formatterHints: { supportsFiles: true },
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('<send-file');
+    });
+
+    it('omits file directive when files not supported', () => {
+      const msg = createMessage({
+        formatterHints: { supportsFiles: false },
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).not.toContain('<send-file');
+    });
+
+    it('shows minimal directives in listening mode', () => {
+      const msg = createMessage({
+        isGroup: true,
+        isListeningMode: true,
+        formatterHints: { supportsReactions: true },
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('<no-reply/>');
+      expect(result).toContain('react to show you saw this');
+      expect(result).not.toContain('react and reply');
     });
 
     it('omits <actions> directives when reactions are not supported', () => {
@@ -253,7 +281,7 @@ describe('formatMessageEnvelope', () => {
     });
 
     it('omits Format support line when no formatHint is set', () => {
-      const msg = createMessage({ channel: 'telegram' });
+      const msg = createMessage({});
       const result = formatMessageEnvelope(msg);
       expect(result).not.toContain('**Format support**');
     });

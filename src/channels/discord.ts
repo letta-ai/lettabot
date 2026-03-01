@@ -26,6 +26,7 @@ export interface DiscordConfig {
   token: string;
   dmPolicy?: DmPolicy;      // 'pairing' (default), 'allowlist', or 'open'
   allowedUsers?: string[];  // Discord user IDs
+  streaming?: boolean;      // Stream responses via progressive message edits (default: false)
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
   groups?: Record<string, GroupModeConfig>;  // Per-guild/channel settings
@@ -56,7 +57,7 @@ export class DiscordAdapter implements ChannelAdapter {
   private attachmentsMaxBytes?: number;
 
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string, args?: string) => Promise<string | null>;
 
   constructor(config: DiscordConfig) {
     this.config = {
@@ -246,14 +247,16 @@ Ask the bot owner to approve with:
       if (!content && attachments.length === 0) return;
 
       if (content.startsWith('/')) {
-        const command = content.slice(1).split(/\s+/)[0]?.toLowerCase();
+        const parts = content.slice(1).split(/\s+/);
+        const command = parts[0]?.toLowerCase();
+        const cmdArgs = parts.slice(1).join(' ') || undefined;
         if (command === 'help' || command === 'start') {
           await message.channel.send(HELP_TEXT);
           return;
         }
         if (this.onCommand) {
-          if (command === 'status' || command === 'reset' || command === 'heartbeat') {
-            const result = await this.onCommand(command);
+          if (command === 'status' || command === 'reset' || command === 'heartbeat' || command === 'cancel' || command === 'model') {
+            const result = await this.onCommand(command, message.channel.id, cmdArgs);
             if (result) {
               await message.channel.send(result);
             }
@@ -416,12 +419,12 @@ Ask the bot owner to approve with:
     return {
       supportsReactions: true,
       supportsFiles: true,
-      formatHint: 'Discord markdown: **bold** *italic* `code` — supports headers, code blocks',
+      formatHint: 'Discord markdown: **bold** *italic* `code` [links](url) ```code blocks``` — supports headers',
     };
   }
 
   supportsEditing(): boolean {
-    return true;
+    return this.config.streaming ?? false;
   }
 
   private async handleReactionEvent(

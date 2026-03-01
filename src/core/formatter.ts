@@ -13,10 +13,7 @@ export const SYSTEM_REMINDER_TAG = 'system-reminder';
 export const SYSTEM_REMINDER_OPEN = `<${SYSTEM_REMINDER_TAG}>`;
 export const SYSTEM_REMINDER_CLOSE = `</${SYSTEM_REMINDER_TAG}>`;
 
-/**
- * Channel format hints - tells the agent what formatting syntax to use
- * Each channel has different markdown support - hints help agent format appropriately.
- */
+// Channel format hints are now provided per-message via formatterHints on InboundMessage.
 
 export interface EnvelopeOptions {
   timezone?: 'local' | 'utc' | string;  // IANA timezone or 'local'/'utc'
@@ -313,10 +310,9 @@ export function buildSessionContext(options: SessionContextOptions): string[] {
 }
 
 /**
- * Build context-aware Response Directives lines based on channel capabilities and chat type.
- *
- * In listening mode, only shows minimal directives (no-reply and reactions).
- * In normal mode, shows full directive set.
+ * Build context-aware Response Directives based on channel capabilities and chat type.
+ * In listening mode, shows minimal directives. In normal mode, shows the full set
+ * filtered by what the channel actually supports.
  */
 function buildResponseDirectives(msg: InboundMessage): string[] {
   const lines: string[] = [];
@@ -326,7 +322,7 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
   const isGroup = messageType === 'group';
   const isListeningMode = msg.isListeningMode ?? false;
 
-  // In listening mode, show minimal directives
+  // Listening mode: minimal directives only
   if (isListeningMode) {
     lines.push(`- \`<no-reply/>\` — acknowledge without replying (recommended)`);
     if (supportsReactions) {
@@ -336,8 +332,6 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
     return lines;
   }
 
-  // Normal mode: full directives
-
   // no-reply
   if (isGroup) {
     lines.push(`- \`<no-reply/>\` — skip replying when the message isn't directed at you`);
@@ -345,9 +339,9 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
     lines.push(`- \`<no-reply/>\` — skip replying when the message doesn't need a response`);
   }
 
-  // actions/react (only if supported)
+  // actions/react (only if channel supports it)
   if (supportsReactions) {
-    lines.push(`- \`<actions><react emoji="thumbsup" /></actions>\` — react without sending text (executes silently, like \`<no-reply/>\`)`);
+    lines.push(`- \`<actions><react emoji="thumbsup" /></actions>\` — react without sending text (executes silently)`);
     lines.push(`- \`<actions><react emoji="eyes" /></actions>Your text here\` — react and reply`);
     if (isGroup) {
       lines.push(`- \`<actions><react emoji="fire" message="123" /></actions>\` — react to a specific message`);
@@ -356,9 +350,12 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
     lines.push(`- Prefer directives over tool calls for reactions (faster and cheaper)`);
   }
 
-  // file sending (only if supported)
+  // voice memo (always available -- TTS config is server-side)
+  lines.push(`- \`<actions><voice>Your message here</voice></actions>\` — send a voice memo via TTS`);
+
+  // file sending (only if channel supports it)
   if (supportsFiles) {
-    lines.push(`- To send a file: \`lettabot-message send --file /path/to/file.jpg\` (or \`--image\` for photos)`);
+    lines.push(`- \`<send-file path="/path/to/file.png" kind="image" />\` — send a file (restricted to configured directory)`);
   }
 
   return lines;
@@ -424,6 +421,7 @@ export function formatMessageEnvelope(
     const directiveLines = buildResponseDirectives(msg);
     sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
   }
+
 
   // Build the full system-reminder block
   const reminderContent = sections.join('\n\n');
@@ -495,22 +493,12 @@ export function formatGroupBatchEnvelope(
   const formatHint = first.formatterHints?.formatHint;
   const hint = formatHint ? `\n(Format: ${formatHint})` : '';
 
-  // Response directives (compact form for batch)
-  let directives = '';
+  // Compact directives for batch
   const supportsReactions = first.formatterHints?.supportsReactions ?? false;
-  if (isListeningMode) {
-    const parts = ['`<no-reply/>` to acknowledge'];
-    if (supportsReactions) {
-      parts.push('`<actions><react emoji="eyes" /></actions>` to react');
-    }
-    directives = `\n(Directives: ${parts.join(', ')})`;
-  } else {
-    const parts = ['`<no-reply/>` to skip replying'];
-    if (supportsReactions) {
-      parts.push('`<actions><react emoji="thumbsup" /></actions>` to react');
-    }
-    directives = `\n(Directives: ${parts.join(', ')})`;
-  }
+  const directiveParts = isListeningMode
+    ? [`\`<no-reply/>\` to acknowledge`, ...(supportsReactions ? [`\`<actions><react emoji="eyes" /></actions>\` to react`] : [])]
+    : [`\`<no-reply/>\` to skip replying`, ...(supportsReactions ? [`\`<actions><react emoji="thumbsup" /></actions>\` to react`] : [])];
+  const directives = `\n(Directives: ${directiveParts.join(', ')})`;
 
   return `${header}\n${lines.join('\n')}${hint}${directives}`;
 }
