@@ -16,7 +16,6 @@ import { createLogger } from '../../logger.js';
 import type { BlueskyConfig, BlueskyInboundMessage, BlueskySource, DidMode, JetstreamEvent } from './types.js';
 import {
   CURSOR_BACKTRACK_US,
-  DEFAULT_APPVIEW_URL,
   DEFAULT_JETSTREAM_URL,
   DEFAULT_NOTIFICATIONS_INTERVAL_SEC,
   DEFAULT_NOTIFICATIONS_LIMIT,
@@ -24,7 +23,6 @@ import {
   HANDLE_CACHE_MAX,
   LAST_POST_CACHE_MAX,
   SEEN_MESSAGE_IDS_MAX,
-  POST_MAX_CHARS,
   RECONNECT_BASE_MS,
   RECONNECT_MAX_MS,
   STATE_FILENAME,
@@ -35,10 +33,14 @@ import { extractPostDetails } from './formatter.js';
 import {
   buildAtUri,
   decodeJwtExp,
+  fetchWithTimeout,
+  getAppViewUrl,
   isRecord,
   normalizeList,
+  parseAtUri,
   pruneMap,
   readString,
+  splitPostText,
   truncate,
   uniqueList,
 } from './utils.js';
@@ -122,7 +124,6 @@ export class BlueskyAdapter implements ChannelAdapter {
       ];
     }
     return {
-      isReadOnly: !shouldReply,
       formatHint: 'Plain text only (no markdown, no tables).',
       actionsSection,
       skipDirectives: true,
@@ -204,7 +205,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       throw new Error('No recent post target to reply to.');
     }
 
-    const chunks = this.splitPostText(_msg.text);
+    const chunks = splitPostText(_msg.text);
     if (chunks.length === 0) {
       throw new Error('Refusing to post empty reply.');
     }
@@ -380,10 +381,6 @@ export class BlueskyAdapter implements ChannelAdapter {
     return this.getWantedDids().length > 0;
   }
 
-  private getAppViewUrl(): string {
-    const raw = this.config.appViewUrl || DEFAULT_APPVIEW_URL;
-    return raw.replace(/\/+$/, '');
-  }
 
   private async handleMessageEvent(event: { data: unknown }): Promise<void> {
     const raw = typeof event.data === 'string'
@@ -579,46 +576,6 @@ export class BlueskyAdapter implements ChannelAdapter {
     };
   }
 
-  private splitPostText(text: string): string[] {
-    // Bluesky enforces maxGraphemes: 300 — count Unicode grapheme clusters, not code points
-    const segmenter = new Intl.Segmenter();
-    const graphemes = [...segmenter.segment(text)].map(s => s.segment);
-    if (graphemes.length === 0) return [];
-    if (graphemes.length <= POST_MAX_CHARS) {
-      const trimmed = text.trim();
-      return trimmed ? [trimmed] : [];
-    }
-
-    const chunks: string[] = [];
-    let start = 0;
-
-    while (start < graphemes.length) {
-      let end = Math.min(start + POST_MAX_CHARS, graphemes.length);
-
-      if (end < graphemes.length) {
-        let split = end;
-        for (let i = end - 1; i > start; i--) {
-          if (/\s/.test(graphemes[i])) {
-            split = i;
-            break;
-          }
-        }
-        end = split > start ? split : end;
-      }
-
-      let chunk = graphemes.slice(start, end).join('');
-      chunk = chunk.replace(/^\s+/, '').replace(/\s+$/, '');
-      if (chunk) chunks.push(chunk);
-
-      start = end;
-      while (start < graphemes.length && /\s/.test(graphemes[start])) {
-        start++;
-      }
-    }
-
-    return chunks;
-  }
-
   private getServiceUrl(): string {
     const raw = this.config.serviceUrl || DEFAULT_SERVICE_URL;
     return raw.replace(/\/+$/, '');
@@ -687,7 +644,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       throw new Error('Missing refreshJwt');
     }
 
-    const res = await fetch(`${this.getServiceUrl()}/xrpc/com.atproto.server.refreshSession`, {
+    const res = await fetchWithTimeout(`${this.getServiceUrl()}/xrpc/com.atproto.server.refreshSession`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -711,7 +668,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       throw new Error('Missing Bluesky handle/appPassword for posting.');
     }
 
-    const res = await fetch(`${this.getServiceUrl()}/xrpc/com.atproto.server.createSession`, {
+    const res = await fetchWithTimeout(`${this.getServiceUrl()}/xrpc/com.atproto.server.createSession`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ identifier, password }),
@@ -863,7 +820,7 @@ export class BlueskyAdapter implements ChannelAdapter {
         params.append('reasons', reason);
       }
 
-      const res = await fetch(`${this.getAppViewUrl()}/xrpc/app.bsky.notification.listNotifications?${params}`, {
+      const res = await fetchWithTimeout(`${getAppViewUrl(this.config.appViewUrl)}/xrpc/app.bsky.notification.listNotifications?${params}`, {
         headers: { Authorization: `Bearer ${this.accessJwt}` },
       });
 
@@ -997,7 +954,7 @@ export class BlueskyAdapter implements ChannelAdapter {
     const dids: string[] = [];
     let cursor: string | undefined;
     const limit = 100;
-    const base = this.getAppViewUrl();
+    const base = getAppViewUrl(this.config.appViewUrl);
 
     for (;;) {
       const params = new URLSearchParams();
@@ -1005,7 +962,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       params.set('limit', String(limit));
       if (cursor) params.set('cursor', cursor);
 
-      const res = await fetch(`${base}/xrpc/app.bsky.graph.getList?${params}`, {
+      const res = await fetchWithTimeout(`${base}/xrpc/app.bsky.graph.getList?${params}`, {
         headers: this.accessJwt ? { Authorization: `Bearer ${this.accessJwt}` } : undefined,
       });
 
@@ -1047,9 +1004,13 @@ export class BlueskyAdapter implements ChannelAdapter {
   private async checkRuntimeState(): Promise<void> {
     if (!this.runtimePath) return;
     if (!existsSync(this.runtimePath)) return;
-    const raw = JSON.parse(readFileSync(this.runtimePath, 'utf-8')) as {
-      agents?: Record<string, { disabled?: boolean; refreshListsAt?: string; reloadConfigAt?: string }>;
-    };
+    let raw: { agents?: Record<string, { disabled?: boolean; refreshListsAt?: string; reloadConfigAt?: string }> };
+    try {
+      raw = JSON.parse(readFileSync(this.runtimePath, 'utf-8'));
+    } catch {
+      log.warn('Failed to parse runtime state file, skipping');
+      return;
+    }
 
     const agentKey = this.config.agentName || 'default';
     const agentState = raw.agents?.[agentKey];
@@ -1176,7 +1137,7 @@ export class BlueskyAdapter implements ChannelAdapter {
 
     const promise = (async () => {
       try {
-        const url = `${this.getAppViewUrl()}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`;
+        const url = `${getAppViewUrl(this.config.appViewUrl)}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`;
         const headers: Record<string, string> = {};
 
         // Use authenticated endpoint if available for complete metadata
@@ -1184,7 +1145,7 @@ export class BlueskyAdapter implements ChannelAdapter {
           headers['Authorization'] = `Bearer ${this.accessJwt}`;
         }
 
-        const res = await fetch(url, { headers });
+        const res = await fetchWithTimeout(url, { headers });
         if (res.ok) {
           const data = await res.json() as { handle?: string };
           if (data.handle && typeof data.handle === 'string') {
@@ -1370,7 +1331,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       },
     };
 
-    const res = await fetch(`${this.getServiceUrl()}/xrpc/com.atproto.repo.createRecord`, {
+    const res = await fetchWithTimeout(`${this.getServiceUrl()}/xrpc/com.atproto.repo.createRecord`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1404,19 +1365,8 @@ export class BlueskyAdapter implements ChannelAdapter {
     return data;
   }
 
-  private parseAtUri(uri: string): { did: string; collection: string; rkey: string } | undefined {
-    if (!uri.startsWith('at://')) return undefined;
-    const parts = uri.slice('at://'.length).split('/');
-    if (parts.length < 3) return undefined;
-    return {
-      did: parts[0],
-      collection: parts[1],
-      rkey: parts[2],
-    };
-  }
-
   private async resolveRecordCid(uri: string): Promise<string | undefined> {
-    const parsed = this.parseAtUri(uri);
+    const parsed = parseAtUri(uri);
     if (!parsed) return undefined;
 
     // Try PDS first (if on same server)
@@ -1425,7 +1375,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       collection: parsed.collection,
       rkey: parsed.rkey,
     });
-    const res = await fetch(`${this.getServiceUrl()}/xrpc/com.atproto.repo.getRecord?${qs.toString()}`, {
+    const res = await fetchWithTimeout(`${this.getServiceUrl()}/xrpc/com.atproto.repo.getRecord?${qs.toString()}`, {
       headers: this.accessJwt ? { 'Authorization': `Bearer ${this.accessJwt}` } : undefined,
     });
     if (res.ok) {
@@ -1435,7 +1385,7 @@ export class BlueskyAdapter implements ChannelAdapter {
 
     // Fallback to AppView for cross-PDS records
     try {
-      const appViewRes = await fetch(`${this.getAppViewUrl()}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}`, {
+      const appViewRes = await fetchWithTimeout(`${getAppViewUrl(this.config.appViewUrl)}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}`, {
         headers: this.accessJwt ? { 'Authorization': `Bearer ${this.accessJwt}` } : undefined,
       });
       if (appViewRes.ok) {

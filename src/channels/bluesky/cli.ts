@@ -30,7 +30,8 @@ import { loadAppConfigOrExit, normalizeAgents } from '../../config/index.js';
 import type { AgentConfig, BlueskyConfig } from '../../config/types.js';
 import { isPathAllowed } from '../../core/bot.js';
 import { createLogger } from '../../logger.js';
-import { DEFAULT_APPVIEW_URL, DEFAULT_SERVICE_URL, POST_MAX_CHARS } from './constants.js';
+import { DEFAULT_SERVICE_URL, POST_MAX_CHARS } from './constants.js';
+import { fetchWithTimeout, getAppViewUrl, parseAtUri, splitPostText } from './utils.js';
 
 const log = createLogger('Bluesky');
 
@@ -47,51 +48,6 @@ const BLUESKY_IMAGE_MAX_COUNT = 4;
 
 function usage(): void {
   console.log(`\nUsage:\n  lettabot-bluesky post --text "Hello" --agent <name>\n  lettabot-bluesky post --reply-to <at://...> --text "Reply" --agent <name>\n  lettabot-bluesky post --text "Long..." --threaded --agent <name>\n  lettabot-bluesky like <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --agent <name>\n  lettabot-bluesky repost <at://...> --text "Quote" --agent <name> [--threaded]\n  lettabot-bluesky profile <did|handle> --agent <name>\n  lettabot-bluesky thread <at://...> --agent <name>\n  lettabot-bluesky author-feed <did|handle> --limit 25 --cursor <cursor> --agent <name>\n  lettabot-bluesky list-feed <listUri> --limit 25 --cursor <cursor> --agent <name>\n  lettabot-bluesky search --query \"...\" --limit 25 --cursor <cursor> --agent <name>\n  lettabot-bluesky notifications --limit 25 --cursor <cursor> --reasons mention,reply --agent <name>\n  lettabot-bluesky block <did|handle> --agent <name>\n  lettabot-bluesky unblock <blockUri> --agent <name>\n  lettabot-bluesky mute <did|handle> --agent <name>\n  lettabot-bluesky unmute <did|handle> --agent <name>\n  lettabot-bluesky blocks --limit 50 --cursor <cursor> --agent <name>\n  lettabot-bluesky mutes --limit 50 --cursor <cursor> --agent <name>\n`);
-}
-
-function parseAtUri(uri: string): { did: string; collection: string; rkey: string } | undefined {
-  if (!uri.startsWith('at://')) return undefined;
-  const parts = uri.slice('at://'.length).split('/');
-  if (parts.length < 3) return undefined;
-  return { did: parts[0], collection: parts[1], rkey: parts[2] };
-}
-
-function splitPostText(text: string): string[] {
-  const segmenter = new Intl.Segmenter();
-  const graphemes = [...segmenter.segment(text)].map(s => s.segment);
-  if (graphemes.length === 0) return [];
-  if (graphemes.length <= POST_MAX_CHARS) {
-    const trimmed = text.trim();
-    return trimmed ? [trimmed] : [];
-  }
-
-  const chunks: string[] = [];
-  let start = 0;
-  while (start < graphemes.length) {
-    let end = Math.min(start + POST_MAX_CHARS, graphemes.length);
-
-    if (end < graphemes.length) {
-      let split = end;
-      for (let i = end - 1; i > start; i--) {
-        if (/\s/.test(graphemes[i])) {
-          split = i;
-          break;
-        }
-      }
-      end = split > start ? split : end;
-    }
-
-    let chunk = graphemes.slice(start, end).join('');
-    chunk = chunk.replace(/^\s+/, '').replace(/\s+$/, '');
-    if (chunk) chunks.push(chunk);
-
-    start = end;
-    while (start < graphemes.length && /\s/.test(graphemes[start])) {
-      start++;
-    }
-  }
-
-  return chunks;
 }
 
 function resolveAgentConfig(agents: AgentConfig[], agentName?: string): AgentConfig {
@@ -123,13 +79,9 @@ function resolveBlueskyConfig(agent: AgentConfig): BlueskyConfig {
   return config;
 }
 
-function getAppViewUrl(bluesky: BlueskyConfig): string {
-  const raw = bluesky.appViewUrl || DEFAULT_APPVIEW_URL;
-  return raw.replace(/\/+$/, '');
-}
 
 async function createSession(serviceUrl: string, handle: string, appPassword: string): Promise<{ accessJwt: string; did: string }> {
-  const res = await fetch(`${serviceUrl}/xrpc/com.atproto.server.createSession`, {
+  const res = await fetchWithTimeout(`${serviceUrl}/xrpc/com.atproto.server.createSession`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ identifier: handle, password: appPassword }),
@@ -143,7 +95,7 @@ async function createSession(serviceUrl: string, handle: string, appPassword: st
 }
 
 async function fetchJson(url: string, headers?: Record<string, string>): Promise<unknown> {
-  const res = await fetch(url, { headers });
+  const res = await fetchWithTimeout(url, { headers });
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(`Request failed: ${detail}`);
@@ -152,7 +104,7 @@ async function fetchJson(url: string, headers?: Record<string, string>): Promise
 }
 
 async function postJson(url: string, body: Record<string, unknown>, headers?: Record<string, string>): Promise<unknown> {
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -176,7 +128,7 @@ async function getRecord(serviceUrl: string, accessJwt: string, uri: string): Pr
     collection: parsed.collection,
     rkey: parsed.rkey,
   });
-  const res = await fetch(`${serviceUrl}/xrpc/com.atproto.repo.getRecord?${qs.toString()}`, {
+  const res = await fetchWithTimeout(`${serviceUrl}/xrpc/com.atproto.repo.getRecord?${qs.toString()}`, {
     headers: { 'Authorization': `Bearer ${accessJwt}` },
   });
   if (!res.ok) {
@@ -189,7 +141,7 @@ async function getRecord(serviceUrl: string, accessJwt: string, uri: string): Pr
 }
 
 async function getPostFromAppView(appViewUrl: string, accessJwt: string, uri: string): Promise<{ cid: string; value: Record<string, unknown> }> {
-  const res = await fetch(`${appViewUrl}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}`, {
+  const res = await fetchWithTimeout(`${appViewUrl}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}`, {
     headers: { 'Authorization': `Bearer ${accessJwt}` },
   });
   if (!res.ok) {
@@ -203,7 +155,7 @@ async function getPostFromAppView(appViewUrl: string, accessJwt: string, uri: st
 }
 
 async function resolveHandleToDid(bluesky: BlueskyConfig, handle: string): Promise<string> {
-  const appViewUrl = getAppViewUrl(bluesky);
+  const appViewUrl = getAppViewUrl(bluesky.appViewUrl);
   const url = `${appViewUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`;
   const data = await fetchJson(url) as { did?: string };
   if (!data.did) throw new Error(`resolveHandle failed for ${handle}`);
@@ -241,7 +193,7 @@ async function createRecord(
   collection: string,
   record: Record<string, unknown>,
 ): Promise<{ uri?: string; cid?: string }> {
-  const res = await fetch(`${serviceUrl}/xrpc/com.atproto.repo.createRecord`, {
+  const res = await fetchWithTimeout(`${serviceUrl}/xrpc/com.atproto.repo.createRecord`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -263,7 +215,7 @@ async function uploadBlob(
   mimeType: string,
 ): Promise<{ blob: unknown }> {
   const data = readFileSync(filePath);
-  const res = await fetch(`${serviceUrl}/xrpc/com.atproto.repo.uploadBlob`, {
+  const res = await fetchWithTimeout(`${serviceUrl}/xrpc/com.atproto.repo.uploadBlob`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessJwt}`,
@@ -340,7 +292,7 @@ async function handlePost(
   images: ImageEntry[] = [],
 ): Promise<void> {
   const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
-  const appViewUrl = (bluesky.appViewUrl || DEFAULT_APPVIEW_URL).replace(/\/+$/, '');
+  const appViewUrl = getAppViewUrl(bluesky.appViewUrl);
   const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
   const charCount = [...new Intl.Segmenter().segment(text)].length;
   if (charCount > POST_MAX_CHARS && !threaded) {
@@ -428,7 +380,7 @@ async function handleQuote(
   threaded = false,
 ): Promise<void> {
   const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
-  const appViewUrl = (bluesky.appViewUrl || DEFAULT_APPVIEW_URL).replace(/\/+$/, '');
+  const appViewUrl = getAppViewUrl(bluesky.appViewUrl);
   const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
   const charCount = [...new Intl.Segmenter().segment(text)].length;
   if (charCount > POST_MAX_CHARS && !threaded) {
@@ -506,7 +458,7 @@ async function handleSubjectRecord(
   collection: 'app.bsky.feed.like' | 'app.bsky.feed.repost',
 ): Promise<void> {
   const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
-  const appViewUrl = (bluesky.appViewUrl || DEFAULT_APPVIEW_URL).replace(/\/+$/, '');
+  const appViewUrl = getAppViewUrl(bluesky.appViewUrl);
   const session = await createSession(serviceUrl, bluesky.handle!, bluesky.appPassword!);
 
   let record;
@@ -578,7 +530,7 @@ async function handleReadCommand(
   reasons?: string[],
   priority?: boolean,
 ): Promise<void> {
-  const appViewUrl = getAppViewUrl(bluesky);
+  const appViewUrl = getAppViewUrl(bluesky.appViewUrl);
   const serviceUrl = (bluesky.serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/, '');
   const effectiveLimit = limit ?? 25;
 

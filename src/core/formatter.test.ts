@@ -191,7 +191,7 @@ describe('formatMessageEnvelope', () => {
       expect(result).toContain('<no-reply/>');
     });
 
-    it('omits <actions> directives when reactions are not supported', () => {
+    it('omits react directive when reactions are not supported', () => {
       const msg = createMessage({ isGroup: false });
       const result = formatMessageEnvelope(msg);
       expect(result).toContain('Response Directives');
@@ -232,7 +232,7 @@ describe('formatMessageEnvelope', () => {
       const result = formatMessageEnvelope(msg);
       expect(result).toContain('Response Directives');
       expect(result).toContain('<no-reply/>');
-      expect(result).not.toContain('<actions>');
+      expect(result).not.toContain('<react');
     });
 
     it('shows minimal directives in listening mode', () => {

@@ -82,9 +82,6 @@ export interface FormatterHints {
   /** Whether this channel supports file/image sending */
   supportsFiles?: boolean;
 
-  /** Whether the channel is read-only (text response won't be posted, agent must use CLI) */
-  isReadOnly?: boolean;
-
   /** Custom action hints replacing the standard Response Directives section */
   actionsSection?: string[];
 
@@ -117,6 +114,7 @@ export interface InboundMessage {
   batchedMessages?: InboundMessage[]; // Original individual messages (for batch formatting)
   isListeningMode?: boolean;          // Listening mode: agent processes for memory but response is suppressed
   formatterHints?: FormatterHints;    // Channel capabilities for directive rendering
+  extraContext?: Record<string, string>; // Channel-specific key/value metadata shown in Chat Context
 }
 
 /**

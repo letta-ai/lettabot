@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { BlueskyAdapter } from './bluesky.js';
+import { splitPostText } from './bluesky/utils.js';
 
 const listUri = 'at://did:plc:tester/app.bsky.graph.list/abcd';
 
@@ -197,9 +198,8 @@ describe('BlueskyAdapter', () => {
   });
 
   it('splits long replies into multiple posts', () => {
-    const adapter = makeAdapter();
     const text = Array.from({ length: 120 }, () => 'word').join(' ');
-    const chunks = (adapter as any).splitPostText(text) as string[];
+    const chunks = splitPostText(text);
     expect(chunks.length).toBeGreaterThan(1);
     const segmenter = new Intl.Segmenter();
     const graphemeCount = (s: string) => [...segmenter.segment(s)].length;

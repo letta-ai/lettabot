@@ -281,9 +281,8 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
   }
 
   // Channel-specific display context (e.g. Bluesky operation/URI metadata)
-  const extraContext = (msg as { extraContext?: Record<string, string> }).extraContext;
-  if (extraContext) {
-    for (const [key, value] of Object.entries(extraContext)) {
+  if (msg.extraContext) {
+    for (const [key, value] of Object.entries(msg.extraContext)) {
       lines.push(`- **${key}**: ${value}`);
     }
   }
