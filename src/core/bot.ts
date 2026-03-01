@@ -610,24 +610,33 @@ export class LettaBot implements AgentSession {
     const convId = key === 'shared'
       ? this.store.conversationId
       : this.store.getConversationId(key);
+    // Treat "default" string (from bad runs) same as null
+    const effectiveConvId = (convId && convId !== 'default') ? convId : null;
 
     // Propagate per-agent cron store path to CLI subprocesses (lettabot-schedule)
     if (this.config.cronStorePath) {
       process.env.CRON_STORE_PATH = this.config.cronStorePath;
     }
 
-    if (convId) {
+    if (effectiveConvId === '') {
       process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
       if (this.store.agentId) {
         installSkillsToAgent(this.store.agentId, this.config.skills);
         sessionAgentId = this.store.agentId;
       }
-      session = resumeSession(convId, opts);
+      session = resumeSession(this.store.agentId!, opts);
+    } else if (effectiveConvId) {
+      process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
+      if (this.store.agentId) {
+        installSkillsToAgent(this.store.agentId, this.config.skills);
+        sessionAgentId = this.store.agentId;
+      }
+      session = resumeSession(effectiveConvId, opts);
     } else if (this.store.agentId) {
       process.env.LETTA_AGENT_ID = this.store.agentId;
       installSkillsToAgent(this.store.agentId, this.config.skills);
       sessionAgentId = this.store.agentId;
-      session = createSession(this.store.agentId, opts);
+      session = resumeSession(this.store.agentId, opts);
     } else {
       // Create new agent -- persist immediately so we don't orphan it on later failures
       log.info('Creating new agent');
@@ -647,7 +656,7 @@ export class LettaBot implements AgentSession {
       installSkillsToAgent(newAgentId, this.config.skills);
       sessionAgentId = newAgentId;
 
-      session = createSession(newAgentId, opts);
+      session = resumeSession(newAgentId, opts);
     }
 
     // Initialize eagerly so the subprocess is ready before the first send()
@@ -703,7 +712,7 @@ export class LettaBot implements AgentSession {
           const convId = bootstrap.conversationId || session.conversationId;
           log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
           session.close();
-          if (convId) {
+    if (convId !== null && convId !== undefined) {
             const result = await recoverOrphanedConversationApproval(
               this.store.agentId,
               convId,
@@ -846,11 +855,11 @@ export class LettaBot implements AgentSession {
       // In per-channel mode, persist per-key. In shared mode, use legacy field.
       if (convKey && convKey !== 'shared') {
         const existing = this.store.getConversationId(convKey);
-        if (session.conversationId !== existing) {
+        if (session.conversationId !== existing && session.conversationId !== 'default') {
           this.store.setConversationId(convKey, session.conversationId);
           log.info(`Conversation ID updated (key=${convKey}):`, session.conversationId);
         }
-      } else if (session.conversationId !== this.store.conversationId) {
+      } else if (session.conversationId !== this.store.conversationId && session.conversationId !== 'default') {
         this.store.conversationId = session.conversationId;
         log.info('Conversation ID updated:', session.conversationId);
       }
