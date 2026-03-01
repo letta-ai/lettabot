@@ -25,8 +25,8 @@ export interface HookHandlerConfig {
 }
 
 export interface MessageHooksConfig {
-  preMessage?: HookHandlerConfig;
-  postMessage?: HookHandlerConfig;
+  preMessage?: HookHandlerConfig | HookHandlerConfig[];
+  postMessage?: HookHandlerConfig | HookHandlerConfig[];
 }
 
 export function canonicalizeServerMode(mode?: ServerMode): CanonicalServerMode {

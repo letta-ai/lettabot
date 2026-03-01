@@ -1466,6 +1466,19 @@ export class LettaBot implements AgentSession {
       log.debug(`${label}: ${(performance.now() - t0).toFixed(0)}ms`);
     };
     const suppressDelivery = isResponseDeliverySuppressed(msg);
+    const triggerContext: TriggerContext = {
+      type: 'user_message',
+      outputMode: suppressDelivery ? 'silent' : 'responsive',
+      sourceChannel: msg.channel,
+      sourceChatId: msg.chatId,
+      sourceUserId: msg.userId,
+    };
+    // Hook tracking state (populated after pre-hook, consumed in finally)
+    let hookMessage: SendMessage | null = null;
+    let hookResponse = '';
+    let hookDelivered = false;
+    let hookError: string | undefined;
+    let postHookRan = false;
     this.lastUserMessageTime = new Date();
 
     // Skip heartbeat target update for listening mode (don't redirect heartbeats)
@@ -1564,6 +1577,7 @@ export class LettaBot implements AgentSession {
         stage: 'pre',
         isHeartbeat: false,
         suppressDelivery,
+        trigger: triggerContext,
         inboundMessage: msg,
         formattedText,
         message: messageToSend,
@@ -1574,6 +1588,7 @@ export class LettaBot implements AgentSession {
       };
       const modifiedMessage = await this.runPreMessageHook(preMessageContext);
       const finalMessageToSend = modifiedMessage || messageToSend;
+      hookMessage = finalMessageToSend;
 
       const run = await this.runSession(finalMessageToSend, { retried, canUseTool, convKey });
       lap('session send');
@@ -1803,7 +1818,8 @@ export class LettaBot implements AgentSession {
             lastAssistantUuid = msgUuid || lastAssistantUuid;
             
             response += streamMsg.content || '';
-            
+            hookResponse += streamMsg.content || '';
+
             // Live-edit streaming for channels that support it
             // Hold back streaming edits while response could still be <no-reply/> or <actions> block
             const canEdit = adapter.supportsEditing?.() ?? false;
@@ -2020,23 +2036,49 @@ export class LettaBot implements AgentSession {
       // Listening mode: agent processed for memory, suppress response delivery
       if (suppressDelivery) {
         log.info(`Listening mode: processed ${msg.channel}:${msg.chatId} for memory (response suppressed)`);
+        hookResponse = response;
+        // Fire post-hook (fire-and-forget in suppress mode)
+        if (hookMessage) {
+          void this.runPostMessageHook({
+            stage: 'post',
+            isHeartbeat: false,
+            suppressDelivery,
+            trigger: triggerContext,
+            inboundMessage: msg,
+            formattedText,
+            message: hookMessage,
+            response: hookResponse,
+            delivered: false,
+            agent: { ...this.buildHookContextBase(), conversationKey: convKey },
+          });
+          postHookRan = true;
+        }
         return;
       }
 
       lap('directives done');
-      
-      // Run post-message hook
-      if (response.trim()) {
+
+      // Run post-message hook (before delivery so it can modify the response)
+      if (hookMessage) {
+        hookResponse = response;
         const hookResult = await this.runPostMessageHook({
-          ...this.buildHookContextBase(msg),
           stage: 'post',
-          message: response,
+          isHeartbeat: false,
+          suppressDelivery,
+          trigger: triggerContext,
+          inboundMessage: msg,
+          formattedText,
+          message: hookMessage,
+          response: hookResponse,
+          agent: { ...this.buildHookContextBase(), conversationKey: convKey },
         });
+        postHookRan = true;
         if (hookResult !== undefined) {
           response = hookResult;
+          hookResponse = hookResult;
         }
       }
-      
+
       // Send final response
       if (response.trim()) {
         // Wait out any active rate limit before sending the final message
@@ -2054,45 +2096,48 @@ export class LettaBot implements AgentSession {
             await adapter.sendMessage({ chatId: msg.chatId, text: prefixedFinal, threadId: msg.threadId });
           }
           sentAnyMessage = true;
+          hookDelivered = true;
           this.store.resetRecoveryAttempts();
         } catch {
           // Edit failed -- send as new message so user isn't left with truncated text
           try {
             await adapter.sendMessage({ chatId: msg.chatId, text: prefixedFinal, threadId: msg.threadId });
             sentAnyMessage = true;
+            hookDelivered = true;
             this.store.resetRecoveryAttempts();
           } catch (retryError) {
             log.error('Retry send also failed:', retryError);
           }
         }
       }
-      
+
       lap('message delivered');
       // Handle no response
       if (!sentAnyMessage) {
         if (!receivedAnyData) {
           log.error('Stream received NO DATA - possible stuck state');
-          await adapter.sendMessage({ 
-            chatId: msg.chatId, 
-            text: '(No response received -- the connection may have dropped or the server may be busy. Please try again. If this persists, /reset will start a fresh conversation.)', 
-            threadId: msg.threadId 
+          await adapter.sendMessage({
+            chatId: msg.chatId,
+            text: '(No response received -- the connection may have dropped or the server may be busy. Please try again. If this persists, /reset will start a fresh conversation.)',
+            threadId: msg.threadId
           });
         } else {
           const hadToolActivity = (msgTypeCounts['tool_call'] || 0) > 0 || (msgTypeCounts['tool_result'] || 0) > 0;
           if (hadToolActivity) {
             log.info('Agent had tool activity but no assistant message - likely sent via tool');
           } else {
-            await adapter.sendMessage({ 
-              chatId: msg.chatId, 
-              text: '(The agent processed your message but didn\'t produce a visible response. This can happen with certain prompts. Try rephrasing or sending again.)', 
-              threadId: msg.threadId 
+            await adapter.sendMessage({
+              chatId: msg.chatId,
+              text: '(The agent processed your message but didn\'t produce a visible response. This can happen with certain prompts. Try rephrasing or sending again.)',
+              threadId: msg.threadId
             });
           }
         }
       }
-      
+
     } catch (error) {
       log.error('Error processing message:', error);
+      hookError = error instanceof Error ? error.message : 'Unknown error';
       try {
         await adapter.sendMessage({
           chatId: msg.chatId,
@@ -2103,6 +2148,22 @@ export class LettaBot implements AgentSession {
         log.error('Failed to send error message to channel:', sendError);
       }
     } finally {
+      // Fire post-hook on error paths that didn't reach it above
+      if (!postHookRan && hookMessage) {
+        void this.runPostMessageHook({
+          stage: 'post',
+          isHeartbeat: false,
+          suppressDelivery,
+          trigger: triggerContext,
+          inboundMessage: msg,
+          formattedText,
+          message: hookMessage,
+          response: hookResponse,
+          delivered: hookDelivered,
+          error: hookError,
+          agent: { ...this.buildHookContextBase(), conversationKey: this.resolveConversationKey(msg.channel, msg.chatId) },
+        }).catch(() => {});
+      }
       // Session stays alive for reuse -- only invalidated on errors
       this.cancelledKeys.delete(this.resolveConversationKey(msg.channel, msg.chatId));
     }
@@ -2159,12 +2220,44 @@ export class LettaBot implements AgentSession {
     context?: TriggerContext
   ): Promise<string> {
     const isSilent = context?.outputMode === 'silent';
+    const suppressDelivery = isSilent;
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
-    
+
+    let hookMessage: SendMessage = text;
+    const hookContextBase: Omit<MessageHookContext, 'stage' | 'message'> = {
+      isHeartbeat: context?.type === 'heartbeat',
+      suppressDelivery,
+      trigger: context,
+      agent: { ...this.buildHookContextBase(), conversationKey: convKey },
+    };
+    let hookResponse = '';
+    let hookError: string | undefined;
+    let postHookRan = false;
+    const runPostHookOnce = async (currentResponse: string, error?: string): Promise<string> => {
+      if (postHookRan) return currentResponse;
+      postHookRan = true;
+      const override = await this.runPostMessageHook({
+        ...hookContextBase,
+        stage: 'post',
+        message: hookMessage,
+        response: currentResponse,
+        delivered: false,
+        error,
+      });
+      return override ?? currentResponse;
+    };
+
+    const hookOverride = await this.runPreMessageHook({
+      ...hookContextBase,
+      stage: 'pre',
+      message: hookMessage,
+    });
+    if (hookOverride) hookMessage = hookOverride;
+
     try {
-      const { stream } = await this.runSession(text, { convKey });
-      
+      const { stream } = await this.runSession(hookMessage, { convKey });
+
       try {
         let response = '';
         let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | undefined;
@@ -2181,6 +2274,7 @@ export class LettaBot implements AgentSession {
           }
           if (msg.type === 'assistant') {
             response += msg.content || '';
+            hookResponse += msg.content || '';
           }
           if (msg.type === 'result') {
             // TODO(letta-code-sdk#31): Remove once SDK handles HITL approvals in bypassPermissions mode.
@@ -2202,16 +2296,22 @@ export class LettaBot implements AgentSession {
             break;
           }
         }
-        if (isSilent && response.trim()) {
-          log.info(`Silent mode: collected ${response.length} chars (not delivered)`);
+        hookResponse = response || hookResponse;
+        const finalResponse = await runPostHookOnce(hookResponse);
+        if (isSilent && finalResponse.trim()) {
+          log.info(`Silent mode: collected ${finalResponse.length} chars (not delivered)`);
         }
-        return response;
+        return finalResponse;
       } catch (error) {
         // Invalidate on stream errors so next call gets a fresh subprocess
         this.invalidateSession(convKey);
+        hookError = error instanceof Error ? error.message : 'Unknown error';
         throw error;
       }
     } finally {
+      if (!postHookRan) {
+        await runPostHookOnce(hookResponse, hookError).catch(() => {});
+      }
       this.releaseLock(convKey, acquired);
     }
   }
@@ -2224,19 +2324,64 @@ export class LettaBot implements AgentSession {
     text: string,
     context?: TriggerContext
   ): AsyncGenerator<StreamMsg> {
+    const suppressDelivery = context?.outputMode === 'silent';
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
 
+    let hookMessage: SendMessage = text;
+    const hookContextBase: Omit<MessageHookContext, 'stage' | 'message'> = {
+      isHeartbeat: context?.type === 'heartbeat',
+      suppressDelivery,
+      trigger: context,
+      agent: { ...this.buildHookContextBase(), conversationKey: convKey },
+    };
+    let hookResponse = '';
+    let hookError: string | undefined;
+    let postHookRan = false;
+    const runPostHookOnce = async (currentResponse: string, error?: string): Promise<void> => {
+      if (postHookRan) return;
+      postHookRan = true;
+      await this.runPostMessageHook({
+        ...hookContextBase,
+        stage: 'post',
+        message: hookMessage,
+        response: currentResponse,
+        delivered: false,
+        error,
+      });
+    };
+
+    const hookOverride = await this.runPreMessageHook({
+      ...hookContextBase,
+      stage: 'pre',
+      message: hookMessage,
+    });
+    if (hookOverride) hookMessage = hookOverride;
+
     try {
-      const { stream } = await this.runSession(text, { convKey });
+      const { stream } = await this.runSession(hookMessage, { convKey });
 
       try {
-        yield* stream();
+        for await (const msg of stream()) {
+          if (msg.type === 'assistant') {
+            hookResponse += msg.content || '';
+          }
+          if (msg.type === 'result') {
+            const resultText = typeof msg.result === 'string' ? msg.result : '';
+            if (resultText.trim().length > 0) hookResponse = resultText;
+          }
+          yield msg;
+        }
+        await runPostHookOnce(hookResponse);
       } catch (error) {
         this.invalidateSession(convKey);
+        hookError = error instanceof Error ? error.message : 'Unknown error';
         throw error;
       }
     } finally {
+      if (!postHookRan) {
+        await runPostHookOnce(hookResponse, hookError).catch(() => {});
+      }
       this.releaseLock(convKey, acquired);
     }
   }

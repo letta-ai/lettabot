@@ -208,6 +208,124 @@ describe('message hooks', () => {
     expect(events[0].isHeartbeat).toBe(true);
   });
 
+  it('chains multiple preMessage hooks, each seeing the previous override', async () => {
+    const hookDir = mkdtempSync(join(tmpdir(), 'lettabot-hook-module-'));
+
+    const hookAPath = join(hookDir, 'hookA.mjs');
+    writeFileSync(hookAPath, [
+      'export async function preMessage(ctx) {',
+      '  return `${ctx.message} [A]`;',
+      '}',
+    ].join('\n'), 'utf-8');
+
+    const hookBPath = join(hookDir, 'hookB.mjs');
+    writeFileSync(hookBPath, [
+      'export async function preMessage(ctx) {',
+      '  return `${ctx.message} [B]`;',
+      '}',
+    ].join('\n'), 'utf-8');
+
+    const mockSession = makeSession();
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      hooks: {
+        preMessage: [
+          { file: './hookA.mjs', mode: 'await' },
+          { file: './hookB.mjs', mode: 'await' },
+        ],
+      },
+      hooksDir: hookDir,
+    });
+
+    await bot.sendToAgent('hello');
+
+    expect(mockSession.send).toHaveBeenCalledWith('hello [A] [B]');
+  });
+
+  it('chains multiple postMessage hooks, each seeing the previous override', async () => {
+    const hookDir = mkdtempSync(join(tmpdir(), 'lettabot-hook-module-'));
+
+    const hookAPath = join(hookDir, 'hookA.mjs');
+    writeFileSync(hookAPath, [
+      'export async function postMessage(ctx) {',
+      '  return `${ctx.response} [A]`;',
+      '}',
+    ].join('\n'), 'utf-8');
+
+    const hookBPath = join(hookDir, 'hookB.mjs');
+    writeFileSync(hookBPath, [
+      'export async function postMessage(ctx) {',
+      '  return `${ctx.response} [B]`;',
+      '}',
+    ].join('\n'), 'utf-8');
+
+    const mockSession = makeSession();
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      hooks: {
+        postMessage: [
+          { file: './hookA.mjs', mode: 'await' },
+          { file: './hookB.mjs', mode: 'await' },
+        ],
+      },
+      hooksDir: hookDir,
+    });
+
+    const response = await bot.sendToAgent('ping');
+
+    expect(response).toBe('ack [A] [B]');
+  });
+
+  it('invokes all postMessage hooks even when some do not return an override', async () => {
+    const hookDir = mkdtempSync(join(tmpdir(), 'lettabot-hook-module-'));
+
+    const hookAPath = join(hookDir, 'hookA.mjs');
+    writeFileSync(hookAPath, [
+      'globalThis.__hookEvents = globalThis.__hookEvents || [];',
+      'export async function postMessage(ctx) {',
+      "  globalThis.__hookEvents.push('A:' + ctx.response);",
+      '  // no return — does not override',
+      '}',
+    ].join('\n'), 'utf-8');
+
+    const hookBPath = join(hookDir, 'hookB.mjs');
+    writeFileSync(hookBPath, [
+      'globalThis.__hookEvents = globalThis.__hookEvents || [];',
+      'export async function postMessage(ctx) {',
+      "  globalThis.__hookEvents.push('B:' + ctx.response);",
+      '}',
+    ].join('\n'), 'utf-8');
+
+    const mockSession = makeSession();
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      hooks: {
+        postMessage: [
+          { file: './hookA.mjs', mode: 'await' },
+          { file: './hookB.mjs', mode: 'await' },
+        ],
+      },
+      hooksDir: hookDir,
+    });
+
+    await bot.sendToAgent('ping');
+
+    const events = (globalThis as any).__hookEvents as string[];
+    expect(events).toEqual(['A:ack', 'B:ack']);
+  });
+
   it('flags suppressed delivery in postMessage hook without blocking', async () => {
     const hookDir = mkdtempSync(join(tmpdir(), 'lettabot-hook-module-'));
     const hookPath = join(hookDir, 'hooks.mjs');

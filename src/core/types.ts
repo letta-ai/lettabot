@@ -54,11 +54,11 @@ export interface HookHandlerConfig {
 }
 
 export interface MessageHooksConfig {
-  preMessage?: HookHandlerConfig;
-  postMessage?: HookHandlerConfig;
-  postReasoning?: HookHandlerConfig;
-  postToolCall?: HookHandlerConfig;
-  postToolResult?: HookHandlerConfig;
+  preMessage?: HookHandlerConfig | HookHandlerConfig[];
+  postMessage?: HookHandlerConfig | HookHandlerConfig[];
+  postReasoning?: HookHandlerConfig | HookHandlerConfig[];
+  postToolCall?: HookHandlerConfig | HookHandlerConfig[];
+  postToolResult?: HookHandlerConfig | HookHandlerConfig[];
 }
 
 export interface MessageHookContext {
