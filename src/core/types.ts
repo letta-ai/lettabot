@@ -65,6 +65,14 @@ export interface MessageHookContext {
   stage: 'pre' | 'postReasoning' | 'post';
   /** Unique ID for this agent turn — same value across all hook stages for the same turn */
   turnId: string;
+  /**
+   * Unix timestamp (ms) of when the underlying event occurred in the stream.
+   * For pre: when the inbound message arrived.
+   * For postReasoning: when the first chunk of this reasoning block was received.
+   * For post: when the turn completed.
+   * Hooks may fire later than this due to queuing; use this for accurate span timing.
+   */
+  timestamp: number;
   isHeartbeat: boolean;
   suppressDelivery: boolean;
   /** Whether this message is a retry of a previously failed turn */
@@ -99,6 +107,8 @@ export interface MessageHookContext {
 export interface ToolCallHookContext {
   /** Unique ID for this agent turn — same value across all hook stages for the same turn */
   turnId: string;
+  /** Unix timestamp (ms) of when the tool_call arrived in the stream */
+  timestamp: number;
   toolName: string;
   toolInput: Record<string, unknown>;
   toolCallId?: string;
@@ -113,6 +123,8 @@ export interface ToolCallHookContext {
 export interface ToolResultHookContext {
   /** Unique ID for this agent turn — same value across all hook stages for the same turn */
   turnId: string;
+  /** Unix timestamp (ms) of when the tool_result arrived in the stream */
+  timestamp: number;
   toolCallId: string;
   toolName?: string;
   content: string;

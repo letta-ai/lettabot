@@ -151,6 +151,7 @@ async function applyPostHook(
   const ctx: MessageHookContext = {
     stage: 'post',
     turnId: randomUUID(),
+    timestamp: performance.timeOrigin + performance.now(),
     isHeartbeat: false,
     suppressDelivery: false,
     message: text,
