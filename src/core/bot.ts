@@ -256,6 +256,7 @@ export class LettaBot implements AgentSession {
       log.info(`Message hooks enabled (baseDir=${baseDir})`);
     }
     log.info(`LettaBot initialized. Agent ID: ${this.store.agentId || '(new)'}`);
+
   }
 
   // =========================================================================

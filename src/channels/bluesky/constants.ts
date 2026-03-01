@@ -1,0 +1,15 @@
+export const DEFAULT_JETSTREAM_URL = 'wss://jetstream2.us-east.bsky.network/subscribe';
+export const RECONNECT_BASE_MS = 1000;
+export const RECONNECT_MAX_MS = 60000;
+export const CURSOR_BACKTRACK_US = 5_000_000; // 5 seconds
+export const STATE_FILENAME = 'bluesky-jetstream.json';
+export const STATE_FLUSH_INTERVAL_MS = 10_000;
+export const DEFAULT_SERVICE_URL = 'https://bsky.social';
+export const DEFAULT_APPVIEW_URL = 'https://public.api.bsky.app';
+export const POST_MAX_CHARS = 300;
+export const DEFAULT_NOTIFICATIONS_INTERVAL_SEC = 60;
+export const DEFAULT_NOTIFICATIONS_LIMIT = 50;
+export const HANDLE_CACHE_MAX = 10_000;
+export const LAST_POST_CACHE_MAX = 5_000;
+export const SEEN_MESSAGE_IDS_MAX = 5_000;
+export const STATE_VERSION = 1;

@@ -296,6 +296,7 @@ function installSkillsFromDir(sourceDir: string, targetDir: string): string[] {
 export const FEATURE_SKILLS: Record<string, string[]> = {
   cron: ['scheduling'],      // Scheduling handles both one-off reminders and recurring cron jobs
   google: ['gog', 'google'], // Installed when Google/Gmail is configured
+  bluesky: ['bluesky'],      // Installed when Bluesky is configured
   tts: ['voice-memo'],       // Voice memo replies via lettabot-tts helper
 };
 
@@ -331,6 +332,7 @@ function installSpecificSkills(
 export interface SkillsInstallConfig {
   cronEnabled?: boolean;
   googleEnabled?: boolean;  // Gmail polling or Google integration
+  blueskyEnabled?: boolean; // Bluesky integration
   ttsEnabled?: boolean;     // Voice memo replies via TTS providers
   additionalSkills?: string[]; // Explicitly enabled skills
 }
@@ -367,14 +369,19 @@ export function installSkillsToWorkingDir(workingDir: string, config: SkillsInst
   if (config.ttsEnabled) {
     requestedSkills.push(...FEATURE_SKILLS.tts);
   }
-  
+
+  // Bluesky skills (if Bluesky is configured)
+  if (config.blueskyEnabled) {
+    requestedSkills.push(...FEATURE_SKILLS.bluesky);
+  }
+
   // Additional explicitly enabled skills
   if (config.additionalSkills?.length) {
     requestedSkills.push(...config.additionalSkills);
   }
 
   const skillsToInstall = Array.from(new Set(requestedSkills));
-  
+
   if (skillsToInstall.length === 0) {
     log.info('No feature-gated skills to install');
     return;
@@ -423,14 +430,19 @@ export function installSkillsToAgent(agentId: string, config: SkillsInstallConfi
   if (config.ttsEnabled) {
     requestedSkills.push(...FEATURE_SKILLS.tts);
   }
-  
+
+  // Bluesky skills (if Bluesky is configured)
+  if (config.blueskyEnabled) {
+    requestedSkills.push(...FEATURE_SKILLS.bluesky);
+  }
+
   // Additional explicitly enabled skills
   if (config.additionalSkills?.length) {
     requestedSkills.push(...config.additionalSkills);
   }
 
   const skillsToInstall = Array.from(new Set(requestedSkills));
-  
+
   if (skillsToInstall.length === 0) {
     return; // No skills to install - silent return
   }

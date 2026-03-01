@@ -189,10 +189,9 @@ describe('formatMessageEnvelope', () => {
       const result = formatMessageEnvelope(msg);
       expect(result).toContain('Response Directives');
       expect(result).toContain('<no-reply/>');
-      expect(result).toContain('<actions>');
     });
 
-    it('omits <actions> directives when reactions are not supported', () => {
+    it('omits react directive when reactions are not supported', () => {
       const msg = createMessage({ isGroup: false });
       const result = formatMessageEnvelope(msg);
       expect(result).toContain('Response Directives');
@@ -226,6 +225,49 @@ describe('formatMessageEnvelope', () => {
       expect(result).toContain('<no-reply/>');
       expect(result).toContain('react to show you saw this');
       expect(result).not.toContain('react and reply');
+    });
+
+    it('omits <actions> directives when reactions are not supported', () => {
+      const msg = createMessage({ isGroup: false });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('Response Directives');
+      expect(result).toContain('<no-reply/>');
+      expect(result).not.toContain('<react');
+    });
+
+    it('shows minimal directives in listening mode', () => {
+      const msg = createMessage({
+        isGroup: true,
+        isListeningMode: true,
+        formatterHints: { supportsReactions: true },
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('Response Directives');
+      expect(result).toContain('<no-reply/>');
+      expect(result).toContain('<actions><react emoji="eyes" /></actions>');
+      // Should NOT show full directives
+      expect(result).not.toContain('react and reply');
+    });
+
+    it('shows Mode line in listening mode', () => {
+      const msg = createMessage({
+        isGroup: true,
+        isListeningMode: true,
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('**Mode**: Listen only');
+    });
+
+    it('listening mode without reactions still shows no-reply', () => {
+      const msg = createMessage({
+        isGroup: true,
+        isListeningMode: true,
+        formatterHints: { supportsReactions: false },
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('Response Directives');
+      expect(result).toContain('<no-reply/>');
+      expect(result).not.toContain('<actions>');
     });
   });
 
@@ -400,7 +442,7 @@ describe('formatGroupBatchEnvelope', () => {
     it('includes OBSERVATION ONLY header when isListeningMode=true', () => {
       const msgs = createBatchMessages(2);
       const result = formatGroupBatchEnvelope(msgs, {}, true);
-      expect(result).toContain('[OBSERVATION ONLY - Update memories. Do not reply unless addressed.]');
+      expect(result).toContain('[OBSERVATION ONLY — Update memories, do not send text replies]');
     });
 
     it('does not include OBSERVATION ONLY header when isListeningMode=false', () => {
@@ -428,6 +470,29 @@ describe('formatGroupBatchEnvelope', () => {
       const result = formatGroupBatchEnvelope(msgs, {}, true);
       expect(result).toContain('User 0: Message 0');
       expect(result).toContain('User 1: Message 1');
+    });
+
+    it('includes minimal directives in listening mode', () => {
+      const msgs = createBatchMessages(2);
+      const result = formatGroupBatchEnvelope(msgs, {}, true);
+      expect(result).toContain('Directives:');
+      expect(result).toContain('<no-reply/>');
+      expect(result).toContain('to acknowledge');
+    });
+
+    it('includes react directive in listening mode when reactions supported', () => {
+      const msgs = createBatchMessages(2);
+      msgs[0].formatterHints = { supportsReactions: true };
+      const result = formatGroupBatchEnvelope(msgs, {}, true);
+      expect(result).toContain('<actions><react emoji="eyes" /></actions>');
+    });
+
+    it('does not include react directive in listening mode when reactions not supported', () => {
+      const msgs = createBatchMessages(2);
+      msgs[0].formatterHints = { supportsReactions: false };
+      const result = formatGroupBatchEnvelope(msgs, {}, true);
+      expect(result).toContain('<no-reply/>');
+      expect(result).not.toContain('<actions>');
     });
   });
 });
