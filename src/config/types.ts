@@ -378,6 +378,7 @@ export interface BlueskyNotificationsConfig {
   limit?: number;           // Max notifications per request (default: 50)
   priority?: boolean;       // Priority only
   reasons?: string[];       // Filter reasons (e.g., ['mention','reply'])
+  backfill?: boolean;       // Process unread notifications on startup (default: false)
 }
 
 /**

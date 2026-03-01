@@ -298,6 +298,20 @@ function getDefaultTodoAgentKey(): string {
 }
 
 async function blueskyCommand(action?: string, rest: string[] = []): Promise<void> {
+  if (!action) {
+    console.log(`
+Bluesky Commands:
+  bluesky add-did <did> --agent <name> [--mode <open|listen|mention-only|disabled>]
+  bluesky add-list <listUri> --agent <name> [--mode <open|listen|mention-only|disabled>]
+  bluesky set-default <open|listen|mention-only|disabled> --agent <name>
+  bluesky refresh-lists --agent <name>
+  bluesky disable --agent <name>
+  bluesky enable --agent <name>
+  bluesky status --agent <name>
+`);
+    return;
+  }
+
   const { saveConfig, resolveConfigPath } = await import('./config/index.js');
   const config = getConfig();
 
@@ -382,7 +396,7 @@ async function blueskyCommand(action?: string, rest: string[] = []): Promise<voi
       ...patch,
     };
     const next = { agents, updatedAt: new Date().toISOString() };
-    writeFileSync(runtimePath, JSON.stringify(next, null, 2));
+    writeFileSync(runtimePath, JSON.stringify(next, null, 2), { mode: 0o600 });
   };
 
   switch (action) {
@@ -392,8 +406,17 @@ async function blueskyCommand(action?: string, rest: string[] = []): Promise<voi
         console.error('Usage: lettabot bluesky add-did <did> --agent <name> [--mode <mode>]');
         process.exit(1);
       }
+      if (!did.startsWith('did:')) {
+        console.error(`Error: "${did}" does not look like a DID (must start with "did:")`);
+        process.exit(1);
+      }
       const agentChannels = getAgentChannels();
       const mode = parseModeArg(args) || agentChannels.bluesky?.groups?.['*']?.mode || 'listen';
+      const validModes = ['open', 'listen', 'mention-only', 'disabled'];
+      if (!validModes.includes(mode)) {
+        console.error(`Error: unknown mode "${mode}". Valid modes: ${validModes.join(', ')}`);
+        process.exit(1);
+      }
       const bluesky = ensureBlueskyConfig();
       bluesky.groups = bluesky.groups || { '*': { mode: 'listen' } };
       bluesky.groups[did] = { mode: mode as any };
@@ -424,6 +447,11 @@ async function blueskyCommand(action?: string, rest: string[] = []): Promise<voi
       const mode = args[0];
       if (!mode) {
         console.error('Usage: lettabot bluesky set-default <open|listen|mention-only|disabled> --agent <name>');
+        process.exit(1);
+      }
+      const validModes = ['open', 'listen', 'mention-only', 'disabled'];
+      if (!validModes.includes(mode)) {
+        console.error(`Error: unknown mode "${mode}". Valid modes: ${validModes.join(', ')}`);
         process.exit(1);
       }
       const bluesky = ensureBlueskyConfig();

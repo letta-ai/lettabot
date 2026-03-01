@@ -416,7 +416,8 @@ export function formatMessageEnvelope(
   }
 
   // Response directives (skip if channel provides its own actionsSection)
-  if (!msg.formatterHints?.skipDirectives) {
+  const hasCustomActions = (msg.formatterHints?.actionsSection?.length ?? 0) > 0;
+  if (!hasCustomActions && !msg.formatterHints?.skipDirectives) {
     const directiveLines = buildResponseDirectives(msg);
     sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
   }

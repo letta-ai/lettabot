@@ -126,7 +126,6 @@ export class BlueskyAdapter implements ChannelAdapter {
     return {
       formatHint: 'Plain text only (no markdown, no tables).',
       actionsSection,
-      skipDirectives: true,
     };
   }
 
@@ -424,7 +423,10 @@ export class BlueskyAdapter implements ChannelAdapter {
     const did = payload.did || 'unknown';
     const handle = payload.did ? this.handleByDid.get(payload.did) : undefined;
     const { text, messageId, source, extraContext } = this.formatCommit(payload, handle);
-    if (!text) return;
+    if (!text) {
+      log.debug(`Dropping non-post Jetstream event: ${payload.commit?.collection} from ${did}`);
+      return;
+    }
     if (messageId && (this.seenMessageIds.has(messageId) || this.seenBaseMessageIds.has(messageId))) return;
 
     const timestamp = payload.time_us
@@ -524,6 +526,9 @@ export class BlueskyAdapter implements ChannelAdapter {
       }
       if (details.replyRefs.parentUri) {
         extraContext['Reply parent'] = details.replyRefs.parentUri;
+      }
+      if (details.embedLines.length > 0) {
+        extraContext['Embeds'] = details.embedLines.join(' | ');
       }
 
       if (details.replyRefs.rootUri) source.threadRootUri = details.replyRefs.rootUri;
@@ -954,9 +959,10 @@ export class BlueskyAdapter implements ChannelAdapter {
     const dids: string[] = [];
     let cursor: string | undefined;
     const limit = 100;
+    const maxPages = 50;
     const base = getAppViewUrl(this.config.appViewUrl);
 
-    for (;;) {
+    for (let page = 0; page < maxPages; page++) {
       const params = new URLSearchParams();
       params.set('list', listUri);
       params.set('limit', String(limit));
@@ -984,6 +990,9 @@ export class BlueskyAdapter implements ChannelAdapter {
 
       if (!data.cursor) break;
       cursor = data.cursor;
+      if (page + 1 >= maxPages) {
+        log.warn(`fetchListDids: reached maxPages (${maxPages}) for list ${listUri}, truncating`);
+      }
     }
 
     return uniqueList(dids);
@@ -1062,6 +1071,9 @@ export class BlueskyAdapter implements ChannelAdapter {
       this.config = {
         ...this.config,
         ...nextBluesky,
+        // Preserve env-var-sourced credentials if the new config doesn't supply them
+        handle: nextBluesky.handle ?? this.config.handle,
+        appPassword: nextBluesky.appPassword ?? this.config.appPassword,
         agentName: this.config.agentName,
       };
       this.loadDidModes();
@@ -1113,7 +1125,9 @@ export class BlueskyAdapter implements ChannelAdapter {
       try {
         this.ws.close();
       } catch {
-        // ignore
+        // If close() throws the WebSocket may still close on its own, so reset the
+        // flag to let the close handler schedule a reconnect if that happens.
+        this.intentionalClose = false;
       }
       this.ws = null;
     }
@@ -1235,7 +1249,7 @@ export class BlueskyAdapter implements ChannelAdapter {
         extraContext['Reply parent'] = details.replyRefs.parentUri;
       }
       if (details.embedLines.length > 0) {
-        // Embeds handled separately
+        extraContext['Embeds'] = details.embedLines.join(' | ');
       }
 
       if (details.replyRefs.rootUri) source.threadRootUri = details.replyRefs.rootUri;

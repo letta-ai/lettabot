@@ -2,6 +2,10 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { BlueskyAdapter } from './bluesky.js';
 import { splitPostText } from './bluesky/utils.js';
 
+vi.mock('../config/io.js', () => ({
+  loadConfig: vi.fn(),
+}));
+
 const listUri = 'at://did:plc:tester/app.bsky.graph.list/abcd';
 
 function makeAdapter(overrides: Partial<ConstructorParameters<typeof BlueskyAdapter>[0]> = {}) {
@@ -70,7 +74,6 @@ describe('BlueskyAdapter', () => {
 
   it('mention-only replies only on mention notifications', async () => {
     const adapter = makeAdapter({
-      autoReply: true,
       groups: { '*': { mode: 'mention-only' } },
     });
 
@@ -206,5 +209,92 @@ describe('BlueskyAdapter', () => {
     expect(chunks.every(chunk => graphemeCount(chunk) <= 300)).toBe(true);
     const total = chunks.reduce((sum, chunk) => sum + graphemeCount(chunk), 0);
     expect(total).toBeGreaterThan(300);
+  });
+
+  it('non-post Jetstream events are dropped without calling onMessage', async () => {
+    const adapter = makeAdapter({ wantedDids: ['did:plc:author'] });
+    const messages: any[] = [];
+    adapter.onMessage = async (msg) => { messages.push(msg); };
+
+    const likeEvent = {
+      data: JSON.stringify({
+        did: 'did:plc:author',
+        time_us: Date.now() * 1000,
+        commit: {
+          operation: 'create',
+          collection: 'app.bsky.feed.like',
+          rkey: 'aaa',
+          cid: 'cid-like',
+          record: {
+            $type: 'app.bsky.feed.like',
+            subject: { uri: 'at://did:plc:other/app.bsky.feed.post/xyz', cid: 'cid-post' },
+            createdAt: new Date().toISOString(),
+          },
+        },
+      }),
+    };
+
+    await (adapter as any).handleMessageEvent(likeEvent);
+    expect(messages).toHaveLength(0);
+  });
+
+  it('embedLines are included in extraContext for posts with images', async () => {
+    const adapter = makeAdapter({ wantedDids: ['did:plc:author'] });
+    const messages: any[] = [];
+    adapter.onMessage = async (msg) => { messages.push(msg); };
+
+    const eventWithEmbed = {
+      data: JSON.stringify({
+        did: 'did:plc:author',
+        time_us: Date.now() * 1000,
+        commit: {
+          operation: 'create',
+          collection: 'app.bsky.feed.post',
+          rkey: 'bbb',
+          cid: 'cid-embed',
+          record: {
+            $type: 'app.bsky.feed.post',
+            text: 'Check this out',
+            createdAt: new Date().toISOString(),
+            embed: {
+              $type: 'app.bsky.embed.images',
+              images: [{ alt: 'A cat photo' }],
+            },
+          },
+        },
+      }),
+    };
+
+    await (adapter as any).handleMessageEvent(eventWithEmbed);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].extraContext?.['Embeds']).toContain('1 image');
+  });
+
+  it('sendMessage throws when kill switch is active', async () => {
+    const adapter = makeAdapter();
+    (adapter as any).runtimeDisabled = true;
+
+    await expect(adapter.sendMessage({ chatId: 'some-chat', text: 'hello' }))
+      .rejects.toThrow('kill switch');
+  });
+
+  it('reloadConfig preserves handle and appPassword when new config omits them', async () => {
+    const { loadConfig } = await import('../config/io.js');
+    vi.mocked(loadConfig).mockReturnValue({
+      channels: {
+        bluesky: {
+          enabled: true,
+          groups: { '*': { mode: 'open' } },
+          // handle and appPassword intentionally absent (set via env vars)
+        },
+      },
+    } as any);
+
+    const adapter = makeAdapter({ handle: 'env@bsky.social', appPassword: 'env-pass' });
+    (adapter as any).reloadConfig();
+
+    expect((adapter as any).config.handle).toBe('env@bsky.social');
+    expect((adapter as any).config.appPassword).toBe('env-pass');
+    expect((adapter as any).config.groups?.['*']?.mode).toBe('open');
   });
 });

@@ -31,7 +31,6 @@ export interface BlueskyInboundMessage extends InboundMessage {
 export interface BlueskyConfig {
   enabled?: boolean;
   agentName?: string;
-  autoReply?: boolean; // Allow auto-replies (default: false / read-only)
   jetstreamUrl?: string;
   wantedDids?: string[] | string;
   wantedCollections?: string[] | string;
