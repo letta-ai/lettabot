@@ -15,7 +15,7 @@
     "setup": "tsx src/setup.ts",
     "dev": "tsx src/main.ts",
     "build": "tsc",
-    "postbuild": "cp -r src/looms/*.txt dist/looms/ && node scripts/fix-bin-permissions.mjs",
+    "postbuild": "node -e \"const fs=require('fs');const src='src/looms',dest='dist/looms';if(!fs.existsSync(dest))fs.mkdirSync(dest,{recursive:true});fs.readdirSync(src).filter(f=>f.endsWith('.txt')).forEach(f=>fs.copyFileSync(src+'/'+f,dest+'/'+f));\" && node scripts/fix-bin-permissions.mjs",
     "prepare": "npx patch-package || true",
     "prepublishOnly": "npm run build && npm run test:run",
     "start": "node dist/main.js",
