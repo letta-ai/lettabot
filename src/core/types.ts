@@ -63,6 +63,8 @@ export interface MessageHooksConfig {
 
 export interface MessageHookContext {
   stage: 'pre' | 'postReasoning' | 'post';
+  /** Unique ID for this agent turn — same value across all hook stages for the same turn */
+  turnId: string;
   isHeartbeat: boolean;
   suppressDelivery: boolean;
   /** Whether this message is a retry of a previously failed turn */
@@ -78,6 +80,14 @@ export interface MessageHookContext {
   reasoning?: string;
   /** Which reasoning block within the turn (0-based) — postReasoning stage only */
   stepIndex?: number;
+  /** Total cost in USD for this turn — populated for post stage only */
+  totalCostUsd?: number;
+  /** Token usage for this turn — populated for post stage only */
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+  };
   agent?: {
     id?: string | null;
     name?: string;
@@ -87,6 +97,8 @@ export interface MessageHookContext {
 }
 
 export interface ToolCallHookContext {
+  /** Unique ID for this agent turn — same value across all hook stages for the same turn */
+  turnId: string;
   toolName: string;
   toolInput: Record<string, unknown>;
   toolCallId?: string;
@@ -99,6 +111,8 @@ export interface ToolCallHookContext {
 }
 
 export interface ToolResultHookContext {
+  /** Unique ID for this agent turn — same value across all hook stages for the same turn */
+  turnId: string;
   toolCallId: string;
   toolName?: string;
   content: string;

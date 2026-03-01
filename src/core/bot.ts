@@ -5,6 +5,7 @@
  */
 
 import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, existsSync } from 'node:fs';
 import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
@@ -1474,11 +1475,14 @@ export class LettaBot implements AgentSession {
       sourceUserId: msg.userId,
     };
     // Hook tracking state (populated after pre-hook, consumed in finally)
+    const turnId = randomUUID();
     let hookMessage: SendMessage | null = null;
     let hookResponse = '';
     let hookDelivered = false;
     let hookError: string | undefined;
     let postHookRan = false;
+    let turnCostUsd: number | undefined;
+    let turnUsage: MessageHookContext['usage'] | undefined;
     this.lastUserMessageTime = new Date();
 
     // Skip heartbeat target update for listening mode (don't redirect heartbeats)
@@ -1575,6 +1579,7 @@ export class LettaBot implements AgentSession {
       // Run pre-message hook
       const preMessageContext: MessageHookContext = {
         stage: 'pre',
+        turnId,
         isHeartbeat: false,
         isRetry: retried,
         suppressDelivery,
@@ -1739,6 +1744,7 @@ export class LettaBot implements AgentSession {
             sawNonAssistantSinceLastUuid = true;
             // Run tool call hook
             this.runToolCallHook({
+              turnId,
               toolName: tcName,
               toolInput: (streamMsg.toolInput || {}) as Record<string, unknown>,
               toolCallId: streamMsg.toolCallId || '',
@@ -1758,6 +1764,7 @@ export class LettaBot implements AgentSession {
             sawNonAssistantSinceLastUuid = true;
             // Run tool result hook
             this.runToolResultHook({
+              turnId,
               toolCallId: streamMsg.toolCallId || '',
               toolName: streamMsg.toolName,
               content: streamMsg.content || '',
@@ -1779,6 +1786,7 @@ export class LettaBot implements AgentSession {
             if (streamMsg.content) {
               this.runReasoningHook({
                 stage: 'postReasoning',
+                turnId,
                 isHeartbeat: false,
                 suppressDelivery,
                 trigger: triggerContext,
@@ -1887,6 +1895,20 @@ export class LettaBot implements AgentSession {
             const isTerminalError = streamMsg.success === false || !!streamMsg.error;
             log.info(`Stream result: success=${streamMsg.success}, hasResponse=${hasResponse}, resultLen=${resultText.length}`);
             log.info(`Stream message counts:`, msgTypeCounts);
+
+            // Capture cost and usage for post-message hook
+            if (typeof streamMsg.totalCostUsd === 'number') {
+              turnCostUsd = streamMsg.totalCostUsd;
+            }
+            const usageRaw = streamMsg.usage as Record<string, unknown> | undefined;
+            if (usageRaw && typeof usageRaw === 'object') {
+              turnUsage = {
+                promptTokens: typeof usageRaw.promptTokens === 'number' ? usageRaw.promptTokens : undefined,
+                completionTokens: typeof usageRaw.completionTokens === 'number' ? usageRaw.completionTokens : undefined,
+                totalTokens: typeof usageRaw.totalTokens === 'number' ? usageRaw.totalTokens : undefined,
+              };
+            }
+
             if (streamMsg.error) {
               const detail = resultText.trim();
               const parts = [`error=${streamMsg.error}`];
@@ -2052,6 +2074,7 @@ export class LettaBot implements AgentSession {
         if (hookMessage) {
           void this.runPostMessageHook({
             stage: 'post',
+            turnId,
             isHeartbeat: false,
             suppressDelivery,
             trigger: triggerContext,
@@ -2060,6 +2083,8 @@ export class LettaBot implements AgentSession {
             message: hookMessage,
             response: hookResponse,
             delivered: false,
+            totalCostUsd: turnCostUsd,
+            usage: turnUsage,
             agent: { ...this.buildHookContextBase(), conversationKey: convKey },
           });
           postHookRan = true;
@@ -2074,6 +2099,7 @@ export class LettaBot implements AgentSession {
         hookResponse = response;
         const hookResult = await this.runPostMessageHook({
           stage: 'post',
+          turnId,
           isHeartbeat: false,
           suppressDelivery,
           trigger: triggerContext,
@@ -2081,6 +2107,8 @@ export class LettaBot implements AgentSession {
           formattedText,
           message: hookMessage,
           response: hookResponse,
+          totalCostUsd: turnCostUsd,
+          usage: turnUsage,
           agent: { ...this.buildHookContextBase(), conversationKey: convKey },
         });
         postHookRan = true;
@@ -2163,6 +2191,7 @@ export class LettaBot implements AgentSession {
       if (!postHookRan && hookMessage) {
         void this.runPostMessageHook({
           stage: 'post',
+          turnId,
           isHeartbeat: false,
           suppressDelivery,
           trigger: triggerContext,
@@ -2172,6 +2201,8 @@ export class LettaBot implements AgentSession {
           response: hookResponse,
           delivered: hookDelivered,
           error: hookError,
+          totalCostUsd: turnCostUsd,
+          usage: turnUsage,
           agent: { ...this.buildHookContextBase(), conversationKey: this.resolveConversationKey(msg.channel, msg.chatId) },
         }).catch(() => {});
       }
@@ -2235,8 +2266,10 @@ export class LettaBot implements AgentSession {
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
 
+    const turnId = randomUUID();
     let hookMessage: SendMessage = text;
     const hookContextBase: Omit<MessageHookContext, 'stage' | 'message'> = {
+      turnId,
       isHeartbeat: context?.type === 'heartbeat',
       suppressDelivery,
       trigger: context,
@@ -2343,8 +2376,10 @@ export class LettaBot implements AgentSession {
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
 
+    const turnId = randomUUID();
     let hookMessage: SendMessage = text;
     const hookContextBase: Omit<MessageHookContext, 'stage' | 'message'> = {
+      turnId,
       isHeartbeat: context?.type === 'heartbeat',
       suppressDelivery,
       trigger: context,

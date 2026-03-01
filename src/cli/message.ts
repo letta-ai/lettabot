@@ -12,6 +12,7 @@
 
 // Config loaded from lettabot.yaml
 import { loadAppConfigOrExit, applyConfigToEnv, resolveConfigPath, normalizeAgents, type AgentConfig } from '../config/index.js';
+import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { loadApiKey } from '../api/auth.js';
 import { existsSync, readFileSync } from 'node:fs';
@@ -149,6 +150,7 @@ async function applyPostHook(
   const trigger = resolveTriggerContext(options);
   const ctx: MessageHookContext = {
     stage: 'post',
+    turnId: randomUUID(),
     isHeartbeat: false,
     suppressDelivery: false,
     message: text,
