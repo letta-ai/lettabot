@@ -37,6 +37,7 @@ const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-
 updateNotifier({ pkg }).notify();
 
 import * as readline from 'node:readline';
+import { join } from 'node:path';
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -237,6 +238,7 @@ Commands:
   channels list-groups List group/channel IDs for Slack/Discord
   channels add <ch>    Add a channel (telegram, slack, discord, whatsapp, signal)
   channels remove <ch> Remove a channel
+  bluesky              Manage Bluesky config (dids, lists, kill switch)
   logout               Logout from Letta Platform (revoke OAuth tokens)
   skills               Configure which skills are enabled
   skills status        Show skills status
@@ -293,6 +295,234 @@ function getDefaultTodoAgentKey(): string {
   }
 
   return configuredName;
+}
+
+async function blueskyCommand(action?: string, rest: string[] = []): Promise<void> {
+  if (!action) {
+    console.log(`
+Bluesky Commands:
+  bluesky add-did <did> --agent <name> [--mode <open|listen|mention-only|disabled>]
+  bluesky add-list <listUri> --agent <name> [--mode <open|listen|mention-only|disabled>]
+  bluesky set-default <open|listen|mention-only|disabled> --agent <name>
+  bluesky refresh-lists --agent <name>
+  bluesky disable --agent <name>
+  bluesky enable --agent <name>
+  bluesky status --agent <name>
+`);
+    return;
+  }
+
+  const { saveConfig, resolveConfigPath } = await import('./config/index.js');
+  const config = getConfig();
+
+  const getAgentConfig = () => {
+    if (config.agents && config.agents.length > 0) {
+      const agent = config.agents.find(a => a.name === agentName);
+      if (!agent) {
+        console.error(`Unknown agent: ${agentName}`);
+        console.error(`Available agents: ${config.agents.map(a => a.name).join(', ')}`);
+        process.exit(1);
+      }
+      if (!agent.channels) {
+        agent.channels = {} as any;
+      }
+      return agent;
+    }
+
+    const configuredName = config.agent?.name?.trim() || 'LettaBot';
+    if (agentName && agentName !== configuredName) {
+      console.error(`Unknown agent: ${agentName}`);
+      console.error(`Available agents: ${configuredName}`);
+      process.exit(1);
+    }
+
+    if (!config.channels) {
+      config.channels = {} as any;
+    }
+
+    return { name: configuredName, channels: config.channels } as any;
+  };
+
+  const getAgentChannels = () => getAgentConfig().channels;
+
+  const ensureBlueskyConfig = () => {
+    const channels = getAgentChannels();
+    if (!channels.bluesky) {
+      channels.bluesky = { enabled: true } as any;
+    }
+    if (!channels.bluesky.groups) {
+      channels.bluesky.groups = { '*': { mode: 'listen' } } as any;
+    }
+    return channels.bluesky as any;
+  };
+
+  const parseModeArg = (args: string[]): string | undefined => {
+    const idx = args.findIndex(arg => arg === '--mode' || arg === '-m');
+    if (idx >= 0 && args[idx + 1]) return args[idx + 1];
+    return undefined;
+  };
+
+  const parseAgentArg = (args: string[]): { agent: string; rest: string[] } => {
+    const idx = args.findIndex(arg => arg === '--agent' || arg === '-a');
+    if (idx >= 0 && args[idx + 1]) {
+      const next = [...args];
+      next.splice(idx, 2);
+      return { agent: args[idx + 1], rest: next };
+    }
+    return { agent: '', rest: args };
+  };
+
+  const { agent: agentName, rest: args } = parseAgentArg(rest);
+  if (!agentName) {
+    console.error('Error: --agent is required for bluesky commands');
+    process.exit(1);
+  }
+
+  const runtimePath = join(getDataDir(), 'bluesky-runtime.json');
+  const writeRuntimeState = (patch: Partial<{ disabled: boolean; refreshListsAt: string; reloadConfigAt: string }>): void => {
+    let state: { agents?: Record<string, { disabled?: boolean; refreshListsAt?: string; reloadConfigAt?: string }> } = {};
+    if (existsSync(runtimePath)) {
+      try {
+        state = JSON.parse(readFileSync(runtimePath, 'utf-8'));
+      } catch {
+        state = {};
+      }
+    }
+    const agents = state.agents && typeof state.agents === 'object'
+      ? { ...state.agents }
+      : {};
+    agents[agentName] = {
+      ...(agents[agentName] || {}),
+      ...patch,
+    };
+    const next = { agents, updatedAt: new Date().toISOString() };
+    writeFileSync(runtimePath, JSON.stringify(next, null, 2), { mode: 0o600 });
+  };
+
+  switch (action) {
+    case 'add-did': {
+      const did = args[0];
+      if (!did) {
+        console.error('Usage: lettabot bluesky add-did <did> --agent <name> [--mode <mode>]');
+        process.exit(1);
+      }
+      if (!did.startsWith('did:')) {
+        console.error(`Error: "${did}" does not look like a DID (must start with "did:")`);
+        process.exit(1);
+      }
+      const agentChannels = getAgentChannels();
+      const mode = parseModeArg(args) || agentChannels.bluesky?.groups?.['*']?.mode || 'listen';
+      const validModes = ['open', 'listen', 'mention-only', 'disabled'];
+      if (!validModes.includes(mode)) {
+        console.error(`Error: unknown mode "${mode}". Valid modes: ${validModes.join(', ')}`);
+        process.exit(1);
+      }
+      const bluesky = ensureBlueskyConfig();
+      bluesky.groups = bluesky.groups || { '*': { mode: 'listen' } };
+      bluesky.groups[did] = { mode: mode as any };
+      saveConfig(config);
+      writeRuntimeState({ reloadConfigAt: new Date().toISOString() });
+      console.log(`✓ Added DID ${did} with mode ${mode}`);
+      console.log(`  Config: ${resolveConfigPath()}`);
+      break;
+    }
+    case 'add-list': {
+      const listUri = args[0];
+      if (!listUri) {
+        console.error('Usage: lettabot bluesky add-list <listUri> --agent <name> [--mode <mode>]');
+        process.exit(1);
+      }
+      const agentChannels = getAgentChannels();
+      const mode = parseModeArg(args) || agentChannels.bluesky?.groups?.['*']?.mode || 'listen';
+      const bluesky = ensureBlueskyConfig();
+      bluesky.lists = bluesky.lists || {};
+      bluesky.lists[listUri] = { mode: mode as any };
+      saveConfig(config);
+      writeRuntimeState({ reloadConfigAt: new Date().toISOString(), refreshListsAt: new Date().toISOString() });
+      console.log(`✓ Added list ${listUri} with mode ${mode}`);
+      console.log(`  Config: ${resolveConfigPath()}`);
+      break;
+    }
+    case 'set-default': {
+      const mode = args[0];
+      if (!mode) {
+        console.error('Usage: lettabot bluesky set-default <open|listen|mention-only|disabled> --agent <name>');
+        process.exit(1);
+      }
+      const validModes = ['open', 'listen', 'mention-only', 'disabled'];
+      if (!validModes.includes(mode)) {
+        console.error(`Error: unknown mode "${mode}". Valid modes: ${validModes.join(', ')}`);
+        process.exit(1);
+      }
+      const bluesky = ensureBlueskyConfig();
+      bluesky.groups = bluesky.groups || {};
+      bluesky.groups['*'] = { mode: mode as any };
+      saveConfig(config);
+      writeRuntimeState({ reloadConfigAt: new Date().toISOString() });
+      console.log(`✓ Set Bluesky default mode to ${mode}`);
+      console.log(`  Config: ${resolveConfigPath()}`);
+      break;
+    }
+    case 'disable': {
+      writeRuntimeState({ disabled: true });
+      console.log('✓ Bluesky runtime disabled (kill switch set)');
+      break;
+    }
+    case 'enable': {
+      writeRuntimeState({ disabled: false });
+      console.log('✓ Bluesky runtime enabled (kill switch cleared)');
+      break;
+    }
+    case 'refresh-lists': {
+      writeRuntimeState({ refreshListsAt: new Date().toISOString() });
+      console.log('✓ Requested Bluesky list refresh');
+      break;
+    }
+    case 'status': {
+      const agentChannels = getAgentChannels();
+      const bluesky = agentChannels.bluesky;
+      if (!bluesky || bluesky.enabled === false) {
+        console.log('Bluesky: disabled in config');
+        return;
+      }
+      console.log('Bluesky: enabled');
+      if (bluesky.wantedDids?.length) {
+        console.log(`  wantedDids: ${bluesky.wantedDids.join(', ')}`);
+      }
+      if (bluesky.lists && Object.keys(bluesky.lists).length > 0) {
+        console.log(`  lists: ${Object.keys(bluesky.lists).length}`);
+      }
+      const defaultMode = bluesky.groups?.['*']?.mode || 'listen';
+      console.log(`  default mode: ${defaultMode}`);
+      if (existsSync(runtimePath)) {
+        try {
+          const runtime = JSON.parse(readFileSync(runtimePath, 'utf-8')) as {
+            agents?: Record<string, { disabled?: boolean }>;
+          };
+          const agentRuntime = runtime.agents?.[agentName];
+          if (typeof agentRuntime?.disabled === 'boolean') {
+            console.log(`  runtime: ${agentRuntime.disabled ? 'disabled' : 'enabled'}`);
+          }
+        } catch {
+          // ignore
+        }
+      }
+      break;
+    }
+    default: {
+      console.log(`
+Bluesky Commands:
+  bluesky add-did <did> --agent <name> [--mode <open|listen|mention-only|disabled>]
+  bluesky add-list <listUri> --agent <name> [--mode <open|listen|mention-only|disabled>]
+  bluesky set-default <open|listen|mention-only|disabled> --agent <name>
+  bluesky refresh-lists --agent <name>
+  bluesky disable --agent <name>
+  bluesky enable --agent <name>
+  bluesky status --agent <name>
+`);
+      process.exit(action ? 1 : 0);
+    }
+  }
 }
 
 async function main() {
@@ -362,6 +592,11 @@ async function main() {
     case 'channel': {
       const { channelManagementCommand } = await import('./cli/channel-management.js');
       await channelManagementCommand(subCommand, args[2], args.slice(3));
+      break;
+    }
+
+    case 'bluesky': {
+      await blueskyCommand(subCommand, args.slice(2));
       break;
     }
     
@@ -603,7 +838,7 @@ async function main() {
       
     case undefined:
       console.log('Usage: lettabot <command>\n');
-      console.log('Commands: onboard, server, configure, model, channels, skills, reset-conversation, destroy, help\n');
+      console.log('Commands: onboard, server, configure, model, channels, bluesky, skills, reset-conversation, destroy, help\n');
       console.log('Run "lettabot help" for more information.');
       break;
       

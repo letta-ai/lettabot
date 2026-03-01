@@ -1,6 +1,6 @@
 # LettaBot Configuration
 # Copy this to lettabot.yaml and fill in your values.
-# 
+#
 # Server modes:
 # - 'api': Use Letta API (api.letta.com) with API key
 # - 'docker': Use a Docker/custom Letta server
@@ -61,6 +61,24 @@ agents:
       # whatsapp:
       #   enabled: true
       #   selfChat: false
+      # bluesky:
+      #   enabled: true
+      #   wantedDids: ["did:plc:..."]
+      #   # groups:
+      #   #   "*": { mode: listen }    # listen = observe only; open = observe + auto-reply; mention-only = auto-reply to @mentions only
+      #   #   "did:plc:...": { mode: open }
+      #   # lists:
+      #   #   "at://did:plc:.../app.bsky.graph.list/xyz": { mode: listen }
+      #   # wantedCollections: ["app.bsky.feed.post"]
+      #   # notifications:
+      #   #   enabled: true
+      #   #   intervalSec: 60
+      #   #   reasons: ["mention", "reply", "quote"]  # also: like, repost, follow
+      #   #   backfill: false                         # process initial backlog on startup
+      #   # jetstreamUrl: wss://jetstream2.us-east.bsky.network/subscribe
+      #   # handle: you.bsky.social
+      #   # appPassword: xxxx-xxxx-xxxx-xxxx
+      #   # serviceUrl: https://bsky.social
 
 # BYOK Providers (optional, api mode only)
 # These will be synced to Letta API on startup
@@ -89,7 +107,7 @@ features:
   # display:
   #   showToolCalls: false       # Show tool invocations in chat (e.g. "Using tool: Read (file_path: ...)")
   #   showReasoning: false       # Show agent reasoning/thinking in chat
-  #   reasoningMaxChars: 0        # Truncate reasoning to N chars (0 = no limit, default)
+  #   reasoningMaxChars: 0       # Truncate reasoning to N chars (0 = no limit, default)
 
 # Attachment handling (defaults to 20MB if omitted)
 # attachments:

@@ -1,0 +1,1515 @@
+/**
+ * Bluesky Jetstream Channel Adapter (read-only by default)
+ *
+ * Uses the Jetstream WebSocket API to ingest events for selected DID(s).
+ * Messages are delivered to the agent in listening mode (no auto-replies).
+ */
+
+import { WebSocket } from 'undici';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import type { ChannelAdapter } from '../types.js';
+import type { InboundMessage, OutboundFile, OutboundMessage } from '../../core/types.js';
+import { getDataDir } from '../../utils/paths.js';
+import { loadConfig } from '../../config/io.js';
+import { createLogger } from '../../logger.js';
+import type { BlueskyConfig, BlueskyInboundMessage, BlueskySource, DidMode, JetstreamEvent } from './types.js';
+import {
+  CURSOR_BACKTRACK_US,
+  DEFAULT_JETSTREAM_URL,
+  DEFAULT_NOTIFICATIONS_INTERVAL_SEC,
+  DEFAULT_NOTIFICATIONS_LIMIT,
+  DEFAULT_SERVICE_URL,
+  HANDLE_CACHE_MAX,
+  LAST_POST_CACHE_MAX,
+  SEEN_MESSAGE_IDS_MAX,
+  RECONNECT_BASE_MS,
+  RECONNECT_MAX_MS,
+  STATE_FILENAME,
+  STATE_FLUSH_INTERVAL_MS,
+  STATE_VERSION,
+} from './constants.js';
+import { extractPostDetails } from './formatter.js';
+import {
+  buildAtUri,
+  decodeJwtExp,
+  fetchWithTimeout,
+  getAppViewUrl,
+  isRecord,
+  normalizeList,
+  parseAtUri,
+  pruneMap,
+  readString,
+  splitPostText,
+  truncate,
+  uniqueList,
+} from './utils.js';
+
+const log = createLogger('Bluesky');
+
+export class BlueskyAdapter implements ChannelAdapter {
+  readonly id = 'bluesky' as const;
+  readonly name = 'Bluesky';
+
+  private config: BlueskyConfig;
+  private ws: WebSocket | null = null;
+  private running = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
+  private intentionalClose = false;
+  private lastCursor?: number;
+  private handleByDid = new Map<string, string>();
+  private handleFetchInFlight = new Map<string, Promise<string | undefined>>();
+  private lastHandleFetchAt = new Map<string, number>();
+  private seenMessageIds = new Map<string, true>();
+  private seenBaseMessageIds = new Map<string, true>();
+  private lastPostByChatId = new Map<string, {
+    uri: string;
+    cid?: string;
+    rootUri?: string;
+    rootCid?: string;
+  }>();
+  private statePath?: string;
+  private stateDirty = false;
+  private stateFlushTimer: ReturnType<typeof setInterval> | null = null;
+  private accessJwt?: string;
+  private refreshJwt?: string;
+  private sessionDid?: string;
+  private accessJwtExpiresAt?: number;
+  private refreshJwtExpiresAt?: number;
+  private didModes: Record<string, DidMode> = {};
+  private notificationsTimer: ReturnType<typeof setInterval> | null = null;
+  private notificationsCursor?: string;
+  private notificationsInitialized = false;
+  private notificationsInFlight = false;
+  private listModes: Record<string, DidMode> = {};
+  private listRefreshInFlight = false;
+  private runtimePath?: string;
+  private runtimeTimer: ReturnType<typeof setInterval> | null = null;
+  private runtimeDisabled = false;
+  private lastRuntimeRefreshAt?: string;
+  private lastRuntimeReloadAt?: string;
+  private readonly handleFetchCooldownMs = 5 * 60 * 1000;
+
+  onMessage?: (msg: InboundMessage) => Promise<void>;
+  onCommand?: (command: string) => Promise<string | null>;
+
+  private buildFormatterHints(shouldReply: boolean, didMode: DidMode) {
+    let actionsSection: string[];
+    if (shouldReply) {
+      // open or mention-only (notification mention) — bot will auto-post the reply
+      actionsSection = [
+        'Your text response will be posted as a Bluesky reply.',
+        'Like: `lettabot-bluesky like <uri>`',
+        'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
+      ];
+    } else if (didMode === 'mention-only') {
+      // mention-only but not a mention notification (reply/quote or Jetstream) — observing only
+      actionsSection = [
+        'In mention-only mode, auto-replies are limited to @mention notifications. Your text response will NOT be auto-posted.',
+        'Use the Bluesky skill to reply manually: `lettabot-bluesky post --reply-to <uri> --text "..."`',
+        'Like: `lettabot-bluesky like <uri>`',
+        'Posts over 300 chars require `--threaded` to create a reply thread.',
+        'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
+      ];
+    } else {
+      // listen — read-only, use CLI to act
+      actionsSection = [
+        'This channel is read-only; your text response will NOT be posted.',
+        'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
+        'Reply: `lettabot-bluesky post --reply-to <uri> --text "..."`',
+        'Like: `lettabot-bluesky like <uri>`',
+        'Posts over 300 chars require `--threaded` to create a reply thread.',
+        'NOTE: Bluesky does NOT support emoji reactions (no `<react>` blocks).',
+      ];
+    }
+    return {
+      formatHint: 'Plain text only (no markdown, no tables).',
+      actionsSection,
+    };
+  }
+
+  constructor(config: BlueskyConfig) {
+    this.config = config;
+    this.loadDidModes();
+    if (config.agentName) {
+      const baseDir = getDataDir();
+      this.statePath = join(baseDir, STATE_FILENAME);
+      this.runtimePath = join(baseDir, 'bluesky-runtime.json');
+    }
+  }
+
+  async start(): Promise<void> {
+    if (this.running) return;
+    this.running = true;
+    this.loadState();
+    this.startStateFlushTimer();
+    await this.maybeInitPostingIdentity();
+    if (!this.running) return;
+    await this.expandLists();
+    if (!this.running) return;
+    this.startRuntimeWatcher();
+    await this.checkRuntimeState();
+    if (!this.running) return;
+    if (!this.runtimeDisabled) {
+      this.startNotificationsPolling();
+      if (this.hasJetstreamTargets()) {
+        this.connect();
+      } else {
+        log.warn('Jetstream disabled (no wantedDids or list-expanded DIDs).');
+      }
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.running = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.stateFlushTimer) {
+      clearInterval(this.stateFlushTimer);
+      this.stateFlushTimer = null;
+    }
+    if (this.notificationsTimer) {
+      clearInterval(this.notificationsTimer);
+      this.notificationsTimer = null;
+    }
+    if (this.runtimeTimer) {
+      clearInterval(this.runtimeTimer);
+      this.runtimeTimer = null;
+    }
+    this.flushState();
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {
+        // ignore
+      }
+      this.ws = null;
+    }
+  }
+
+  isRunning(): boolean {
+    return this.running;
+  }
+
+  async sendMessage(_msg: OutboundMessage): Promise<{ messageId: string }> {
+    if (this.runtimeDisabled) {
+      throw new Error('Bluesky runtime disabled via kill switch.');
+    }
+
+    const target = this.lastPostByChatId.get(_msg.chatId);
+    if (!target) {
+      throw new Error('No recent post target to reply to.');
+    }
+
+    const chunks = splitPostText(_msg.text);
+    if (chunks.length === 0) {
+      throw new Error('Refusing to post empty reply.');
+    }
+
+    const rootUri = target.rootUri || target.uri;
+    const rootCid = target.rootCid || target.cid;
+    if (!rootUri || !rootCid) {
+      throw new Error('Missing reply root metadata.');
+    }
+
+    let currentTarget = {
+      uri: target.uri,
+      cid: target.cid,
+      rootUri,
+      rootCid,
+    };
+    let lastUri = '';
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const post = await this.createReply(chunk, currentTarget);
+      const postUri = post?.uri;
+      if (!postUri) {
+        throw new Error('Reply post returned no URI.');
+      }
+      const isLast = i === chunks.length - 1;
+      lastUri = postUri;
+      if (!isLast) {
+        const cid = post?.cid || await this.resolveRecordCid(postUri);
+        if (!cid) throw new Error('Reply post returned no CID for intermediate chunk.');
+        currentTarget = { uri: postUri, cid, rootUri, rootCid };
+      }
+    }
+    return { messageId: lastUri };
+  }
+
+  async editMessage(_chatId: string, _messageId: string, _text: string): Promise<void> {
+    log.warn('editMessage is not supported (read-only channel).');
+  }
+
+  supportsEditing(): boolean {
+    return false;
+  }
+
+  async sendTypingIndicator(_chatId: string): Promise<void> {
+    // No typing indicator on Bluesky
+  }
+
+  getFormatterHints() {
+    return {
+      supportsReactions: false,
+      supportsFiles: false,
+      formatHint: 'Plain text only (no markdown, no tables).',
+    };
+  }
+
+  async sendFile(_file: OutboundFile): Promise<{ messageId: string }>
+  {
+    throw new Error('sendFile is not supported.');
+  }
+
+  private connect(): void {
+    if (!this.running) return;
+    if (this.ws) return; // Already connected — prevent double-connections
+    if (!this.hasJetstreamTargets()) {
+      log.warn('Jetstream disabled (no wantedDids or list-expanded DIDs).');
+      return;
+    }
+
+    const url = this.buildJetstreamUrl();
+    log.info(`Connecting to Jetstream: ${url}`);
+
+    const ws = new WebSocket(url);
+    this.ws = ws;
+    let sawError = false;
+
+    ws.addEventListener('open', () => {
+      this.reconnectAttempts = 0;
+      log.info('Connected');
+    });
+
+    ws.addEventListener('message', (event) => {
+      this.handleMessageEvent(event).catch(err => {
+        log.error('Failed to process event:', err);
+      });
+    });
+
+    ws.addEventListener('error', (event) => {
+      if (sawError) return;
+      sawError = true;
+      const error = (event as { error?: unknown; message?: string }).error
+        || (event as { error?: unknown; message?: string }).message
+        || 'Unknown WebSocket error';
+      log.error('WebSocket error:', {
+        error,
+        url: this.buildJetstreamUrl(),
+        reconnectAttempts: this.reconnectAttempts,
+      });
+      // Some WebSocket errors never emit "close"; force a close to trigger reconnect.
+      if (this.ws === ws && !this.runtimeDisabled) {
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      }
+    });
+
+    ws.addEventListener('close', () => {
+      if (this.ws !== ws) {
+        // Stale/orphaned connection closed — a new connection is already active, ignore
+        return;
+      }
+      this.ws = null;
+      log.warn('Disconnected');
+      if (this.intentionalClose) {
+        // reconnectJetstream() already called connect() — don't schedule another reconnect
+        this.intentionalClose = false;
+        return;
+      }
+      if (!this.runtimeDisabled) {
+        this.scheduleReconnect();
+      }
+    });
+  }
+
+  private scheduleReconnect(): void {
+    if (!this.running) return;
+    if (this.reconnectTimer) return;
+    if (!this.hasJetstreamTargets()) {
+      log.warn('Jetstream reconnect skipped (no wantedDids or list-expanded DIDs).');
+      return;
+    }
+
+    const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, this.reconnectAttempts));
+    this.reconnectAttempts += 1;
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
+
+    log.info(`Reconnecting in ${delay}ms...`);
+  }
+
+  private buildJetstreamUrl(): string {
+    const base = this.config.jetstreamUrl || DEFAULT_JETSTREAM_URL;
+    const url = new URL(base);
+
+    const wantedDids = this.getWantedDids();
+    url.searchParams.delete('wantedDids');
+    for (const did of wantedDids) {
+      url.searchParams.append('wantedDids', did);
+    }
+
+    const wantedCollections = normalizeList(this.config.wantedCollections);
+    url.searchParams.delete('wantedCollections');
+    for (const collection of wantedCollections) {
+      url.searchParams.append('wantedCollections', collection);
+    }
+
+    const cursor = this.lastCursor !== undefined
+      ? Math.max(0, this.lastCursor - CURSOR_BACKTRACK_US)
+      : this.config.cursor;
+
+    if (cursor !== undefined) {
+      url.searchParams.set('cursor', String(cursor));
+    }
+
+    return url.toString();
+  }
+
+  private hasJetstreamTargets(): boolean {
+    return this.getWantedDids().length > 0;
+  }
+
+
+  private async handleMessageEvent(event: { data: unknown }): Promise<void> {
+    const raw = typeof event.data === 'string'
+      ? event.data
+      : Buffer.from(event.data as ArrayBuffer).toString('utf-8');
+
+    let payload: JetstreamEvent;
+    try {
+      payload = JSON.parse(raw) as JetstreamEvent;
+    } catch {
+      log.warn('Received non-JSON message');
+      return;
+    }
+
+    if (typeof payload.time_us === 'number') {
+      this.lastCursor = payload.time_us;
+      this.stateDirty = true;
+    }
+
+    if (payload.did && payload.identity?.handle) {
+      this.handleByDid.set(payload.did, payload.identity.handle);
+      pruneMap(this.handleByDid, HANDLE_CACHE_MAX);
+    }
+    if (payload.did && payload.account?.handle) {
+      this.handleByDid.set(payload.did, payload.account.handle);
+      pruneMap(this.handleByDid, HANDLE_CACHE_MAX);
+    }
+
+    if (payload.did && !this.handleByDid.get(payload.did)) {
+      const resolved = await this.resolveHandleForDid(payload.did);
+      if (resolved) {
+        this.handleByDid.set(payload.did, resolved);
+        pruneMap(this.handleByDid, HANDLE_CACHE_MAX);
+      }
+    }
+
+    if (!payload.commit) {
+      return;
+    }
+
+    const did = payload.did || 'unknown';
+    const handle = payload.did ? this.handleByDid.get(payload.did) : undefined;
+    const { text, messageId, source, extraContext } = this.formatCommit(payload, handle);
+    if (!text) {
+      log.debug(`Dropping non-post Jetstream event: ${payload.commit?.collection} from ${did}`);
+      return;
+    }
+    if (messageId && (this.seenMessageIds.has(messageId) || this.seenBaseMessageIds.has(messageId))) return;
+
+    const timestamp = payload.time_us
+      ? new Date(Math.floor(payload.time_us / 1000))
+      : new Date();
+
+    const didMode = this.getDidMode(did);
+    if (didMode === 'disabled') {
+      return;
+    }
+
+    const isPost = payload.commit?.collection === 'app.bsky.feed.post';
+    const shouldReply = isPost && didMode === 'open';
+
+    const chatId = source?.uri ?? did;
+    const inbound: BlueskyInboundMessage = {
+      channel: 'bluesky',
+      chatId,
+      userId: did,
+      userHandle: handle,
+      userName: handle ? `@${handle}` : undefined,
+      messageId,
+      text,
+      timestamp,
+      messageType: 'public',
+      groupName: handle ? `@${handle}` : did,
+      isListeningMode: !shouldReply,
+      source,
+      extraContext,
+      formatterHints: this.buildFormatterHints(shouldReply, didMode),
+    };
+
+    if (payload.commit?.collection === 'app.bsky.feed.post' && source?.uri) {
+      // For standalone posts (not replies), root is the post itself.
+      // For reply posts, threadRootUri/Cid point to the conversation root.
+      this.lastPostByChatId.set(chatId, {
+        uri: source.uri,
+        cid: source.cid,
+        rootUri: source.threadRootUri ?? source.uri,
+        rootCid: source.threadRootCid ?? source.cid,
+      });
+      pruneMap(this.lastPostByChatId, LAST_POST_CACHE_MAX);
+    }
+
+    if (messageId) {
+      this.seenMessageIds.set(messageId, true);
+      pruneMap(this.seenMessageIds, SEEN_MESSAGE_IDS_MAX);
+      this.seenBaseMessageIds.set(messageId, true);
+      pruneMap(this.seenBaseMessageIds, SEEN_MESSAGE_IDS_MAX);
+    }
+    await this.onMessage?.(inbound);
+  }
+
+  private formatCommit(payload: JetstreamEvent, handle?: string): {
+    text: string;
+    messageId?: string;
+    source?: BlueskySource;
+    extraContext: Record<string, string>;
+  } {
+    const commit = payload.commit || {};
+    const operation = commit.operation || 'commit';
+    const collection = commit.collection || 'unknown';
+    const uri = buildAtUri(payload.did, commit.collection, commit.rkey);
+
+    const source: BlueskySource = {
+      uri,
+      collection: commit.collection,
+      cid: commit.cid,
+      rkey: commit.rkey,
+    };
+
+    const extraContext: Record<string, string> = {};
+    extraContext['Operation'] = `${operation} ${collection}`;
+    if (handle) {
+      extraContext['Handle'] = `@${handle}`;
+    }
+    if (payload.did) {
+      extraContext['DID'] = payload.did;
+    }
+    if (uri) {
+      extraContext['URI'] = uri;
+    }
+
+    const record = isRecord(commit.record) ? commit.record : undefined;
+
+    if (collection === 'app.bsky.feed.post' && record) {
+      const details = extractPostDetails(record);
+
+      if (details.createdAt) {
+        extraContext['Created'] = details.createdAt;
+      }
+      if (details.langs.length > 0) {
+        extraContext['Languages'] = details.langs.join(', ');
+      }
+      if (details.replyRefs.rootUri) {
+        extraContext['Thread root'] = details.replyRefs.rootUri;
+      }
+      if (details.replyRefs.parentUri) {
+        extraContext['Reply parent'] = details.replyRefs.parentUri;
+      }
+      if (details.embedLines.length > 0) {
+        extraContext['Embeds'] = details.embedLines.join(' | ');
+      }
+
+      if (details.replyRefs.rootUri) source.threadRootUri = details.replyRefs.rootUri;
+      if (details.replyRefs.rootCid) source.threadRootCid = details.replyRefs.rootCid;
+      if (details.replyRefs.parentUri) source.threadParentUri = details.replyRefs.parentUri;
+      if (details.replyRefs.parentCid) source.threadParentCid = details.replyRefs.parentCid;
+      return {
+        text: details.text || '',
+        extraContext,
+        messageId: commit.cid || commit.rkey,
+        source,
+      };
+    } else if ((collection === 'app.bsky.feed.like' || collection === 'app.bsky.feed.repost') && record) {
+      const subject = isRecord(record.subject) ? record.subject : undefined;
+      const subjectUri = subject ? readString(subject.uri) : undefined;
+      const subjectCid = subject ? readString(subject.cid) : undefined;
+      const createdAt = readString(record.createdAt);
+
+      if (subjectUri) {
+        extraContext['Subject'] = subjectUri;
+      }
+      if (createdAt) {
+        extraContext['Created'] = createdAt;
+      }
+
+      if (subjectUri) source.subjectUri = subjectUri;
+      if (subjectCid) source.subjectCid = subjectCid;
+    } else if ((collection === 'app.bsky.graph.follow' || collection === 'app.bsky.graph.block') && record) {
+      const subjectDid = readString(record.subject);
+      const createdAt = readString(record.createdAt);
+      if (subjectDid) {
+        extraContext['Subject DID'] = subjectDid;
+      }
+      if (createdAt) {
+        extraContext['Created'] = createdAt;
+      }
+    } else if (record) {
+      const createdAt = readString(record.createdAt);
+      if (createdAt) {
+        extraContext['Created'] = createdAt;
+      }
+      extraContext['Record'] = truncate(JSON.stringify(record));
+    }
+
+    return {
+      text: '', // No post text for non-post collections
+      extraContext,
+      messageId: commit.cid || commit.rkey,
+      source,
+    };
+  }
+
+  private getServiceUrl(): string {
+    const raw = this.config.serviceUrl || DEFAULT_SERVICE_URL;
+    return raw.replace(/\/+$/, '');
+  }
+
+  private isExpired(expiryMs?: number, skewMs = 60_000): boolean {
+    if (!expiryMs) return true;
+    return expiryMs - skewMs <= Date.now();
+  }
+
+  private async maybeInitPostingIdentity(): Promise<void> {
+    if (!this.config.handle && !this.refreshJwt) return;
+    if (!this.config.appPassword && !this.refreshJwt) return;
+
+    try {
+      await this.ensureSession();
+    } catch (err) {
+      log.warn('Posting identity init failed:', err);
+    }
+  }
+
+  private async ensureSession(): Promise<void> {
+    if (this.accessJwt && !this.isExpired(this.accessJwtExpiresAt)) {
+      return;
+    }
+
+    if (this.refreshJwt && !this.isExpired(this.refreshJwtExpiresAt)) {
+      try {
+        await this.refreshSessionWithRetry();
+        return;
+      } catch (err) {
+        log.warn('refreshSession failed, falling back to createSession:', err);
+      }
+    }
+
+    await this.createSessionWithRetry();
+  }
+
+  private async withRetry<T>(fn: () => Promise<T>, label: string, maxRetries = 3): Promise<T> {
+    let lastError: Error | undefined;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastError = err as Error;
+        if (attempt < maxRetries - 1) {
+          const delay = Math.min(5000, 1000 * Math.pow(2, attempt));
+          log.warn(`${label} failed (attempt ${attempt + 1}/${maxRetries}). Retrying in ${delay}ms.`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+    throw lastError ?? new Error(`${label} failed`);
+  }
+
+  private async refreshSessionWithRetry(): Promise<void> {
+    await this.withRetry(() => this.refreshSession(), 'refreshSession');
+  }
+
+  private async createSessionWithRetry(): Promise<void> {
+    await this.withRetry(() => this.createSession(), 'createSession');
+  }
+
+  private async refreshSession(): Promise<void> {
+    if (!this.refreshJwt) {
+      throw new Error('Missing refreshJwt');
+    }
+
+    const res = await fetchWithTimeout(`${this.getServiceUrl()}/xrpc/com.atproto.server.refreshSession`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.refreshJwt}`,
+      },
+    });
+
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(`refreshSession failed: ${detail}`);
+    }
+
+    const data = await res.json() as { accessJwt: string; refreshJwt: string; did: string; handle?: string };
+    this.applySession(data.accessJwt, data.refreshJwt, data.did, data.handle);
+  }
+
+  private async createSession(): Promise<void> {
+    const identifier = this.config.handle;
+    const password = this.config.appPassword;
+    if (!identifier || !password) {
+      throw new Error('Missing Bluesky handle/appPassword for posting.');
+    }
+
+    const res = await fetchWithTimeout(`${this.getServiceUrl()}/xrpc/com.atproto.server.createSession`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier, password }),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(`createSession failed: ${detail}`);
+    }
+
+    const data = await res.json() as { accessJwt: string; refreshJwt: string; did: string; handle?: string };
+    this.applySession(data.accessJwt, data.refreshJwt, data.did, data.handle);
+  }
+
+  private applySession(accessJwt: string, refreshJwt: string, did: string, handle?: string): void {
+    this.accessJwt = accessJwt;
+    this.refreshJwt = refreshJwt;
+    this.sessionDid = did;
+    this.accessJwtExpiresAt = decodeJwtExp(accessJwt);
+    this.refreshJwtExpiresAt = decodeJwtExp(refreshJwt);
+    if (handle) {
+      this.handleByDid.set(did, handle);
+    }
+    this.stateDirty = true;
+  }
+
+  private static readonly DID_PATTERN = /^did:[a-z]+:[a-zA-Z0-9._:-]+$/;
+
+  private loadDidModes(): void {
+    const modes: Record<string, DidMode> = {};
+    const groups = this.config.groups || {};
+    for (const [did, config] of Object.entries(groups)) {
+      if (did === '*') continue;
+      if (!BlueskyAdapter.DID_PATTERN.test(did)) {
+        log.warn(`Ignoring groups entry with invalid DID: "${did}"`);
+        continue;
+      }
+      const mode = config?.mode;
+      if (mode === 'open' || mode === 'listen' || mode === 'mention-only' || mode === 'disabled') {
+        modes[did] = mode;
+      }
+    }
+    this.didModes = modes;
+  }
+
+  private getDidMode(did: string): DidMode {
+    const explicit = this.didModes[did];
+    if (explicit) return explicit;
+
+    const listMode = this.listModes[did];
+    if (listMode) return listMode;
+
+    const wildcardMode = this.config.groups?.['*']?.mode;
+    if (wildcardMode === 'open' || wildcardMode === 'listen' || wildcardMode === 'mention-only' || wildcardMode === 'disabled') {
+      return wildcardMode;
+    }
+
+    return 'listen';
+  }
+
+  private getWantedDids(): string[] {
+    const configured = normalizeList(this.config.wantedDids);
+    const disabledDids = new Set(
+      Object.entries(this.didModes)
+        .filter(([, mode]) => mode === 'disabled')
+        .map(([did]) => did),
+    );
+    const explicitAllowed = Object.entries(this.didModes)
+      .filter(([, mode]) => mode !== 'disabled')
+      .map(([did]) => did);
+    const listAllowed = Object.entries(this.listModes)
+      .filter(([, mode]) => mode !== 'disabled')
+      .map(([did]) => did);
+    const combined = uniqueList([...configured, ...explicitAllowed, ...listAllowed]);
+    return combined.filter(did => !disabledDids.has(did));
+  }
+
+  private getNotificationsConfig(): {
+    enabled: boolean;
+    intervalMs: number;
+    limit: number;
+    priority?: boolean;
+    reasons: string[];
+    backfill: boolean;
+  } | null {
+    const config = this.config.notifications;
+    if (config?.enabled === false) return null;
+
+    const hasAuth = !!(this.config.handle && this.config.appPassword) || !!this.refreshJwt;
+    if (!config?.enabled && !hasAuth) return null;
+    if (config?.enabled && !hasAuth) {
+      log.warn('Notifications enabled but no auth configured.');
+      return null;
+    }
+
+    const intervalSec = typeof config?.intervalSec === 'number' && config.intervalSec > 0
+      ? config.intervalSec
+      : DEFAULT_NOTIFICATIONS_INTERVAL_SEC;
+    const limit = typeof config?.limit === 'number' && config.limit > 0
+      ? config.limit
+      : DEFAULT_NOTIFICATIONS_LIMIT;
+    const reasons = config?.reasons && normalizeList(config.reasons).length > 0
+      ? normalizeList(config.reasons)
+      : ['mention', 'reply', 'quote'];
+    return {
+      enabled: true,
+      intervalMs: intervalSec * 1000,
+      limit,
+      priority: config?.priority,
+      reasons,
+      backfill: config?.backfill === true,
+    };
+  }
+
+  private startNotificationsPolling(): void {
+    const config = this.getNotificationsConfig();
+    if (!config) return;
+    if (this.notificationsTimer) return;
+    this.notificationsTimer = setInterval(() => {
+      this.pollNotifications().catch(err => {
+        log.error('Notifications poll failed:', err);
+      });
+    }, config.intervalMs);
+    this.pollNotifications().catch(err => {
+      log.error('Notifications poll failed:', err);
+    });
+    log.info(`Notifications polling every ${config.intervalMs / 1000}s`);
+  }
+
+  private async pollNotifications(): Promise<void> {
+    const config = this.getNotificationsConfig();
+    if (!config || !this.running) return;
+    if (this.notificationsInFlight) return;
+    this.notificationsInFlight = true;
+
+    try {
+      await this.ensureSession();
+      if (!this.accessJwt) return;
+
+      const params = new URLSearchParams();
+      params.set('limit', String(config.limit));
+      if (this.notificationsCursor) {
+        params.set('cursor', this.notificationsCursor);
+      }
+      if (config.priority !== undefined) {
+        params.set('priority', config.priority ? 'true' : 'false');
+      }
+      for (const reason of config.reasons) {
+        params.append('reasons', reason);
+      }
+
+      const res = await fetchWithTimeout(`${getAppViewUrl(this.config.appViewUrl)}/xrpc/app.bsky.notification.listNotifications?${params}`, {
+        headers: { Authorization: `Bearer ${this.accessJwt}` },
+      });
+
+      if (res.status === 401) {
+        this.accessJwt = undefined;
+        this.accessJwtExpiresAt = undefined;
+        await this.ensureSession();
+        return;
+      }
+
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(`listNotifications failed: ${detail}`);
+      }
+
+      const data = await res.json() as {
+        cursor?: string;
+        notifications: Array<{
+          uri: string;
+          cid?: string;
+          author?: { did: string; handle?: string; displayName?: string };
+          reason: string;
+          reasonSubject?: string;
+          record?: Record<string, unknown>;
+          indexedAt?: string;
+          isRead?: boolean;
+        }>;
+      };
+
+      const backfill = config.backfill;
+      const initializing = !this.notificationsInitialized;
+      let deferredCursor: string | undefined;
+
+      if (initializing) {
+        deferredCursor = data.cursor;
+        this.notificationsInitialized = true;
+        this.stateDirty = true;
+        if (!backfill) {
+          if (deferredCursor) {
+            this.notificationsCursor = deferredCursor;
+            this.stateDirty = true;
+          }
+          log.info('Notifications cursor initialized (skipping initial backlog).');
+          return;
+        }
+        if (!deferredCursor) {
+          log.warn('Notifications backfill enabled but API returned no cursor; may reprocess initial page.');
+        }
+        log.info('Notifications cursor initialized (backfill enabled).');
+      }
+
+      if (!initializing && data.cursor) {
+        this.notificationsCursor = data.cursor;
+        this.stateDirty = true;
+      }
+
+      const notifications = Array.isArray(data.notifications) ? data.notifications : [];
+      if (notifications.length === 0) {
+        if (initializing && deferredCursor) {
+          this.notificationsCursor = deferredCursor;
+          this.stateDirty = true;
+        }
+        return;
+      }
+
+      // Deliver oldest first
+      const ordered = [...notifications].reverse();
+      for (const notification of ordered) {
+        await this.processNotification(notification);
+      }
+
+      if (initializing && deferredCursor) {
+        this.notificationsCursor = deferredCursor;
+        this.stateDirty = true;
+      }
+    } finally {
+      this.notificationsInFlight = false;
+    }
+  }
+
+  private async expandLists(): Promise<void> {
+    if (this.listRefreshInFlight) return;
+    const lists = this.config.lists || {};
+    const entries = Object.entries(lists).filter(([uri]) => uri && uri !== '*');
+    if (entries.length === 0) return;
+
+    this.listRefreshInFlight = true;
+    try {
+      if (!this.accessJwt && this.config.handle && this.config.appPassword) {
+        try {
+          await this.ensureSession();
+        } catch (err) {
+          log.warn('List expansion auth failed:', err);
+        }
+      }
+
+      const nextModes: Record<string, DidMode> = {};
+
+      for (const [listUri, config] of entries) {
+        const mode = config?.mode;
+        if (mode !== 'open' && mode !== 'listen' && mode !== 'mention-only' && mode !== 'disabled') {
+          continue;
+        }
+
+        const dids = await this.fetchListDids(listUri);
+        for (const did of dids) {
+          if (!did || !BlueskyAdapter.DID_PATTERN.test(did)) {
+            if (did) log.warn(`Skipping list entry with invalid DID: "${did}"`);
+            continue;
+          }
+          if (this.didModes[did]) {
+            // Explicit groups config takes precedence over list membership
+            log.debug(`List DID ${did} already explicitly configured, skipping list entry`);
+            continue;
+          }
+          if (!nextModes[did]) {
+            nextModes[did] = mode;
+          }
+        }
+      }
+
+      this.listModes = nextModes;
+    } catch (err) {
+      log.error('List expansion failed:', err);
+    } finally {
+      this.listRefreshInFlight = false;
+    }
+  }
+
+  private async fetchListDids(listUri: string): Promise<string[]> {
+    const dids: string[] = [];
+    let cursor: string | undefined;
+    const limit = 100;
+    const maxPages = 50;
+    const base = getAppViewUrl(this.config.appViewUrl);
+
+    for (let page = 0; page < maxPages; page++) {
+      const params = new URLSearchParams();
+      params.set('list', listUri);
+      params.set('limit', String(limit));
+      if (cursor) params.set('cursor', cursor);
+
+      const res = await fetchWithTimeout(`${base}/xrpc/app.bsky.graph.getList?${params}`, {
+        headers: this.accessJwt ? { Authorization: `Bearer ${this.accessJwt}` } : undefined,
+      });
+
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(`getList failed: ${detail}`);
+      }
+
+      const data = await res.json() as {
+        cursor?: string;
+        items?: Array<{ subject?: { did?: string } }>;
+      };
+
+      const items = Array.isArray(data.items) ? data.items : [];
+      for (const item of items) {
+        const did = item?.subject?.did;
+        if (did) dids.push(did);
+      }
+
+      if (!data.cursor) break;
+      cursor = data.cursor;
+      if (page + 1 >= maxPages) {
+        log.warn(`fetchListDids: reached maxPages (${maxPages}) for list ${listUri}, truncating`);
+      }
+    }
+
+    return uniqueList(dids);
+  }
+
+  private startRuntimeWatcher(): void {
+    if (!this.runtimePath || this.runtimeTimer) return;
+    this.runtimeTimer = setInterval(() => {
+      this.checkRuntimeState().catch(err => {
+        log.error('Runtime check failed:', err);
+      });
+    }, 5000);
+    this.checkRuntimeState().catch(err => {
+      log.error('Runtime check failed:', err);
+    });
+  }
+
+  private async checkRuntimeState(): Promise<void> {
+    if (!this.runtimePath) return;
+    if (!existsSync(this.runtimePath)) return;
+    let raw: { agents?: Record<string, { disabled?: boolean; refreshListsAt?: string; reloadConfigAt?: string }> };
+    try {
+      raw = JSON.parse(readFileSync(this.runtimePath, 'utf-8'));
+    } catch {
+      log.warn('Failed to parse runtime state file, skipping');
+      return;
+    }
+
+    const agentKey = this.config.agentName || 'default';
+    const agentState = raw.agents?.[agentKey];
+    if (!agentState) return;
+
+    if (typeof agentState.disabled === 'boolean' && agentState.disabled !== this.runtimeDisabled) {
+      this.runtimeDisabled = agentState.disabled;
+      if (this.runtimeDisabled) {
+        this.pauseRuntime();
+      } else {
+        await this.resumeRuntime();
+      }
+    }
+
+    if (agentState.refreshListsAt && agentState.refreshListsAt !== this.lastRuntimeRefreshAt) {
+      this.lastRuntimeRefreshAt = agentState.refreshListsAt;
+      await this.expandLists();
+      if (!this.runtimeDisabled) {
+        this.reconnectJetstream();
+      }
+    }
+
+    if (agentState.reloadConfigAt && agentState.reloadConfigAt !== this.lastRuntimeReloadAt) {
+      this.lastRuntimeReloadAt = agentState.reloadConfigAt;
+      this.reloadConfig();
+      await this.expandLists();
+      if (!this.runtimeDisabled) {
+        this.reconnectJetstream();
+      }
+    }
+  }
+
+  private reloadConfig(): void {
+    try {
+      const nextConfig = loadConfig();
+      let nextBluesky: BlueskyConfig | undefined;
+      if (nextConfig.agents && nextConfig.agents.length > 0) {
+        const agent = nextConfig.agents.find(a => a.name === this.config.agentName);
+        nextBluesky = agent?.channels?.bluesky as BlueskyConfig | undefined;
+      } else {
+        nextBluesky = nextConfig.channels?.bluesky as BlueskyConfig | undefined;
+      }
+
+      if (!nextBluesky) {
+        log.warn('Config reload skipped (no bluesky config found).');
+        return;
+      }
+
+      this.config = {
+        ...this.config,
+        ...nextBluesky,
+        // Preserve env-var-sourced credentials if the new config doesn't supply them
+        handle: nextBluesky.handle ?? this.config.handle,
+        appPassword: nextBluesky.appPassword ?? this.config.appPassword,
+        agentName: this.config.agentName,
+      };
+      this.loadDidModes();
+      this.listModes = {};
+      this.maybeInitPostingIdentity().catch(err => {
+        log.warn('Posting identity init failed after reload:', err);
+      });
+      log.info('Config reloaded.');
+    } catch (err) {
+      log.warn('Config reload failed:', err);
+    }
+  }
+
+  private pauseRuntime(): void {
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {
+        // ignore
+      }
+      this.ws = null;
+    }
+    if (this.notificationsTimer) {
+      clearInterval(this.notificationsTimer);
+      this.notificationsTimer = null;
+    }
+    log.info('Runtime disabled via kill switch.');
+  }
+
+  private async resumeRuntime(): Promise<void> {
+    await this.expandLists();
+    this.startNotificationsPolling();
+    if (this.hasJetstreamTargets()) {
+      this.connect();
+    } else {
+      log.warn('Jetstream disabled (no wantedDids or list-expanded DIDs).');
+    }
+    log.info('Runtime re-enabled via kill switch.');
+  }
+
+  private reconnectJetstream(): void {
+    if (!this.hasJetstreamTargets()) {
+      log.warn('Jetstream reconnect skipped (no wantedDids or list-expanded DIDs).');
+      return;
+    }
+    if (this.ws) {
+      // Signal the close handler not to schedule its own reconnect — we're handling it below
+      this.intentionalClose = true;
+      try {
+        this.ws.close();
+      } catch {
+        // If close() throws the WebSocket may still close on its own, so reset the
+        // flag to let the close handler schedule a reconnect if that happens.
+        this.intentionalClose = false;
+      }
+      this.ws = null;
+    }
+    if (!this.runtimeDisabled) {
+      this.connect();
+    }
+  }
+
+  private async resolveHandleForDid(did: string): Promise<string | undefined> {
+    if (!did || did === 'unknown') return undefined;
+    const cached = this.handleByDid.get(did);
+    if (cached) return cached;
+
+    const lastFetched = this.lastHandleFetchAt.get(did);
+    if (lastFetched && Date.now() - lastFetched < this.handleFetchCooldownMs) {
+      return undefined;
+    }
+
+    const existing = this.handleFetchInFlight.get(did);
+    if (existing) return existing;
+
+    const promise = (async () => {
+      try {
+        const url = `${getAppViewUrl(this.config.appViewUrl)}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`;
+        const headers: Record<string, string> = {};
+
+        // Use authenticated endpoint if available for complete metadata
+        if (this.accessJwt && !this.isExpired(this.accessJwtExpiresAt)) {
+          headers['Authorization'] = `Bearer ${this.accessJwt}`;
+        }
+
+        const res = await fetchWithTimeout(url, { headers });
+        if (res.ok) {
+          const data = await res.json() as { handle?: string };
+          if (data.handle && typeof data.handle === 'string') {
+            this.handleByDid.set(did, data.handle);
+            pruneMap(this.handleByDid, HANDLE_CACHE_MAX);
+            return data.handle;
+          }
+        }
+        // Failed to resolve: apply cooldown to avoid hammering on repeated misses
+        this.lastHandleFetchAt.set(did, Date.now());
+        return undefined;
+      } catch {
+        // Network error: apply cooldown before retrying
+        this.lastHandleFetchAt.set(did, Date.now());
+        return undefined;
+      } finally {
+        this.handleFetchInFlight.delete(did);
+      }
+    })();
+
+    this.handleFetchInFlight.set(did, promise);
+    return promise;
+  }
+
+  private async processNotification(notification: {
+    uri: string;
+    cid?: string;
+    author?: { did: string; handle?: string; displayName?: string };
+    reason: string;
+    reasonSubject?: string;
+    record?: Record<string, unknown>;
+    indexedAt?: string;
+    isRead?: boolean;
+  }): Promise<void> {
+    const authorDid = notification.author?.did || 'unknown';
+    let authorHandle = notification.author?.handle;
+    if (authorDid && authorHandle) {
+      this.handleByDid.set(authorDid, authorHandle);
+      pruneMap(this.handleByDid, HANDLE_CACHE_MAX);
+    }
+    if (authorDid && !authorHandle) {
+      authorHandle = await this.resolveHandleForDid(authorDid);
+      if (authorHandle) {
+        this.handleByDid.set(authorDid, authorHandle);
+        pruneMap(this.handleByDid, HANDLE_CACHE_MAX);
+      }
+    }
+    const record = isRecord(notification.record) ? notification.record : undefined;
+    const recordType = record ? readString(record.$type) : undefined;
+    const timestamp = notification.indexedAt ? new Date(notification.indexedAt) : new Date();
+
+    const source: BlueskySource = {
+      uri: notification.uri,
+      cid: notification.cid,
+    };
+
+    const extraContext: Record<string, string> = {};
+    extraContext['Operation'] = `notification ${notification.reason}`;
+    if (notification.reason) extraContext['NotificationReason'] = notification.reason;
+    if (authorHandle) {
+      extraContext['Handle'] = `@${authorHandle}`;
+    }
+    if (authorDid) {
+      extraContext['DID'] = authorDid;
+    }
+    if (notification.reasonSubject) {
+      extraContext['Subject'] = notification.reasonSubject;
+    }
+    if (notification.uri) {
+      extraContext['URI'] = notification.uri;
+    }
+
+    let postText = '';
+    if (recordType === 'app.bsky.feed.post' && record) {
+      const details = extractPostDetails(record);
+      postText = details.text || '';
+      if (details.createdAt) {
+        extraContext['Created'] = details.createdAt;
+      }
+      if (details.langs.length > 0) {
+        extraContext['Languages'] = details.langs.join(', ');
+      }
+      if (details.replyRefs.rootUri) {
+        extraContext['Thread root'] = details.replyRefs.rootUri;
+      }
+      if (details.replyRefs.parentUri) {
+        extraContext['Reply parent'] = details.replyRefs.parentUri;
+      }
+      if (details.embedLines.length > 0) {
+        extraContext['Embeds'] = details.embedLines.join(' | ');
+      }
+
+      if (details.replyRefs.rootUri) source.threadRootUri = details.replyRefs.rootUri;
+      if (details.replyRefs.rootCid) source.threadRootCid = details.replyRefs.rootCid;
+      if (details.replyRefs.parentUri) source.threadParentUri = details.replyRefs.parentUri;
+      if (details.replyRefs.parentCid) source.threadParentCid = details.replyRefs.parentCid;
+
+      const chatId = source.uri ?? authorDid;
+      this.lastPostByChatId.set(chatId, {
+        uri: notification.uri,
+        cid: notification.cid,
+        rootUri: source.threadRootUri ?? notification.uri,
+        rootCid: source.threadRootCid ?? notification.cid,
+      });
+      pruneMap(this.lastPostByChatId, LAST_POST_CACHE_MAX);
+    } else if (record) {
+      extraContext['Record'] = truncate(JSON.stringify(record));
+    }
+
+    const didMode = this.getDidMode(authorDid);
+    if (didMode === 'disabled') return;
+
+    const baseMsgId = notification.cid || notification.uri;
+    if (!baseMsgId) {
+      log.warn('Skipping notification with no cid or uri');
+      return;
+    }
+    // Cross-path dedup: if Jetstream already delivered this post (stored as bare CID), skip.
+    // This prevents double-delivery when both Jetstream and Notifications see the same post.
+    if (this.seenMessageIds.has(baseMsgId)) return;
+    // Within-notification dedup: use a reason-scoped key so the same post arriving with
+    // *different* reasons (e.g., "mention" and "reply") is delivered once per reason —
+    // each represents a distinct actionable event (mention vs. thread reply context).
+    const notificationMessageId = notification.reason ? `${notification.reason}:${baseMsgId}` : baseMsgId;
+    if (this.seenMessageIds.has(notificationMessageId)) return;
+
+    const actionable = notification.reason === 'mention'
+      || notification.reason === 'reply'
+      || notification.reason === 'quote';
+    const shouldReply = actionable
+      && recordType === 'app.bsky.feed.post'
+      && (didMode === 'open' || (didMode === 'mention-only' && notification.reason === 'mention'));
+
+    const chatId = source.uri ?? authorDid;
+    const inbound: BlueskyInboundMessage = {
+      channel: 'bluesky',
+      chatId,
+      userId: authorDid,
+      userHandle: authorHandle,
+      userName: authorHandle ? `@${authorHandle}` : undefined,
+      messageId: notification.cid || notification.uri,
+      text: postText,
+      timestamp,
+      messageType: 'public',
+      groupName: authorHandle ? `@${authorHandle}` : authorDid,
+      isListeningMode: !shouldReply,
+      source,
+      extraContext,
+      formatterHints: this.buildFormatterHints(shouldReply, didMode),
+    };
+
+    if (notificationMessageId) {
+      this.seenMessageIds.set(notificationMessageId, true);
+      pruneMap(this.seenMessageIds, SEEN_MESSAGE_IDS_MAX);
+    }
+    if (baseMsgId) {
+      this.seenBaseMessageIds.set(baseMsgId, true);
+      pruneMap(this.seenBaseMessageIds, SEEN_MESSAGE_IDS_MAX);
+    }
+    await this.onMessage?.(inbound);
+  }
+
+  private async createReply(text: string, target: { uri: string; cid?: string; rootUri?: string; rootCid?: string }, retried = false): Promise<{ uri?: string; cid?: string } | undefined> {
+    await this.ensureSession();
+    if (!this.accessJwt) throw new Error('[Bluesky] ensureSession() completed but accessJwt is not set.');
+    if (!this.sessionDid) throw new Error('[Bluesky] ensureSession() completed but sessionDid is not set.');
+
+    const rootUri = target.rootUri || target.uri;
+    const rootCid = target.rootCid || target.cid;
+    const parentUri = target.uri;
+    const parentCid = target.cid;
+
+    if (!rootUri || !rootCid || !parentUri || !parentCid) {
+      throw new Error('Missing reply root/parent metadata.');
+    }
+
+    const record = {
+      text,
+      createdAt: new Date().toISOString(),
+      reply: {
+        root: { uri: rootUri, cid: rootCid },
+        parent: { uri: parentUri, cid: parentCid },
+      },
+    };
+
+    const res = await fetchWithTimeout(`${this.getServiceUrl()}/xrpc/com.atproto.repo.createRecord`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.accessJwt}`,
+      },
+      body: JSON.stringify({
+        repo: this.sessionDid,
+        collection: 'app.bsky.feed.post',
+        record,
+      }),
+    });
+
+    if (res.status === 401) {
+      if (retried) throw new Error('[Bluesky] createReply: still unauthorized after re-auth.');
+      this.accessJwt = undefined;
+      this.sessionDid = undefined;
+      this.accessJwtExpiresAt = undefined;
+      await this.ensureSession();
+      return this.createReply(text, target, true);
+    }
+
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(`createRecord failed: ${detail}`);
+    }
+
+    const data = await res.json() as { uri?: string; cid?: string };
+    if (!data.cid && data.uri) {
+      data.cid = await this.resolveRecordCid(data.uri);
+    }
+    return data;
+  }
+
+  private async resolveRecordCid(uri: string): Promise<string | undefined> {
+    const parsed = parseAtUri(uri);
+    if (!parsed) return undefined;
+
+    // Try PDS first (if on same server)
+    const qs = new URLSearchParams({
+      repo: parsed.did,
+      collection: parsed.collection,
+      rkey: parsed.rkey,
+    });
+    const res = await fetchWithTimeout(`${this.getServiceUrl()}/xrpc/com.atproto.repo.getRecord?${qs.toString()}`, {
+      headers: this.accessJwt ? { 'Authorization': `Bearer ${this.accessJwt}` } : undefined,
+    });
+    if (res.ok) {
+      const data = await res.json() as { cid?: string };
+      return data.cid;
+    }
+
+    // Fallback to AppView for cross-PDS records
+    try {
+      const appViewRes = await fetchWithTimeout(`${getAppViewUrl(this.config.appViewUrl)}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}`, {
+        headers: this.accessJwt ? { 'Authorization': `Bearer ${this.accessJwt}` } : undefined,
+      });
+      if (appViewRes.ok) {
+        const data = await appViewRes.json() as { thread?: { post?: { cid?: string } } };
+        return data.thread?.post?.cid;
+      }
+    } catch {
+      return undefined;
+    }
+
+    return undefined;
+  }
+
+  private loadState(): void {
+    if (!this.statePath || !this.config.agentName) return;
+    if (!existsSync(this.statePath)) return;
+    try {
+      const raw = JSON.parse(readFileSync(this.statePath, 'utf-8')) as {
+        version?: number;
+        agents?: Record<string, {
+          cursor?: number;
+          wantedDids?: string[];
+          wantedCollections?: string[];
+          auth?: {
+            did?: string;
+            handle?: string;
+          };
+          notificationsCursor?: string;
+        }>;
+      };
+      const state = this.migrateState(raw);
+      const entry = state?.agents?.[this.config.agentName];
+      if (entry?.cursor !== undefined) {
+        this.lastCursor = entry.cursor;
+      }
+      if (entry?.wantedDids && entry.wantedDids.length > 0) {
+        this.config.wantedDids = entry.wantedDids;
+      }
+      if (entry?.wantedCollections && entry.wantedCollections.length > 0) {
+        this.config.wantedCollections = entry.wantedCollections;
+      }
+      // JWTs are not persisted; session DID and handle are non-secret and safe to store
+      if (entry?.auth?.did) {
+        this.sessionDid = entry.auth.did;
+      }
+      if (entry?.auth?.handle && entry?.auth?.did) {
+        this.handleByDid.set(entry.auth.did, entry.auth.handle);
+      }
+      if (entry?.notificationsCursor) {
+        this.notificationsCursor = entry.notificationsCursor;
+        this.notificationsInitialized = true;
+      }
+    } catch (err) {
+      log.warn('Failed to load cursor state:', err);
+    }
+  }
+
+  private migrateState(raw: { version?: number; agents?: Record<string, unknown> } | null | undefined): {
+    version: number;
+    agents: Record<string, any>;
+  } {
+    if (!raw || typeof raw !== 'object') {
+      return { version: STATE_VERSION, agents: {} };
+    }
+    // Accept any version; STATE_VERSION is written on next flush.
+    // Add version-specific migration logic here if the state shape ever changes.
+    return { version: STATE_VERSION, agents: raw.agents && typeof raw.agents === 'object' ? raw.agents : {} };
+  }
+
+  private startStateFlushTimer(): void {
+    if (!this.statePath || !this.config.agentName) return;
+    if (this.stateFlushTimer) return;
+    this.stateFlushTimer = setInterval(() => this.flushState(), STATE_FLUSH_INTERVAL_MS);
+  }
+
+  private flushState(): void {
+    if (!this.statePath || !this.config.agentName) return;
+    if (!this.stateDirty && this.lastCursor === undefined) return;
+
+    try {
+      mkdirSync(dirname(this.statePath), { recursive: true });
+      const existing = existsSync(this.statePath)
+        ? JSON.parse(readFileSync(this.statePath, 'utf-8'))
+        : {};
+      const agents = typeof existing.agents === 'object' && existing.agents
+        ? { ...existing.agents }
+        : {};
+      // Only persist non-secret session metadata; JWTs are re-acquired on startup
+      const auth = this.sessionDid
+        ? {
+            did: this.sessionDid,
+            handle: this.config.handle,
+          }
+        : undefined;
+
+      agents[this.config.agentName] = {
+        cursor: this.lastCursor,
+        wantedDids: this.getWantedDids(),
+        wantedCollections: normalizeList(this.config.wantedCollections),
+        auth,
+        notificationsCursor: this.notificationsCursor,
+      };
+      writeFileSync(this.statePath, JSON.stringify({
+        version: STATE_VERSION,
+        updatedAt: new Date().toISOString(),
+        agents,
+      }, null, 2), { mode: 0o600 });
+      this.stateDirty = false;
+    } catch (err) {
+      log.warn('Failed to persist cursor state:', err);
+    }
+  }
+}

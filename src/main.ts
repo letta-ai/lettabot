@@ -172,6 +172,7 @@ import { SlackAdapter } from './channels/slack.js';
 import { WhatsAppAdapter } from './channels/whatsapp/index.js';
 import { SignalAdapter } from './channels/signal.js';
 import { DiscordAdapter } from './channels/discord.js';
+import { BlueskyAdapter } from './channels/bluesky.js';
 import { GroupBatcher } from './core/group-batcher.js';
 import { printStartupBanner } from './core/banner.js';
 import { collectGroupBatchingConfig } from './core/group-batching-config.js';
@@ -461,6 +462,30 @@ function createChannelsForAgent(
     }));
   }
 
+  if (agentConfig.channels.bluesky?.enabled) {
+    const blueskyConfig = agentConfig.channels.bluesky;
+    const hasWantedDids = !!blueskyConfig?.wantedDids?.length;
+    const hasLists = !!(blueskyConfig?.lists && Object.keys(blueskyConfig.lists).length > 0);
+    const hasAuth = !!blueskyConfig?.handle;
+    const wantsNotifications = !!blueskyConfig?.notifications?.enabled;
+    if (hasWantedDids || hasLists || hasAuth || wantsNotifications) {
+      adapters.push(new BlueskyAdapter({
+        agentName: agentConfig.name,
+        jetstreamUrl: blueskyConfig.jetstreamUrl,
+        wantedDids: blueskyConfig.wantedDids,
+        wantedCollections: blueskyConfig.wantedCollections,
+        cursor: blueskyConfig.cursor,
+        handle: blueskyConfig.handle,
+        appPassword: blueskyConfig.appPassword,
+        serviceUrl: blueskyConfig.serviceUrl,
+        appViewUrl: blueskyConfig.appViewUrl,
+        groups: blueskyConfig.groups,
+        lists: blueskyConfig.lists,
+        notifications: blueskyConfig.notifications,
+      }));
+    }
+  }
+
   return adapters;
 }
 
@@ -614,6 +639,7 @@ async function main() {
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
         googleEnabled: !!agentConfig.integrations?.google?.enabled || !!agentConfig.polling?.gmail?.enabled,
+        blueskyEnabled: !!agentConfig.channels?.bluesky?.enabled,
         ttsEnabled: voiceMemoEnabled,
       },
     });

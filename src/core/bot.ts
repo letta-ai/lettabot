@@ -235,6 +235,7 @@ export class LettaBot implements AgentSession {
       this.conversationOverrides = new Set(config.conversationOverrides.map((ch) => ch.toLowerCase()));
     }
     log.info(`LettaBot initialized. Agent ID: ${this.store.agentId || '(new)'}`);
+
   }
 
   // =========================================================================
