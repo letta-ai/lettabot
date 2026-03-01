@@ -45,6 +45,17 @@ const AUDIO_FILE_EXTENSIONS = new Set([
   '.ogg', '.opus', '.mp3', '.m4a', '.wav', '.aac', '.flac',
 ]);
 
+/** Extract token usage from a stream result message for hook context. */
+function extractUsage(msg: StreamMsg): MessageHookContext['usage'] | undefined {
+  const raw = msg.usage as Record<string, unknown> | undefined;
+  if (!raw || typeof raw !== 'object') return undefined;
+  return {
+    promptTokens: typeof raw.promptTokens === 'number' ? raw.promptTokens : undefined,
+    completionTokens: typeof raw.completionTokens === 'number' ? raw.completionTokens : undefined,
+    totalTokens: typeof raw.totalTokens === 'number' ? raw.totalTokens : undefined,
+  };
+}
+
 /** Infer whether a file is an image, audio, or generic file based on extension. */
 export function inferFileKind(filePath: string): 'image' | 'file' | 'audio' {
   const ext = extname(filePath).toLowerCase();
@@ -239,8 +250,7 @@ export class LettaBot implements AgentSession {
       this.conversationOverrides = new Set(config.conversationOverrides.map((ch) => ch.toLowerCase()));
     }
     this.hooksConfig = config.hooks;
-    if (this.hooksConfig?.preMessage || this.hooksConfig?.postMessage ||
-        this.hooksConfig?.postReasoning || this.hooksConfig?.postToolCall || this.hooksConfig?.postToolResult) {
+    if (config.hooks && Object.values(config.hooks).some(Boolean)) {
       const baseDir = config.hooksDir || process.cwd();
       this.hookRunner = new MessageHookRunner(baseDir);
       log.info(`Message hooks enabled (baseDir=${baseDir})`);
@@ -1483,6 +1493,7 @@ export class LettaBot implements AgentSession {
     let postHookRan = false;
     let turnCostUsd: number | undefined;
     let turnUsage: MessageHookContext['usage'] | undefined;
+    let reasoningStepIndex = 0;
     this.lastUserMessageTime = new Date();
 
     // Skip heartbeat target update for listening mode (don't redirect heartbeats)
@@ -1572,10 +1583,9 @@ export class LettaBot implements AgentSession {
     };
 
     // Run session
+    const convKey = this.resolveConversationKey(msg.channel, msg.chatId);
     let session: Session | null = null;
     try {
-      const convKey = this.resolveConversationKey(msg.channel, msg.chatId);
-
       // Run pre-message hook
       const preMessageContext: MessageHookContext = {
         stage: 'pre',
@@ -1748,7 +1758,7 @@ export class LettaBot implements AgentSession {
               toolName: tcName,
               toolInput: (streamMsg.toolInput || {}) as Record<string, unknown>,
               toolCallId: streamMsg.toolCallId || '',
-              agent: this.buildHookContextBase(),
+              agent: { ...this.buildHookContextBase(), conversationKey: convKey },
             });
             // Display tool call (args are fully accumulated by dedupedStream buffer-and-flush)
             if (this.config.display?.showToolCalls && !suppressDelivery) {
@@ -1769,7 +1779,7 @@ export class LettaBot implements AgentSession {
               toolName: streamMsg.toolName,
               content: streamMsg.content || '',
               isError: streamMsg.isError || false,
-              agent: this.buildHookContextBase(),
+              agent: { ...this.buildHookContextBase(), conversationKey: convKey },
             });
           } else if (streamMsg.type === 'assistant' && lastMsgType !== 'assistant') {
             log.info(`Generating response...`);
@@ -1793,7 +1803,7 @@ export class LettaBot implements AgentSession {
                 inboundMessage: msg,
                 message: messageToSend,
                 reasoning: streamMsg.content,
-                stepIndex: 0, // TODO: track reasoning step index
+                stepIndex: reasoningStepIndex++,
                 agent: this.buildHookContextBase(),
               });
             }
@@ -1837,7 +1847,6 @@ export class LettaBot implements AgentSession {
             lastAssistantUuid = msgUuid || lastAssistantUuid;
             
             response += streamMsg.content || '';
-            hookResponse += streamMsg.content || '';
 
             // Live-edit streaming for channels that support it
             // Hold back streaming edits while response could still be <no-reply/> or <actions> block
@@ -1897,17 +1906,8 @@ export class LettaBot implements AgentSession {
             log.info(`Stream message counts:`, msgTypeCounts);
 
             // Capture cost and usage for post-message hook
-            if (typeof streamMsg.totalCostUsd === 'number') {
-              turnCostUsd = streamMsg.totalCostUsd;
-            }
-            const usageRaw = streamMsg.usage as Record<string, unknown> | undefined;
-            if (usageRaw && typeof usageRaw === 'object') {
-              turnUsage = {
-                promptTokens: typeof usageRaw.promptTokens === 'number' ? usageRaw.promptTokens : undefined,
-                completionTokens: typeof usageRaw.completionTokens === 'number' ? usageRaw.completionTokens : undefined,
-                totalTokens: typeof usageRaw.totalTokens === 'number' ? usageRaw.totalTokens : undefined,
-              };
-            }
+            if (typeof streamMsg.totalCostUsd === 'number') turnCostUsd = streamMsg.totalCostUsd;
+            turnUsage = extractUsage(streamMsg) ?? turnUsage;
 
             if (streamMsg.error) {
               const detail = resultText.trim();
@@ -2203,11 +2203,11 @@ export class LettaBot implements AgentSession {
           error: hookError,
           totalCostUsd: turnCostUsd,
           usage: turnUsage,
-          agent: { ...this.buildHookContextBase(), conversationKey: this.resolveConversationKey(msg.channel, msg.chatId) },
+          agent: { ...this.buildHookContextBase(), conversationKey: convKey },
         }).catch(() => {});
       }
       // Session stays alive for reuse -- only invalidated on errors
-      this.cancelledKeys.delete(this.resolveConversationKey(msg.channel, msg.chatId));
+      this.cancelledKeys.delete(convKey);
     }
   }
 
@@ -2278,6 +2278,8 @@ export class LettaBot implements AgentSession {
     let hookResponse = '';
     let hookError: string | undefined;
     let postHookRan = false;
+    let turnCostUsd: number | undefined;
+    let turnUsage: MessageHookContext['usage'] | undefined;
     const runPostHookOnce = async (currentResponse: string, error?: string): Promise<string> => {
       if (postHookRan) return currentResponse;
       postHookRan = true;
@@ -2288,6 +2290,8 @@ export class LettaBot implements AgentSession {
         response: currentResponse,
         delivered: false,
         error,
+        totalCostUsd: turnCostUsd,
+        usage: turnUsage,
       });
       return override ?? currentResponse;
     };
@@ -2299,6 +2303,7 @@ export class LettaBot implements AgentSession {
     });
     if (preResult.skip) {
       log.info('preMessage hook returned skip — aborting sendToAgent call');
+      this.releaseLock(convKey, acquired);
       return '';
     }
     if (preResult.message) hookMessage = preResult.message;
@@ -2322,9 +2327,11 @@ export class LettaBot implements AgentSession {
           }
           if (msg.type === 'assistant') {
             response += msg.content || '';
-            hookResponse += msg.content || '';
           }
           if (msg.type === 'result') {
+            // Capture cost and usage for post-message hook
+            if (typeof msg.totalCostUsd === 'number') turnCostUsd = msg.totalCostUsd;
+            turnUsage = extractUsage(msg) ?? turnUsage;
             // TODO(letta-code-sdk#31): Remove once SDK handles HITL approvals in bypassPermissions mode.
             if (msg.success === false || msg.error) {
               // Enrich opaque errors from run metadata (mirrors processMessage logic).
@@ -2344,7 +2351,7 @@ export class LettaBot implements AgentSession {
             break;
           }
         }
-        hookResponse = response || hookResponse;
+        hookResponse = response;
         const finalResponse = await runPostHookOnce(hookResponse);
         if (isSilent && finalResponse.trim()) {
           log.info(`Silent mode: collected ${finalResponse.length} chars (not delivered)`);
@@ -2388,6 +2395,8 @@ export class LettaBot implements AgentSession {
     let hookResponse = '';
     let hookError: string | undefined;
     let postHookRan = false;
+    let turnCostUsd: number | undefined;
+    let turnUsage: MessageHookContext['usage'] | undefined;
     const runPostHookOnce = async (currentResponse: string, error?: string): Promise<void> => {
       if (postHookRan) return;
       postHookRan = true;
@@ -2398,6 +2407,8 @@ export class LettaBot implements AgentSession {
         response: currentResponse,
         delivered: false,
         error,
+        totalCostUsd: turnCostUsd,
+        usage: turnUsage,
       });
     };
 
@@ -2408,6 +2419,7 @@ export class LettaBot implements AgentSession {
     });
     if (preResult.skip) {
       log.info('preMessage hook returned skip — aborting heartbeat call');
+      this.releaseLock(convKey, acquired);
       return;
     }
     if (preResult.message) hookMessage = preResult.message;
@@ -2423,6 +2435,9 @@ export class LettaBot implements AgentSession {
           if (msg.type === 'result') {
             const resultText = typeof msg.result === 'string' ? msg.result : '';
             if (resultText.trim().length > 0) hookResponse = resultText;
+            // Capture cost and usage for post-message hook
+            if (typeof msg.totalCostUsd === 'number') turnCostUsd = msg.totalCostUsd;
+            turnUsage = extractUsage(msg) ?? turnUsage;
           }
           yield msg;
         }

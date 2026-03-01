@@ -72,6 +72,32 @@ describe('message hooks', () => {
     throw new Error('Timed out waiting for condition');
   }
 
+  function makeAdapter() {
+    return {
+      id: 'telegram' as const,
+      name: 'Telegram',
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async () => ({ messageId: '1' })),
+      editMessage: vi.fn(async () => undefined),
+      sendTypingIndicator: vi.fn(async () => undefined),
+      stopTypingIndicator: vi.fn(async () => undefined),
+      supportsEditing: () => true,
+    };
+  }
+
+  function makeMessage(overrides: Record<string, unknown> = {}) {
+    return {
+      channel: 'telegram',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+      ...overrides,
+    };
+  }
+
   it('uses preMessage hook to override sendToAgent payload', async () => {
     const hookDir = mkdtempSync(join(tmpdir(), 'lettabot-hook-module-'));
     const hookPath = join(hookDir, 'hooks.mjs');
@@ -354,32 +380,105 @@ describe('message hooks', () => {
       hooksDir: hookDir,
     });
 
-    const adapter = {
-      id: 'telegram',
-      name: 'Telegram',
-      start: vi.fn(async () => undefined),
-      stop: vi.fn(async () => undefined),
-      isRunning: vi.fn(() => true),
-      sendMessage: vi.fn(async () => ({ messageId: '1' })),
-      editMessage: vi.fn(async () => undefined),
-      sendTypingIndicator: vi.fn(async () => undefined),
-      stopTypingIndicator: vi.fn(async () => undefined),
-      supportsEditing: () => true,
-    };
-
-    const message = {
-      channel: 'telegram',
-      chatId: 'chat-1',
-      userId: 'user-1',
-      text: 'hello',
-      timestamp: new Date(),
-      isListeningMode: true,
-    };
-
-    await (bot as any).processMessage(message, adapter);
+    await (bot as any).processMessage(makeMessage({ isListeningMode: true }), makeAdapter());
 
     await waitFor(() => (globalThis as any).__hookEvents.length === 1);
     const events = (globalThis as any).__hookEvents as Array<{ suppressDelivery?: boolean }>;
     expect(events[0].suppressDelivery).toBe(true);
+  });
+
+  it('preMessage hook returning { skip: true } aborts the agent call', async () => {
+    const hookDir = mkdtempSync(join(tmpdir(), 'lettabot-hook-module-'));
+    writeFileSync(join(hookDir, 'hooks.mjs'), [
+      'export async function preMessage() {',
+      '  return { skip: true };',
+      '}',
+    ].join('\n'), 'utf-8');
+
+    const mockSession = makeSession();
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      hooks: { preMessage: { file: './hooks.mjs', mode: 'await' } },
+      hooksDir: hookDir,
+    });
+
+    await (bot as any).processMessage(makeMessage(), makeAdapter());
+
+    expect(mockSession.send).not.toHaveBeenCalled();
+  });
+
+  it('captures totalCostUsd and usage from stream result and passes them to postMessage hook', async () => {
+    const hookDir = mkdtempSync(join(tmpdir(), 'lettabot-hook-module-'));
+    writeFileSync(join(hookDir, 'hooks.mjs'), [
+      'globalThis.__hookEvents = globalThis.__hookEvents || [];',
+      'export async function postMessage(ctx) {',
+      '  globalThis.__hookEvents.push({ totalCostUsd: ctx.totalCostUsd, usage: ctx.usage });',
+      '}',
+    ].join('\n'), 'utf-8');
+
+    const mockSession = {
+      ...makeSession(),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'hello' };
+          yield {
+            type: 'result',
+            success: true,
+            totalCostUsd: 0.0042,
+            usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+          };
+        })()
+      ),
+    };
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      hooks: { postMessage: { file: './hooks.mjs', mode: 'await' } },
+      hooksDir: hookDir,
+    });
+
+    await (bot as any).processMessage(makeMessage(), makeAdapter());
+
+    const events = (globalThis as any).__hookEvents as Array<{ totalCostUsd?: number; usage?: unknown }>;
+    expect(events).toHaveLength(1);
+    expect(events[0].totalCostUsd).toBe(0.0042);
+    expect(events[0].usage).toEqual({ promptTokens: 100, completionTokens: 50, totalTokens: 150 });
+  });
+
+  it('fires postMessage hook via finally block when session throws', async () => {
+    const hookDir = mkdtempSync(join(tmpdir(), 'lettabot-hook-module-'));
+    writeFileSync(join(hookDir, 'hooks.mjs'), [
+      'globalThis.__hookEvents = globalThis.__hookEvents || [];',
+      'export async function postMessage(ctx) {',
+      '  globalThis.__hookEvents.push({ error: ctx.error });',
+      '}',
+    ].join('\n'), 'utf-8');
+
+    const mockSession = {
+      ...makeSession(),
+      send: vi.fn(async () => { throw new Error('session send failed'); }),
+    };
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      hooks: { postMessage: { file: './hooks.mjs', mode: 'await' } },
+      hooksDir: hookDir,
+    });
+
+    await (bot as any).processMessage(makeMessage(), makeAdapter());
+
+    await waitFor(() => (globalThis as any).__hookEvents.length === 1);
+    const events = (globalThis as any).__hookEvents as Array<{ error?: string }>;
+    expect(events[0].error).toBe('session send failed');
   });
 });

@@ -28,7 +28,7 @@ function normalizeConfigs(config: HookHandlerConfig | HookHandlerConfig[] | unde
 }
 
 function isSendMessage(value: unknown): value is SendMessage {
-  return typeof value === 'string' || Array.isArray(value);
+  return typeof value === 'string' || (Array.isArray(value) && value.every(item => typeof item === 'object' && item !== null));
 }
 
 function extractSendMessage(result: unknown): SendMessage | undefined {
@@ -139,11 +139,11 @@ export class MessageHookRunner {
     for (const cfg of configs) {
       const mode = cfg.mode ?? DEFAULT_HOOK_MODE;
       const hookCtx = current !== undefined ? { ...ctx, message: current } : ctx;
+      const timeoutMs = cfg.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
       if (mode === 'parallel') {
-        void this.invokeHook('preMessage', cfg, hookCtx);
+        void this.invokeHook('preMessage', cfg, hookCtx, timeoutMs);
         continue;
       }
-      const timeoutMs = cfg.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
       const result = await this.invokeHook('preMessage', cfg, hookCtx, timeoutMs);
       if (result && typeof result === 'object' && !Array.isArray(result) && (result as Record<string, unknown>).skip === true) {
         return { skip: true };
@@ -165,11 +165,11 @@ export class MessageHookRunner {
     for (const cfg of configs) {
       const mode = cfg.mode ?? DEFAULT_HOOK_MODE;
       const hookCtx = current !== undefined ? { ...ctx, response: current } : ctx;
+      const timeoutMs = cfg.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
       if (mode === 'parallel') {
-        void this.invokeHook('postMessage', cfg, hookCtx);
+        void this.invokeHook('postMessage', cfg, hookCtx, timeoutMs);
         continue;
       }
-      const timeoutMs = cfg.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
       const result = await this.invokeHook('postMessage', cfg, hookCtx, timeoutMs);
       const extracted = extractResponseText(result);
       if (extracted !== undefined) current = extracted;
@@ -179,13 +179,33 @@ export class MessageHookRunner {
 
   async runPostReasoning(config: HookHandlerConfig | HookHandlerConfig[] | undefined, ctx: MessageHookContext): Promise<void> {
     for (const cfg of normalizeConfigs(config)) {
-      const mode = cfg.mode ?? DEFAULT_HOOK_MODE;
       const timeoutMs = cfg.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
+      const mode = cfg.mode ?? DEFAULT_HOOK_MODE;
       if (mode === 'parallel') {
-        void this.invokeHook('postReasoning', cfg, ctx);
+        void this.invokeHook('postReasoning', cfg, ctx, timeoutMs);
         continue;
       }
       await this.invokeHook('postReasoning', cfg, ctx, timeoutMs);
+    }
+  }
+
+  private async invokeToolHook<Ctx>(
+    stageName: string,
+    fn: (ctx: Ctx) => Promise<unknown> | unknown,
+    ctx: Ctx,
+    cfg: HookHandlerConfig,
+  ): Promise<void> {
+    const mode = cfg.mode ?? DEFAULT_HOOK_MODE;
+    const timeoutMs = cfg.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
+    const task = fn(ctx);
+    if (mode === 'parallel') {
+      void this.invokeWithTimeout(task, timeoutMs);
+      return;
+    }
+    try {
+      await this.invokeWithTimeout(task, timeoutMs);
+    } catch (err) {
+      console.warn(`[Hooks] ${stageName} failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -193,18 +213,7 @@ export class MessageHookRunner {
     for (const cfg of normalizeConfigs(config)) {
       const module = await this.loadModule(cfg.file);
       if (!module || typeof module.postToolCall !== 'function') continue;
-      const mode = cfg.mode ?? DEFAULT_HOOK_MODE;
-      const timeoutMs = cfg.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
-      const task = module.postToolCall(ctx);
-      if (mode === 'parallel') {
-        void this.invokeWithTimeout(task, timeoutMs);
-        continue;
-      }
-      try {
-        await this.invokeWithTimeout(task, timeoutMs);
-      } catch (err) {
-        console.warn(`[Hooks] postToolCall failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      await this.invokeToolHook('postToolCall', module.postToolCall.bind(module), ctx, cfg);
     }
   }
 
@@ -212,18 +221,7 @@ export class MessageHookRunner {
     for (const cfg of normalizeConfigs(config)) {
       const module = await this.loadModule(cfg.file);
       if (!module || typeof module.postToolResult !== 'function') continue;
-      const mode = cfg.mode ?? DEFAULT_HOOK_MODE;
-      const timeoutMs = cfg.timeoutMs ?? DEFAULT_AWAIT_TIMEOUT_MS;
-      const task = module.postToolResult(ctx);
-      if (mode === 'parallel') {
-        void this.invokeWithTimeout(task, timeoutMs);
-        continue;
-      }
-      try {
-        await this.invokeWithTimeout(task, timeoutMs);
-      } catch (err) {
-        console.warn(`[Hooks] postToolResult failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      await this.invokeToolHook('postToolResult', module.postToolResult.bind(module), ctx, cfg);
     }
   }
 }
