@@ -66,7 +66,7 @@ export interface AgentConfig {
   };
   /** Conversation routing */
   conversations?: {
-    mode?: 'shared' | 'per-channel' | 'per-chat';  // Default: shared (single conversation across all channels)
+    mode?: 'disabled' | 'shared' | 'per-channel' | 'per-chat';  // Default: shared (single conversation across all channels)
     heartbeat?: string;               // "dedicated" | "last-active" | "<channel>" (default: last-active)
     perChannel?: string[];            // Channels that should always have their own conversation
     maxSessions?: number;             // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
@@ -154,7 +154,7 @@ export interface LettaBotConfig {
 
   // Conversation routing
   conversations?: {
-    mode?: 'shared' | 'per-channel' | 'per-chat';  // Default: shared (single conversation across all channels)
+    mode?: 'disabled' | 'shared' | 'per-channel' | 'per-chat';  // Default: shared (single conversation across all channels)
     heartbeat?: string;               // "dedicated" | "last-active" | "<channel>" (default: last-active)
     perChannel?: string[];            // Channels that should always have their own conversation
     maxSessions?: number;             // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)

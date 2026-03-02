@@ -56,7 +56,7 @@ agent:
 
 # Conversation routing (optional)
 conversations:
-  mode: shared                   # "shared" | "per-channel" | "per-chat"
+  mode: shared                   # "disabled" | "shared" | "per-channel" | "per-chat"
   heartbeat: last-active         # "dedicated" | "last-active" | "<channel>"
 
 # Channel configurations
@@ -268,7 +268,7 @@ Conversation routing controls which incoming messages share a Letta conversation
 
 ```yaml
 conversations:
-  mode: shared            # "shared" | "per-channel" | "per-chat"
+  mode: shared            # "disabled" | "shared" | "per-channel" | "per-chat"
   heartbeat: last-active  # "dedicated" | "last-active" | "<channel>"
   maxSessions: 10         # per-chat only: max concurrent sessions (LRU eviction)
   perChannel:
@@ -279,6 +279,7 @@ conversations:
 
 | Mode | Key | Description |
 |------|-----|-------------|
+| `disabled` | `"default"` | Always uses the agent's built-in default conversation. No new conversations are created. |
 | `shared` (default) | `"shared"` | One conversation across all channels and all chats |
 | `per-channel` | `"telegram"`, `"discord"`, etc. | One conversation per channel adapter. All Telegram groups share one conversation, all Discord channels share another. |
 | `per-chat` | `"telegram:12345"` | One conversation per unique chat within each channel. Every DM and group gets its own isolated message history. |

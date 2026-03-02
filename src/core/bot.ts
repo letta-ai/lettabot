@@ -138,6 +138,7 @@ export function resolveConversationKey(
   conversationOverrides: Set<string>,
   chatId?: string,
 ): string {
+  if (conversationMode === 'disabled') return 'default';
   const normalized = channel.toLowerCase();
   if (conversationMode === 'per-chat' && chatId) return `${normalized}:${chatId}`;
   if (conversationMode === 'per-channel') return normalized;
@@ -158,6 +159,7 @@ export function resolveHeartbeatConversationKey(
   lastActiveChannel?: string,
   lastActiveChatId?: string,
 ): string {
+  if (conversationMode === 'disabled') return 'default';
   const hb = heartbeatConversation || 'last-active';
 
   if (conversationMode === 'per-chat') {
@@ -605,18 +607,25 @@ export class LettaBot implements AgentSession {
     let session: Session;
     let sessionAgentId: string | undefined;
 
-    // In per-channel mode, look up per-key conversation ID.
-    // In shared mode (key === "shared"), use the legacy single conversationId.
-    const convId = key === 'shared'
-      ? this.store.conversationId
-      : this.store.getConversationId(key);
+    // In disabled mode, always resume the agent's built-in default conversation.
+    // Skip store lookup entirely -- no conversation ID is persisted.
+    const convId = key === 'default'
+      ? null
+      : key === 'shared'
+        ? this.store.conversationId
+        : this.store.getConversationId(key);
 
     // Propagate per-agent cron store path to CLI subprocesses (lettabot-schedule)
     if (this.config.cronStorePath) {
       process.env.CRON_STORE_PATH = this.config.cronStorePath;
     }
 
-    if (convId) {
+    if (key === 'default' && this.store.agentId) {
+      process.env.LETTA_AGENT_ID = this.store.agentId;
+      installSkillsToAgent(this.store.agentId, this.config.skills);
+      sessionAgentId = this.store.agentId;
+      session = resumeSession('default', opts);
+    } else if (convId) {
       process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
       if (this.store.agentId) {
         installSkillsToAgent(this.store.agentId, this.config.skills);
@@ -647,7 +656,11 @@ export class LettaBot implements AgentSession {
       installSkillsToAgent(newAgentId, this.config.skills);
       sessionAgentId = newAgentId;
 
-      session = createSession(newAgentId, opts);
+      // In disabled mode, resume the built-in default conversation instead of
+      // creating a new one.  Other modes create a fresh conversation per key.
+      session = key === 'default'
+        ? resumeSession('default', opts)
+        : createSession(newAgentId, opts);
     }
 
     // Initialize eagerly so the subprocess is ready before the first send()
@@ -842,8 +855,9 @@ export class LettaBot implements AgentSession {
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
       this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
       log.info('Agent ID updated:', session.agentId);
-    } else if (session.conversationId) {
+    } else if (session.conversationId && convKey !== 'default') {
       // In per-channel mode, persist per-key. In shared mode, use legacy field.
+      // In disabled mode (key === 'default'), skip -- always use the built-in default.
       if (convKey && convKey !== 'shared') {
         const existing = this.store.getConversationId(convKey);
         if (session.conversationId !== existing) {
@@ -1123,6 +1137,13 @@ export class LettaBot implements AgentSession {
         // resolveConversationKey returns 'shared' for non-override channels,
         // the channel id for per-channel, or channel:chatId for per-chat.
         const convKey = channelId ? this.resolveConversationKey(channelId, chatId) : 'shared';
+
+        // In disabled mode the bot always uses the agent's built-in default
+        // conversation -- there's nothing to reset locally.
+        if (convKey === 'default') {
+          return 'Conversations are disabled -- nothing to reset.';
+        }
+
         this.store.clearConversation(convKey);
         this.store.resetRecoveryAttempts();
         this.invalidateSession(convKey);
