@@ -200,6 +200,7 @@ export class LettaBot implements AgentSession {
   private processingKeys: Set<string> = new Set(); // Per-key locks for per-channel mode
   private cancelledKeys: Set<string> = new Set(); // Tracks keys where /cancel was issued
   private sendSequence = 0; // Monotonic counter for desync diagnostics
+  private lastResultRunFingerprints: Map<string, string> = new Map();
 
   // AskUserQuestion support: resolves when the next user message arrives.
   // In per-chat mode, keyed by convKey so each chat resolves independently.
@@ -249,6 +250,34 @@ export class LettaBot implements AgentSession {
   private prefixResponse(text: string): string {
     if (!this.config.displayName) return text;
     return `${this.config.displayName}: ${text}`;
+  }
+
+  private normalizeResultRunIds(msg: StreamMsg): string[] {
+    const rawRunIds = (msg as StreamMsg & { runIds?: unknown; run_ids?: unknown }).runIds
+      ?? (msg as StreamMsg & { run_ids?: unknown }).run_ids;
+    if (!Array.isArray(rawRunIds)) return [];
+
+    const runIds = rawRunIds.filter((id): id is string =>
+      typeof id === 'string' && id.trim().length > 0
+    );
+    if (runIds.length === 0) return [];
+
+    return [...new Set(runIds)].sort();
+  }
+
+  private classifyResultRun(convKey: string, msg: StreamMsg): 'fresh' | 'stale' | 'unknown' {
+    const runIds = this.normalizeResultRunIds(msg);
+    if (runIds.length === 0) return 'unknown';
+
+    const fingerprint = runIds.join(',');
+    const previous = this.lastResultRunFingerprints.get(convKey);
+    if (previous === fingerprint) {
+      log.warn(`Detected stale duplicate result (key=${convKey}, runIds=${fingerprint})`);
+      return 'stale';
+    }
+
+    this.lastResultRunFingerprints.set(convKey, fingerprint);
+    return 'fresh';
   }
 
   // =========================================================================
@@ -1762,6 +1791,18 @@ export class LettaBot implements AgentSession {
               break;
             }
 
+            const resultRunState = this.classifyResultRun(convKey, streamMsg);
+            if (resultRunState === 'stale') {
+              this.invalidateSession(convKey);
+              session = null;
+              if (!retried) {
+                log.warn(`Retrying message after stale duplicate result (seq=${seq}, key=${convKey})`);
+                return this.processMessage(msg, adapter, true);
+              }
+              response = '';
+              break;
+            }
+
             const resultText = typeof streamMsg.result === 'string' ? streamMsg.result : '';
             if (resultText.trim().length > 0) {
               // Guard against n-1 desync: if we accumulated assistant text via
@@ -2078,55 +2119,79 @@ export class LettaBot implements AgentSession {
     const acquired = await this.acquireLock(convKey);
     
     try {
-      const { stream } = await this.runSession(text, { convKey });
-      
-      try {
-        let response = '';
-        let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | undefined;
-        for await (const msg of stream()) {
-          if (msg.type === 'tool_call') {
-            this.syncTodoToolCall(msg);
-          }
-          if (msg.type === 'error') {
-            lastErrorDetail = {
-              message: (msg as any).message || 'unknown',
-              stopReason: (msg as any).stopReason || 'error',
-              apiError: (msg as any).apiError,
-            };
-          }
-          if (msg.type === 'assistant') {
-            response += msg.content || '';
-          }
-          if (msg.type === 'result') {
-            // TODO(letta-code-sdk#31): Remove once SDK handles HITL approvals in bypassPermissions mode.
-            if (msg.success === false || msg.error) {
-              // Enrich opaque errors from run metadata (mirrors processMessage logic).
-              const convId = typeof msg.conversationId === 'string' ? msg.conversationId : undefined;
-              if (this.store.agentId &&
-                  (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
-                const enriched = await getLatestRunError(this.store.agentId, convId);
-                if (enriched) {
-                  lastErrorDetail = { message: enriched.message, stopReason: enriched.stopReason };
-                }
-              }
-              const errMsg = lastErrorDetail?.message || msg.error || 'error';
-              const errReason = lastErrorDetail?.stopReason || msg.error || 'error';
-              const detail = typeof msg.result === 'string' ? msg.result.trim() : '';
-              throw new Error(detail ? `Agent run failed: ${errReason} (${errMsg})` : `Agent run failed: ${errReason} -- ${errMsg}`);
+      let retried = false;
+      while (true) {
+        const { stream } = await this.runSession(text, { convKey, retried });
+
+        try {
+          let response = '';
+          let sawStaleDuplicateResult = false;
+          let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | undefined;
+          for await (const msg of stream()) {
+            if (msg.type === 'tool_call') {
+              this.syncTodoToolCall(msg);
             }
-            break;
+            if (msg.type === 'error') {
+              lastErrorDetail = {
+                message: (msg as any).message || 'unknown',
+                stopReason: (msg as any).stopReason || 'error',
+                apiError: (msg as any).apiError,
+              };
+            }
+            if (msg.type === 'assistant') {
+              response += msg.content || '';
+            }
+            if (msg.type === 'result') {
+              const resultRunState = this.classifyResultRun(convKey, msg);
+              if (resultRunState === 'stale') {
+                sawStaleDuplicateResult = true;
+                break;
+              }
+
+              // TODO(letta-code-sdk#31): Remove once SDK handles HITL approvals in bypassPermissions mode.
+              if (msg.success === false || msg.error) {
+                // Enrich opaque errors from run metadata (mirrors processMessage logic).
+                const convId = typeof msg.conversationId === 'string' ? msg.conversationId : undefined;
+                if (this.store.agentId &&
+                    (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
+                  const enriched = await getLatestRunError(this.store.agentId, convId);
+                  if (enriched) {
+                    lastErrorDetail = { message: enriched.message, stopReason: enriched.stopReason };
+                  }
+                }
+                const errMsg = lastErrorDetail?.message || msg.error || 'error';
+                const errReason = lastErrorDetail?.stopReason || msg.error || 'error';
+                const detail = typeof msg.result === 'string' ? msg.result.trim() : '';
+                throw new Error(detail ? `Agent run failed: ${errReason} (${errMsg})` : `Agent run failed: ${errReason} -- ${errMsg}`);
+              }
+              break;
+            }
           }
+
+          if (sawStaleDuplicateResult) {
+            this.invalidateSession(convKey);
+            if (retried) {
+              throw new Error('Agent stream returned stale duplicate result after retry');
+            }
+            log.warn(`Retrying sendToAgent after stale duplicate result (key=${convKey})`);
+            retried = true;
+            continue;
+          }
+
+          if (isSilent && response.trim()) {
+            log.info(`Silent mode: collected ${response.length} chars (not delivered)`);
+          }
+          return response;
+        } catch (error) {
+          // Invalidate on stream errors so next call gets a fresh subprocess
+          this.invalidateSession(convKey);
+          throw error;
         }
-        if (isSilent && response.trim()) {
-          log.info(`Silent mode: collected ${response.length} chars (not delivered)`);
-        }
-        return response;
-      } catch (error) {
-        // Invalidate on stream errors so next call gets a fresh subprocess
-        this.invalidateSession(convKey);
-        throw error;
       }
     } finally {
+      if (this.config.reuseSession === false) {
+        this.invalidateSession(convKey);
+      }
       this.releaseLock(convKey, acquired);
     }
   }
@@ -2152,6 +2217,9 @@ export class LettaBot implements AgentSession {
         throw error;
       }
     } finally {
+      if (this.config.reuseSession === false) {
+        this.invalidateSession(convKey);
+      }
       this.releaseLock(convKey, acquired);
     }
   }

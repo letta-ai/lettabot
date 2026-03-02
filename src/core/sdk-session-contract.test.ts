@@ -685,6 +685,89 @@ describe('SDK session contract', () => {
     );
   });
 
+  it('retries sendToAgent when the result runIds repeat the previous run', async () => {
+    let streamCall = 0;
+
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async () => undefined),
+      stream: vi.fn(() => {
+        const call = streamCall++;
+        return (async function* () {
+          if (call === 0) {
+            yield { type: 'assistant', content: 'response-A' };
+            yield { type: 'result', success: true, runIds: ['run-A'] };
+            return;
+          }
+          if (call === 1) {
+            // Stale replay of the previous run; bot should retry once.
+            yield { type: 'assistant', content: 'stale-A' };
+            yield { type: 'result', success: true, runIds: ['run-A'] };
+            return;
+          }
+          yield { type: 'assistant', content: 'response-B' };
+          yield { type: 'result', success: true, runIds: ['run-B'] };
+        })();
+      }),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-runid-test',
+      conversationId: 'conversation-runid-test',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    const responseA = await bot.sendToAgent('first message');
+    expect(responseA).toBe('response-A');
+
+    const responseB = await bot.sendToAgent('second message');
+    expect(responseB).toBe('response-B');
+
+    expect(mockSession.send).toHaveBeenCalledTimes(3);
+    expect(mockSession.send).toHaveBeenNthCalledWith(1, 'first message');
+    expect(mockSession.send).toHaveBeenNthCalledWith(2, 'second message');
+    expect(mockSession.send).toHaveBeenNthCalledWith(3, 'second message');
+    expect(mockSession.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('invalidates background sessions when reuseSession is false', async () => {
+    let resultCounter = 0;
+
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async () => undefined),
+      stream: vi.fn(() => {
+        const runId = `run-fixed-${++resultCounter}`;
+        return (async function* () {
+          yield { type: 'assistant', content: 'ok' };
+          yield { type: 'result', success: true, runIds: [runId] };
+        })();
+      }),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-reuse-false',
+      conversationId: 'conversation-reuse-false',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      reuseSession: false,
+    });
+
+    await bot.sendToAgent('first background trigger');
+    await bot.sendToAgent('second background trigger');
+
+    expect(mockSession.close).toHaveBeenCalledTimes(2);
+  });
+
   it('does not leak stale stream events between consecutive sendToAgent calls', async () => {
     // Simulates the real SDK behavior prior to 0.1.8: the shared streamQueue
     // retains events that arrive after the result message. When the next

@@ -198,6 +198,7 @@ export interface StreamMsg {
   uuid?: string;
   isError?: boolean;
   result?: string;
+  runIds?: string[];
   success?: boolean;
   error?: string;
   [key: string]: unknown;
