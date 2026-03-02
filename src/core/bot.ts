@@ -4,28 +4,25 @@
  * Single agent, single conversation - chat continues across all channels.
  */
 
-import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
+import { imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
 import { mkdirSync, existsSync } from 'node:fs';
 import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { extname, resolve, join } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext, StreamMsg } from './types.js';
-import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError, formatApiErrorForUser } from './errors.js';
+import { formatApiErrorForUser } from './errors.js';
 import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
-import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel } from '../tools/letta-api.js';
-import { installSkillsToAgent, withAgentSkillsOnPath, getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
+import { getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel } from '../tools/letta-api.js';
+import { getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
-import { loadMemoryBlocks } from './memory.js';
 import { redactOutbound } from './redact.js';
-import { SYSTEM_PROMPT } from './system-prompt.js';
 import { parseDirectives, stripActionsBlock, type Directive } from './directives.js';
 import { resolveEmoji } from './emoji.js';
-import { createManageTodoTool } from '../tools/todo.js';
-import { syncTodosFromTool } from '../todo/store.js';
+import { SessionManager } from './session-manager.js';
 
 
 import { createLogger } from '../logger.js';
@@ -205,28 +202,9 @@ export class LettaBot implements AgentSession {
   // In shared mode, a single entry keyed by 'shared' provides legacy behavior.
   private pendingQuestionResolvers: Map<string, (text: string) => void> = new Map();
 
-  // Persistent sessions: reuse CLI subprocesses across messages.
-  // In shared mode, only the "shared" key is used. In per-channel mode, each
-  // channel (and optionally heartbeat) gets its own subprocess. In per-chat
-  // mode, each unique channel:chatId gets its own subprocess (LRU-evicted).
-  private sessions: Map<string, Session> = new Map();
-  private sessionLastUsed: Map<string, number> = new Map(); // LRU tracking for per-chat mode
-  // Coalesces concurrent ensureSessionForKey calls for the same key so the
-  // second caller waits for the first instead of creating a duplicate session.
-  // generation prevents stale in-flight creations from being reused after reset.
-  private sessionCreationLocks: Map<string, { promise: Promise<Session>; generation: number }> = new Map();
-  private sessionGenerations: Map<string, number> = new Map();
-  private currentCanUseTool: CanUseToolCallback | undefined;
   private conversationOverrides: Set<string> = new Set();
-  // Stable callback wrapper so the Session options never change, but we can
-  // swap out the per-message handler before each send().
-  private readonly sessionCanUseTool: CanUseToolCallback = async (toolName, toolInput) => {
-    if (this.currentCanUseTool) {
-      return this.currentCanUseTool(toolName, toolInput);
-    }
-    return { behavior: 'allow' as const };
-  };
-  
+  private readonly sessionManager: SessionManager;
+
   constructor(config: BotConfig) {
     this.config = config;
     mkdirSync(config.workingDir, { recursive: true });
@@ -234,6 +212,7 @@ export class LettaBot implements AgentSession {
     if (config.conversationOverrides?.length) {
       this.conversationOverrides = new Set(config.conversationOverrides.map((ch) => ch.toLowerCase()));
     }
+    this.sessionManager = new SessionManager(this.store, config, this.processingKeys);
     log.info(`LettaBot initialized. Agent ID: ${this.store.agentId || '(new)'}`);
   }
 
@@ -251,113 +230,8 @@ export class LettaBot implements AgentSession {
   }
 
   // =========================================================================
-  // Session options (shared by processMessage and sendToAgent)
-  // =========================================================================
-
-  private getTodoAgentKey(): string {
-    return this.store.agentId || this.config.agentName || 'LettaBot';
-  }
-
-  private syncTodoToolCall(streamMsg: StreamMsg): void {
-    if (streamMsg.type !== 'tool_call') return;
-
-    const normalizedToolName = (streamMsg.toolName || '').toLowerCase();
-    const isBuiltInTodoTool = normalizedToolName === 'todowrite'
-      || normalizedToolName === 'todo_write'
-      || normalizedToolName === 'writetodos'
-      || normalizedToolName === 'write_todos';
-    if (!isBuiltInTodoTool) return;
-
-    const input = (streamMsg.toolInput && typeof streamMsg.toolInput === 'object')
-      ? streamMsg.toolInput as Record<string, unknown>
-      : null;
-    if (!input || !Array.isArray(input.todos)) return;
-
-    const incoming: Array<{
-      content?: string;
-      description?: string;
-      status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
-    }> = [];
-    for (const item of input.todos) {
-      if (!item || typeof item !== 'object') continue;
-      const obj = item as Record<string, unknown>;
-      const statusRaw = typeof obj.status === 'string' ? obj.status : '';
-      if (!['pending', 'in_progress', 'completed', 'cancelled'].includes(statusRaw)) continue;
-      incoming.push({
-        content: typeof obj.content === 'string' ? obj.content : undefined,
-        description: typeof obj.description === 'string' ? obj.description : undefined,
-        status: statusRaw as 'pending' | 'in_progress' | 'completed' | 'cancelled',
-      });
-    }
-    if (incoming.length === 0) return;
-
-    try {
-      const summary = syncTodosFromTool(this.getTodoAgentKey(), incoming);
-      if (summary.added > 0 || summary.updated > 0) {
-        log.info(`Synced ${summary.totalIncoming} todo(s) from ${streamMsg.toolName} into heartbeat store (added=${summary.added}, updated=${summary.updated})`);
-      }
-    } catch (err) {
-      log.warn('Failed to sync TodoWrite todos:', err instanceof Error ? err.message : err);
-    }
-  }
-
-  private getSessionTimeoutMs(): number {
-    const envTimeoutMs = Number(process.env.LETTA_SESSION_TIMEOUT_MS);
-    if (Number.isFinite(envTimeoutMs) && envTimeoutMs > 0) {
-      return envTimeoutMs;
-    }
-    return 60000;
-  }
-
-  private async withSessionTimeout<T>(
-    promise: Promise<T>,
-    label: string,
-  ): Promise<T> {
-    const timeoutMs = this.getSessionTimeoutMs();
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<T>((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(new Error(`${label} timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-    });
-    try {
-      return await Promise.race([promise, timeoutPromise]);
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-    }
-  }
-
-  private baseSessionOptions(canUseTool?: CanUseToolCallback) {
-    return {
-      permissionMode: 'bypassPermissions' as const,
-      allowedTools: this.config.allowedTools,
-      disallowedTools: [
-        // Block built-in TodoWrite -- it requires interactive approval (fails
-        // silently during heartbeats) and writes to the CLI's own store rather
-        // than lettabot's persistent heartbeat store.  The agent should use the
-        // custom manage_todo tool instead.
-        'TodoWrite',
-        ...(this.config.disallowedTools || []),
-      ],
-      cwd: this.config.workingDir,
-      tools: [createManageTodoTool(this.getTodoAgentKey())],
-      // Memory filesystem (context repository): true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
-      ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
-      // In bypassPermissions mode, canUseTool is only called for interactive
-      // tools (AskUserQuestion, ExitPlanMode). When no callback is provided
-      // (background triggers), the SDK auto-denies interactive tools.
-      ...(canUseTool ? { canUseTool } : {}),
-    };
-  }
-
-  // =========================================================================
   // AskUserQuestion formatting
   // =========================================================================
-
-  /**
-   * Format AskUserQuestion questions as a single channel message.
-   * Displays each question with numbered options for the user to choose from.
-   */
   // =========================================================================
   // Session lifecycle helpers
   // =========================================================================
@@ -543,490 +417,13 @@ export class LettaBot implements AgentSession {
     );
   }
 
-  // =========================================================================
-  // Session lifecycle (per-key)
-  // =========================================================================
+  // Session lifecycle delegated to SessionManager
 
   /**
-   * Return the persistent session for the given conversation key,
-   * creating and initializing it if needed.
-   *
-   * After initialization, calls bootstrapState() to detect pending approvals.
-   * If an orphaned approval is found, recovers proactively before returning
-   * the session -- preventing the first send() from hitting a 409 CONFLICT.
-   */
-  private async ensureSessionForKey(key: string, bootstrapRetried = false): Promise<Session> {
-    const generation = this.sessionGenerations.get(key) ?? 0;
-
-    // Fast path: session already exists
-    const existing = this.sessions.get(key);
-    if (existing) {
-      this.sessionLastUsed.set(key, Date.now());
-      return existing;
-    }
-
-    // Coalesce concurrent callers: if another call is already creating this
-    // key (e.g. warmSession running while first message arrives), wait for
-    // it instead of creating a duplicate session.
-    const pending = this.sessionCreationLocks.get(key);
-    if (pending && pending.generation === generation) return pending.promise;
-
-    const promise = this._createSessionForKey(key, bootstrapRetried, generation);
-    this.sessionCreationLocks.set(key, { promise, generation });
-    try {
-      return await promise;
-    } finally {
-      const current = this.sessionCreationLocks.get(key);
-      if (current?.promise === promise) {
-        this.sessionCreationLocks.delete(key);
-      }
-    }
-  }
-
-  /** Internal session creation -- called via ensureSessionForKey's lock. */
-  private async _createSessionForKey(
-    key: string,
-    bootstrapRetried: boolean,
-    generation: number,
-  ): Promise<Session> {
-    // Session was invalidated while this creation path was queued.
-    if ((this.sessionGenerations.get(key) ?? 0) !== generation) {
-      return this.ensureSessionForKey(key, bootstrapRetried);
-    }
-
-    // Re-read the store file from disk so we pick up agent/conversation ID
-    // changes made by other processes (e.g. after a restart or container deploy).
-    // This costs one synchronous disk read per incoming message, which is fine
-    // at chat-bot throughput. If this ever becomes a bottleneck, throttle to
-    // refresh at most once per second.
-    this.store.refresh();
-
-    const opts = this.baseSessionOptions(this.sessionCanUseTool);
-    let session: Session;
-    let sessionAgentId: string | undefined;
-
-    // In per-channel mode, look up per-key conversation ID.
-    // In shared mode (key === "shared"), use the legacy single conversationId.
-    const convId = key === 'shared'
-      ? this.store.conversationId
-      : this.store.getConversationId(key);
-
-    // Propagate per-agent cron store path to CLI subprocesses (lettabot-schedule)
-    if (this.config.cronStorePath) {
-      process.env.CRON_STORE_PATH = this.config.cronStorePath;
-    }
-
-    if (convId) {
-      process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
-      if (this.store.agentId) {
-        installSkillsToAgent(this.store.agentId, this.config.skills);
-        sessionAgentId = this.store.agentId;
-      }
-      session = resumeSession(convId, opts);
-    } else if (this.store.agentId) {
-      // Agent exists but no conversation stored -- resume the default conversation
-      process.env.LETTA_AGENT_ID = this.store.agentId;
-      installSkillsToAgent(this.store.agentId, this.config.skills);
-      sessionAgentId = this.store.agentId;
-      session = resumeSession(this.store.agentId, opts);
-    } else {
-      // Create new agent -- persist immediately so we don't orphan it on later failures
-      log.info('Creating new agent');
-      const newAgentId = await createAgent({
-        systemPrompt: SYSTEM_PROMPT,
-        memory: loadMemoryBlocks(this.config.agentName),
-        tags: ['origin:lettabot'],
-        ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
-      });
-      const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
-      this.store.setAgent(newAgentId, currentBaseUrl);
-      log.info('Saved new agent ID:', newAgentId);
-
-      if (this.config.agentName) {
-        updateAgentName(newAgentId, this.config.agentName).catch(() => {});
-      }
-      installSkillsToAgent(newAgentId, this.config.skills);
-      sessionAgentId = newAgentId;
-
-      session = createSession(newAgentId, opts);
-    }
-
-    // Initialize eagerly so the subprocess is ready before the first send()
-    log.info(`Initializing session subprocess (key=${key})...`);
-    try {
-      if (sessionAgentId) {
-        await withAgentSkillsOnPath(
-          sessionAgentId,
-          () => this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`),
-        );
-      } else {
-        await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
-      }
-      log.info(`Session subprocess ready (key=${key})`);
-    } catch (error) {
-      // Close immediately so failed initialization cannot leak a subprocess.
-      session.close();
-
-      // If the stored agent ID doesn't exist on the server (deleted externally,
-      // ghost agent from failed pairing, etc.), clear the stale ID and retry.
-      // The retry will hit the "else" branch and create a fresh agent.
-      // Uses bootstrapRetried to prevent infinite recursion if creation also fails.
-      if (this.store.agentId && !bootstrapRetried && isAgentMissingFromInitError(error)) {
-        log.warn(
-          `Agent ${this.store.agentId} appears missing from server, ` +
-          `clearing stale agent ID and recreating...`,
-        );
-        this.store.clearAgent();
-        return this._createSessionForKey(key, /* bootstrapRetried */ true, generation);
-      }
-
-      throw error;
-    }
-
-    // reset/invalidate can happen while initialize() is in-flight.
-    if ((this.sessionGenerations.get(key) ?? 0) !== generation) {
-      log.info(`Discarding stale initialized session (key=${key})`);
-      session.close();
-      return this.ensureSessionForKey(key, bootstrapRetried);
-    }
-
-    // Proactive approval detection via bootstrapState().
-    // Single CLI round-trip that returns hasPendingApproval flag alongside
-    // session metadata. If an orphaned approval is stuck, recover now so the
-    // first send() doesn't hit a 409 CONFLICT.
-    if (!bootstrapRetried && this.store.agentId) {
-      try {
-        const bootstrap = await this.withSessionTimeout(
-          session.bootstrapState(),
-          `Session bootstrapState (key=${key})`,
-        );
-        if (bootstrap.hasPendingApproval) {
-          const convId = bootstrap.conversationId || session.conversationId;
-          log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
-          session.close();
-          if (convId) {
-            const result = await recoverOrphanedConversationApproval(
-              this.store.agentId,
-              convId,
-              true, /* deepScan */
-            );
-            if (result.recovered) {
-              log.info(`Proactive approval recovery succeeded: ${result.details}`);
-            } else {
-              log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
-            }
-          }
-          // Recreate session after recovery (conversation state changed).
-          // Call _createSessionForKey directly (not ensureSessionForKey) since
-          // we're already inside the creation lock for this key.
-          return this._createSessionForKey(key, true, generation);
-        }
-      } catch (err) {
-        // bootstrapState failure is non-fatal -- the session is still usable.
-        // The reactive 409 handler in runSession() will catch stuck approvals.
-        log.warn(`bootstrapState check failed (key=${key}), continuing:`, err instanceof Error ? err.message : err);
-      }
-    }
-
-    if ((this.sessionGenerations.get(key) ?? 0) !== generation) {
-      log.info(`Discarding stale session after bootstrapState (key=${key})`);
-      session.close();
-      return this.ensureSessionForKey(key, bootstrapRetried);
-    }
-
-    // LRU eviction: in per-chat mode, limit concurrent sessions to avoid
-    // unbounded subprocess growth. Evicted sessions can be cheaply recreated
-    // via resumeSession() since conversation IDs are persisted in the store.
-    const maxSessions = this.config.maxSessions ?? 10;
-    if (this.config.conversationMode === 'per-chat' && this.sessions.size >= maxSessions) {
-      let oldestKey: string | null = null;
-      let oldestTime = Infinity;
-      for (const [k, ts] of this.sessionLastUsed) {
-        if (k === key) continue;
-        if (!this.sessions.has(k)) continue;
-        // Never evict an active/in-flight key (can close a live stream).
-        if (this.processingKeys.has(k) || this.sessionCreationLocks.has(k)) continue;
-        if (ts < oldestTime) {
-          oldestKey = k;
-          oldestTime = ts;
-        }
-      }
-      if (oldestKey) {
-        log.info(`LRU session eviction: closing session for key="${oldestKey}" (${this.sessions.size} active, max=${maxSessions})`);
-        const evicted = this.sessions.get(oldestKey);
-        evicted?.close();
-        this.sessions.delete(oldestKey);
-        this.sessionLastUsed.delete(oldestKey);
-        this.sessionGenerations.delete(oldestKey);
-        this.sessionCreationLocks.delete(oldestKey);
-      } else {
-        // All existing sessions are active; allow temporary overflow.
-        log.debug(`LRU session eviction skipped: all ${this.sessions.size} sessions are active/in-flight`);
-      }
-    }
-
-    this.sessions.set(key, session);
-    this.sessionLastUsed.set(key, Date.now());
-    return session;
-  }
-
-  /** Legacy convenience: resolve key from shared/per-channel mode and delegate. */
-  private async ensureSession(): Promise<Session> {
-    return this.ensureSessionForKey('shared');
-  }
-
-  /**
-   * Destroy session(s). If key provided, destroys only that key.
-   * If key is undefined, destroys ALL sessions.
-   */
-  private invalidateSession(key?: string): void {
-    if (key) {
-      // Invalidate any in-flight creation for this key so reset can force
-      // a fresh conversation/session immediately.
-      const nextGeneration = (this.sessionGenerations.get(key) ?? 0) + 1;
-      this.sessionGenerations.set(key, nextGeneration);
-      this.sessionCreationLocks.delete(key);
-
-      const session = this.sessions.get(key);
-      if (session) {
-        log.info(`Invalidating session (key=${key})`);
-        session.close();
-        this.sessions.delete(key);
-        this.sessionLastUsed.delete(key);
-      }
-    } else {
-      const keys = new Set<string>([
-        ...this.sessions.keys(),
-        ...this.sessionCreationLocks.keys(),
-      ]);
-      for (const k of keys) {
-        const nextGeneration = (this.sessionGenerations.get(k) ?? 0) + 1;
-        this.sessionGenerations.set(k, nextGeneration);
-      }
-
-      for (const [k, session] of this.sessions) {
-        log.info(`Invalidating session (key=${k})`);
-        session.close();
-      }
-      this.sessions.clear();
-      this.sessionCreationLocks.clear();
-      this.sessionLastUsed.clear();
-    }
-  }
-
-  /**
-   * Pre-warm the session subprocess at startup. Call after config/agent is loaded.
+   * Pre-warm the session subprocess at startup.
    */
   async warmSession(): Promise<void> {
-    this.store.refresh();
-    if (!this.store.agentId && !this.store.conversationId) return;
-    try {
-      const mode = this.config.conversationMode || 'shared';
-      // In shared mode, warm the single session. In per-channel/per-chat modes,
-      // warm nothing (sessions are created on first message per key).
-      if (mode === 'shared') {
-        await this.ensureSessionForKey('shared');
-      }
-    } catch (err) {
-      log.warn('Session pre-warm failed:', err instanceof Error ? err.message : err);
-    }
-  }
-
-  /**
-   * Persist conversation ID after a successful session result.
-   * Agent ID and first-run setup are handled eagerly in ensureSessionForKey().
-   */
-  private persistSessionState(session: Session, convKey?: string): void {
-    // Agent ID already persisted in ensureSessionForKey() on creation.
-    // Here we only update if the server returned a different one (shouldn't happen).
-    if (session.agentId && session.agentId !== this.store.agentId) {
-      const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
-      this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
-      log.info('Agent ID updated:', session.agentId);
-    } else if (session.conversationId && session.conversationId !== 'default') {
-      // In per-channel mode, persist per-key. In shared mode, use legacy field.
-      // Skip saving "default" -- it's an API alias, not a real conversation ID.
-      if (convKey && convKey !== 'shared') {
-        const existing = this.store.getConversationId(convKey);
-        if (session.conversationId !== existing) {
-          this.store.setConversationId(convKey, session.conversationId);
-          log.info(`Conversation ID updated (key=${convKey}):`, session.conversationId);
-        }
-      } else if (session.conversationId !== this.store.conversationId) {
-        this.store.conversationId = session.conversationId;
-        log.info('Conversation ID updated:', session.conversationId);
-      }
-    }
-  }
-
-  /**
-   * Send a message and return a deduplicated stream.
-   * 
-   * Handles:
-   * - Persistent session reuse (subprocess stays alive across messages)
-   * - CONFLICT recovery from orphaned approvals (retry once)
-   * - Conversation-not-found fallback (create new conversation)
-   * - Tool call deduplication
-   * - Session persistence after result
-   */
-  private async runSession(
-    message: SendMessage,
-    options: { retried?: boolean; canUseTool?: CanUseToolCallback; convKey?: string } = {},
-  ): Promise<{ session: Session; stream: () => AsyncGenerator<StreamMsg> }> {
-    const { retried = false, canUseTool, convKey = 'shared' } = options;
-
-    // Update the per-message callback before sending
-    this.currentCanUseTool = canUseTool;
-
-    let session = await this.ensureSessionForKey(convKey);
-
-    // Resolve the conversation ID for this key (for error recovery)
-    const convId = convKey === 'shared'
-      ? this.store.conversationId
-      : this.store.getConversationId(convKey);
-
-    // Send message with fallback chain
-    try {
-      await this.withSessionTimeout(session.send(message), `Session send (key=${convKey})`);
-    } catch (error) {
-      // 409 CONFLICT from orphaned approval
-      if (!retried && isApprovalConflictError(error) && this.store.agentId && convId) {
-        log.info('CONFLICT detected - attempting orphaned approval recovery...');
-        this.invalidateSession(convKey);
-        const result = await recoverOrphanedConversationApproval(
-          this.store.agentId,
-          convId
-        );
-        if (result.recovered) {
-          log.info(`Recovery succeeded (${result.details}), retrying...`);
-          return this.runSession(message, { retried: true, canUseTool, convKey });
-        }
-        log.error(`Orphaned approval recovery failed: ${result.details}`);
-        throw error;
-      }
-
-      // Conversation/agent not found - try creating a new conversation.
-      // Only retry on errors that indicate missing conversation/agent, not
-      // on auth, network, or protocol errors (which would just fail again).
-      if (this.store.agentId && isConversationMissingError(error)) {
-        log.warn(`Conversation not found (key=${convKey}), creating a new conversation...`);
-        this.invalidateSession(convKey);
-        if (convKey !== 'shared') {
-          this.store.clearConversation(convKey);
-        } else {
-          this.store.conversationId = null;
-        }
-        session = await this.ensureSessionForKey(convKey);
-        try {
-          await this.withSessionTimeout(session.send(message), `Session send retry (key=${convKey})`);
-        } catch (retryError) {
-          this.invalidateSession(convKey);
-          throw retryError;
-        }
-      } else {
-        // Unknown error -- invalidate so we get a fresh subprocess next time
-        this.invalidateSession(convKey);
-        throw error;
-      }
-    }
-
-    // Persist conversation ID immediately after successful send, before streaming.
-    this.persistSessionState(session, convKey);
-
-    // Return session and a stream generator that buffers tool_call chunks and
-    // flushes them with fully accumulated arguments on the next type boundary.
-    // This ensures display messages always have complete args (channels can't
-    // edit messages after sending).
-    const pendingToolCalls = new Map<string, { msg: StreamMsg; accumulatedArgs: string }>();
-    const self = this;
-    const capturedConvKey = convKey; // Capture for closure
-
-    /** Merge tool argument strings, handling both delta and cumulative chunking. */
-    function mergeToolArgs(existing: string, incoming: string): string {
-      if (!incoming) return existing;
-      if (!existing) return incoming;
-      if (incoming === existing) return existing;
-      // Cumulative: latest chunk includes all prior text
-      if (incoming.startsWith(existing)) return incoming;
-      if (existing.endsWith(incoming)) return existing;
-      // Delta: each chunk is an append
-      return `${existing}${incoming}`;
-    }
-
-    function* flushPending(): Generator<StreamMsg> {
-      for (const [, pending] of pendingToolCalls) {
-        if (!pending.accumulatedArgs) {
-          // No rawArguments accumulated (old SDK or single complete chunk) --
-          // preserve the original toolInput from the first chunk as-is.
-          yield pending.msg;
-          continue;
-        }
-        let toolInput: Record<string, unknown> = {};
-        try { toolInput = JSON.parse(pending.accumulatedArgs); }
-        catch { toolInput = { raw: pending.accumulatedArgs }; }
-        yield { ...pending.msg, toolInput };
-      }
-      pendingToolCalls.clear();
-      lastPendingToolCallId = null;
-    }
-
-    let anonToolCallCounter = 0;
-    let lastPendingToolCallId: string | null = null;
-
-    async function* dedupedStream(): AsyncGenerator<StreamMsg> {
-      for await (const raw of session.stream()) {
-        const msg = raw as StreamMsg;
-
-        if (msg.type === 'tool_call') {
-          let id = msg.toolCallId;
-          if (!id) {
-            // Tool calls without IDs (e.g., from models that don't emit
-            // tool_call_id on subsequent argument chunks) still need to be
-            // accumulated. Assign a synthetic ID so they enter the buffer.
-            // If tool name matches the most recent pending call, treat this as
-            // a continuation even when the first chunk had a real toolCallId.
-            const currentPending = lastPendingToolCallId ? pendingToolCalls.get(lastPendingToolCallId) : null;
-            if (lastPendingToolCallId && currentPending && (currentPending.msg.toolName || 'unknown') === (msg.toolName || 'unknown')) {
-              id = lastPendingToolCallId;
-            } else {
-              id = `__anon_${++anonToolCallCounter}__`;
-            }
-          }
-
-          const incoming = (msg as StreamMsg & { rawArguments?: string }).rawArguments || '';
-          const existing = pendingToolCalls.get(id);
-          if (existing) {
-            existing.accumulatedArgs = mergeToolArgs(existing.accumulatedArgs, incoming);
-          } else {
-            pendingToolCalls.set(id, { msg, accumulatedArgs: incoming });
-          }
-          lastPendingToolCallId = id;
-          continue; // buffer, don't yield yet
-        }
-
-        // Flush pending tool calls on semantic type boundary (not stream_event)
-        if (pendingToolCalls.size > 0 && msg.type !== 'stream_event') {
-          yield* flushPending();
-        }
-
-        if (msg.type === 'result') {
-          // Flush any remaining before result
-          yield* flushPending();
-          self.persistSessionState(session, capturedConvKey);
-        }
-
-        yield msg;
-
-        if (msg.type === 'result') {
-          break;
-        }
-      }
-
-      // Flush remaining at generator end (shouldn't normally happen)
-      yield* flushPending();
-    }
-
-    return { session, stream: dedupedStream };
+    return this.sessionManager.warmSession();
   }
 
   // =========================================================================
@@ -1127,13 +524,13 @@ export class LettaBot implements AgentSession {
         const convKey = channelId ? this.resolveConversationKey(channelId, chatId) : 'shared';
         this.store.clearConversation(convKey);
         this.store.resetRecoveryAttempts();
-        this.invalidateSession(convKey);
+        this.sessionManager.invalidateSession(convKey);
         log.info(`/reset - conversation cleared for key="${convKey}"`);
         // Eagerly create the new session so we can report the conversation ID.
         try {
-          const session = await this.ensureSessionForKey(convKey);
+          const session = await this.sessionManager.ensureSessionForKey(convKey);
           const newConvId = session.conversationId || '(pending)';
-          this.persistSessionState(session, convKey);
+          this.sessionManager.persistSessionState(session, convKey);
           if (convKey === 'shared') {
             return `Conversation reset. New conversation: ${newConvId}\n(Agent memory is preserved.)`;
           }
@@ -1159,7 +556,7 @@ export class LettaBot implements AgentSession {
         this.cancelledKeys.add(convKey);
 
         // Abort client-side stream
-        const session = this.sessions.get(convKey);
+        const session = this.sessionManager.getSession(convKey);
         if (session) {
           session.abort().catch(() => {});
           log.info(`/cancel - aborted session stream (key=${convKey})`);
@@ -1507,7 +904,7 @@ export class LettaBot implements AgentSession {
     let session: Session | null = null;
     try {
       const convKey = this.resolveConversationKey(msg.channel, msg.chatId);
-      const run = await this.runSession(messageToSend, { retried, canUseTool, convKey });
+      const run = await this.sessionManager.runSession(messageToSend, { retried, canUseTool, convKey });
       lap('session send');
       session = run.session;
 
@@ -1644,7 +1041,7 @@ export class LettaBot implements AgentSession {
 
           // Log meaningful events with structured summaries
           if (streamMsg.type === 'tool_call') {
-            this.syncTodoToolCall(streamMsg);
+            this.sessionManager.syncTodoToolCall(streamMsg);
             const tcName = streamMsg.toolName || 'unknown';
             const tcId = streamMsg.toolCallId?.slice(0, 12) || '?';
             log.info(`>>> TOOL CALL: ${tcName} (id: ${tcId})`);
@@ -1753,7 +1150,7 @@ export class LettaBot implements AgentSession {
             // next message. Discard it and retry so the message gets processed.
             if (streamMsg.stopReason === 'cancelled') {
               log.info(`Discarding cancelled run result (len=${typeof streamMsg.result === 'string' ? streamMsg.result.length : 0})`);
-              this.invalidateSession(convKey);
+              this.sessionManager.invalidateSession(convKey);
               session = null;
               if (!retried) {
                 return this.processMessage(msg, adapter, true);
@@ -1816,7 +1213,7 @@ export class LettaBot implements AgentSession {
             if (isApprovalConflict && !retried && this.store.agentId) {
               if (retryConvId) {
                 log.info('Approval conflict detected -- attempting targeted recovery...');
-                this.invalidateSession(retryConvKey);
+                this.sessionManager.invalidateSession(retryConvKey);
                 session = null;
                 clearInterval(typingInterval);
                 const convResult = await recoverOrphanedConversationApproval(
@@ -1860,7 +1257,7 @@ export class LettaBot implements AgentSession {
               if (!retried && this.store.agentId && retryConvId) {
                 const reason = shouldRetryForErrorResult ? 'error result' : 'empty result';
                 log.info(`${reason} - attempting orphaned approval recovery...`);
-                this.invalidateSession(retryConvKey);
+                this.sessionManager.invalidateSession(retryConvKey);
                 session = null;
                 clearInterval(typingInterval);
                 const convResult = await recoverOrphanedConversationApproval(
@@ -2059,14 +1456,14 @@ export class LettaBot implements AgentSession {
     const acquired = await this.acquireLock(convKey);
     
     try {
-      const { stream } = await this.runSession(text, { convKey });
+      const { stream } = await this.sessionManager.runSession(text, { convKey });
       
       try {
         let response = '';
         let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | undefined;
         for await (const msg of stream()) {
           if (msg.type === 'tool_call') {
-            this.syncTodoToolCall(msg);
+            this.sessionManager.syncTodoToolCall(msg);
           }
           if (msg.type === 'error') {
             lastErrorDetail = {
@@ -2104,7 +1501,7 @@ export class LettaBot implements AgentSession {
         return response;
       } catch (error) {
         // Invalidate on stream errors so next call gets a fresh subprocess
-        this.invalidateSession(convKey);
+        this.sessionManager.invalidateSession(convKey);
         throw error;
       }
     } finally {
@@ -2124,12 +1521,12 @@ export class LettaBot implements AgentSession {
     const acquired = await this.acquireLock(convKey);
 
     try {
-      const { stream } = await this.runSession(text, { convKey });
+      const { stream } = await this.sessionManager.runSession(text, { convKey });
 
       try {
         yield* stream();
       } catch (error) {
-        this.invalidateSession(convKey);
+        this.sessionManager.invalidateSession(convKey);
         throw error;
       }
     } finally {

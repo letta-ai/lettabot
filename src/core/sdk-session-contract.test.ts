@@ -547,19 +547,20 @@ describe('SDK session contract', () => {
     bot.setAgentId('agent-contract-test');
 
     const botInternal = bot as any;
-    botInternal.sessions.set('telegram:active', activeSession);
-    botInternal.sessions.set('telegram:idle', idleSession);
-    botInternal.sessionLastUsed.set('telegram:active', 1);
-    botInternal.sessionLastUsed.set('telegram:idle', 2);
+    const sm = botInternal.sessionManager;
+    sm.sessions.set('telegram:active', activeSession);
+    sm.sessions.set('telegram:idle', idleSession);
+    sm.sessionLastUsed.set('telegram:active', 1);
+    sm.sessionLastUsed.set('telegram:idle', 2);
     botInternal.processingKeys.add('telegram:active');
 
-    await botInternal._createSessionForKey('telegram:new', true, 0);
+    await sm._createSessionForKey('telegram:new', true, 0);
 
     expect(activeSession.close).not.toHaveBeenCalled();
     expect(idleSession.close).toHaveBeenCalledTimes(1);
-    expect(botInternal.sessions.has('telegram:active')).toBe(true);
-    expect(botInternal.sessions.has('telegram:idle')).toBe(false);
-    expect(botInternal.sessions.has('telegram:new')).toBe(true);
+    expect(sm.sessions.has('telegram:active')).toBe(true);
+    expect(sm.sessions.has('telegram:idle')).toBe(false);
+    expect(sm.sessions.has('telegram:new')).toBe(true);
   });
 
   it('enriches opaque error via stream error event in sendToAgent', async () => {
