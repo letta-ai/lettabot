@@ -624,10 +624,11 @@ export class LettaBot implements AgentSession {
       }
       session = resumeSession(convId, opts);
     } else if (this.store.agentId) {
+      // Agent exists but no conversation stored -- resume the default conversation
       process.env.LETTA_AGENT_ID = this.store.agentId;
       installSkillsToAgent(this.store.agentId, this.config.skills);
       sessionAgentId = this.store.agentId;
-      session = createSession(this.store.agentId, opts);
+      session = resumeSession(this.store.agentId, opts);
     } else {
       // Create new agent -- persist immediately so we don't orphan it on later failures
       log.info('Creating new agent');
@@ -842,8 +843,9 @@ export class LettaBot implements AgentSession {
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
       this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
       log.info('Agent ID updated:', session.agentId);
-    } else if (session.conversationId) {
+    } else if (session.conversationId && session.conversationId !== 'default') {
       // In per-channel mode, persist per-key. In shared mode, use legacy field.
+      // Skip saving "default" -- it's an API alias, not a real conversation ID.
       if (convKey && convKey !== 'shared') {
         const existing = this.store.getConversationId(convKey);
         if (session.conversationId !== existing) {
