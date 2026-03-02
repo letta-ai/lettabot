@@ -2322,10 +2322,52 @@ export class LettaBot implements AgentSession {
 
       try {
         let response = '';
+        let reasoningBuffer = '';
+        let reasoningStepIndex = 0;
         let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | undefined;
         for await (const msg of stream()) {
           if (msg.type === 'tool_call') {
             this.syncTodoToolCall(msg);
+            const tcName = msg.toolName || 'unknown';
+            const tcId = msg.toolCallId?.slice(0, 12) || '?';
+            log.info(`>>> TOOL CALL: ${tcName} (id: ${tcId})`);
+            // Run tool call hook
+            this.runToolCallHook({
+              turnId,
+              timestamp: performance.timeOrigin + performance.now(),
+              toolName: tcName,
+              toolInput: (msg.toolInput || {}) as Record<string, unknown>,
+              toolCallId: msg.toolCallId || '',
+              agent: { ...this.buildHookContextBase(), conversationKey: convKey },
+            });
+          } else if (msg.type === 'tool_result') {
+            log.info(`<<< TOOL RESULT: error=${msg.isError}, len=${(msg as any).content?.length || 0}`);
+            // Run tool result hook
+            this.runToolResultHook({
+              turnId,
+              timestamp: performance.timeOrigin + performance.now(),
+              toolCallId: msg.toolCallId || '',
+              toolName: msg.toolName,
+              content: msg.content || '',
+              isError: msg.isError || false,
+              agent: { ...this.buildHookContextBase(), conversationKey: convKey },
+            });
+          } else if (msg.type === 'reasoning') {
+            // Accumulate reasoning for hook
+            reasoningBuffer += msg.content || '';
+          } else if (msg.type === 'assistant') {
+            // Fire reasoning hook when transitioning from reasoning to assistant
+            if (reasoningBuffer) {
+              this.runReasoningHook({
+                ...hookContextBase,
+                stage: 'postReasoning',
+                message: hookMessage,
+                reasoning: reasoningBuffer,
+                stepIndex: reasoningStepIndex++,
+              });
+              reasoningBuffer = '';
+            }
+            response += msg.content || '';
           }
           if (msg.type === 'error') {
             lastErrorDetail = {
@@ -2334,10 +2376,18 @@ export class LettaBot implements AgentSession {
               apiError: (msg as any).apiError,
             };
           }
-          if (msg.type === 'assistant') {
-            response += msg.content || '';
-          }
           if (msg.type === 'result') {
+            // Fire any remaining reasoning hook
+            if (reasoningBuffer) {
+              this.runReasoningHook({
+                ...hookContextBase,
+                stage: 'postReasoning',
+                message: hookMessage,
+                reasoning: reasoningBuffer,
+                stepIndex: reasoningStepIndex++,
+              });
+              reasoningBuffer = '';
+            }
             // Capture cost and usage for post-message hook
             if (typeof msg.totalCostUsd === 'number') turnCostUsd = msg.totalCostUsd;
             turnUsage = extractUsage(msg) ?? turnUsage;
@@ -2437,12 +2487,64 @@ export class LettaBot implements AgentSession {
     try {
       const { stream } = await this.runSession(hookMessage, { convKey });
 
+      let reasoningBuffer = '';
+      let reasoningStepIndex = 0;
       try {
         for await (const msg of stream()) {
-          if (msg.type === 'assistant') {
+          if (msg.type === 'tool_call') {
+            this.syncTodoToolCall(msg);
+            const tcName = msg.toolName || 'unknown';
+            const tcId = msg.toolCallId?.slice(0, 12) || '?';
+            log.info(`>>> TOOL CALL: ${tcName} (id: ${tcId})`);
+            // Run tool call hook
+            this.runToolCallHook({
+              turnId,
+              timestamp: performance.timeOrigin + performance.now(),
+              toolName: tcName,
+              toolInput: (msg.toolInput || {}) as Record<string, unknown>,
+              toolCallId: msg.toolCallId || '',
+              agent: { ...this.buildHookContextBase(), conversationKey: convKey },
+            });
+          } else if (msg.type === 'tool_result') {
+            log.info(`<<< TOOL RESULT: error=${msg.isError}, len=${(msg as any).content?.length || 0}`);
+            // Run tool result hook
+            this.runToolResultHook({
+              turnId,
+              timestamp: performance.timeOrigin + performance.now(),
+              toolCallId: msg.toolCallId || '',
+              toolName: msg.toolName,
+              content: msg.content || '',
+              isError: msg.isError || false,
+              agent: { ...this.buildHookContextBase(), conversationKey: convKey },
+            });
+          } else if (msg.type === 'reasoning') {
+            reasoningBuffer += msg.content || '';
+          } else if (msg.type === 'assistant') {
+            // Fire reasoning hook when transitioning from reasoning to assistant
+            if (reasoningBuffer) {
+              this.runReasoningHook({
+                ...hookContextBase,
+                stage: 'postReasoning',
+                message: hookMessage,
+                reasoning: reasoningBuffer,
+                stepIndex: reasoningStepIndex++,
+              });
+              reasoningBuffer = '';
+            }
             hookResponse += msg.content || '';
           }
           if (msg.type === 'result') {
+            // Fire any remaining reasoning hook
+            if (reasoningBuffer) {
+              this.runReasoningHook({
+                ...hookContextBase,
+                stage: 'postReasoning',
+                message: hookMessage,
+                reasoning: reasoningBuffer,
+                stepIndex: reasoningStepIndex++,
+              });
+              reasoningBuffer = '';
+            }
             const resultText = typeof msg.result === 'string' ? msg.result : '';
             if (resultText.trim().length > 0) hookResponse = resultText;
             // Capture cost and usage for post-message hook
