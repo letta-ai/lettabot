@@ -420,15 +420,15 @@ export class CronService {
       // Send message to agent
       const response = await this.bot.sendToAgent(messageWithMetadata);
       
-      // Resolve delivery target: explicit config > last message target fallback
-      const deliverTarget = job.deliver ?? (() => {
+      // Resolve delivery target: explicit config > last message target fallback > silent
+      let deliverTarget: { channel: string; chatId: string } | null = job.deliver ?? null;
+      if (!deliverTarget && !job.silent) {
         const last = this.bot.getLastMessageTarget();
         if (last) {
           log.info(`No deliver target configured for "${job.name}", using last message target: ${last.channel}:${last.chatId}`);
-          return { channel: last.channel, chatId: last.chatId };
+          deliverTarget = { channel: last.channel, chatId: last.chatId };
         }
-        return null;
-      })();
+      }
       const deliverMode = deliverTarget ? 'deliver' : 'silent';
       if (deliverTarget && response) {
         try {
