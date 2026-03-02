@@ -26,6 +26,8 @@ export class SessionManager {
 
   // Active processing keys -- owned by LettaBot, read here for LRU eviction safety.
   private readonly processingKeys: ReadonlySet<string>;
+  // Stale-result fingerprints -- owned by LettaBot, cleaned here on invalidation/eviction.
+  private readonly lastResultRunFingerprints: Map<string, string>;
 
   // Persistent sessions: reuse CLI subprocesses across messages.
   private sessions: Map<string, Session> = new Map();
@@ -46,10 +48,16 @@ export class SessionManager {
     return { behavior: 'allow' as const };
   };
 
-  constructor(store: Store, config: BotConfig, processingKeys: ReadonlySet<string>) {
+  constructor(
+    store: Store,
+    config: BotConfig,
+    processingKeys: ReadonlySet<string>,
+    lastResultRunFingerprints: Map<string, string>,
+  ) {
     this.store = store;
     this.config = config;
     this.processingKeys = processingKeys;
+    this.lastResultRunFingerprints = lastResultRunFingerprints;
   }
 
   // =========================================================================
@@ -216,18 +224,25 @@ export class SessionManager {
     let session: Session;
     let sessionAgentId: string | undefined;
 
-    // In per-channel mode, look up per-key conversation ID.
-    // In shared mode (key === "shared"), use the legacy single conversationId.
-    const convId = key === 'shared'
-      ? this.store.conversationId
-      : this.store.getConversationId(key);
+    // In disabled mode, always resume the agent's built-in default conversation.
+    // Skip store lookup entirely -- no conversation ID is persisted.
+    const convId = key === 'default'
+      ? null
+      : key === 'shared'
+        ? this.store.conversationId
+        : this.store.getConversationId(key);
 
     // Propagate per-agent cron store path to CLI subprocesses (lettabot-schedule)
     if (this.config.cronStorePath) {
       process.env.CRON_STORE_PATH = this.config.cronStorePath;
     }
 
-    if (convId) {
+    if (key === 'default' && this.store.agentId) {
+      process.env.LETTA_AGENT_ID = this.store.agentId;
+      installSkillsToAgent(this.store.agentId, this.config.skills);
+      sessionAgentId = this.store.agentId;
+      session = resumeSession('default', opts);
+    } else if (convId) {
       process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
       if (this.store.agentId) {
         installSkillsToAgent(this.store.agentId, this.config.skills);
@@ -259,7 +274,11 @@ export class SessionManager {
       installSkillsToAgent(newAgentId, this.config.skills);
       sessionAgentId = newAgentId;
 
-      session = createSession(newAgentId, opts);
+      // In disabled mode, resume the built-in default conversation instead of
+      // creating a new one.  Other modes create a fresh conversation per key.
+      session = key === 'default'
+        ? resumeSession('default', opts)
+        : createSession(newAgentId, opts);
     }
 
     // Initialize eagerly so the subprocess is ready before the first send()
@@ -361,7 +380,9 @@ export class SessionManager {
         this.sessionLastUsed.delete(oldestKey);
         this.sessionGenerations.delete(oldestKey);
         this.sessionCreationLocks.delete(oldestKey);
+        this.lastResultRunFingerprints.delete(oldestKey);
       } else {
+        // All existing sessions are active; allow temporary overflow.
         log.debug(`LRU session eviction skipped: all ${this.sessions.size} sessions are active/in-flight`);
       }
     }
@@ -393,6 +414,7 @@ export class SessionManager {
         this.sessions.delete(key);
         this.sessionLastUsed.delete(key);
       }
+      this.lastResultRunFingerprints.delete(key);
     } else {
       const keys = new Set<string>([
         ...this.sessions.keys(),
@@ -410,6 +432,7 @@ export class SessionManager {
       this.sessions.clear();
       this.sessionCreationLocks.clear();
       this.sessionLastUsed.clear();
+      this.lastResultRunFingerprints.clear();
     }
   }
 
@@ -431,13 +454,19 @@ export class SessionManager {
 
   /**
    * Persist conversation ID after a successful session result.
+   * Agent ID and first-run setup are handled eagerly in ensureSessionForKey().
    */
   persistSessionState(session: Session, convKey?: string): void {
+    // Agent ID already persisted in ensureSessionForKey() on creation.
+    // Here we only update if the server returned a different one (shouldn't happen).
     if (session.agentId && session.agentId !== this.store.agentId) {
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
       this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
       log.info('Agent ID updated:', session.agentId);
-    } else if (session.conversationId && session.conversationId !== 'default') {
+    } else if (session.conversationId && session.conversationId !== 'default' && convKey !== 'default') {
+      // In per-channel mode, persist per-key. In shared mode, use legacy field.
+      // Skip saving "default" -- it's an API alias, not a real conversation ID.
+      // In disabled mode (convKey === 'default'), skip -- always use the built-in default.
       if (convKey && convKey !== 'shared') {
         const existing = this.store.getConversationId(convKey);
         if (session.conversationId !== existing) {
