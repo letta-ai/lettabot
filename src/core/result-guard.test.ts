@@ -60,4 +60,48 @@ describe('result divergence guard', () => {
     const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
     expect(sentTexts).toEqual(['first segment']);
   });
+
+  it('prefers streamed assistant text when result text diverges after flush', async () => {
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async () => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    (bot as any).runSession = vi.fn(async () => ({
+      session: { abort: vi.fn(async () => {}) },
+      stream: async function* () {
+        yield { type: 'assistant', content: 'streamed-segment' };
+        yield { type: 'tool_call', toolCallId: 'tc-1', toolName: 'Bash', toolInput: { command: 'echo hi' } };
+        // Divergent stale result should not replace or resend streamed content.
+        yield { type: 'result', success: true, result: 'stale-result-segment' };
+      },
+    }));
+
+    const msg: InboundMessage = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
+    expect(sentTexts).toEqual(['streamed-segment']);
+  });
 });
