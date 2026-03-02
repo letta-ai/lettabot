@@ -420,19 +420,27 @@ export class CronService {
       // Send message to agent
       const response = await this.bot.sendToAgent(messageWithMetadata);
       
-      // Deliver response to channel if configured
-      const deliverMode = job.deliver ? 'deliver' : 'silent';
-      if (job.deliver && response) {
+      // Resolve delivery target: explicit config > last message target fallback > silent
+      let deliverTarget: { channel: string; chatId: string } | null = job.deliver ?? null;
+      if (!deliverTarget && !job.silent) {
+        const last = this.bot.getLastMessageTarget();
+        if (last) {
+          log.info(`No deliver target configured for "${job.name}", using last message target: ${last.channel}:${last.chatId}`);
+          deliverTarget = { channel: last.channel, chatId: last.chatId };
+        }
+      }
+      const deliverMode = deliverTarget ? 'deliver' : 'silent';
+      if (deliverTarget && response) {
         try {
-          await this.bot.deliverToChannel(job.deliver.channel, job.deliver.chatId, { text: response });
-          log.info(`📬 Delivered response to ${job.deliver.channel}:${job.deliver.chatId}`);
+          await this.bot.deliverToChannel(deliverTarget.channel, deliverTarget.chatId, { text: response });
+          log.info(`📬 Delivered response to ${deliverTarget.channel}:${deliverTarget.chatId}`);
         } catch (deliverError) {
-          log.error(`Failed to deliver response to ${job.deliver.channel}:${job.deliver.chatId}:`, deliverError);
+          log.error(`Failed to deliver response to ${deliverTarget.channel}:${deliverTarget.chatId}:`, deliverError);
           logEvent('job_deliver_failed', {
             id: job.id,
             name: job.name,
-            channel: job.deliver.channel,
-            chatId: job.deliver.chatId,
+            channel: deliverTarget.channel,
+            chatId: deliverTarget.chatId,
             error: deliverError instanceof Error ? deliverError.message : String(deliverError),
           });
         }
@@ -457,9 +465,9 @@ export class CronService {
       log.info(`✅ JOB COMPLETED: ${job.name} [${deliverMode.toUpperCase()} MODE]`);
       log.info(`       Response: ${response?.slice(0, 200)}${(response?.length || 0) > 200 ? '...' : ''}`);
       if (deliverMode === 'silent') {
-        log.info(`       (Response NOT auto-delivered - agent uses lettabot-message CLI)`);
+        log.info(`       (Response NOT auto-delivered - no target available)`);
       } else {
-        log.info(`       (Response delivered to ${job.deliver!.channel}:${job.deliver!.chatId})`);
+        log.info(`       (Response delivered to ${deliverTarget!.channel}:${deliverTarget!.chatId}${!job.deliver ? ' via fallback' : ''})`);
       }
       log.info(`${'='.repeat(50)}`);
       
@@ -468,7 +476,8 @@ export class CronService {
         name: job.name,
         status: 'ok',
         mode: deliverMode,
-        deliverTarget: job.deliver ? `${job.deliver.channel}:${job.deliver.chatId}` : undefined,
+        deliverTarget: deliverTarget ? `${deliverTarget.channel}:${deliverTarget.chatId}` : undefined,
+        deliverSource: job.deliver ? 'configured' : (deliverTarget ? 'lastMessageTarget' : undefined),
         nextRun: job.state.nextRunAt?.toISOString(),
         responseLength: response?.length || 0,
       });
