@@ -146,7 +146,7 @@ See the [Letta Code skills documentation](https://docs.letta.com/letta-code/skil
 
 To add a skill to lettabot:
 
-1. Create a directory under `skills/<name>/` with a `SKILL.md` file. The frontmatter declares metadata (see above). The body is a prompt loaded into the agent's context -- write it as instructions the agent will follow, not as human documentation.
+1. Create a directory under `skills/<name>/` (in the lettabot repo root) with a `SKILL.md` file. The frontmatter declares metadata (see above). The body is a prompt loaded into the agent's context -- write it as instructions the agent will follow, not as human documentation.
 2. Place any executables or scripts alongside `SKILL.md` in the same directory. These become available on the agent's PATH at runtime.
 3. If the skill should be feature-gated (only installed when a config flag is set), add an entry to `FEATURE_SKILLS` in `src/skills/loader.ts` and wire up the corresponding config flag in `main.ts`.
 4. Verify with `lettabot skills status` that the skill is discovered and eligible.
