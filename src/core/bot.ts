@@ -235,6 +235,9 @@ export class LettaBot implements AgentSession {
     this.config = config;
     mkdirSync(config.workingDir, { recursive: true });
     this.store = new Store('lettabot-agent.json', config.agentName);
+    if (config.reuseSession === false) {
+      log.warn('Session reuse disabled (conversations.reuseSession=false): each foreground/background message uses a fresh SDK subprocess (~5s overhead per turn).');
+    }
     if (config.conversationOverrides?.length) {
       this.conversationOverrides = new Set(config.conversationOverrides.map((ch) => ch.toLowerCase()));
     }
@@ -1559,7 +1562,11 @@ export class LettaBot implements AgentSession {
     try {
       const convKey = this.resolveConversationKey(msg.channel, msg.chatId);
       const seq = ++this.sendSequence;
-      log.info(`processMessage seq=${seq} key=${convKey} retried=${retried} user=${msg.userId} text=${(msg.text || '').slice(0, 80)}`);
+      const userText = msg.text || '';
+      log.info(`processMessage seq=${seq} key=${convKey} retried=${retried} user=${msg.userId} textLen=${userText.length}`);
+      if (userText.length > 0) {
+        log.debug(`processMessage seq=${seq} textPreview=${userText.slice(0, 80)}`);
+      }
       const run = await this.runSession(messageToSend, { retried, canUseTool, convKey });
       lap('session send');
       session = run.session;
@@ -1640,6 +1647,7 @@ export class LettaBot implements AgentSession {
       
       try {
         let firstChunkLogged = false;
+        let streamedAssistantText = '';
         for await (const streamMsg of run.stream()) {
           // Check for /cancel before processing each chunk
           if (this.cancelledKeys.has(convKey)) {
@@ -1764,7 +1772,9 @@ export class LettaBot implements AgentSession {
             }
             lastAssistantUuid = msgUuid || lastAssistantUuid;
             
-            response += streamMsg.content || '';
+            const assistantChunk = streamMsg.content || '';
+            response += assistantChunk;
+            streamedAssistantText += assistantChunk;
             
             // Live-edit streaming for channels that support it
             // Hold back streaming edits while response could still be <no-reply/> or <actions> block
@@ -1805,7 +1815,7 @@ export class LettaBot implements AgentSession {
             // content from a previously cancelled run as the result for the
             // next message. Discard it and retry so the message gets processed.
             if (streamMsg.stopReason === 'cancelled') {
-              log.info(`Discarding cancelled run result (len=${typeof streamMsg.result === 'string' ? streamMsg.result.length : 0})`);
+              log.info(`Discarding cancelled run result (seq=${seq}, len=${typeof streamMsg.result === 'string' ? streamMsg.result.length : 0})`);
               this.invalidateSession(convKey);
               session = null;
               if (!retried) {
@@ -1828,23 +1838,31 @@ export class LettaBot implements AgentSession {
 
             const resultText = typeof streamMsg.result === 'string' ? streamMsg.result : '';
             if (resultText.trim().length > 0) {
-              // Guard against n-1 desync: if we accumulated assistant text via
-              // streaming and the result carries different content, the result
-              // likely belongs to a prior run that leaked through the SDK's
-              // stream queue. Prefer the real-time streamed content.
-              if (response.trim().length > 0 && resultText.trim() !== response.trim()) {
+              const streamedTextTrimmed = streamedAssistantText.trim();
+              const resultTextTrimmed = resultText.trim();
+              // Compare against all streamed assistant text, not the current
+              // response buffer (which can be reset between assistant turns).
+              if (streamedTextTrimmed.length > 0 && resultTextTrimmed !== streamedTextTrimmed) {
                 log.warn(
                   `Result text diverges from streamed content ` +
-                  `(resultLen=${resultText.length}, streamLen=${response.length}). ` +
+                  `(resultLen=${resultText.length}, streamLen=${streamedAssistantText.length}). ` +
                   `Preferring streamed content to avoid n-1 desync.`
                 );
-              } else {
+              } else if (streamedTextTrimmed.length === 0) {
+                // Fallback for models/providers that only populate result text.
+                response = resultText;
+              } else if (!sentAnyMessage && response.trim().length === 0) {
+                // Safety fallback: if we streamed text but nothing was
+                // delivered yet, allow a single result-based resend.
                 response = resultText;
               }
             }
             const hasResponse = response.trim().length > 0;
             const isTerminalError = streamMsg.success === false || !!streamMsg.error;
-            log.info(`Stream result: seq=${seq} success=${streamMsg.success}, hasResponse=${hasResponse}, resultLen=${resultText.length}, responsePreview=${response.trim().slice(0, 60)}`);
+            log.info(`Stream result: seq=${seq} success=${streamMsg.success}, hasResponse=${hasResponse}, resultLen=${resultText.length}`);
+            if (response.trim().length > 0) {
+              log.debug(`Stream result preview: seq=${seq} responsePreview=${response.trim().slice(0, 60)}`);
+            }
             log.info(`Stream message counts:`, msgTypeCounts);
             if (streamMsg.error) {
               const detail = resultText.trim();
