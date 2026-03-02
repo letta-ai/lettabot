@@ -200,6 +200,9 @@ export class LettaBot implements AgentSession {
   private processingKeys: Set<string> = new Set(); // Per-key locks for per-channel mode
   private cancelledKeys: Set<string> = new Set(); // Tracks keys where /cancel was issued
   private sendSequence = 0; // Monotonic counter for desync diagnostics
+  // Forward-looking: stale-result detection via runIds becomes active once the
+  // SDK surfaces non-empty result run_ids. Until then, this map mostly stays
+  // empty and the streamed/result divergence guard remains the active defense.
   private lastResultRunFingerprints: Map<string, string> = new Map();
 
   // AskUserQuestion support: resolves when the next user message arrives.
@@ -256,6 +259,10 @@ export class LettaBot implements AgentSession {
   }
 
   private normalizeResultRunIds(msg: StreamMsg): string[] {
+    // Forward-looking compatibility:
+    // - Current SDK releases often emit result.run_ids as null/undefined.
+    // - When runIds are absent, caller gets [] and falls back to streamed vs
+    //   result text comparison (which works with today's wire payloads).
     const rawRunIds = (msg as StreamMsg & { runIds?: unknown; run_ids?: unknown }).runIds
       ?? (msg as StreamMsg & { run_ids?: unknown }).run_ids;
     if (!Array.isArray(rawRunIds)) return [];
@@ -791,6 +798,7 @@ export class LettaBot implements AgentSession {
         this.sessionLastUsed.delete(oldestKey);
         this.sessionGenerations.delete(oldestKey);
         this.sessionCreationLocks.delete(oldestKey);
+        this.lastResultRunFingerprints.delete(oldestKey);
       } else {
         // All existing sessions are active; allow temporary overflow.
         log.debug(`LRU session eviction skipped: all ${this.sessions.size} sessions are active/in-flight`);
@@ -826,6 +834,7 @@ export class LettaBot implements AgentSession {
         this.sessions.delete(key);
         this.sessionLastUsed.delete(key);
       }
+      this.lastResultRunFingerprints.delete(key);
     } else {
       const keys = new Set<string>([
         ...this.sessions.keys(),
@@ -843,6 +852,7 @@ export class LettaBot implements AgentSession {
       this.sessions.clear();
       this.sessionCreationLocks.clear();
       this.sessionLastUsed.clear();
+      this.lastResultRunFingerprints.clear();
     }
   }
 
@@ -1817,6 +1827,10 @@ export class LettaBot implements AgentSession {
             if (resultText.trim().length > 0) {
               const streamedTextTrimmed = streamedAssistantText.trim();
               const resultTextTrimmed = resultText.trim();
+              // Decision tree:
+              // 1) Diverged from streamed output -> prefer streamed text (active fix today)
+              // 2) No streamed assistant text -> use result text as fallback
+              // 3) Streamed text exists but nothing was delivered -> allow one result resend
               // Compare against all streamed assistant text, not the current
               // response buffer (which can be reset between assistant turns).
               if (streamedTextTrimmed.length > 0 && resultTextTrimmed !== streamedTextTrimmed) {

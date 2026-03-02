@@ -685,7 +685,7 @@ describe('SDK session contract', () => {
     );
   });
 
-  it('retries sendToAgent when the result runIds repeat the previous run', async () => {
+  it('retries sendToAgent when SDK result runIds repeat the previous run', async () => {
     let streamCall = 0;
 
     const mockSession = {
@@ -736,18 +736,17 @@ describe('SDK session contract', () => {
   });
 
   it('invalidates background sessions when reuseSession is false', async () => {
-    let resultCounter = 0;
-
     const mockSession = {
       initialize: vi.fn(async () => undefined),
       send: vi.fn(async () => undefined),
-      stream: vi.fn(() => {
-        const runId = `run-fixed-${++resultCounter}`;
-        return (async function* () {
+      stream: vi.fn(() =>
+        (async function* () {
           yield { type: 'assistant', content: 'ok' };
-          yield { type: 'result', success: true, runIds: [runId] };
-        })();
-      }),
+          // Keep this fixture aligned with current SDK output where runIds is
+          // often absent; this test validates reuseSession behavior only.
+          yield { type: 'result', success: true };
+        })()
+      ),
       close: vi.fn(() => undefined),
       agentId: 'agent-reuse-false',
       conversationId: 'conversation-reuse-false',
