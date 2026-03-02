@@ -169,7 +169,7 @@ export interface BotConfig {
   cronStorePath?: string; // Resolved cron store path (per-agent in multi-agent mode)
 
   // Conversation routing
-  conversationMode?: 'shared' | 'per-channel' | 'per-chat'; // Default: shared
+  conversationMode?: 'disabled' | 'shared' | 'per-channel' | 'per-chat'; // Default: shared
   heartbeatConversation?: string; // "dedicated" | "last-active" | "<channel>" (default: last-active)
   conversationOverrides?: string[]; // Channels that always use their own conversation (shared mode)
   maxSessions?: number; // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
