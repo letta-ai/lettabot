@@ -42,12 +42,14 @@ lettabot-cron create \
 - `--name` - Job name (required)
 - `--schedule` - Cron expression (required)
 - `--message` - Message sent when job runs (required)
-- `--deliver` - Where to send: `channel:chatId` (defaults to last messaged chat)
+- `--deliver` - Where to send: `channel:chatId` (defaults to last messaged chat at creation time; falls back to last messaged chat at runtime)
+- `--silent` - Do not deliver response automatically (agent must use `lettabot-message send`)
 
 ### Managing Jobs
 
 ```bash
 lettabot-cron list              # Show all jobs
+lettabot-cron update <id> ...   # Update job properties (--deliver, --name, --message, etc.)
 lettabot-cron delete <id>       # Delete a job
 lettabot-cron enable <id>       # Enable a job
 lettabot-cron disable <id>      # Disable a job
@@ -144,11 +146,20 @@ Only actionable tasks are shown in the heartbeat prompt:
 - `completed: false`
 - `snoozed_until` not set, or already in the past
 
-## Silent Mode
+## Delivery Behavior
 
-Both cron jobs and heartbeats run in **Silent Mode**:
+### Cron Jobs
 
-- The agent's text output is NOT automatically sent to users
+Cron jobs deliver responses automatically:
+- If `--deliver` was specified at creation, responses go to that channel/chat
+- If `--deliver` was omitted, the CLI auto-fills from the last messaged chat
+- At runtime, if a job has no configured delivery target, it falls back to the most recent message target
+- Use `--silent` at creation to explicitly opt out of automatic delivery
+
+### Heartbeats (Silent Mode)
+
+Heartbeats run in **Silent Mode** -- responses are NOT automatically delivered:
+
 - The agent sees a `[SILENT MODE]` banner with instructions
 - To send messages, the agent must explicitly run:
 
@@ -207,4 +218,8 @@ Migration note:
 
 ### Jobs running but no messages received
 
-The agent runs in Silent Mode - it must actively choose to send messages. Check the agent's behavior in the ADE to see what it's doing during background tasks.
+1. Check `lettabot-cron list` -- does the job show a delivery target?
+2. If delivery shows `(none)`, the job was created without `--deliver` and no user had messaged the bot yet
+3. Fix: `lettabot-cron update <id> --deliver telegram:123456789` (or your channel:chatId)
+4. Alternatively, send the bot any message to establish a last-message target -- new runs will auto-deliver
+5. Check logs for `"mode":"silent"` entries -- this confirms the job ran but had nowhere to send the response

@@ -102,7 +102,6 @@ describe('SDK session contract', () => {
       conversationId: 'conversation-contract-test',
     };
 
-    vi.mocked(createSession).mockReturnValue(mockSession as never);
     vi.mocked(resumeSession).mockReturnValue(mockSession as never);
 
     const bot = new LettaBot({
@@ -113,8 +112,8 @@ describe('SDK session contract', () => {
     await bot.sendToAgent('first message');
     await bot.sendToAgent('second message');
 
-    expect(vi.mocked(resumeSession)).not.toHaveBeenCalled();
-    expect(vi.mocked(createSession)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createSession)).not.toHaveBeenCalled();
+    expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(1);
     expect(mockSession.initialize).toHaveBeenCalledTimes(1);
     expect(mockSession.send).toHaveBeenCalledTimes(2);
     expect(mockSession.send).toHaveBeenNthCalledWith(1, 'first message');
@@ -219,9 +218,10 @@ describe('SDK session contract', () => {
     };
 
     vi.mocked(createAgent).mockResolvedValue('agent-recreated');
-    vi.mocked(createSession)
-      .mockReturnValueOnce(staleSession as never)
-      .mockReturnValueOnce(recoveredSession as never);
+    // First call: agentId exists, no convId → resumeSession(agentId)
+    vi.mocked(resumeSession).mockReturnValueOnce(staleSession as never);
+    // After clearAgent + createAgent → createSession(newAgentId)
+    vi.mocked(createSession).mockReturnValueOnce(recoveredSession as never);
 
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
@@ -234,9 +234,8 @@ describe('SDK session contract', () => {
     expect(response).toBe('fresh response');
     expect(staleSession.close).toHaveBeenCalledTimes(1);
     expect(vi.mocked(createAgent)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(createSession)).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(createSession).mock.calls[0][0]).toBe('agent-contract-test');
-    expect(vi.mocked(createSession).mock.calls[1][0]).toBe('agent-recreated');
+    expect(vi.mocked(resumeSession).mock.calls[0][0]).toBe('agent-contract-test');
+    expect(vi.mocked(createSession).mock.calls[0][0]).toBe('agent-recreated');
   });
 
   it('does not clear agent state on generic initialize failures', async () => {
@@ -309,10 +308,9 @@ describe('SDK session contract', () => {
       conversationId: 'conversation-contract-test-2',
     };
 
-    vi.mocked(createSession)
+    vi.mocked(resumeSession)
       .mockReturnValueOnce(firstSession as never)
       .mockReturnValueOnce(secondSession as never);
-    vi.mocked(resumeSession).mockReturnValue(firstSession as never);
 
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
@@ -322,7 +320,7 @@ describe('SDK session contract', () => {
     await expect(bot.sendToAgent('trigger fallback')).rejects.toThrow('network down');
     expect(firstSession.close).toHaveBeenCalledTimes(1);
     expect(secondSession.close).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(createSession)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(2);
   });
 
   it('reset ignores stale in-flight warm session and creates a fresh one', async () => {
@@ -356,8 +354,9 @@ describe('SDK session contract', () => {
       conversationId: 'conv-new',
     };
 
-    vi.mocked(resumeSession).mockReturnValue(warmSession as never);
-    vi.mocked(createSession).mockReturnValue(resetSession as never);
+    vi.mocked(resumeSession)
+      .mockReturnValueOnce(warmSession as never)
+      .mockReturnValueOnce(resetSession as never);
 
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
@@ -384,7 +383,7 @@ describe('SDK session contract', () => {
     expect(resetMessage).toContain('New conversation: conv-new');
     expect(warmSession.close).toHaveBeenCalledTimes(1);
     expect(resetSession.initialize).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(createSession)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(2);
   });
 
   it('does not pre-warm a shared session in per-chat mode', async () => {
@@ -401,7 +400,7 @@ describe('SDK session contract', () => {
     expect(vi.mocked(resumeSession)).not.toHaveBeenCalled();
   });
 
-  it('passes memfs: true to createSession when config sets memfs true', async () => {
+  it('passes memfs: true to resumeSession when config sets memfs true', async () => {
     const mockSession = {
       initialize: vi.fn(async () => undefined),
       send: vi.fn(async (_message: unknown) => undefined),
@@ -416,7 +415,7 @@ describe('SDK session contract', () => {
       conversationId: 'conversation-contract-test',
     };
 
-    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
 
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
@@ -426,11 +425,11 @@ describe('SDK session contract', () => {
 
     await bot.sendToAgent('test');
 
-    const opts = vi.mocked(createSession).mock.calls[0][1];
+    const opts = vi.mocked(resumeSession).mock.calls[0][1];
     expect(opts).toHaveProperty('memfs', true);
   });
 
-  it('passes memfs: false to createSession when config sets memfs false', async () => {
+  it('passes memfs: false to resumeSession when config sets memfs false', async () => {
     const mockSession = {
       initialize: vi.fn(async () => undefined),
       send: vi.fn(async (_message: unknown) => undefined),
@@ -445,7 +444,7 @@ describe('SDK session contract', () => {
       conversationId: 'conversation-contract-test',
     };
 
-    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
 
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
@@ -455,11 +454,11 @@ describe('SDK session contract', () => {
 
     await bot.sendToAgent('test');
 
-    const opts = vi.mocked(createSession).mock.calls[0][1];
+    const opts = vi.mocked(resumeSession).mock.calls[0][1];
     expect(opts).toHaveProperty('memfs', false);
   });
 
-  it('omits memfs key from createSession options when config memfs is undefined', async () => {
+  it('omits memfs key from resumeSession options when config memfs is undefined', async () => {
     const mockSession = {
       initialize: vi.fn(async () => undefined),
       send: vi.fn(async (_message: unknown) => undefined),
@@ -474,7 +473,7 @@ describe('SDK session contract', () => {
       conversationId: 'conversation-contract-test',
     };
 
-    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
 
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
@@ -484,7 +483,7 @@ describe('SDK session contract', () => {
 
     await bot.sendToAgent('test');
 
-    const opts = vi.mocked(createSession).mock.calls[0][1];
+    const opts = vi.mocked(resumeSession).mock.calls[0][1];
     expect(opts).not.toHaveProperty('memfs');
   });
 
@@ -530,7 +529,7 @@ describe('SDK session contract', () => {
       agentId: 'agent-contract-test',
       conversationId: 'conv-new',
     };
-    vi.mocked(createSession).mockReturnValue(createdSession as never);
+    vi.mocked(resumeSession).mockReturnValue(createdSession as never);
 
     const activeSession = {
       close: vi.fn(() => undefined),
@@ -578,7 +577,7 @@ describe('SDK session contract', () => {
       conversationId: 'conversation-contract-test',
     };
 
-    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
 
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
@@ -604,7 +603,7 @@ describe('SDK session contract', () => {
       conversationId: 'conv-123',
     };
 
-    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
     vi.mocked(getLatestRunError).mockResolvedValueOnce({
       message: 'INTERNAL_SERVER_ERROR: Bad request to Anthropic: Error code: 400',
       stopReason: 'llm_api_error',
@@ -636,7 +635,7 @@ describe('SDK session contract', () => {
       conversationId: 'conversation-contract-test',
     };
 
-    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
     vi.mocked(getLatestRunError).mockResolvedValueOnce(null);
 
     const bot = new LettaBot({

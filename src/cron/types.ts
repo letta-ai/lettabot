@@ -30,6 +30,9 @@ export interface CronJob {
     chatId: string;
   };
   
+  // Explicitly suppress delivery (skips lastMessageTarget fallback)
+  silent?: boolean;
+  
   // Delete after running (for one-shot jobs)
   deleteAfterRun?: boolean;
   
