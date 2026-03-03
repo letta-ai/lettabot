@@ -10,7 +10,9 @@ import type { SkillEntry, ClawdbotMetadata } from './types.js';
 
 // Skills directories (in priority order: project > agent > global > bundled > skills.sh)
 const HOME = process.env.HOME || process.env.USERPROFILE || '';
+export const WORKING_DIR = process.env.WORKING_DIR || '/tmp/lettabot';
 export const PROJECT_SKILLS_DIR = resolve(process.cwd(), '.skills');
+export const WORKING_SKILLS_DIR = join(WORKING_DIR, '.skills'); // skills enabled via CLI
 export const GLOBAL_SKILLS_DIR = join(HOME, '.letta', 'skills');
 export const SKILLS_SH_DIR = join(HOME, '.agents', 'skills'); // skills.sh global installs
 
@@ -55,50 +57,57 @@ export function getAgentSkillExecutableDirs(agentId: string): string[] {
 }
 
 /**
- * Temporarily prepend agent skill directories to PATH for one async operation.
- *
- * PATH is process-global, so serialize PATH mutations to avoid races when
- * multiple sessions initialize concurrently.
+ * Get executable skill directories from the working-dir .skills/ folder.
+ * These are skills enabled via `lettabot skills enable` or the sync wizard.
  */
-let _pathMutationQueue: Promise<void> = Promise.resolve();
-async function withPathMutationLock<T>(fn: () => Promise<T>): Promise<T> {
-  const previous = _pathMutationQueue;
-  let release!: () => void;
-  _pathMutationQueue = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+export function getWorkingSkillExecutableDirs(): string[] {
+  if (!existsSync(WORKING_SKILLS_DIR)) return [];
+  return resolveSkillExecutableDirs(WORKING_SKILLS_DIR);
+}
 
-  await previous;
-  try {
-    return await fn();
-  } finally {
-    release();
+/**
+ * Permanently prepend skill directories to PATH so that subprocesses
+ * spawned subsequently inherit them.
+ *
+ * Includes both agent-scoped skills (~/.letta/agents/{id}/skills/) and
+ * working-dir skills (WORKING_DIR/.skills/) so that skills enabled via
+ * `lettabot skills enable` are available without needing a feature-gate.
+ *
+ * This must be called BEFORE createSession/resumeSession -- the SDK spawns
+ * the subprocess at session-creation time, not during initialize(). The
+ * subprocess inherits its environment at fork; calling this afterward has
+ * no effect on an already-running process.
+ *
+ * Unlike withAgentSkillsOnPath this does not restore the original PATH.
+ * The prepend is idempotent: dirs already present are not added twice.
+ */
+export function prependSkillDirsToPath(agentId: string): void {
+  const agentDirs = getAgentSkillExecutableDirs(agentId);
+  const workingDirs = getWorkingSkillExecutableDirs();
+  const seen = new Set(agentDirs);
+  const dirs = [...agentDirs, ...workingDirs.filter(d => !seen.has(d))];
+
+  if (dirs.length === 0) return;
+
+  const originalPath = process.env.PATH || '';
+  const existing = new Set(originalPath.split(delimiter).filter(Boolean));
+  const prepend = dirs.filter(d => !existing.has(d));
+
+  if (prepend.length > 0) {
+    process.env.PATH = [...prepend, originalPath].filter(Boolean).join(delimiter);
+    log.info(`Prepended ${prepend.length} skill dir(s) to PATH: ${prepend.join(', ')}`);
   }
 }
 
+/**
+ * @deprecated Use prependSkillDirsToPath() before session creation instead.
+ * This wrapper restores PATH after the callback, but the SDK spawns the
+ * subprocess during createSession/resumeSession -- before initialize() is
+ * called -- so PATH changes here don't reach the subprocess.
+ */
 export async function withAgentSkillsOnPath<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
-  const skillDirs = getAgentSkillExecutableDirs(agentId);
-  if (skillDirs.length === 0) {
-    return fn();
-  }
-
-  return withPathMutationLock(async () => {
-    const originalPath = process.env.PATH || '';
-    const originalParts = originalPath.split(delimiter).filter(Boolean);
-    const existing = new Set(originalParts);
-    const prepend = skillDirs.filter((dir) => !existing.has(dir));
-
-    if (prepend.length > 0) {
-      process.env.PATH = [...prepend, ...originalParts].join(delimiter);
-      log.info(`Added ${prepend.length} skill dir(s) to PATH: ${prepend.join(', ')}`);
-    }
-
-    try {
-      return await fn();
-    } finally {
-      process.env.PATH = originalPath;
-    }
-  });
+  prependSkillDirsToPath(agentId);
+  return fn();
 }
 
 /**

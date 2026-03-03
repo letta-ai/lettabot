@@ -634,6 +634,7 @@ async function main() {
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
       conversationOverrides: agentConfig.conversations?.perChannel,
       maxSessions: agentConfig.conversations?.maxSessions,
+      reuseSession: agentConfig.conversations?.reuseSession,
       redaction: agentConfig.security?.redaction,
       cronStorePath,
       skills: {
@@ -729,7 +730,7 @@ async function main() {
     const heartbeatConfig = agentConfig.features?.heartbeat;
     const heartbeatService = new HeartbeatService(bot, {
       enabled: heartbeatConfig?.enabled ?? false,
-      intervalMinutes: heartbeatConfig?.intervalMin ?? 30,
+      intervalMinutes: heartbeatConfig?.intervalMin ?? 240,
       skipRecentUserMinutes: heartbeatConfig?.skipRecentUserMin ?? globalConfig.heartbeatSkipRecentUserMin,
       agentKey: agentConfig.name,
       prompt: heartbeatConfig?.prompt || process.env.HEARTBEAT_PROMPT,
@@ -770,7 +771,12 @@ async function main() {
           ?? (agentConfig.integrations?.google?.pollIntervalSec
             ? agentConfig.integrations.google.pollIntervalSec * 1000
             : 60000),
-        gmail: { enabled: gmailEnabled, accounts: gmailAccounts },
+        gmail: {
+          enabled: gmailEnabled,
+          accounts: gmailAccounts,
+          prompt: agentConfig.polling?.gmail?.prompt,
+          promptFile: agentConfig.polling?.gmail?.promptFile,
+        },
       };
     })();
     
@@ -818,7 +824,7 @@ async function main() {
       channels: status.channels,
       features: {
         cron: cfg?.features?.cron ?? globalConfig.cronEnabled,
-        heartbeatIntervalMin: hbCfg?.enabled ? (hbCfg.intervalMin ?? 30) : undefined,
+        heartbeatIntervalMin: hbCfg?.enabled ? (hbCfg.intervalMin ?? 240) : undefined,
       },
     };
   });

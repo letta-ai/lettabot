@@ -56,7 +56,7 @@ agent:
 
 # Conversation routing (optional)
 conversations:
-  mode: shared                   # "shared" | "per-channel" | "per-chat"
+  mode: shared                   # "disabled" | "shared" | "per-channel" | "per-chat"
   heartbeat: last-active         # "dedicated" | "last-active" | "<channel>"
 
 # Channel configurations
@@ -268,7 +268,7 @@ Conversation routing controls which incoming messages share a Letta conversation
 
 ```yaml
 conversations:
-  mode: shared            # "shared" | "per-channel" | "per-chat"
+  mode: shared            # "disabled" | "shared" | "per-channel" | "per-chat"
   heartbeat: last-active  # "dedicated" | "last-active" | "<channel>"
   maxSessions: 10         # per-chat only: max concurrent sessions (LRU eviction)
   perChannel:
@@ -279,6 +279,7 @@ conversations:
 
 | Mode | Key | Description |
 |------|-----|-------------|
+| `disabled` | `"default"` | Always uses the agent's built-in default conversation. No new conversations are created. |
 | `shared` (default) | `"shared"` | One conversation across all channels and all chats |
 | `per-channel` | `"telegram"`, `"discord"`, etc. | One conversation per channel adapter. All Telegram groups share one conversation, all Discord channels share another. |
 | `per-chat` | `"telegram:12345"` | One conversation per unique chat within each channel. Every DM and group gets its own isolated message history. |
@@ -727,7 +728,58 @@ polling:
 | `polling.intervalMs` | number | `60000` | Polling interval in milliseconds |
 | `polling.gmail.enabled` | boolean | auto | Enable Gmail polling. Auto-detected from `account` or `accounts` |
 | `polling.gmail.account` | string | - | Gmail account to poll for unread messages |
-| `polling.gmail.accounts` | string[] | - | Gmail accounts to poll for unread messages |
+| `polling.gmail.accounts` | (string \| object)[] | - | Gmail accounts to poll. Can be strings or objects with `account`, `prompt`, `promptFile` |
+| `polling.gmail.prompt` | string | - | Default custom prompt for all accounts |
+| `polling.gmail.promptFile` | string | - | Path to default prompt file for all accounts |
+
+### Custom Email Prompts
+
+You can customize what the agent is told when new emails are detected. The custom text replaces the default body while keeping the silent mode envelope (account, time, trigger metadata, and messaging instructions).
+
+**Inline prompt for all accounts:**
+
+```yaml
+polling:
+  gmail:
+    enabled: true
+    prompt: "Summarize these emails and flag anything urgent."
+    accounts:
+      - user@example.com
+```
+
+**Per-account prompts:**
+
+```yaml
+polling:
+  gmail:
+    enabled: true
+    prompt: "Review these emails and notify me of anything important."
+    accounts:
+      - "personal@gmail.com"           # Uses global prompt above
+      - account: "work@company.com"
+        prompt: "Focus on emails from executives and flag urgent matters."
+      - account: "notifications@example.com"
+        promptFile: ./prompts/notifications.txt  # Re-read each poll
+```
+
+**Prompt file for live editing:**
+
+```yaml
+polling:
+  gmail:
+    enabled: true
+    promptFile: ./prompts/email-review.md  # Re-read each poll for live editing
+    accounts:
+      - user@example.com
+```
+
+**Priority order:**
+
+1. Account-specific `prompt` (inline in accounts array)
+2. Account-specific `promptFile`
+3. Global `polling.gmail.prompt`
+4. Global `polling.gmail.promptFile`
+5. Built-in default prompt
 
 ### Legacy config path
 

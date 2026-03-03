@@ -16,6 +16,9 @@
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { getCronLogPath, getCronStorePath, getLegacyCronStorePath } from '../utils/paths.js';
+import { loadLastTarget } from '../cli/shared.js';
+
+const VALID_CHANNELS = ['telegram', 'telegram-mtproto', 'slack', 'discord', 'whatsapp', 'signal'];
 
 // Parse ISO datetime string
 function parseISODateTime(input: string): Date {
@@ -40,6 +43,7 @@ interface CronJob {
     channel: string;
     chatId: string;
   };
+  silent?: boolean;
   deleteAfterRun?: boolean;
   state: {
     lastRunAt?: string;
@@ -156,6 +160,10 @@ function listJobs(): void {
     }
     if (job.deliver) {
       console.log(`    Deliver: ${job.deliver.channel}:${job.deliver.chatId}`);
+    } else if (job.silent) {
+      console.log(`    Deliver: silent (no delivery)`);
+    } else {
+      console.log(`    Deliver: (none -- will use last message target at runtime)`);
     }
   }
   console.log('');
@@ -167,6 +175,7 @@ function createJob(args: string[]): void {
   let at = '';  // One-off timer: ISO datetime or relative (e.g., "5m", "1h")
   let message = '';
   let enabled = true;
+  let silent = false;
   let deliverChannel = '';
   let deliverChatId = '';
   
@@ -189,13 +198,14 @@ function createJob(args: string[]): void {
       i++;
     } else if (arg === '--disabled') {
       enabled = false;
+    } else if (arg === '--silent') {
+      silent = true;
     } else if ((arg === '--deliver' || arg === '-d') && next) {
       // Format: channel:chatId (e.g., telegram:123456789 or discord:123456789012345678)
       const [ch, ...rest] = next.split(':');
       const id = rest.join(':'); // Rejoin in case chatId contains colons
-      const validChannels = ['telegram', 'telegram-mtproto', 'slack', 'discord', 'whatsapp', 'signal'];
-      if (!validChannels.includes(ch)) {
-        console.error(`Error: invalid channel "${ch}". Must be one of: ${validChannels.join(', ')}`);
+      if (!VALID_CHANNELS.includes(ch)) {
+        console.error(`Error: invalid channel "${ch}". Must be one of: ${VALID_CHANNELS.join(', ')}`);
         process.exit(1);
       }
       if (!id) {
@@ -205,6 +215,21 @@ function createJob(args: string[]): void {
       deliverChannel = ch;
       deliverChatId = id;
       i++;
+    }
+  }
+  
+  // Auto-fill deliver from last message target when not explicitly set
+  if (!silent && !deliverChannel) {
+    const lastTarget = loadLastTarget();
+    if (lastTarget) {
+      deliverChannel = lastTarget.channel;
+      deliverChatId = lastTarget.chatId;
+      console.log(`  Delivering to ${deliverChannel}:${deliverChatId} (from last message target)`);
+      console.log(`  Use --silent for no delivery, or --deliver channel:chatId to override.`);
+    } else {
+      console.warn('Warning: No --deliver target and no previous messages found.');
+      console.warn('Responses will not be delivered until a user messages the bot.');
+      console.warn('Use --deliver channel:chatId to set a target, or --silent for intentional silent mode.');
     }
   }
   
@@ -246,7 +271,8 @@ function createJob(args: string[]): void {
     enabled,
     schedule: cronSchedule,
     message,
-    deliver: deliverChannel && deliverChatId ? { channel: deliverChannel, chatId: deliverChatId } : undefined,
+    deliver: !silent && deliverChannel && deliverChatId ? { channel: deliverChannel, chatId: deliverChatId } : undefined,
+    silent: silent || undefined,
     deleteAfterRun,
     state: {},
   };
@@ -332,6 +358,13 @@ function showJob(id: string): void {
   console.log(`Enabled: ${job.enabled}`);
   console.log(`Schedule: ${job.schedule.kind === 'cron' ? job.schedule.expr : JSON.stringify(job.schedule)}`);
   console.log(`Message:\n  ${job.message}`);
+  if (job.deliver) {
+    console.log(`Deliver: ${job.deliver.channel}:${job.deliver.chatId}`);
+  } else if (job.silent) {
+    console.log(`Deliver: silent (no delivery)`);
+  } else {
+    console.log(`Deliver: (none -- will use last message target at runtime)`);
+  }
   console.log(`\nState:`);
   console.log(`  Last run: ${formatDate(job.state.lastRunAt)}`);
   console.log(`  Next run: ${formatDate(job.state.nextRunAt)}`);
@@ -343,6 +376,82 @@ function showJob(id: string): void {
 
 
 
+function updateJob(args: string[]): void {
+  const id = args[0];
+  if (!id) {
+    console.error('Error: Job ID required');
+    console.error('Usage: lettabot-schedule update <id> [--name ...] [--message ...] [--schedule ...] [--at ...] [--deliver channel:chatId] [--silent]');
+    process.exit(1);
+  }
+  
+  const store = loadStore();
+  const job = store.jobs.find(j => j.id === id);
+  
+  if (!job) {
+    console.error(`Error: Job not found: ${id}`);
+    process.exit(1);
+  }
+  
+  const updates: string[] = [];
+  
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i];
+    const next = args[i + 1];
+    
+    if ((arg === '--name' || arg === '-n') && next) {
+      job.name = next;
+      updates.push(`name="${next}"`);
+      i++;
+    } else if ((arg === '--message' || arg === '-m') && next) {
+      job.message = next;
+      updates.push(`message updated`);
+      i++;
+    } else if ((arg === '--schedule' || arg === '-s') && next) {
+      job.schedule = { kind: 'cron', expr: next };
+      job.deleteAfterRun = false;
+      updates.push(`schedule="${next}"`);
+      i++;
+    } else if ((arg === '--at' || arg === '-a') && next) {
+      const date = parseISODateTime(next);
+      job.schedule = { kind: 'at', date };
+      job.deleteAfterRun = true;
+      updates.push(`at=${date.toISOString()}`);
+      i++;
+    } else if ((arg === '--deliver' || arg === '-d') && next) {
+      const [ch, ...rest] = next.split(':');
+      const chatId = rest.join(':');
+      if (!VALID_CHANNELS.includes(ch)) {
+        console.error(`Error: invalid channel "${ch}". Must be one of: ${VALID_CHANNELS.join(', ')}`);
+        process.exit(1);
+      }
+      if (!chatId) {
+        console.error('Error: --deliver requires format channel:chatId (e.g., telegram:123456789)');
+        process.exit(1);
+      }
+      job.deliver = { channel: ch, chatId };
+      job.silent = undefined;
+      updates.push(`deliver=${ch}:${chatId}`);
+      i++;
+    } else if (arg === '--silent') {
+      job.deliver = undefined;
+      job.silent = true;
+      updates.push('silent mode (no delivery)');
+    }
+  }
+  
+  if (updates.length === 0) {
+    console.error('Error: No updates specified');
+    console.error('Usage: lettabot-schedule update <id> [--name ...] [--message ...] [--schedule ...] [--at ...] [--deliver channel:chatId] [--silent]');
+    process.exit(1);
+  }
+  
+  saveStore(store);
+  
+  log('job_updated', { id, name: job.name, updates });
+  
+  console.log(`✓ Updated "${job.name}": ${updates.join(', ')}`);
+}
+
 function showHelp(): void {
   console.log(`
 lettabot-schedule - Manage scheduled tasks and reminders
@@ -350,25 +459,35 @@ lettabot-schedule - Manage scheduled tasks and reminders
 Commands:
   list                    List all scheduled tasks
   create [options]        Create a new task
+  update <id> [options]   Update an existing task
   delete <id>             Delete a task
   enable <id>             Enable a task
   disable <id>            Disable a task
   show <id>               Show task details
 
-Create options:
-  --name, -n <name>       Task name (required)
+Create/update options:
+  --name, -n <name>       Task name (required for create)
   --schedule, -s <cron>   Cron expression for recurring tasks
   --at, -a <datetime>     ISO datetime for one-off reminder (auto-deletes after)
-  --message, -m <msg>     Prompt sent to agent when job fires (required)
-  --deliver, -d <target>  Auto-deliver response to channel:chatId (omit for silent mode)
+  --message, -m <msg>     Prompt sent to agent when job fires (required for create)
+  --deliver, -d <target>  Deliver response to channel:chatId (defaults to last messaged chat)
+  --silent                Do not deliver response (agent must use lettabot-message CLI)
   --disabled              Create in disabled state
+
+  Note: Use 'enable <id>' / 'disable <id>' to toggle job state.
 
 Examples:
   # One-off reminder (calculate ISO: new Date(Date.now() + 5*60*1000).toISOString())
   lettabot-schedule create -n "Standup" --at "2026-01-28T20:15:00Z" -m "Time to stand!"
 
-  # Recurring daily at 8am
+  # Recurring daily at 8am (delivers to last messaged chat)
   lettabot-schedule create -n "Morning" -s "0 8 * * *" -m "Good morning!"
+
+  # Deliver to specific channel
+  lettabot-schedule create -n "Morning" -s "0 8 * * *" -m "Good morning!" -d telegram:123456789
+
+  # Update delivery target on existing job
+  lettabot-schedule update <id> --deliver telegram:123456789
 
   # List and delete
   lettabot-schedule list
@@ -389,6 +508,11 @@ switch (command) {
   case 'create':
   case 'add':
     createJob(args.slice(1));
+    break;
+    
+  case 'update':
+  case 'edit':
+    updateJob(args.slice(1));
     break;
     
   case 'delete':
