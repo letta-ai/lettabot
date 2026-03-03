@@ -233,14 +233,18 @@ something they need to know or act on.
 }
 
 /**
- * Email prompt (silent mode) - for Gmail polling
+ * Email prompt (silent mode) - for Gmail polling.
+ * When customPrompt is provided it replaces the default body text.
  */
 export function buildEmailPrompt(
   account: string,
   emailCount: number,
   emailData: string,
-  time: string
+  time: string,
+  customPrompt?: string,
 ): string {
+  const body = customPrompt
+    ?? 'Review and summarize important emails. Use `lettabot-message send --text "..."` to notify the user if needed.';
   return `
 ${SILENT_MODE_PREFIX}
 
@@ -257,37 +261,7 @@ To notify your human about important emails, run:
 NEW EMAILS (${emailCount}):
 ${emailData}
 
-Review and summarize important emails. Use \`lettabot-message send --text "..."\` to notify the user if needed.
-`.trim();
-}
-
-/**
- * Custom email prompt - wraps user-provided text with silent mode envelope
- */
-export function buildCustomEmailPrompt(
-  customPrompt: string,
-  account: string,
-  emailCount: number,
-  emailData: string,
-  time: string
-): string {
-  return `
-${SILENT_MODE_PREFIX}
-
-TRIGGER: Email polling
-ACCOUNT: ${account}
-TIME: ${time}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
-To notify your human, run:
-  lettabot-message send --text "Your message here"
-
-${customPrompt}
-
-NEW EMAILS (${emailCount}):
-${emailData}
+${body}
 `.trim();
 }
 

@@ -11,11 +11,56 @@ import { resolve, join } from 'node:path';
 import type { AgentSession } from '../core/interfaces.js';
 import type { TriggerContext } from '../core/types.js';
 import type { GmailAccountConfig } from '../config/types.js';
-import { buildEmailPrompt, buildCustomEmailPrompt } from '../core/prompts.js';
+import { buildEmailPrompt } from '../core/prompts.js';
 
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Polling');
+
+/**
+ * Resolve the custom prompt for a Gmail account.
+ * Pure function extracted for testability.
+ *
+ * Priority: account prompt > account promptFile > global prompt > global promptFile > undefined (built-in)
+ */
+export function resolveEmailPrompt(
+  accountConfig: GmailAccountConfig,
+  globalPrompt?: string,
+  globalPromptFile?: string,
+  workingDir?: string,
+): string | undefined {
+  // Account-specific inline prompt
+  if (accountConfig.prompt) {
+    return accountConfig.prompt;
+  }
+
+  // Account-specific promptFile
+  if (accountConfig.promptFile) {
+    try {
+      const path = workingDir ? resolve(workingDir, accountConfig.promptFile) : accountConfig.promptFile;
+      return readFileSync(path, 'utf-8').trim();
+    } catch (err) {
+      log.warn(`Failed to read promptFile for ${accountConfig.account}: ${(err as Error).message}`);
+    }
+  }
+
+  // Global inline prompt
+  if (globalPrompt) {
+    return globalPrompt;
+  }
+
+  // Global promptFile
+  if (globalPromptFile) {
+    try {
+      const path = workingDir ? resolve(workingDir, globalPromptFile) : globalPromptFile;
+      return readFileSync(path, 'utf-8').trim();
+    } catch (err) {
+      log.warn(`Failed to read global promptFile: ${(err as Error).message}`);
+    }
+  }
+
+  return undefined;
+}
 
 /**
  * Parse Gmail accounts from various formats.
@@ -200,41 +245,12 @@ export class PollingService {
   
   /**
    * Resolve custom prompt for an account.
-   * Priority: account-specific > global default > none (use built-in prompt)
+   * Delegates to the exported pure function.
    */
   private resolvePrompt(accountConfig: GmailAccountConfig): string | undefined {
     const gmail = this.config.gmail;
     if (!gmail) return undefined;
-    
-    // Check for account-specific prompt first
-    if (accountConfig.prompt) {
-      return accountConfig.prompt;
-    }
-    
-    // Check for account-specific promptFile
-    if (accountConfig.promptFile) {
-      try {
-        return readFileSync(resolve(this.config.workingDir, accountConfig.promptFile), 'utf-8').trim();
-      } catch (err) {
-        log.error(`Failed to read promptFile for ${accountConfig.account}:`, err);
-      }
-    }
-
-    // Fall back to global prompt
-    if (gmail.prompt) {
-      return gmail.prompt;
-    }
-
-    // Fall back to global promptFile
-    if (gmail.promptFile) {
-      try {
-        return readFileSync(resolve(this.config.workingDir, gmail.promptFile), 'utf-8').trim();
-      } catch (err) {
-        log.error(`Failed to read global promptFile:`, err);
-      }
-    }
-    
-    return undefined;
+    return resolveEmailPrompt(accountConfig, gmail.prompt, gmail.promptFile, this.config.workingDir);
   }
   
   /**
@@ -307,10 +323,8 @@ export class PollingService {
       const now = new Date();
       const time = now.toLocaleString();
       
-      // Build message using prompt builders
-      const message = customPrompt
-        ? buildCustomEmailPrompt(customPrompt, account, newEmails.length, newEmailsOutput, time)
-        : buildEmailPrompt(account, newEmails.length, newEmailsOutput, time);
+      // Build message using prompt builder
+      const message = buildEmailPrompt(account, newEmails.length, newEmailsOutput, time, customPrompt);
       
       // Build trigger context for silent mode
       const context: TriggerContext = {
