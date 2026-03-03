@@ -814,12 +814,17 @@ async function stepFeatures(config: OnboardConfig): Promise<void> {
   config.heartbeat.enabled = setupHeartbeat;
   
   if (setupHeartbeat) {
+    p.note(
+      'Each heartbeat runs your agent and costs ~$0.60 in API credits.\n' +
+      'At the default 4-hour interval that\'s ~$3.60/day. Shorter intervals cost more.',
+      'Cost warning'
+    );
     const interval = await p.text({
       message: 'Interval (minutes)',
-      placeholder: '30',
-      initialValue: config.heartbeat.interval || '30',
+      placeholder: '240',
+      initialValue: config.heartbeat.interval || '240',
     });
-    if (!p.isCancel(interval)) config.heartbeat.interval = interval || '30';
+    if (!p.isCancel(interval)) config.heartbeat.interval = interval || '240';
   }
   
   // Cron
