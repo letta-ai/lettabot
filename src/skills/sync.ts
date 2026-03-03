@@ -68,11 +68,12 @@ function discoverSkills(): SkillInfo[] {
     }
   };
   
-  // Discover from all sources (order matters - first source wins for duplicates)
+  // Discover from all sources (order matters - first source wins for duplicates).
+  // Priority matches the loader hierarchy: project (.skills/) > bundled (skills/) > external.
+  addFromDir(PROJECT_SKILLS_DIR, 'builtin'); // .skills/ project overrides
+  addFromDir(BUNDLED_SKILLS_DIR, 'builtin'); // skills/ bundled with repo
   addFromDir(CLAWDHUB_DIR, 'clawdhub');
   addFromDir(VERCEL_DIR, 'vercel');
-  addFromDir(BUNDLED_SKILLS_DIR, 'builtin'); // skills/ in repo
-  addFromDir(PROJECT_SKILLS_DIR, 'builtin'); // .skills/ override dir
   
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -225,7 +226,8 @@ export async function runSkillsSync(): Promise<void> {
  * Searches BUNDLED_SKILLS_DIR, then GLOBAL_SKILLS_DIR, then SKILLS_SH_DIR.
  */
 export function enableSkill(name: string): void {
-  const sourceDirs = [BUNDLED_SKILLS_DIR, GLOBAL_SKILLS_DIR, SKILLS_SH_DIR, PROJECT_SKILLS_DIR];
+  // Search order: highest priority first (project local > global > bundled > skills.sh)
+  const sourceDirs = [PROJECT_SKILLS_DIR, GLOBAL_SKILLS_DIR, BUNDLED_SKILLS_DIR, SKILLS_SH_DIR];
   
   mkdirSync(TARGET_DIR, { recursive: true });
   
