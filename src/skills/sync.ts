@@ -17,7 +17,7 @@ const VERCEL_DIR = join(HOME, '.agents', 'skills');      // ~/.agents/skills (Ve
 interface SkillInfo {
   name: string;
   description: string;
-  source: 'builtin' | 'clawdhub' | 'vercel';
+  source: 'builtin' | 'global' | 'clawdhub' | 'vercel';
   sourcePath: string;
   installed: boolean;
 }
@@ -71,6 +71,16 @@ function discoverSkills(): SkillInfo[] {
   // Priority matches the loader hierarchy: project (.skills/) > bundled (skills/) > external.
   addFromDir(PROJECT_SKILLS_DIR, 'builtin'); // .skills/ project overrides
   addFromDir(BUNDLED_SKILLS_DIR, 'builtin'); // skills/ bundled with repo
+  // ~/.letta/skills/ uses a category/skill-name nested structure (tools/, meta/, letta/, etc.)
+  if (existsSync(GLOBAL_SKILLS_DIR)) {
+    try {
+      for (const cat of readdirSync(GLOBAL_SKILLS_DIR, { withFileTypes: true })) {
+        if (cat.isDirectory() && !cat.name.startsWith('.')) {
+          addFromDir(join(GLOBAL_SKILLS_DIR, cat.name), 'global');
+        }
+      }
+    } catch { /* ignore */ }
+  }
   addFromDir(CLAWDHUB_DIR, 'clawdhub');
   addFromDir(VERCEL_DIR, 'vercel');
   
@@ -104,12 +114,26 @@ export async function runSkillsSync(): Promise<void> {
   
   // Check which sources exist
   const hasBuiltin = skills.some(s => s.source === 'builtin');
+  const hasGlobal = skills.some(s => s.source === 'global');
   const hasClawdhub = existsSync(CLAWDHUB_DIR) && skills.some(s => s.source === 'clawdhub');
   const hasVercel = existsSync(VERCEL_DIR) && skills.some(s => s.source === 'vercel');
-  
-  // Build options grouped by source with headers (order: ClawdHub, Vercel, Built-in)
+
+  // Build options grouped by source with headers
   const options: Array<{ value: string; label: string; hint: string }> = [];
-  
+
+  // Add Letta global skills section (~/.letta/skills/)
+  if (hasGlobal) {
+    options.push({ value: '__header_global__', label: `── Letta Skills ── (~/.letta/skills)`, hint: '' });
+    for (const skill of skills.filter(s => s.source === 'global')) {
+      const desc = skill.description || '';
+      options.push({
+        value: skill.name,
+        label: `✦ ${skill.name}`,
+        hint: desc.length > 60 ? desc.slice(0, 57) + '...' : desc,
+      });
+    }
+  }
+
   // Add ClawdHub skills section
   if (hasClawdhub) {
     options.push({ value: '__header_clawdhub__', label: '── ClawdHub Skills ── (~/clawd/skills)', hint: '' });
@@ -122,7 +146,7 @@ export async function runSkillsSync(): Promise<void> {
       });
     }
   }
-  
+
   // Add Vercel skills section
   if (hasVercel) {
     options.push({ value: '__header_vercel__', label: '── Vercel Skills ── (~/.agents/skills)', hint: '' });
@@ -135,7 +159,7 @@ export async function runSkillsSync(): Promise<void> {
       });
     }
   }
-  
+
   // Add built-in skills section
   if (hasBuiltin) {
     options.push({ value: '__header_builtin__', label: '── Built-in Skills ──', hint: '' });
@@ -227,14 +251,14 @@ export async function runSkillsSync(): Promise<void> {
 export function disableSkill(name: string): void {
   const dest = join(TARGET_DIR, name);
   if (!existsSync(dest)) {
-    console.log(`Skill '${name}' is not enabled.`);
+    p.log.warn(`Skill '${name}' is not enabled.`);
     return;
   }
   try {
     rmSync(dest, { recursive: true, force: true });
-    console.log(`Disabled skill '${name}'.`);
+    p.log.success(`Disabled skill '${name}'.`);
   } catch (e) {
-    console.error(`Failed to disable '${name}': ${e}`);
+    p.log.error(`Failed to disable '${name}': ${e}`);
     process.exit(1);
   }
 }
@@ -244,26 +268,36 @@ export function disableSkill(name: string): void {
  * Searches BUNDLED_SKILLS_DIR, then GLOBAL_SKILLS_DIR, then SKILLS_SH_DIR.
  */
 export function enableSkill(name: string): void {
-  // Search order: highest priority first (project local > global > bundled > skills.sh)
-  const sourceDirs = [PROJECT_SKILLS_DIR, GLOBAL_SKILLS_DIR, BUNDLED_SKILLS_DIR, SKILLS_SH_DIR];
-  
   mkdirSync(TARGET_DIR, { recursive: true });
-  
+
   const dest = join(TARGET_DIR, name);
   if (existsSync(dest)) {
-    console.log(`Skill '${name}' is already enabled.`);
+    p.log.warn(`Skill '${name}' is already enabled.`);
     return;
   }
-  
-  for (const dir of sourceDirs) {
+
+  // Build search list: flat dirs first, then nested GLOBAL_SKILLS_DIR categories
+  const flatDirs = [PROJECT_SKILLS_DIR, BUNDLED_SKILLS_DIR, SKILLS_SH_DIR];
+  const searchDirs: string[] = [...flatDirs];
+  if (existsSync(GLOBAL_SKILLS_DIR)) {
+    try {
+      for (const cat of readdirSync(GLOBAL_SKILLS_DIR, { withFileTypes: true })) {
+        if (cat.isDirectory() && !cat.name.startsWith('.')) {
+          searchDirs.push(join(GLOBAL_SKILLS_DIR, cat.name));
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  for (const dir of searchDirs) {
     const src = join(dir, name);
     if (existsSync(src) && existsSync(join(src, 'SKILL.md'))) {
       cpSync(src, dest, { recursive: true });
-      console.log(`Enabled skill '${name}' from ${dir}`);
+      p.log.success(`Enabled skill '${name}'.`);
       return;
     }
   }
-  
-  console.error(`Skill '${name}' not found. Run 'lettabot skills status' to see available skills.`);
+
+  p.log.error(`Skill '${name}' not found. Run 'lettabot skills status' to see available skills.`);
   process.exit(1);
 }
