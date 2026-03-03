@@ -814,12 +814,18 @@ async function stepFeatures(config: OnboardConfig): Promise<void> {
   config.heartbeat.enabled = setupHeartbeat;
   
   if (setupHeartbeat) {
+    p.log.warn(
+      'Each heartbeat triggers a full agent invocation — real API cost, billed by your model.\n' +
+      'A 30-minute interval runs 48 invocations/day. A 4-hour interval runs 6.\n' +
+      'Most heartbeats are no-ops, but you pay for each one regardless.\n' +
+      'Set a longer interval if you\'re watching your spend.'
+    );
     const interval = await p.text({
       message: 'Interval (minutes)',
-      placeholder: '30',
-      initialValue: config.heartbeat.interval || '30',
+      placeholder: '240',
+      initialValue: config.heartbeat.interval || '240',
     });
-    if (!p.isCancel(interval)) config.heartbeat.interval = interval || '30';
+    if (!p.isCancel(interval)) config.heartbeat.interval = interval || '240';
   }
   
   // Cron
