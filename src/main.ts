@@ -6,7 +6,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, promises as fs } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
 // API server imports
@@ -512,6 +512,7 @@ const globalConfig = {
   cronEnabled: process.env.CRON_ENABLED === 'true',  // Legacy env var fallback
   heartbeatSkipRecentUserMin: parseNonNegativeNumber(process.env.HEARTBEAT_SKIP_RECENT_USER_MIN),
 };
+const hooksDir = dirname(configPath);
 
 // Validate LETTA_API_KEY is set for API mode (docker mode doesn't require it)
 if (!isDockerServerMode(yamlConfig.server.mode) && !process.env.LETTA_API_KEY) {
@@ -611,6 +612,8 @@ async function main() {
       maxSessions: agentConfig.conversations?.maxSessions,
       reuseSession: agentConfig.conversations?.reuseSession,
       redaction: agentConfig.security?.redaction,
+      hooks: agentConfig.hooks,
+      hooksDir,
       cronStorePath,
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,

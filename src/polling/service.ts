@@ -325,7 +325,7 @@ export class PollingService {
       
       // Build message using prompt builder
       const message = buildEmailPrompt(account, newEmails.length, newEmailsOutput, time, customPrompt);
-      
+
       // Build trigger context for silent mode
       const context: TriggerContext = {
         type: 'feed',
@@ -333,7 +333,7 @@ export class PollingService {
         sourceChannel: 'gmail',
         sourceChatId: account,
       };
-      
+
       const response = await this.bot.sendToAgent(message, context);
       
       // Log response but do NOT auto-deliver (silent mode)

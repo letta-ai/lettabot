@@ -2,6 +2,8 @@
  * Core Types for LettaBot
  */
 
+import type { SendMessage } from '@letta-ai/letta-code-sdk';
+
 // =============================================================================
 // Output Control Types (NEW)
 // =============================================================================
@@ -36,6 +38,102 @@ export interface TriggerContext {
   notifyTarget?: {
     channel: string;
     chatId: string;
+  };
+}
+
+// =============================================================================
+// Message Hooks
+// =============================================================================
+
+export type HookMode = 'await' | 'parallel';
+
+export interface HookHandlerConfig {
+  file: string;          // Path to ESM module exporting preMessage/postMessage
+  mode?: HookMode;       // 'await' (default) or 'parallel'
+  timeoutMs?: number;    // Optional timeout (ms)
+}
+
+export interface MessageHooksConfig {
+  preMessage?: HookHandlerConfig | HookHandlerConfig[];
+  postMessage?: HookHandlerConfig | HookHandlerConfig[];
+  postReasoning?: HookHandlerConfig | HookHandlerConfig[];
+  postToolCall?: HookHandlerConfig | HookHandlerConfig[];
+  postToolResult?: HookHandlerConfig | HookHandlerConfig[];
+}
+
+export interface MessageHookContext {
+  stage: 'pre' | 'postReasoning' | 'post';
+  /** Unique ID for this agent turn — same value across all hook stages for the same turn */
+  turnId: string;
+  /**
+   * Unix timestamp (ms) of when the underlying event occurred in the stream.
+   * For pre: when the inbound message arrived.
+   * For postReasoning: when the first chunk of this reasoning block was received.
+   * For post: when the turn completed.
+   * Hooks may fire later than this due to queuing; use this for accurate span timing.
+   */
+  timestamp: number;
+  isHeartbeat: boolean;
+  suppressDelivery: boolean;
+  /** Whether this message is a retry of a previously failed turn */
+  isRetry?: boolean;
+  trigger?: TriggerContext;
+  inboundMessage?: InboundMessage;
+  formattedText?: string;
+  message: SendMessage;
+  response?: string;
+  delivered?: boolean;
+  error?: string;
+  /** Reasoning content — populated for postReasoning stage only */
+  reasoning?: string;
+  /** Which reasoning block within the turn (0-based) — postReasoning stage only */
+  stepIndex?: number;
+  /** Total cost in USD for this turn — populated for post stage only */
+  totalCostUsd?: number;
+  /** Token usage for this turn — populated for post stage only */
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+  };
+  agent?: {
+    id?: string | null;
+    name?: string;
+    conversationId?: string | null;
+    conversationKey?: string;
+  };
+}
+
+export interface ToolCallHookContext {
+  /** Unique ID for this agent turn — same value across all hook stages for the same turn */
+  turnId: string;
+  /** Unix timestamp (ms) of when the tool_call arrived in the stream */
+  timestamp: number;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  toolCallId?: string;
+  agent?: {
+    id?: string | null;
+    name?: string;
+    conversationId?: string | null;
+    conversationKey?: string;
+  };
+}
+
+export interface ToolResultHookContext {
+  /** Unique ID for this agent turn — same value across all hook stages for the same turn */
+  turnId: string;
+  /** Unix timestamp (ms) of when the tool_result arrived in the stream */
+  timestamp: number;
+  toolCallId: string;
+  toolName?: string;
+  content: string;
+  isError: boolean;
+  agent?: {
+    id?: string | null;
+    name?: string;
+    conversationId?: string | null;
+    conversationKey?: string;
   };
 }
 
@@ -140,6 +238,8 @@ export interface BotConfig {
   agentName?: string; // Name for the agent (set via API after creation)
   allowedTools: string[];
   disallowedTools?: string[];
+  hooks?: MessageHooksConfig;
+  hooksDir?: string; // Base dir for resolving hook module paths
 
   // Display
   displayName?: string; // Prefix outbound messages (e.g. "💜 Signo")

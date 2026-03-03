@@ -91,6 +91,16 @@ features:
   #   showReasoning: false       # Show agent reasoning/thinking in chat
   #   reasoningMaxChars: 0        # Truncate reasoning to N chars (0 = no limit, default)
 
+# Message hooks (optional)
+# hooks:
+#   preMessage:
+#     file: ./hooks/message-hooks.mjs
+#     mode: await       # 'await' (default) or 'parallel'
+#     timeoutMs: 2000
+#   postMessage:
+#     file: ./hooks/message-hooks.mjs
+#     mode: parallel
+
 # Attachment handling (defaults to 20MB if omitted)
 # attachments:
 #   maxMB: 20

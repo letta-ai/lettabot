@@ -12,6 +12,23 @@ const log = createLogger('Config');
 export type ServerMode = 'api' | 'docker' | 'cloud' | 'selfhosted';
 export type CanonicalServerMode = 'api' | 'docker';
 
+// =============================================================================
+// Message Hooks
+// =============================================================================
+
+export type HookMode = 'await' | 'parallel';
+
+export interface HookHandlerConfig {
+  file: string;          // Path to ESM module exporting preMessage/postMessage
+  mode?: HookMode;       // 'await' (default) or 'parallel'
+  timeoutMs?: number;    // Optional timeout (ms)
+}
+
+export interface MessageHooksConfig {
+  preMessage?: HookHandlerConfig | HookHandlerConfig[];
+  postMessage?: HookHandlerConfig | HookHandlerConfig[];
+}
+
 export function canonicalizeServerMode(mode?: ServerMode): CanonicalServerMode {
   return mode === 'docker' || mode === 'selfhosted' ? 'docker' : 'api';
 }
@@ -99,6 +116,8 @@ export interface AgentConfig {
       pii?: boolean;
     };
   };
+  /** Message hooks for this agent */
+  hooks?: MessageHooksConfig;
   /** Polling config */
   polling?: PollingYamlConfig;
   /** Integrations */
@@ -183,6 +202,9 @@ export interface LettaBotConfig {
     allowedTools?: string[];       // Global tool whitelist (overridden by per-agent, falls back to ALLOWED_TOOLS env)
     disallowedTools?: string[];    // Global tool blocklist (overridden by per-agent, falls back to DISALLOWED_TOOLS env)
   };
+
+  // Message hooks (applies to all agents unless overridden)
+  hooks?: MessageHooksConfig;
 
   // Polling - system-level background checks (Gmail, etc.)
   polling?: PollingYamlConfig;
@@ -583,6 +605,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     return config.agents.map((agent, index) => ({
       ...agent,
       channels: normalizeChannels(agent.channels, `agents[${index}].channels`),
+      hooks: agent.hooks ?? config.hooks,
     }));
   }
 
@@ -690,6 +713,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     displayName: config.agent?.displayName,
     model,
     channels,
+    hooks: config.hooks,
     conversations: config.conversations,
     features: hasFeatures ? features : config.features,
     polling: config.polling,

@@ -82,6 +82,13 @@ export async function listChannels(): Promise<void> {
   console.log('');
 }
 
+export async function listGroups(channelArg?: string, extraArgs: string[] = []): Promise<void> {
+  const args = [];
+  if (channelArg) args.push(channelArg);
+  args.push(...extraArgs);
+  await listGroupsFromArgs(args);
+}
+
 export async function interactiveChannelMenu(): Promise<void> {
   p.intro('🔌 Channel Management');
   
@@ -266,11 +273,9 @@ export async function channelManagementCommand(subCommand?: string, channelName?
       await listChannels();
       break;
     case 'list-groups':
-    case 'groups': {
-      const args = channelName ? [channelName, ...extraArgs] : extraArgs;
-      await listGroupsFromArgs(args);
+    case 'groups':
+      await listGroups(channelName, extraArgs);
       break;
-    }
     case 'add':
       await addChannel(channelName);
       break;

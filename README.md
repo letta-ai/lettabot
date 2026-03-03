@@ -204,6 +204,7 @@ Then ask your bot things like:
 | `lettabot onboard` | Interactive setup wizard |
 | `lettabot server` | Start the bot server |
 | `lettabot configure` | View and edit configuration |
+| `lettabot channels list-groups [channel]` | List group/channel IDs for Slack/Discord |
 | `lettabot skills status` | Show enabled and available skills |
 | `lettabot destroy` | Delete all local data and start fresh |
 | `lettabot help` | Show help |
@@ -329,6 +330,8 @@ lettabot-message send --text "Hello from a background task"
 lettabot-react add --emoji :eyes: --channel discord --chat 123 --message 456
 lettabot-history fetch --limit 25 --channel discord --chat 123456789
 ```
+
+If you rely on message hooks, set `--trigger` (or `LETTABOT_TRIGGER_TYPE`) when using `lettabot-message` so `ctx.trigger` is populated.
 
 See [CLI Tools](docs/cli-tools.md) for details and limitations.
 

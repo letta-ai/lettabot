@@ -8,6 +8,7 @@
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, renameSync, watch, type FSWatcher } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import type { AgentSession } from '../core/interfaces.js';
+import type { TriggerContext } from '../core/types.js';
 import type { CronJob, CronJobCreate, CronSchedule, CronConfig, HeartbeatConfig } from './types.js';
 import { DEFAULT_HEARTBEAT_MESSAGES } from './types.js';
 import { getCronDataDir, getCronLogPath, getCronStorePath, getLegacyCronStorePath } from '../utils/paths.js';
@@ -289,7 +290,11 @@ export class CronService {
       try {
         // SILENT MODE - response NOT auto-delivered
         // Agent must use `lettabot-message` CLI to send messages
-        const response = await this.bot.sendToAgent(config.message);
+        const context: TriggerContext = {
+          type: 'heartbeat',
+          outputMode: 'silent',
+        };
+        const response = await this.bot.sendToAgent(config.message, context);
         
         log.info(`Heartbeat finished (SILENT MODE)`);
         log.info(`  - Response: ${response?.slice(0, 100)}${(response?.length || 0) > 100 ? '...' : ''}`);
@@ -418,7 +423,17 @@ export class CronService {
       ].join('\n');
       
       // Send message to agent
-      const response = await this.bot.sendToAgent(messageWithMetadata);
+      const context: TriggerContext = {
+        type: 'cron',
+        outputMode: job.deliver ? 'responsive' : 'silent',
+        jobId: job.id,
+        jobName: job.name,
+        notifyTarget: job.deliver ? {
+          channel: job.deliver.channel,
+          chatId: job.deliver.chatId,
+        } : undefined,
+      };
+      const response = await this.bot.sendToAgent(messageWithMetadata, context);
       
       // Resolve delivery target: explicit config > last message target fallback > silent
       let deliverTarget: { channel: string; chatId: string } | null = job.deliver ?? null;
