@@ -1335,6 +1335,8 @@ export class LettaBot implements AgentSession {
                   return this.processMessage(msg, adapter, true);
                 }
                 log.warn(`Approval recovery failed: ${convResult.details}`);
+                log.info('Retrying once with a fresh session after approval conflict...');
+                return this.processMessage(msg, adapter, true);
               }
             }
 
@@ -1581,6 +1583,7 @@ export class LettaBot implements AgentSession {
         try {
           let response = '';
           let sawStaleDuplicateResult = false;
+          let approvalRetryPending = false;
           let usedMessageCli = false;
           let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown>; isApprovalError?: boolean } | undefined;
           for await (const msg of stream()) {
@@ -1623,6 +1626,16 @@ export class LettaBot implements AgentSession {
                     };
                   }
                 }
+                const isApprovalIssue = lastErrorDetail?.isApprovalError === true
+                  || ((lastErrorDetail?.message?.toLowerCase().includes('conflict') || false)
+                  && (lastErrorDetail?.message?.toLowerCase().includes('waiting for approval') || false));
+                if (isApprovalIssue && !retried) {
+                  log.info('sendToAgent: approval issue detected -- retrying once with fresh session...');
+                  this.sessionManager.invalidateSession(convKey);
+                  retried = true;
+                  approvalRetryPending = true;
+                  break;
+                }
                 const errMsg = lastErrorDetail?.message || msg.error || 'error';
                 const errReason = lastErrorDetail?.stopReason || msg.error || 'error';
                 const detail = typeof msg.result === 'string' ? msg.result.trim() : '';
@@ -1630,6 +1643,10 @@ export class LettaBot implements AgentSession {
               }
               break;
             }
+          }
+
+          if (approvalRetryPending) {
+            continue;
           }
 
           if (sawStaleDuplicateResult) {
