@@ -145,9 +145,10 @@ export function resolveConversationKey(
 
 /**
  * Pure function: resolve the conversation key for heartbeat/sendToAgent.
- * In per-chat mode, uses the full channel:chatId of the last-active target.
- * In per-channel mode, respects heartbeatConversation setting.
- * In shared mode with overrides, respects override channels when using last-active.
+ * The heartbeat setting is orthogonal to conversation mode:
+ *   - "dedicated" always returns "heartbeat" (isolated conversation)
+ *   - "<channel>" always routes to that channel's conversation
+ *   - "last-active" routes to wherever the user last messaged from
  */
 export function resolveHeartbeatConversationKey(
   conversationMode: string | undefined,
@@ -159,23 +160,26 @@ export function resolveHeartbeatConversationKey(
   if (conversationMode === 'disabled') return 'default';
   const hb = heartbeatConversation || 'last-active';
 
+  // "dedicated" always gets its own conversation, regardless of mode
+  if (hb === 'dedicated') return 'heartbeat';
+
+  // Explicit channel name — route to that channel's conversation
+  if (hb !== 'last-active') return hb;
+
+  // "last-active" handling varies by mode
   if (conversationMode === 'per-chat') {
-    if (hb === 'dedicated') return 'heartbeat';
-    if (hb === 'last-active' && lastActiveChannel && lastActiveChatId) {
+    if (lastActiveChannel && lastActiveChatId) {
       return `${lastActiveChannel.toLowerCase()}:${lastActiveChatId}`;
     }
-    // Fall back to shared if no last-active target
     return 'shared';
   }
 
   if (conversationMode === 'per-channel') {
-    if (hb === 'dedicated') return 'heartbeat';
-    if (hb === 'last-active') return lastActiveChannel ?? 'shared';
-    return hb;
+    return lastActiveChannel ?? 'shared';
   }
 
-  // shared mode — if last-active and overrides exist, respect the override channel
-  if (hb === 'last-active' && conversationOverrides.size > 0 && lastActiveChannel) {
+  // shared mode — if overrides exist, respect the override channel
+  if (conversationOverrides.size > 0 && lastActiveChannel) {
     return resolveConversationKey(lastActiveChannel, conversationMode, conversationOverrides);
   }
 
