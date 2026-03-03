@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { LettaBot } from './bot.js';
-import type { InboundMessage } from './types.js';
+import type { InboundMessage, OutboundMessage } from './types.js';
 
 describe('result divergence guard', () => {
   let workDir: string;
@@ -28,7 +28,7 @@ describe('result divergence guard', () => {
       start: vi.fn(async () => {}),
       stop: vi.fn(async () => {}),
       isRunning: vi.fn(() => true),
-      sendMessage: vi.fn(async () => ({ messageId: 'msg-1' })),
+      sendMessage: vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'msg-1' })),
       editMessage: vi.fn(async () => {}),
       sendTypingIndicator: vi.fn(async () => {}),
       stopTypingIndicator: vi.fn(async () => {}),
@@ -73,7 +73,7 @@ describe('result divergence guard', () => {
       start: vi.fn(async () => {}),
       stop: vi.fn(async () => {}),
       isRunning: vi.fn(() => true),
-      sendMessage: vi.fn(async () => ({ messageId: 'msg-1' })),
+      sendMessage: vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'msg-1' })),
       editMessage: vi.fn(async () => {}),
       sendTypingIndicator: vi.fn(async () => {}),
       stopTypingIndicator: vi.fn(async () => {}),
