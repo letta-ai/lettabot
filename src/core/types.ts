@@ -269,10 +269,11 @@ export interface BotConfig {
   cronStorePath?: string; // Resolved cron store path (per-agent in multi-agent mode)
 
   // Conversation routing
-  conversationMode?: 'shared' | 'per-channel' | 'per-chat'; // Default: shared
+  conversationMode?: 'disabled' | 'shared' | 'per-channel' | 'per-chat'; // Default: shared
   heartbeatConversation?: string; // "dedicated" | "last-active" | "<channel>" (default: last-active)
   conversationOverrides?: string[]; // Channels that always use their own conversation (shared mode)
   maxSessions?: number; // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
+  reuseSession?: boolean; // Reuse SDK subprocess across messages (default: true). Set false to eliminate stream state bleed at cost of ~5s latency per message.
 }
 
 /**
@@ -297,6 +298,7 @@ export interface StreamMsg {
   uuid?: string;
   isError?: boolean;
   result?: string;
+  runIds?: string[];
   success?: boolean;
   error?: string;
   [key: string]: unknown;
