@@ -814,10 +814,11 @@ async function stepFeatures(config: OnboardConfig): Promise<void> {
   config.heartbeat.enabled = setupHeartbeat;
   
   if (setupHeartbeat) {
-    p.note(
-      'Each heartbeat runs your agent and costs ~$0.60 in API credits.\n' +
-      'At the default 4-hour interval that\'s ~$3.60/day. Shorter intervals cost more.',
-      'Cost warning'
+    p.log.warn(
+      'Each heartbeat triggers a full agent invocation — real API cost, billed by your model.\n' +
+      'A 30-minute interval runs 48 invocations/day. A 4-hour interval runs 6.\n' +
+      'Most heartbeats are no-ops, but you pay for each one regardless.\n' +
+      'Set a longer interval if you\'re watching your spend.'
     );
     const interval = await p.text({
       message: 'Interval (minutes)',
