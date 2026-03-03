@@ -644,15 +644,15 @@ export class LettaBot implements AgentSession {
         const current = await getAgentModel(agentId);
         const { models: recommendedModels } = await import('../utils/model-selection.js');
         const lines = [
-          `Current model: ${current || '(unknown)'}`,
+          `Current model: \`${current || '(unknown)'}\``,
           '',
           'Recommended models:',
         ];
         for (const m of recommendedModels) {
           const marker = m.handle === current ? ' (current)' : '';
-          lines.push(`  ${m.label} - ${m.handle}${marker}`);
+          lines.push(`  ${m.label} - \`${m.handle}\`${marker}`);
         }
-        lines.push('', 'Use /model <handle> to switch.');
+        lines.push('', 'Use `/model <handle>` to switch.');
         return lines.join('\n');
       }
       default:
