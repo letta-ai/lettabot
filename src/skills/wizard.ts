@@ -6,7 +6,7 @@ import * as p from '@clack/prompts';
 import { join } from 'node:path';
 import { getSkillsSummary, type SkillsSummary } from './status.js';
 import { installSkillDeps } from './install.js';
-import { hasBinary, GLOBAL_SKILLS_DIR, SKILLS_SH_DIR } from './loader.js';
+import { hasBinary, BUNDLED_SKILLS_DIR, GLOBAL_SKILLS_DIR, SKILLS_SH_DIR } from './loader.js';
 import type { NodeManager, SkillStatus } from './types.js';
 
 import { createLogger } from '../logger.js';
@@ -261,7 +261,7 @@ export async function listSkills(): Promise<void> {
  */
 export async function showStatus(): Promise<void> {
   const enabledSummary = getSkillsSummary([WORKING_SKILLS_DIR]);
-  const availableSummary = getSkillsSummary([GLOBAL_SKILLS_DIR, SKILLS_SH_DIR]);
+  const availableSummary = getSkillsSummary([BUNDLED_SKILLS_DIR, GLOBAL_SKILLS_DIR, SKILLS_SH_DIR]);
   
   // Get names of enabled skills to filter available
   const enabledNames = new Set(enabledSummary.skills.map(s => s.skill.name));
@@ -297,6 +297,6 @@ export async function showStatus(): Promise<void> {
   }
   
   log.info('');
-  log.info(`  To enable: lettabot skills enable <name>`);
+  log.info(`  To enable: lettabot skills enable <name>  (or run: lettabot skills)`);
   log.info(`  Skills dir: ${WORKING_SKILLS_DIR}`);
 }
