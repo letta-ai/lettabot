@@ -335,7 +335,7 @@ async function main() {
       break;
       
     case 'skills': {
-      const { showStatus, runSkillsSync, enableSkill } = await import('./skills/index.js');
+      const { showStatus, runSkillsSync, enableSkill, disableSkill } = await import('./skills/index.js');
       switch (subCommand) {
         case 'status':
           await showStatus();
@@ -346,6 +346,13 @@ async function main() {
             process.exit(1);
           }
           enableSkill(args[2]);
+          break;
+        case 'disable':
+          if (!args[2]) {
+            console.error('Usage: lettabot skills disable <name>');
+            process.exit(1);
+          }
+          disableSkill(args[2]);
           break;
         default:
           await runSkillsSync();

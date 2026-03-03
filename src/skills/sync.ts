@@ -149,11 +149,12 @@ export async function runSkillsSync(): Promise<void> {
     }
   }
   
-  // Start with no skills selected (user must explicitly enable)
+  // Pre-check currently installed skills so the user edits from current state
+  const currentlyInstalled = skills.filter(s => s.installed).map(s => s.name);
   const selected = await p.multiselect({
     message: 'Enable skills (space=toggle, enter=confirm):',
     options,
-    initialValues: [], // Disabled by default
+    initialValues: currentlyInstalled,
     required: false,
   });
   
@@ -218,6 +219,24 @@ export async function runSkillsSync(): Promise<void> {
   
   p.log.info(`Skills directory: ${TARGET_DIR}`);
   p.outro(`✨ Added ${toAdd.length}, removed ${toRemove.length} skill(s)`);
+}
+
+/**
+ * Non-interactively disable a single skill by name.
+ */
+export function disableSkill(name: string): void {
+  const dest = join(TARGET_DIR, name);
+  if (!existsSync(dest)) {
+    console.log(`Skill '${name}' is not enabled.`);
+    return;
+  }
+  try {
+    rmSync(dest, { recursive: true, force: true });
+    console.log(`Disabled skill '${name}'.`);
+  } catch (e) {
+    console.error(`Failed to disable '${name}': ${e}`);
+    process.exit(1);
+  }
 }
 
 /**

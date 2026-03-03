@@ -293,6 +293,7 @@ export async function showStatus(): Promise<void> {
   }
   
   log.info('');
-  log.info(`  To enable: lettabot skills enable <name>  (or run: lettabot skills)`);
+  log.info(`  To enable:  lettabot skills enable <name>  (or run: lettabot skills)`);
+  log.info(`  To disable: lettabot skills disable <name>`);
   log.info(`  Skills dir: ${WORKING_SKILLS_DIR}`);
 }
