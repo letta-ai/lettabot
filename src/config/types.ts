@@ -239,13 +239,26 @@ export interface TranscriptionConfig {
   model?: string;      // Defaults to 'whisper-1' (OpenAI) or 'voxtral-mini-latest' (Mistral)
 }
 
+export interface GmailAccountConfig {
+  /** Gmail account email address */
+  account: string;
+  /** Custom email prompt for this account (inline) - replaces default body */
+  prompt?: string;
+  /** Path to prompt file (re-read each poll for live editing) */
+  promptFile?: string;
+}
+
 export interface PollingYamlConfig {
   enabled?: boolean;      // Master switch (default: auto-detected from sub-configs)
   intervalMs?: number;    // Polling interval in milliseconds (default: 60000)
   gmail?: {
     enabled?: boolean;    // Enable Gmail polling
-    account?: string;     // Gmail account to poll (e.g., user@example.com)
-    accounts?: string[];  // Multiple Gmail accounts to poll
+    account?: string;     // Single Gmail account (simple string form)
+    accounts?: (string | GmailAccountConfig)[];  // Multiple accounts (string or config object)
+    /** Default prompt for all accounts (can be overridden per-account) */
+    prompt?: string;
+    /** Default prompt file for all accounts (re-read each poll for live editing) */
+    promptFile?: string;
   };
 }
 

@@ -233,6 +233,65 @@ something they need to know or act on.
 }
 
 /**
+ * Email prompt (silent mode) - for Gmail polling
+ */
+export function buildEmailPrompt(
+  account: string,
+  emailCount: number,
+  emailData: string,
+  time: string
+): string {
+  return `
+${SILENT_MODE_PREFIX}
+
+TRIGGER: Email polling
+ACCOUNT: ${account}
+TIME: ${time}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
+To notify your human about important emails, run:
+  lettabot-message send --text "Important email: ..."
+
+NEW EMAILS (${emailCount}):
+${emailData}
+
+Review and summarize important emails. Use \`lettabot-message send --text "..."\` to notify the user if needed.
+`.trim();
+}
+
+/**
+ * Custom email prompt - wraps user-provided text with silent mode envelope
+ */
+export function buildCustomEmailPrompt(
+  customPrompt: string,
+  account: string,
+  emailCount: number,
+  emailData: string,
+  time: string
+): string {
+  return `
+${SILENT_MODE_PREFIX}
+
+TRIGGER: Email polling
+ACCOUNT: ${account}
+TIME: ${time}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
+To notify your human, run:
+  lettabot-message send --text "Your message here"
+
+${customPrompt}
+
+NEW EMAILS (${emailCount}):
+${emailData}
+`.trim();
+}
+
+/**
  * Base persona addition for message CLI awareness
  * 
  * This should be added to the agent's persona/system prompt to ensure

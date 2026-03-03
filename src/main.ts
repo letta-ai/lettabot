@@ -745,7 +745,12 @@ async function main() {
           ?? (agentConfig.integrations?.google?.pollIntervalSec
             ? agentConfig.integrations.google.pollIntervalSec * 1000
             : 60000),
-        gmail: { enabled: gmailEnabled, accounts: gmailAccounts },
+        gmail: {
+          enabled: gmailEnabled,
+          accounts: gmailAccounts,
+          prompt: agentConfig.polling?.gmail?.prompt,
+          promptFile: agentConfig.polling?.gmail?.promptFile,
+        },
       };
     })();
     
