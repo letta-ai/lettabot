@@ -84,6 +84,12 @@ export function formatApiErrorForUser(error: { message: string; stopReason: stri
     return `(Rate limited${reasonStr}. Try again in a moment.)`;
   }
 
+  // 409 CONFLICT -- approval-specific (stuck tool approval blocking messages)
+  if ((msg.includes('waiting for approval') || msg.includes('pending_approval')) &&
+      (msg.includes('conflict') || msg.includes('409'))) {
+    return '(A stuck tool approval is blocking this conversation. Run `lettabot reset-conversation` to clear it, or approve/deny the pending request at app.letta.com.)';
+  }
+
   // 409 CONFLICT (concurrent request on same conversation)
   if (msg.includes('conflict') || msg.includes('409') || msg.includes('another request is currently being processed')) {
     return '(Another request is still processing on this conversation. Wait a moment and try again.)';

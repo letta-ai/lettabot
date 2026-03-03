@@ -977,7 +977,7 @@ export class LettaBot implements AgentSession {
       let sentAnyMessage = false;
       let receivedAnyData = false;
       let sawNonAssistantSinceLastUuid = false;
-      let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | null = null;
+      let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown>; isApprovalError?: boolean } | null = null;
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
       const msgTypeCounts: Record<string, number> = {};
@@ -1301,7 +1301,11 @@ export class LettaBot implements AgentSession {
                 (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
               const enriched = await getLatestRunError(this.store.agentId, retryConvId);
               if (enriched) {
-                lastErrorDetail = { message: enriched.message, stopReason: enriched.stopReason };
+                lastErrorDetail = {
+                  message: enriched.message,
+                  stopReason: enriched.stopReason,
+                  isApprovalError: enriched.isApprovalError,
+                };
               }
             }
 
@@ -1311,8 +1315,12 @@ export class LettaBot implements AgentSession {
 
             // For approval-specific conflicts, attempt recovery directly (don't
             // enter the generic retry path which would just get another CONFLICT).
-            const isApprovalConflict = isConflictError &&
-              lastErrorDetail?.message?.toLowerCase().includes('waiting for approval');
+            // Use isApprovalError from run metadata as a fallback when the
+            // error message doesn't contain the expected strings (e.g. when
+            // the type=error event was lost and enrichment detected a stuck run).
+            const isApprovalConflict = (isConflictError &&
+              lastErrorDetail?.message?.toLowerCase().includes('waiting for approval')) ||
+              lastErrorDetail?.isApprovalError === true;
             if (isApprovalConflict && !retried && this.store.agentId) {
               if (retryConvId) {
                 log.info('Approval conflict detected -- attempting targeted recovery...');
@@ -1574,7 +1582,7 @@ export class LettaBot implements AgentSession {
           let response = '';
           let sawStaleDuplicateResult = false;
           let usedMessageCli = false;
-          let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | undefined;
+          let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown>; isApprovalError?: boolean } | undefined;
           for await (const msg of stream()) {
             if (msg.type === 'tool_call') {
               this.sessionManager.syncTodoToolCall(msg);
@@ -1608,7 +1616,11 @@ export class LettaBot implements AgentSession {
                     (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
                   const enriched = await getLatestRunError(this.store.agentId, convId);
                   if (enriched) {
-                    lastErrorDetail = { message: enriched.message, stopReason: enriched.stopReason };
+                    lastErrorDetail = {
+                      message: enriched.message,
+                      stopReason: enriched.stopReason,
+                      isApprovalError: enriched.isApprovalError,
+                    };
                   }
                 }
                 const errMsg = lastErrorDetail?.message || msg.error || 'error';
