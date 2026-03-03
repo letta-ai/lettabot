@@ -99,6 +99,15 @@ describe('formatApiErrorForUser', () => {
     expect(msg).toContain('stuck tool approval');
   });
 
+  it('maps requires_approval stop_reason enrichment message to stuck-approval guidance', () => {
+    const msg = formatApiErrorForUser({
+      message: 'Run run-stuck stuck waiting for tool approval (status=created)',
+      stopReason: 'requires_approval',
+    });
+    expect(msg).toContain('stuck tool approval');
+    expect(msg).toContain('reset-conversation');
+  });
+
   it('falls back to sanitized original message when no mapping matches', () => {
     const msg = formatApiErrorForUser({
       message: `${'x'.repeat(205)}.   `,
