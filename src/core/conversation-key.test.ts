@@ -74,6 +74,21 @@ describe('resolveConversationKey', () => {
     expect(resolveConversationKey('telegram', 'shared', new Set(), '12345')).toBe('shared');
     expect(resolveConversationKey('telegram', 'per-channel', new Set(), '12345')).toBe('telegram');
   });
+
+  // --- disabled mode ---
+
+  it('returns "default" in disabled mode', () => {
+    expect(resolveConversationKey('telegram', 'disabled', new Set())).toBe('default');
+  });
+
+  it('returns "default" in disabled mode regardless of chatId', () => {
+    expect(resolveConversationKey('telegram', 'disabled', new Set(), '12345')).toBe('default');
+  });
+
+  it('returns "default" in disabled mode regardless of overrides', () => {
+    const overrides = new Set(['telegram']);
+    expect(resolveConversationKey('telegram', 'disabled', overrides)).toBe('default');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -125,10 +140,25 @@ describe('resolveHeartbeatConversationKey', () => {
     expect(resolveHeartbeatConversationKey('shared', 'last-active', overrides, undefined)).toBe('shared');
   });
 
-  it('returns "shared" in shared mode even with overrides when heartbeat is not last-active', () => {
-    // Non-last-active heartbeat in shared mode always returns 'shared'
+  // --- dedicated is orthogonal to mode ---
+
+  it('returns \"heartbeat\" in shared mode with dedicated', () => {
+    expect(resolveHeartbeatConversationKey('shared', 'dedicated', new Set())).toBe('heartbeat');
+  });
+
+  it('returns \"heartbeat\" in shared mode with dedicated even when overrides exist', () => {
     const overrides = new Set(['slack']);
-    expect(resolveHeartbeatConversationKey('shared', 'dedicated', overrides, 'slack')).toBe('shared');
+    expect(resolveHeartbeatConversationKey('shared', 'dedicated', overrides, 'slack')).toBe('heartbeat');
+  });
+
+  // --- explicit channel is orthogonal to mode ---
+
+  it('returns explicit channel name in shared mode', () => {
+    expect(resolveHeartbeatConversationKey('shared', 'discord', new Set(), 'telegram')).toBe('discord');
+  });
+
+  it('returns explicit channel name in per-chat mode', () => {
+    expect(resolveHeartbeatConversationKey('per-chat', 'discord', new Set(), 'telegram', '12345')).toBe('discord');
   });
 
   // --- per-chat mode ---
@@ -137,7 +167,7 @@ describe('resolveHeartbeatConversationKey', () => {
     expect(resolveHeartbeatConversationKey('per-chat', 'last-active', new Set(), 'telegram', '12345')).toBe('telegram:12345');
   });
 
-  it('returns "heartbeat" in per-chat mode with dedicated', () => {
+  it('returns \"heartbeat\" in per-chat mode with dedicated', () => {
     expect(resolveHeartbeatConversationKey('per-chat', 'dedicated', new Set(), 'telegram', '12345')).toBe('heartbeat');
   });
 
@@ -145,7 +175,15 @@ describe('resolveHeartbeatConversationKey', () => {
     expect(resolveHeartbeatConversationKey('per-chat', 'last-active', new Set(), 'telegram', undefined)).toBe('shared');
   });
 
-  it('falls back to "shared" in per-chat mode when no last-active target', () => {
+  it('falls back to \"shared\" in per-chat mode when no last-active target', () => {
     expect(resolveHeartbeatConversationKey('per-chat', 'last-active', new Set(), undefined, undefined)).toBe('shared');
+  });
+
+  // --- disabled mode ---
+
+  it('returns "default" in disabled mode regardless of heartbeat setting', () => {
+    expect(resolveHeartbeatConversationKey('disabled', 'last-active', new Set(), 'telegram')).toBe('default');
+    expect(resolveHeartbeatConversationKey('disabled', 'dedicated', new Set(), 'telegram')).toBe('default');
+    expect(resolveHeartbeatConversationKey('disabled', undefined, new Set())).toBe('default');
   });
 });

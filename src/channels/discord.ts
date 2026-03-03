@@ -350,8 +350,14 @@ Ask the bot owner to approve with:
       throw new Error(`Discord channel not found or not text-based: ${msg.chatId}`);
     }
 
-    const result = await (channel as { send: (content: string) => Promise<{ id: string }> }).send(msg.text);
-    return { messageId: result.id };
+    const sendable = channel as { send: (content: string) => Promise<{ id: string }> };
+    const chunks = splitMessageText(msg.text);
+    let lastMessageId = '';
+    for (const chunk of chunks) {
+      const result = await sendable.send(chunk);
+      lastMessageId = result.id;
+    }
+    return { messageId: lastMessageId };
   }
 
   async sendFile(file: OutboundFile): Promise<{ messageId: string }> {
@@ -384,7 +390,12 @@ Ask the bot owner to approve with:
       log.warn('Cannot edit message not sent by bot');
       return;
     }
-    await message.edit(text);
+
+    // Discord edit limit is 2000 chars -- truncate if needed (edits can't split)
+    const truncated = text.length > DISCORD_MAX_LENGTH
+      ? text.slice(0, DISCORD_MAX_LENGTH - 1) + '\u2026'
+      : text;
+    await message.edit(truncated);
   }
 
   async addReaction(chatId: string, messageId: string, emoji: string): Promise<void> {
@@ -557,6 +568,58 @@ function resolveDiscordEmoji(input: string): string {
     return DISCORD_EMOJI_ALIAS_TO_UNICODE[input];
   }
   return input;
+}
+
+// Discord message length limit
+const DISCORD_MAX_LENGTH = 2000;
+// Leave some headroom when choosing split points
+const DISCORD_SPLIT_THRESHOLD = 1900;
+
+/**
+ * Split text into chunks that fit within Discord's 2000-char limit.
+ * Splits at paragraph boundaries (double newlines), falling back to
+ * single newlines, then hard-splitting at the threshold.
+ */
+function splitMessageText(text: string): string[] {
+  if (text.length <= DISCORD_SPLIT_THRESHOLD) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > DISCORD_SPLIT_THRESHOLD) {
+    let splitIdx = -1;
+
+    const searchRegion = remaining.slice(0, DISCORD_SPLIT_THRESHOLD);
+    // Try paragraph boundary (double newline)
+    const lastParagraph = searchRegion.lastIndexOf('\n\n');
+    if (lastParagraph > DISCORD_SPLIT_THRESHOLD * 0.3) {
+      splitIdx = lastParagraph;
+    }
+
+    // Fall back to single newline
+    if (splitIdx === -1) {
+      const lastNewline = searchRegion.lastIndexOf('\n');
+      if (lastNewline > DISCORD_SPLIT_THRESHOLD * 0.3) {
+        splitIdx = lastNewline;
+      }
+    }
+
+    // Hard split as last resort
+    if (splitIdx === -1) {
+      splitIdx = DISCORD_SPLIT_THRESHOLD;
+    }
+
+    chunks.push(remaining.slice(0, splitIdx).trimEnd());
+    remaining = remaining.slice(splitIdx).trimStart();
+  }
+
+  if (remaining.trim()) {
+    chunks.push(remaining.trim());
+  }
+
+  return chunks;
 }
 
 type DiscordAttachment = {

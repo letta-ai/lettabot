@@ -39,7 +39,7 @@ describe('listening mode directive safety', () => {
       sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
     };
 
-    (bot as any).runSession = vi.fn(async () => ({
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
       session: { abort: vi.fn(async () => {}) },
       stream: async function* () {
         yield {
