@@ -1573,10 +1573,15 @@ export class LettaBot implements AgentSession {
         try {
           let response = '';
           let sawStaleDuplicateResult = false;
+          let usedMessageCli = false;
           let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | undefined;
           for await (const msg of stream()) {
             if (msg.type === 'tool_call') {
               this.sessionManager.syncTodoToolCall(msg);
+              if (isSilent && msg.toolName === 'Bash') {
+                const cmd = String((msg as any).toolInput?.command ?? msg.rawArguments ?? '');
+                if (cmd.includes('lettabot-message send')) usedMessageCli = true;
+              }
             }
             if (msg.type === 'error') {
               lastErrorDetail = {
@@ -1626,7 +1631,11 @@ export class LettaBot implements AgentSession {
           }
 
           if (isSilent && response.trim()) {
-            log.info(`Silent mode: collected ${response.length} chars (not delivered)`);
+            if (usedMessageCli) {
+              log.info(`Silent mode: agent used lettabot-message CLI, collected ${response.length} chars (not delivered)`);
+            } else {
+              log.warn(`Silent mode: agent produced ${response.length} chars but did NOT use lettabot-message CLI — response discarded. If this keeps happening, the agent's model may not be following silent mode instructions.`);
+            }
           }
           return response;
         } catch (error) {
