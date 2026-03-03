@@ -5,11 +5,10 @@
 import { existsSync, readdirSync, cpSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import * as p from '@clack/prompts';
-import { PROJECT_SKILLS_DIR, BUNDLED_SKILLS_DIR, GLOBAL_SKILLS_DIR, SKILLS_SH_DIR, parseSkillFile } from './loader.js';
+import { PROJECT_SKILLS_DIR, BUNDLED_SKILLS_DIR, GLOBAL_SKILLS_DIR, SKILLS_SH_DIR, WORKING_SKILLS_DIR, parseSkillFile } from './loader.js';
 
 const HOME = process.env.HOME || process.env.USERPROFILE || '';
-const WORKING_DIR = process.env.WORKING_DIR || '/tmp/lettabot';
-const TARGET_DIR = join(WORKING_DIR, '.skills');
+const TARGET_DIR = WORKING_SKILLS_DIR;
 
 // Skill source directories
 const CLAWDHUB_DIR = join(HOME, 'clawd', 'skills');      // ~/clawd/skills (ClawdHub)

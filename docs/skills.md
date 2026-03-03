@@ -109,9 +109,14 @@ Run `lettabot skills status` to see which skills are eligible and which have mis
 
 ## Skill execution
 
-When a session starts, `withAgentSkillsOnPath()` in `src/skills/loader.ts` prepends the agent's skill directories to `PATH`. Only directories containing at least one non-`.md` file (i.e., executables or scripts) are added.
+When a session starts, `withAgentSkillsOnPath()` in `src/skills/loader.ts` prepends skill directories to `PATH` so the spawned Letta Code subprocess can invoke them as CLI tools. Two sources are combined:
 
-PATH mutations are serialized via a lock to avoid races when multiple sessions initialize concurrently. The original PATH is restored after the session operation completes.
+1. **Agent-scoped skills** (`~/.letta/agents/{id}/skills/`) — feature-gated skills installed by `installSkillsToAgent()` on startup.
+2. **Working-dir skills** (`WORKING_DIR/.skills/`) — skills enabled via `lettabot skills enable <name>` or the interactive `lettabot skills` wizard.
+
+Only directories containing at least one non-`.md` file are added. PATH mutations are serialized via a lock to avoid races when multiple sessions initialize concurrently.
+
+**Note on process inspection:** The PATH is set on the parent (lettabot) process only for the duration of `session.initialize()`, so the Letta Code subprocess inherits it at fork time. The parent's PATH is restored immediately after. If you inspect the parent process's environment (e.g. via `/proc/[pid]/environ`) after startup you will see the original PATH — this is expected. Check the child subprocess's `/proc/[pid]/environ` to verify the skill directories are present.
 
 ## Bundled skills
 

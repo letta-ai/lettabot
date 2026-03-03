@@ -3,18 +3,14 @@
  */
 
 import * as p from '@clack/prompts';
-import { join } from 'node:path';
 import { getSkillsSummary, type SkillsSummary } from './status.js';
 import { installSkillDeps } from './install.js';
-import { hasBinary, BUNDLED_SKILLS_DIR, GLOBAL_SKILLS_DIR, SKILLS_SH_DIR } from './loader.js';
+import { hasBinary, BUNDLED_SKILLS_DIR, GLOBAL_SKILLS_DIR, SKILLS_SH_DIR, WORKING_SKILLS_DIR } from './loader.js';
 import type { NodeManager, SkillStatus } from './types.js';
 
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Wizard');
-// Skills in working directory (where Letta Code looks)
-const WORKING_DIR = process.env.WORKING_DIR || '/tmp/lettabot';
-const WORKING_SKILLS_DIR = join(WORKING_DIR, '.skills');
 
 /**
  * Detect available node managers

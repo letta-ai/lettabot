@@ -10,7 +10,9 @@ import type { SkillEntry, ClawdbotMetadata } from './types.js';
 
 // Skills directories (in priority order: project > agent > global > bundled > skills.sh)
 const HOME = process.env.HOME || process.env.USERPROFILE || '';
+export const WORKING_DIR = process.env.WORKING_DIR || '/tmp/lettabot';
 export const PROJECT_SKILLS_DIR = resolve(process.cwd(), '.skills');
+export const WORKING_SKILLS_DIR = join(WORKING_DIR, '.skills'); // skills enabled via CLI
 export const GLOBAL_SKILLS_DIR = join(HOME, '.letta', 'skills');
 export const SKILLS_SH_DIR = join(HOME, '.agents', 'skills'); // skills.sh global installs
 
@@ -55,10 +57,30 @@ export function getAgentSkillExecutableDirs(agentId: string): string[] {
 }
 
 /**
- * Temporarily prepend agent skill directories to PATH for one async operation.
+ * Get executable skill directories from the working-dir .skills/ folder.
+ * These are skills enabled via `lettabot skills enable` or the sync wizard.
+ */
+export function getWorkingSkillExecutableDirs(): string[] {
+  if (!existsSync(WORKING_SKILLS_DIR)) return [];
+  return resolveSkillExecutableDirs(WORKING_SKILLS_DIR);
+}
+
+/**
+ * Temporarily prepend skill directories to PATH for one async operation.
  *
- * PATH is process-global, so serialize PATH mutations to avoid races when
- * multiple sessions initialize concurrently.
+ * Includes both agent-scoped skills (~/.letta/agents/{id}/skills/) and
+ * working-dir skills (WORKING_DIR/.skills/) so that skills enabled via
+ * `lettabot skills enable` are available without needing a feature-gate.
+ *
+ * PATH is process-global, so mutations are serialized via a lock to avoid
+ * races when multiple sessions initialize concurrently.
+ *
+ * The mutation applies only to the parent process during initialize() so
+ * that the spawned Letta Code subprocess inherits the augmented PATH at
+ * fork time. The parent's PATH is restored in the finally block -- checking
+ * the parent process's /proc/environ after startup will show the original
+ * PATH, which is expected. Inspect the child subprocess's /proc/[pid]/environ
+ * to see the skill dirs.
  */
 let _pathMutationQueue: Promise<void> = Promise.resolve();
 async function withPathMutationLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -77,8 +99,13 @@ async function withPathMutationLock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export async function withAgentSkillsOnPath<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
-  const skillDirs = getAgentSkillExecutableDirs(agentId);
-  if (skillDirs.length === 0) {
+  const agentDirs = getAgentSkillExecutableDirs(agentId);
+  const workingDirs = getWorkingSkillExecutableDirs();
+  // Deduplicate: working-dir dirs come first (lower priority than agent-scoped)
+  const seen = new Set(agentDirs);
+  const combined = [...agentDirs, ...workingDirs.filter(d => !seen.has(d))];
+
+  if (combined.length === 0) {
     return fn();
   }
 
@@ -86,7 +113,7 @@ export async function withAgentSkillsOnPath<T>(agentId: string, fn: () => Promis
     const originalPath = process.env.PATH || '';
     const originalParts = originalPath.split(delimiter).filter(Boolean);
     const existing = new Set(originalParts);
-    const prepend = skillDirs.filter((dir) => !existing.has(dir));
+    const prepend = combined.filter((dir) => !existing.has(dir));
 
     if (prepend.length > 0) {
       process.env.PATH = [...prepend, ...originalParts].join(delimiter);
