@@ -251,14 +251,14 @@ export async function runSkillsSync(): Promise<void> {
 export function disableSkill(name: string): void {
   const dest = join(TARGET_DIR, name);
   if (!existsSync(dest)) {
-    console.log(`Skill '${name}' is not enabled.`);
+    p.log.warn(`Skill '${name}' is not enabled.`);
     return;
   }
   try {
     rmSync(dest, { recursive: true, force: true });
-    console.log(`Disabled skill '${name}'.`);
+    p.log.success(`Disabled skill '${name}'.`);
   } catch (e) {
-    console.error(`Failed to disable '${name}': ${e}`);
+    p.log.error(`Failed to disable '${name}': ${e}`);
     process.exit(1);
   }
 }
@@ -272,7 +272,7 @@ export function enableSkill(name: string): void {
 
   const dest = join(TARGET_DIR, name);
   if (existsSync(dest)) {
-    console.log(`Skill '${name}' is already enabled.`);
+    p.log.warn(`Skill '${name}' is already enabled.`);
     return;
   }
 
@@ -293,11 +293,11 @@ export function enableSkill(name: string): void {
     const src = join(dir, name);
     if (existsSync(src) && existsSync(join(src, 'SKILL.md'))) {
       cpSync(src, dest, { recursive: true });
-      console.log(`Enabled skill '${name}' from ${dir}`);
+      p.log.success(`Enabled skill '${name}'.`);
       return;
     }
   }
-  
-  console.error(`Skill '${name}' not found. Run 'lettabot skills status' to see available skills.`);
+
+  p.log.error(`Skill '${name}' not found. Run 'lettabot skills status' to see available skills.`);
   process.exit(1);
 }
