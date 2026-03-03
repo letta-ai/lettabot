@@ -11,7 +11,7 @@ import type { BotConfig, StreamMsg } from './types.js';
 import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError } from './errors.js';
 import { Store } from './store.js';
 import { updateAgentName, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
-import { installSkillsToAgent, withAgentSkillsOnPath } from '../skills/loader.js';
+import { installSkillsToAgent, prependSkillDirsToPath } from '../skills/loader.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { createManageTodoTool } from '../tools/todo.js';
@@ -241,12 +241,14 @@ export class SessionManager {
       process.env.LETTA_AGENT_ID = this.store.agentId;
       installSkillsToAgent(this.store.agentId, this.config.skills);
       sessionAgentId = this.store.agentId;
+      prependSkillDirsToPath(sessionAgentId); // must be before resumeSession spawns subprocess
       session = resumeSession('default', opts);
     } else if (convId) {
       process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
       if (this.store.agentId) {
         installSkillsToAgent(this.store.agentId, this.config.skills);
         sessionAgentId = this.store.agentId;
+        prependSkillDirsToPath(sessionAgentId); // must be before resumeSession spawns subprocess
       }
       session = resumeSession(convId, opts);
     } else if (this.store.agentId) {
@@ -254,6 +256,7 @@ export class SessionManager {
       process.env.LETTA_AGENT_ID = this.store.agentId;
       installSkillsToAgent(this.store.agentId, this.config.skills);
       sessionAgentId = this.store.agentId;
+      prependSkillDirsToPath(sessionAgentId); // must be before resumeSession spawns subprocess
       session = resumeSession(this.store.agentId, opts);
     } else {
       // Create new agent -- persist immediately so we don't orphan it on later failures
@@ -273,6 +276,7 @@ export class SessionManager {
       }
       installSkillsToAgent(newAgentId, this.config.skills);
       sessionAgentId = newAgentId;
+      prependSkillDirsToPath(sessionAgentId); // must be before createSession spawns subprocess
 
       // In disabled mode, resume the built-in default conversation instead of
       // creating a new one.  Other modes create a fresh conversation per key.
@@ -284,14 +288,7 @@ export class SessionManager {
     // Initialize eagerly so the subprocess is ready before the first send()
     log.info(`Initializing session subprocess (key=${key})...`);
     try {
-      if (sessionAgentId) {
-        await withAgentSkillsOnPath(
-          sessionAgentId,
-          () => this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`),
-        );
-      } else {
-        await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
-      }
+      await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
       log.info(`Session subprocess ready (key=${key})`);
     } catch (error) {
       // Close immediately so failed initialization cannot leak a subprocess.

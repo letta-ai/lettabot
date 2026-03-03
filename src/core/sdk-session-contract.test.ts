@@ -22,7 +22,7 @@ vi.mock('../tools/letta-api.js', () => ({
 
 vi.mock('../skills/loader.js', () => ({
   installSkillsToAgent: vi.fn(),
-  withAgentSkillsOnPath: vi.fn((_id: string, fn: () => unknown) => fn()),
+  prependSkillDirsToPath: vi.fn(),
   getAgentSkillExecutableDirs: vi.fn().mockReturnValue([]),
   isVoiceMemoConfigured: vi.fn().mockReturnValue(false),
 }));
