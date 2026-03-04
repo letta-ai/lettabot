@@ -199,8 +199,19 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+let lastEvictionDate = '';
+
 function getCounter(counterKey: string): DailyCounter {
   const d = today();
+
+  // Evict stale entries once per day (on first access after midnight)
+  if (d !== lastEvictionDate) {
+    for (const [key, entry] of counters) {
+      if (entry.date !== d) counters.delete(key);
+    }
+    lastEvictionDate = d;
+  }
+
   let counter = counters.get(counterKey);
   if (!counter || counter.date !== d) {
     counter = { date: d, total: 0, users: new Map() };
@@ -256,4 +267,5 @@ export function checkDailyLimit(
 /** Reset all counters. Exported for testing. */
 export function resetDailyLimitCounters(): void {
   counters.clear();
+  lastEvictionDate = '';
 }

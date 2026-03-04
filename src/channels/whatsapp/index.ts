@@ -789,15 +789,6 @@ export class WhatsAppAdapter implements ChannelAdapter {
           continue;
         }
 
-        // Daily rate limit check
-        const limits = resolveDailyLimits(this.config.groups, [remoteJid]);
-        const counterKey = `${this.config.agentName ?? ''}:whatsapp:${limits.matchedKey ?? remoteJid}`;
-        const limitResult = checkDailyLimit(counterKey, userId, limits);
-        if (!limitResult.allowed) {
-          log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
-          continue;
-        }
-
         wasMentioned = gatingResult.wasMentioned ?? false;
         isListeningMode = gatingResult.mode === 'listen' && !wasMentioned;
       }
@@ -828,6 +819,17 @@ export class WhatsAppAdapter implements ChannelAdapter {
           if (result) await this.sendMessage({ chatId, text: result });
         }
         return; // Don't pass commands to agent
+      }
+
+      // Daily rate limit check (after commands so /help, /reset etc. always work)
+      if (isGroup) {
+        const limits = resolveDailyLimits(this.config.groups, [remoteJid]);
+        const counterKey = `${this.config.agentName ?? ''}:whatsapp:${limits.matchedKey ?? remoteJid}`;
+        const limitResult = checkDailyLimit(counterKey, userId, limits);
+        if (!limitResult.allowed) {
+          log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
+          continue;
+        }
       }
 
       // Debounce and forward to bot core (unless history)

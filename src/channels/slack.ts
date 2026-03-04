@@ -242,16 +242,7 @@ export class SlackAdapter implements ChannelAdapter {
         return; // User not in group allowedUsers -- silent drop
       }
 
-      // Daily rate limit check
-      const mentionLimits = resolveDailyLimits(this.config.groups, [channelId]);
-      const mentionCounterKey = `${this.config.agentName ?? ''}:slack:${mentionLimits.matchedKey ?? channelId}`;
-      const mentionLimitResult = checkDailyLimit(mentionCounterKey, userId, mentionLimits);
-      if (!mentionLimitResult.allowed) {
-        log.info(`Daily limit reached for ${mentionCounterKey} (${mentionLimitResult.reason})`);
-        return;
-      }
-      
-      // Handle slash commands
+      // Handle slash commands (before rate limiting -- commands should always work)
       const parsed = parseCommand(text);
       if (parsed) {
         if (parsed.command === 'help' || parsed.command === 'start') {
@@ -261,6 +252,15 @@ export class SlackAdapter implements ChannelAdapter {
           if (result) await this.sendMessage({ chatId: channelId, text: result, threadId: threadTs });
         }
         return; // Don't pass commands to agent
+      }
+
+      // Daily rate limit check (after commands so /help, /reset etc. always work)
+      const mentionLimits = resolveDailyLimits(this.config.groups, [channelId]);
+      const mentionCounterKey = `${this.config.agentName ?? ''}:slack:${mentionLimits.matchedKey ?? channelId}`;
+      const mentionLimitResult = checkDailyLimit(mentionCounterKey, userId, mentionLimits);
+      if (!mentionLimitResult.allowed) {
+        log.info(`Daily limit reached for ${mentionCounterKey} (${mentionLimitResult.reason})`);
+        return;
       }
       
       if (this.onMessage) {
