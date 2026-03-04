@@ -30,6 +30,9 @@ Thumbs.db
 .idea/
 .claude/
 
+# Logs
+logs/
+
 # Runtime files
 cron-log.jsonl
 cron-jobs.json
