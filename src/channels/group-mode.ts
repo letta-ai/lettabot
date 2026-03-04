@@ -137,31 +137,49 @@ export interface ResolvedDailyLimits {
 /**
  * Resolve the effective daily limit config for a group/channel.
  *
- * Priority:
+ * Priority for each field independently:
  * 1. First matching key in provided order
  * 2. Wildcard "*"
  * 3. undefined (no limit)
  *
- * Returns `matchedKey` so callers can scope counters to the config level
- * (e.g. guild-wide vs channel-specific).
+ * Fields are merged: a specific key can set `dailyLimit` while wildcard
+ * provides `dailyUserLimit` (or vice versa).
+ *
+ * Returns `matchedKey` (the most specific key that contributed any limit)
+ * so callers can scope counters to the config level.
  */
 export function resolveDailyLimits(
   groups: GroupsConfig | undefined,
   keys: string[],
 ): ResolvedDailyLimits {
-  if (groups) {
-    for (const key of keys) {
-      const config = groups[key];
-      if (config && (config.dailyLimit !== undefined || config.dailyUserLimit !== undefined)) {
-        return { dailyLimit: config.dailyLimit, dailyUserLimit: config.dailyUserLimit, matchedKey: key };
-      }
+  if (!groups) return {};
+
+  const wildcard = groups['*'];
+
+  // Find the first specific key that has any limit
+  let matched: { config: GroupModeConfig; key: string } | undefined;
+  for (const key of keys) {
+    const config = groups[key];
+    if (config && (config.dailyLimit !== undefined || config.dailyUserLimit !== undefined)) {
+      matched = { config, key };
+      break;
     }
-    const wildcard = groups['*'];
+  }
+
+  if (!matched) {
+    // No specific key -- use wildcard only
     if (wildcard && (wildcard.dailyLimit !== undefined || wildcard.dailyUserLimit !== undefined)) {
       return { dailyLimit: wildcard.dailyLimit, dailyUserLimit: wildcard.dailyUserLimit, matchedKey: '*' };
     }
+    return {};
   }
-  return {};
+
+  // Merge: specific key takes priority, wildcard fills in undefined fields
+  return {
+    dailyLimit: matched.config.dailyLimit ?? wildcard?.dailyLimit,
+    dailyUserLimit: matched.config.dailyUserLimit ?? wildcard?.dailyUserLimit,
+    matchedKey: matched.key,
+  };
 }
 
 // ---------------------------------------------------------------------------

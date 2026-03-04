@@ -272,6 +272,32 @@ describe('group-mode helpers', () => {
       expect(resolveDailyLimits(groups, ['chat-1', 'server-1'])).toEqual({ dailyLimit: 5, dailyUserLimit: undefined, matchedKey: 'chat-1' });
       expect(resolveDailyLimits(groups, ['chat-2', 'server-1'])).toEqual({ dailyLimit: 50, dailyUserLimit: undefined, matchedKey: 'server-1' });
     });
+
+    it('inherits undefined fields from wildcard', () => {
+      const groups: GroupsConfig = {
+        '*': { mode: 'open', dailyUserLimit: 10 },
+        'channel-123': { mode: 'open', dailyLimit: 50 },
+      };
+      // channel-123 sets dailyLimit, wildcard provides dailyUserLimit
+      expect(resolveDailyLimits(groups, ['channel-123'])).toEqual({
+        dailyLimit: 50,
+        dailyUserLimit: 10,
+        matchedKey: 'channel-123',
+      });
+    });
+
+    it('specific key overrides wildcard for the same field', () => {
+      const groups: GroupsConfig = {
+        '*': { mode: 'open', dailyLimit: 100, dailyUserLimit: 20 },
+        'group-1': { mode: 'open', dailyLimit: 10 },
+      };
+      // group-1 overrides dailyLimit, inherits dailyUserLimit from wildcard
+      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({
+        dailyLimit: 10,
+        dailyUserLimit: 20,
+        matchedKey: 'group-1',
+      });
+    });
   });
 
   describe('checkDailyLimit', () => {
