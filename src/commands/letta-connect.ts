@@ -5,11 +5,14 @@
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
 
 interface CommandCandidate {
   command: string;
   args: string[];
 }
+
+const require = createRequire(import.meta.url);
 
 async function runLettaCodeCommand(candidate: CommandCandidate, providerAlias: string, env: NodeJS.ProcessEnv): Promise<boolean> {
   const result = spawnSync(candidate.command, [...candidate.args, providerAlias], {
@@ -23,11 +26,34 @@ async function runLettaCodeCommand(candidate: CommandCandidate, providerAlias: s
 
 function getCandidateCommands(): CommandCandidate[] {
   const commands: CommandCandidate[] = [];
+  const seen = new Set<string>();
+
+  const addCandidate = (candidate: CommandCandidate): void => {
+    const key = `${candidate.command} ${candidate.args.join(' ')}`;
+    if (seen.has(key)) {
+      return;
+    }
+    commands.push(candidate);
+    seen.add(key);
+  };
+
+  // Resolve the bundled dependency from lettabot's install path, not only cwd.
+  try {
+    const resolvedScript = require.resolve('@letta-ai/letta-code/letta.js');
+    if (existsSync(resolvedScript)) {
+      addCandidate({
+        command: process.execPath,
+        args: [resolvedScript, 'connect'],
+      });
+    }
+  } catch {
+    // Fall through to other discovery paths.
+  }
   
   // Direct package entrypoint when available.
   const letCodeScript = resolve(process.cwd(), 'node_modules', '@letta-ai', 'letta-code', 'letta.js');
   if (existsSync(letCodeScript)) {
-    commands.push({
+    addCandidate({
       command: process.execPath,
       args: [letCodeScript, 'connect'],
     });
@@ -38,15 +64,21 @@ function getCandidateCommands(): CommandCandidate[] {
     ? resolve(process.cwd(), 'node_modules', '.bin', 'letta.cmd')
     : resolve(process.cwd(), 'node_modules', '.bin', 'letta');
   if (existsSync(localBinary)) {
-    commands.push({
+    addCandidate({
       command: localBinary,
       args: ['connect'],
     });
   }
+
+  // Reuse globally installed `letta` when available before falling back to npx.
+  addCandidate({
+    command: process.platform === 'win32' ? 'letta.cmd' : 'letta',
+    args: ['connect'],
+  });
   
   // Fallback to npx from npm registry.
   const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-  commands.push({
+  addCandidate({
     command: npxCommand,
     args: ['-y', '@letta-ai/letta-code', 'connect'],
   });

@@ -596,7 +596,7 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
     return;
   }
   
-  config.providers = [];
+  const providersById = new Map((config.providers ?? []).map(provider => [provider.id, provider]));
   const apiKey = config.apiKey || env.LETTA_API_KEY || process.env.LETTA_API_KEY;
   
   // Collect API keys for each selected provider
@@ -669,7 +669,7 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
         
         if (response.ok) {
           spinner.stop(`Connected ${provider.displayName}`);
-          config.providers.push({ id: provider.id, name: provider.name, apiKey: providerKey });
+          providersById.set(provider.id, { id: provider.id, name: provider.name, apiKey: providerKey });
 
           // If OpenAI was just connected, offer to enable voice transcription
           if (provider.id === 'openai') {
@@ -691,6 +691,13 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
         spinner.stop(`Failed to connect ${provider.displayName}`);
       }
     }
+  }
+
+  const mergedProviders = Array.from(providersById.values());
+  if (mergedProviders.length > 0) {
+    config.providers = mergedProviders;
+  } else {
+    delete config.providers;
   }
 }
 
