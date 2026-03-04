@@ -53,6 +53,9 @@ export interface WhatsAppConfig {
 
   /** Per-group settings (JID or "*" for defaults) */
   groups?: Record<string, GroupModeConfig>;
+
+  /** For scoping daily limit counters in multi-agent mode */
+  agentName?: string;
 }
 
 /**

@@ -28,6 +28,7 @@ export interface SlackConfig {
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
   groups?: Record<string, GroupModeConfig>;  // Per-channel settings
+  agentName?: string;       // For scoping daily limit counters in multi-agent mode
 }
 
 export class SlackAdapter implements ChannelAdapter {
@@ -156,9 +157,10 @@ export class SlackAdapter implements ChannelAdapter {
 
           // Daily rate limit check
           const limits = resolveDailyLimits(this.config.groups, [channelId]);
-          const limitResult = checkDailyLimit(`slack:${channelId}`, userId || '', limits);
+          const counterKey = `${this.config.agentName ?? ''}:slack:${limits.matchedKey ?? channelId}`;
+          const limitResult = checkDailyLimit(counterKey, userId || '', limits);
           if (!limitResult.allowed) {
-            log.info(`Daily limit reached for slack:${channelId} (${limitResult.reason})`);
+            log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
             return;
           }
         }
@@ -242,9 +244,10 @@ export class SlackAdapter implements ChannelAdapter {
 
       // Daily rate limit check
       const mentionLimits = resolveDailyLimits(this.config.groups, [channelId]);
-      const mentionLimitResult = checkDailyLimit(`slack:${channelId}`, userId, mentionLimits);
+      const mentionCounterKey = `${this.config.agentName ?? ''}:slack:${mentionLimits.matchedKey ?? channelId}`;
+      const mentionLimitResult = checkDailyLimit(mentionCounterKey, userId, mentionLimits);
       if (!mentionLimitResult.allowed) {
-        log.info(`Daily limit reached for slack:${channelId} (${mentionLimitResult.reason})`);
+        log.info(`Daily limit reached for ${mentionCounterKey} (${mentionLimitResult.reason})`);
         return;
       }
       

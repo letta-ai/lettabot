@@ -277,6 +277,10 @@ export interface GroupConfig {
   allowedUsers?: string[];
   /** Process messages from other bots instead of dropping them. Default: false. */
   receiveBotMessages?: boolean;
+  /** Maximum total bot triggers per day in this group. Omit for unlimited. */
+  dailyLimit?: number;
+  /** Maximum bot triggers per user per day in this group. Omit for unlimited. */
+  dailyUserLimit?: number;
   /**
    * @deprecated Use mode: "mention-only" (true) or "open" (false).
    */

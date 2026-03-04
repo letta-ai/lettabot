@@ -370,6 +370,7 @@ function createChannelsForAgent(
       attachmentsMaxBytes,
       groups: agentConfig.channels.telegram!.groups,
       mentionPatterns: agentConfig.channels.telegram!.mentionPatterns,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -401,6 +402,7 @@ function createChannelsForAgent(
       attachmentsDir,
       attachmentsMaxBytes,
       groups: agentConfig.channels.slack.groups,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -421,6 +423,7 @@ function createChannelsForAgent(
       attachmentsMaxBytes,
       groups: agentConfig.channels.whatsapp.groups,
       mentionPatterns: agentConfig.channels.whatsapp.mentionPatterns,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -444,6 +447,7 @@ function createChannelsForAgent(
       attachmentsMaxBytes,
       groups: agentConfig.channels.signal.groups,
       mentionPatterns: agentConfig.channels.signal.mentionPatterns,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -458,6 +462,7 @@ function createChannelsForAgent(
       attachmentsDir,
       attachmentsMaxBytes,
       groups: agentConfig.channels.discord.groups,
+      agentName: agentConfig.name,
     }));
   }
 

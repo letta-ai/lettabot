@@ -232,28 +232,28 @@ describe('group-mode helpers', () => {
       const groups: GroupsConfig = {
         'group-1': { mode: 'open', dailyLimit: 50 },
       };
-      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: 50, dailyUserLimit: undefined });
+      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: 50, dailyUserLimit: undefined, matchedKey: 'group-1' });
     });
 
     it('resolves dailyUserLimit from specific key', () => {
       const groups: GroupsConfig = {
         'group-1': { mode: 'open', dailyUserLimit: 10 },
       };
-      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: undefined, dailyUserLimit: 10 });
+      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: undefined, dailyUserLimit: 10, matchedKey: 'group-1' });
     });
 
     it('resolves both limits together', () => {
       const groups: GroupsConfig = {
         'group-1': { mode: 'open', dailyLimit: 100, dailyUserLimit: 20 },
       };
-      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: 100, dailyUserLimit: 20 });
+      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: 100, dailyUserLimit: 20, matchedKey: 'group-1' });
     });
 
     it('uses wildcard as fallback', () => {
       const groups: GroupsConfig = {
         '*': { mode: 'open', dailyLimit: 30 },
       };
-      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: 30, dailyUserLimit: undefined });
+      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: 30, dailyUserLimit: undefined, matchedKey: '*' });
     });
 
     it('prefers specific key over wildcard', () => {
@@ -261,7 +261,7 @@ describe('group-mode helpers', () => {
         '*': { mode: 'open', dailyLimit: 100 },
         'group-1': { mode: 'open', dailyLimit: 10 },
       };
-      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: 10, dailyUserLimit: undefined });
+      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: 10, dailyUserLimit: undefined, matchedKey: 'group-1' });
     });
 
     it('uses first matching key in priority order', () => {
@@ -269,8 +269,8 @@ describe('group-mode helpers', () => {
         'chat-1': { mode: 'open', dailyLimit: 5 },
         'server-1': { mode: 'open', dailyLimit: 50 },
       };
-      expect(resolveDailyLimits(groups, ['chat-1', 'server-1'])).toEqual({ dailyLimit: 5, dailyUserLimit: undefined });
-      expect(resolveDailyLimits(groups, ['chat-2', 'server-1'])).toEqual({ dailyLimit: 50, dailyUserLimit: undefined });
+      expect(resolveDailyLimits(groups, ['chat-1', 'server-1'])).toEqual({ dailyLimit: 5, dailyUserLimit: undefined, matchedKey: 'chat-1' });
+      expect(resolveDailyLimits(groups, ['chat-2', 'server-1'])).toEqual({ dailyLimit: 50, dailyUserLimit: undefined, matchedKey: 'server-1' });
     });
   });
 

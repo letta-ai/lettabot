@@ -44,6 +44,7 @@ export interface SignalConfig {
   // Group gating
   mentionPatterns?: string[]; // Regex patterns for mention detection (e.g., ["@bot"])
   groups?: Record<string, SignalGroupConfig>;  // Per-group settings, "*" for defaults
+  agentName?: string;       // For scoping daily limit counters in multi-agent mode
 }
 
 type SignalRpcResponse<T> = {
@@ -858,9 +859,10 @@ This code expires in 1 hour.`;
         // Daily rate limit check
         const groupKeys = [groupInfo.groupId, `group:${groupInfo.groupId}`];
         const limits = resolveDailyLimits(this.config.groups, groupKeys);
-        const limitResult = checkDailyLimit(`signal:${groupInfo.groupId}`, source, limits);
+        const counterKey = `${this.config.agentName ?? ''}:signal:${limits.matchedKey ?? groupInfo.groupId}`;
+        const limitResult = checkDailyLimit(counterKey, source, limits);
         if (!limitResult.allowed) {
-          log.info(`Daily limit reached for signal:${groupInfo.groupId} (${limitResult.reason})`);
+          log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
           return;
         }
         

@@ -30,6 +30,7 @@ export interface DiscordConfig {
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
   groups?: Record<string, GroupModeConfig>;  // Per-guild/channel settings
+  agentName?: string;       // For scoping daily limit counters in multi-agent mode
 }
 
 export function shouldProcessDiscordBotMessage(params: {
@@ -298,9 +299,11 @@ Ask the bot owner to approve with:
 
           // Daily rate limit check (after all other gating so we only count real triggers)
           const limits = resolveDailyLimits(this.config.groups, keys);
-          const limitResult = checkDailyLimit(`discord:${chatId}`, userId, limits);
+          const counterScope = limits.matchedKey ?? chatId;
+          const counterKey = `${this.config.agentName ?? ''}:discord:${counterScope}`;
+          const limitResult = checkDailyLimit(counterKey, userId, limits);
           if (!limitResult.allowed) {
-            log.info(`Daily limit reached for discord:${chatId} (${limitResult.reason})`);
+            log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
             return;
           }
         }

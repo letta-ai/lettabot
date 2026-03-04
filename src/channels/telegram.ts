@@ -32,6 +32,7 @@ export interface TelegramConfig {
   attachmentsMaxBytes?: number;
   mentionPatterns?: string[];    // Regex patterns for mention detection
   groups?: Record<string, GroupModeConfig>;  // Per-group settings
+  agentName?: string;       // For scoping daily limit counters in multi-agent mode
 }
 
 export class TelegramAdapter implements ChannelAdapter {
@@ -97,9 +98,10 @@ export class TelegramAdapter implements ChannelAdapter {
     const chatIdStr = String(ctx.chat.id);
     const senderId = ctx.from?.id ? String(ctx.from.id) : '';
     const limits = resolveDailyLimits(this.config.groups, [chatIdStr]);
-    const limitResult = checkDailyLimit(`telegram:${chatIdStr}`, senderId, limits);
+    const counterKey = `${this.config.agentName ?? ''}:telegram:${limits.matchedKey ?? chatIdStr}`;
+    const limitResult = checkDailyLimit(counterKey, senderId, limits);
     if (!limitResult.allowed) {
-      log.info(`Daily limit reached for telegram:${chatIdStr} (${limitResult.reason})`);
+      log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
       return null;
     }
 

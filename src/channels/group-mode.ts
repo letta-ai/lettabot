@@ -127,6 +127,13 @@ export function resolveGroupMode(
   return fallback;
 }
 
+export interface ResolvedDailyLimits {
+  dailyLimit?: number;
+  dailyUserLimit?: number;
+  /** The config key that provided the limits (e.g. channelId, guildId, or "*"). */
+  matchedKey?: string;
+}
+
 /**
  * Resolve the effective daily limit config for a group/channel.
  *
@@ -134,21 +141,24 @@ export function resolveGroupMode(
  * 1. First matching key in provided order
  * 2. Wildcard "*"
  * 3. undefined (no limit)
+ *
+ * Returns `matchedKey` so callers can scope counters to the config level
+ * (e.g. guild-wide vs channel-specific).
  */
 export function resolveDailyLimits(
   groups: GroupsConfig | undefined,
   keys: string[],
-): { dailyLimit?: number; dailyUserLimit?: number } {
+): ResolvedDailyLimits {
   if (groups) {
     for (const key of keys) {
       const config = groups[key];
       if (config && (config.dailyLimit !== undefined || config.dailyUserLimit !== undefined)) {
-        return { dailyLimit: config.dailyLimit, dailyUserLimit: config.dailyUserLimit };
+        return { dailyLimit: config.dailyLimit, dailyUserLimit: config.dailyUserLimit, matchedKey: key };
       }
     }
     const wildcard = groups['*'];
     if (wildcard && (wildcard.dailyLimit !== undefined || wildcard.dailyUserLimit !== undefined)) {
-      return { dailyLimit: wildcard.dailyLimit, dailyUserLimit: wildcard.dailyUserLimit };
+      return { dailyLimit: wildcard.dailyLimit, dailyUserLimit: wildcard.dailyUserLimit, matchedKey: '*' };
     }
   }
   return {};

@@ -791,9 +791,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
         // Daily rate limit check
         const limits = resolveDailyLimits(this.config.groups, [remoteJid]);
-        const limitResult = checkDailyLimit(`whatsapp:${remoteJid}`, userId, limits);
+        const counterKey = `${this.config.agentName ?? ''}:whatsapp:${limits.matchedKey ?? remoteJid}`;
+        const limitResult = checkDailyLimit(counterKey, userId, limits);
         if (!limitResult.allowed) {
-          log.info(`Daily limit reached for whatsapp:${remoteJid} (${limitResult.reason})`);
+          log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
           continue;
         }
 
