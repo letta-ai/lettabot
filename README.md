@@ -31,6 +31,7 @@ Your personal AI assistant that remembers everything across **Telegram, Slack, D
 - Node.js 20+
 - A Letta API key from [app.letta.com](https://app.letta.com) (or a running [Letta Docker server](https://docs.letta.com/guides/docker/))
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
+- Optional: a ChatGPT subscription account you want to use for model credits
 
 ### Install
 
@@ -96,6 +97,14 @@ cd lettabot
 npm install && npm run build && npm link
 lettabot onboard
 ```
+
+Prefer to use your ChatGPT subscription instead of another API key? After onboarding (or anytime), run:
+
+```bash
+lettabot connect chatgpt
+```
+
+This opens a browser flow and enables connected subscription handles in the model picker.
 
 ### Run
 
@@ -202,11 +211,20 @@ Then ask your bot things like:
 | Command | Description |
 |---------|-------------|
 | `lettabot onboard` | Interactive setup wizard |
+| `lettabot connect` | Connect model providers (for example, `chatgpt`) |
 | `lettabot server` | Start the bot server |
 | `lettabot configure` | View and edit configuration |
 | `lettabot skills status` | Show enabled and available skills |
 | `lettabot destroy` | Delete all local data and start fresh |
 | `lettabot help` | Show help |
+
+## Changelog
+
+### March 4, 2026
+
+- Added `lettabot connect` with `chatgpt`/`codex` provider aliases for subscription login via OAuth.
+- Added ChatGPT/Codex as an onboarding provider option so users can connect without manual key entry.
+- Included connected-provider models in the model picker for both free and paid users.
 
 
 ## Channel Setup
