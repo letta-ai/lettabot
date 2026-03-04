@@ -7,9 +7,10 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as p from '@clack/prompts';
 import { saveConfig, syncProviders, isApiServerMode } from './config/index.js';
-import type { AgentConfig, LettaBotConfig, ProviderConfig } from './config/types.js';
+import type { AgentConfig, LettaBotConfig } from './config/types.js';
 import { isLettaApiUrl } from './utils/server.js';
 import { parseCsvList, parseOptionalInt } from './utils/parse.js';
+import { runChatgptConnect } from './commands/letta-connect.js';
 import { CHANNELS, getChannelHint, isSignalCliInstalled, setupTelegram, setupSlack, setupDiscord, setupWhatsApp, setupSignal } from './channels/setup.js';
 
 // ============================================================================
@@ -221,8 +222,9 @@ interface OnboardConfig {
   // Model (only for new agents)
   model?: string;
   
-  // BYOK Providers (for free tier)
+  // BYOK/connected providers
   providers?: Array<{ id: string; name: string; apiKey: string }>;
+  chatgptConnected?: boolean;
   
   // Channels (with access control)
   telegram: {
@@ -552,8 +554,17 @@ async function stepAgent(config: OnboardConfig, env: Record<string, string>): Pr
   }
 }
 
+type ByokProvider = {
+  id: string;
+  name: string;
+  displayName: string;
+  providerType: string;
+  isOAuth?: boolean;
+};
+
 // BYOK Provider definitions (same as letta-code)
-const BYOK_PROVIDERS = [
+const BYOK_PROVIDERS: ByokProvider[] = [
+  { id: 'codex', name: 'chatgpt-plus-pro', displayName: 'ChatGPT / Codex', providerType: 'chatgpt_oauth', isOAuth: true },
   { id: 'anthropic', name: 'lc-anthropic', displayName: 'Anthropic (Claude)', providerType: 'anthropic' },
   { id: 'openai', name: 'lc-openai', displayName: 'OpenAI', providerType: 'openai' },
   { id: 'gemini', name: 'lc-gemini', displayName: 'Google Gemini', providerType: 'google_ai' },
@@ -563,16 +574,17 @@ const BYOK_PROVIDERS = [
 ];
 
 async function stepProviders(config: OnboardConfig, env: Record<string, string>): Promise<void> {
-  // Only for free tier users on Letta API (not Docker/custom servers, not paid)
   if (isDockerAuthMethod(config.authMethod)) return;
-  if (config.billingTier !== 'free') return;
+  const isFreeTier = config.billingTier === 'free';
+  const selectedProviderDefs = BYOK_PROVIDERS.filter(provider => isFreeTier || provider.id === 'codex');
+  if (selectedProviderDefs.length === 0) return;
   
   const selectedProviders = await p.multiselect({
-    message: 'Add LLM provider keys (optional - for BYOK models)',
-    options: BYOK_PROVIDERS.map(provider => ({
+    message: 'Add connected providers (optional)',
+    options: selectedProviderDefs.map(provider => ({
       value: provider.id,
       label: provider.displayName,
-      hint: `Connect your ${provider.displayName} API key`,
+      hint: provider.isOAuth ? 'Connect your ChatGPT subscription via OAuth' : `Connect your ${provider.displayName} API key`,
     })),
     required: false,
   });
@@ -591,6 +603,13 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
   for (const providerId of selectedProviders as string[]) {
     const provider = BYOK_PROVIDERS.find(p => p.id === providerId);
     if (!provider) continue;
+    if (provider.isOAuth) {
+      const connected = await runChatgptConnect({ ...env, ...process.env, LETTA_BASE_URL: config.baseUrl || 'https://api.letta.com' });
+      if (connected) {
+        config.chatgptConnected = true;
+      }
+      continue;
+    }
     
     const providerKey = await p.text({
       message: `${provider.displayName} API Key`,
@@ -1196,7 +1215,12 @@ function showSummary(config: OnboardConfig): void {
   
   // Model
   if (config.model) {
-    lines.push(`Model:     ${config.model}`);
+  lines.push(`Model:     ${config.model}`);
+  }
+
+  // Providers
+  if (config.chatgptConnected) {
+    lines.push('Providers: ChatGPT subscription');
   }
   
   // Channels
