@@ -187,7 +187,7 @@ Ask the bot owner to approve with:
         try {
           const { isTranscriptionConfigured } = await import('../transcription/index.js');
           if (!isTranscriptionConfigured()) {
-            await message.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages');
+            await message.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice');
           } else {
             // Download audio
             const response = await fetch(audioAttachment.url);

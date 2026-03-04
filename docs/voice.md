@@ -40,13 +40,13 @@ If no API key is configured, users who send voice messages will receive an error
 
 ### Supported Audio Formats
 
-These formats are sent directly to the transcription API:
+These formats are sent directly to the transcription API (some with a filename remap):
 
-`flac`, `m4a`, `mp3`, `mp4`, `mpeg`, `mpga`, `oga`, `ogg`, `wav`, `webm`
+`flac`, `m4a`, `mp3`, `mp4`, `mpeg`, `mpga`, `oga`, `ogg`, `opus`, `wav`, `webm`
 
-These formats are automatically converted via ffmpeg (if installed):
+These formats are automatically converted to MP3 via ffmpeg (if installed):
 
-`aac`, `amr`, `caf`, `3gp`, `3gpp`, `opus`
+`aac`, `amr`, `caf`, `3gp`, `3gpp`
 
 Files over 20MB are automatically split into 10-minute chunks before transcription.
 
@@ -117,7 +117,7 @@ tts:
 | WhatsApp  | Native voice bubble | Sent with push-to-talk (`ptt: true`) for native rendering. |
 | Discord   | Audio attachment | Playable inline. |
 | Slack     | Audio attachment | Playable inline. |
-| Signal    | Not supported | Directive is skipped with a warning. |
+| Signal    | Audio attachment | Sent as a file attachment. |
 
 ### When to Use Voice
 

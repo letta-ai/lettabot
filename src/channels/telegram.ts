@@ -370,7 +370,7 @@ export class TelegramAdapter implements ChannelAdapter {
       // Check if transcription is configured (config or env)
       const { isTranscriptionConfigured } = await import('../transcription/index.js');
       if (!isTranscriptionConfigured()) {
-        await ctx.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages');
+        await ctx.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice');
         return;
       }
 

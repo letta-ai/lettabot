@@ -111,7 +111,7 @@ Backslash-escaped quotes (common when LLMs generate XML inside a JSON context) a
 | Slack     | Yes | Yes | Audio attachment | Reactions use Slack emoji names (`:thumbsup:` style). |
 | Discord   | Yes | Yes | Audio attachment | Custom server emoji not yet supported. |
 | WhatsApp  | No  | Yes | Voice note (PTT) | Sent with `ptt: true` for native voice bubble. |
-| Signal    | No  | No  | No | Directive skipped with a warning. |
+| Signal    | No  | Yes | Audio attachment | Sent as a file attachment. |
 
 When a channel doesn't implement `addReaction`, the directive is silently skipped and a warning is logged. This never blocks message delivery.
 

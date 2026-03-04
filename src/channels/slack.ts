@@ -80,7 +80,7 @@ export class SlackAdapter implements ChannelAdapter {
         try {
           const { isTranscriptionConfigured } = await import('../transcription/index.js');
           if (!isTranscriptionConfigured()) {
-            await say('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages');
+            await say('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice');
           } else {
             // Download file (requires bot token for auth)
             const response = await fetch(audioFile.url_private_download, {
@@ -188,7 +188,7 @@ export class SlackAdapter implements ChannelAdapter {
         try {
           const { isTranscriptionConfigured } = await import('../transcription/index.js');
           if (!isTranscriptionConfigured()) {
-            await this.sendMessage({ chatId: channelId, text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages', threadId: threadTs });
+            await this.sendMessage({ chatId: channelId, text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice', threadId: threadTs });
             return;
           }
           // Download file (requires bot token for auth)

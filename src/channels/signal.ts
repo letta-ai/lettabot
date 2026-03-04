@@ -700,7 +700,7 @@ This code expires in 1 hour.`;
             if (chatId) {
               await this.sendMessage({
                 chatId,
-                text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages'
+                text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice'
               });
             }
           } else {
