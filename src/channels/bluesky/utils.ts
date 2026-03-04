@@ -118,6 +118,42 @@ export function splitPostText(text: string, maxChars = 300): string[] {
   return chunks;
 }
 
+import { AtpAgent, RichText } from '@atproto/api';
+
+/**
+ * Parse text and generate AT Protocol facets (links, mentions, hashtags).
+ * When an authenticated agent is provided, @mention handles are resolved to DIDs.
+ * Without an agent, links and hashtags work but mentions won't have DIDs.
+ */
+export async function parseFacets(text: string, agent?: AtpAgent): Promise<Record<string, unknown>[]> {
+  const rt = new RichText({ text });
+  if (agent) {
+    await rt.detectFacets(agent);
+  } else {
+    rt.detectFacetsWithoutResolution();
+  }
+  if (!rt.facets || rt.facets.length === 0) return [];
+  return rt.facets.map(facet => ({
+    index: { byteStart: facet.index.byteStart, byteEnd: facet.index.byteEnd },
+    features: facet.features.map(feature => {
+      const type = feature.$type;
+      if (type === 'app.bsky.richtext.facet#link') {
+        const f = feature as { $type: string; uri: string };
+        return { $type: type, uri: f.uri };
+      }
+      if (type === 'app.bsky.richtext.facet#mention') {
+        const f = feature as { $type: string; did: string };
+        return { $type: type, did: f.did };
+      }
+      if (type === 'app.bsky.richtext.facet#tag') {
+        const f = feature as { $type: string; tag: string };
+        return { $type: type, tag: f.tag };
+      }
+      return { $type: type };
+    }),
+  }));
+}
+
 export function decodeJwtExp(jwt: string): number | undefined {
   const parts = jwt.split('.');
   if (parts.length < 2) return undefined;
