@@ -8,6 +8,7 @@
 import type { ChannelAdapter } from './types.js';
 import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
 import { applySignalGroupGating } from './signal/group-gating.js';
+import { resolveDailyLimits, checkDailyLimit } from './group-mode.js';
 import type { DmPolicy } from '../pairing/types.js';
 import {
   isUserAllowed,
@@ -851,6 +852,15 @@ This code expires in 1 hour.`;
         
         if (!gatingResult.shouldProcess) {
           log.info(`Group message filtered: ${gatingResult.reason}`);
+          return;
+        }
+
+        // Daily rate limit check
+        const groupKeys = [groupInfo.groupId, `group:${groupInfo.groupId}`];
+        const limits = resolveDailyLimits(this.config.groups, groupKeys);
+        const limitResult = checkDailyLimit(`signal:${groupInfo.groupId}`, source, limits);
+        if (!limitResult.allowed) {
+          log.info(`Daily limit reached for signal:${groupInfo.groupId} (${limitResult.reason})`);
           return;
         }
         

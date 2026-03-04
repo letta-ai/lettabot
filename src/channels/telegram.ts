@@ -18,7 +18,7 @@ import { isGroupApproved, approveGroup } from '../pairing/group-store.js';
 import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { applyTelegramGroupGating } from './telegram-group-gating.js';
-import type { GroupModeConfig } from './group-mode.js';
+import { resolveDailyLimits, checkDailyLimit, type GroupModeConfig } from './group-mode.js';
 
 import { createLogger } from '../logger.js';
 
@@ -92,6 +92,17 @@ export class TelegramAdapter implements ChannelAdapter {
       log.info(`Group message filtered: ${gatingResult.reason}`);
       return null;
     }
+
+    // Daily rate limit check (after all other gating so we only count real triggers)
+    const chatIdStr = String(ctx.chat.id);
+    const senderId = ctx.from?.id ? String(ctx.from.id) : '';
+    const limits = resolveDailyLimits(this.config.groups, [chatIdStr]);
+    const limitResult = checkDailyLimit(`telegram:${chatIdStr}`, senderId, limits);
+    if (!limitResult.allowed) {
+      log.info(`Daily limit reached for telegram:${chatIdStr} (${limitResult.reason})`);
+      return null;
+    }
+
     const wasMentioned = gatingResult.wasMentioned ?? false;
     const isListeningMode = gatingResult.mode === 'listen' && !wasMentioned;
     return { isGroup, groupName, wasMentioned, isListeningMode };

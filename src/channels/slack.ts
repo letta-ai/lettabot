@@ -11,7 +11,7 @@ import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { parseCommand, HELP_TEXT } from '../core/commands.js';
 import { markdownToSlackMrkdwn } from './slack-format.js';
-import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, type GroupMode, type GroupModeConfig } from './group-mode.js';
+import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveDailyLimits, checkDailyLimit, type GroupMode, type GroupModeConfig } from './group-mode.js';
 
 import { createLogger } from '../logger.js';
 
@@ -153,6 +153,14 @@ export class SlackAdapter implements ChannelAdapter {
             // The app_mention handler will process actual @mentions.
             return;
           }
+
+          // Daily rate limit check
+          const limits = resolveDailyLimits(this.config.groups, [channelId]);
+          const limitResult = checkDailyLimit(`slack:${channelId}`, userId || '', limits);
+          if (!limitResult.allowed) {
+            log.info(`Daily limit reached for slack:${channelId} (${limitResult.reason})`);
+            return;
+          }
         }
         
         await this.onMessage({
@@ -230,6 +238,14 @@ export class SlackAdapter implements ChannelAdapter {
       }
       if (!isGroupUserAllowed(this.config.groups, [channelId], userId)) {
         return; // User not in group allowedUsers -- silent drop
+      }
+
+      // Daily rate limit check
+      const mentionLimits = resolveDailyLimits(this.config.groups, [channelId]);
+      const mentionLimitResult = checkDailyLimit(`slack:${channelId}`, userId, mentionLimits);
+      if (!mentionLimitResult.allowed) {
+        log.info(`Daily limit reached for slack:${channelId} (${mentionLimitResult.reason})`);
+        return;
       }
       
       // Handle slash commands

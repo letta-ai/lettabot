@@ -11,7 +11,7 @@ import type { DmPolicy } from '../pairing/types.js';
 import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { HELP_TEXT } from '../core/commands.js';
-import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveReceiveBotMessages, type GroupModeConfig } from './group-mode.js';
+import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveReceiveBotMessages, resolveDailyLimits, checkDailyLimit, type GroupModeConfig } from './group-mode.js';
 import { basename } from 'node:path';
 
 import { createLogger } from '../logger.js';
@@ -295,6 +295,14 @@ Ask the bot owner to approve with:
             return; // Mention required but not mentioned -- silent drop
           }
           isListeningMode = mode === 'listen' && !wasMentioned;
+
+          // Daily rate limit check (after all other gating so we only count real triggers)
+          const limits = resolveDailyLimits(this.config.groups, keys);
+          const limitResult = checkDailyLimit(`discord:${chatId}`, userId, limits);
+          if (!limitResult.allowed) {
+            log.info(`Daily limit reached for discord:${chatId} (${limitResult.reason})`);
+            return;
+          }
         }
 
         await this.onMessage({
