@@ -72,7 +72,7 @@ Generates speech from text via TTS and sends it as a native voice note. No tool 
 <voice>Hey, here's a quick voice reply!</voice>
 ```
 
-The text content is sent to the configured TTS provider (see [TTS Configuration](./configuration.md#text-to-speech-tts-configuration)), converted to audio, and delivered as a voice note. Audio is automatically cleaned up after sending.
+The text content is sent to the configured TTS provider, converted to audio, and delivered as a voice note. Audio is automatically cleaned up after sending. See [voice.md](./voice.md) for full setup and provider options.
 
 - Requires `tts` to be configured in `lettabot.yaml`
 - Renders as native voice bubbles on Telegram and WhatsApp

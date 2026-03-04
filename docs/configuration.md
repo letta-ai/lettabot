@@ -809,44 +809,30 @@ The top-level `polling` section takes priority if both are present.
 
 ## Transcription Configuration
 
-Voice message transcription via OpenAI Whisper:
+Voice message transcription (OpenAI Whisper or Mistral Voxtral):
 
 ```yaml
 transcription:
-  provider: openai
-  apiKey: sk-...       # Optional: uses OPENAI_API_KEY env var
-  model: whisper-1     # Default
+  provider: openai       # "openai" (default) or "mistral"
+  apiKey: sk-...         # Optional: falls back to OPENAI_API_KEY / MISTRAL_API_KEY env var
+  model: whisper-1       # Default (OpenAI) or voxtral-mini-latest (Mistral)
 ```
+
+See [voice.md](./voice.md) for provider details, supported formats, and troubleshooting.
 
 ## Text-to-Speech (TTS) Configuration
 
-Voice memo generation via the `<voice>` directive. The agent can reply with voice notes on Telegram and WhatsApp:
+Voice memo generation via the `<voice>` directive (ElevenLabs or OpenAI):
 
 ```yaml
 tts:
   provider: elevenlabs    # "elevenlabs" (default) or "openai"
   apiKey: sk_475a...      # Provider API key
-  voiceId: 21m00Tcm4TlvDq8ikWAM  # Voice selection (see below)
+  voiceId: onwK4e9ZLuTAKqWW03F9   # Voice selection
   model: eleven_multilingual_v2   # Optional model override
 ```
 
-**ElevenLabs** (default):
-- `voiceId` is an ElevenLabs voice ID. Default: `21m00Tcm4TlvDq8ikWAM` (Rachel). Browse voices at [elevenlabs.io/voice-library](https://elevenlabs.io/voice-library).
-- `model` defaults to `eleven_multilingual_v2`.
-
-**OpenAI**:
-- `voiceId` is one of: `alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`. Default: `alloy`.
-- `model` defaults to `tts-1`. Use `tts-1-hd` for higher quality.
-
-The agent uses the `<voice>` directive in responses:
-
-```xml
-<actions>
-  <voice>Hey, here's a quick voice reply!</voice>
-</actions>
-```
-
-The `lettabot-tts` CLI tool is also available for background tasks (heartbeats, cron).
+See [voice.md](./voice.md) for provider options, channel support, and CLI tools.
 
 ## Attachments Configuration
 
@@ -987,7 +973,7 @@ Reference:
 | `LETTABOT_WORKING_DIR` | Agent working directory (overridden by per-agent `workingDir`) |
 | `TTS_PROVIDER` | TTS backend: `elevenlabs` (default) or `openai` |
 | `ELEVENLABS_API_KEY` | API key for ElevenLabs TTS |
-| `ELEVENLABS_VOICE_ID` | ElevenLabs voice ID (default: `21m00Tcm4TlvDq8ikWAM` / Rachel) |
+| `ELEVENLABS_VOICE_ID` | ElevenLabs voice ID (default: `onwK4e9ZLuTAKqWW03F9`) |
 | `ELEVENLABS_MODEL_ID` | ElevenLabs model (default: `eleven_multilingual_v2`) |
 | `OPENAI_TTS_VOICE` | OpenAI TTS voice (default: `alloy`) |
 | `OPENAI_TTS_MODEL` | OpenAI TTS model (default: `tts-1`) |

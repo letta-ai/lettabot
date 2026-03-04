@@ -114,16 +114,7 @@ LettaBot responds to these Telegram commands:
 
 ### Voice Messages
 
-Send a voice message to have it transcribed and processed:
-
-1. Requires `OPENAI_API_KEY` for transcription
-2. The bot transcribes and responds to the content
-3. Configure in `lettabot.yaml`:
-   ```yaml
-   transcription:
-     provider: openai
-     apiKey: sk-...  # Optional: uses OPENAI_API_KEY env var
-   ```
+Send a voice message to have it transcribed and processed. See [voice.md](./voice.md) for transcription setup (OpenAI Whisper or Mistral Voxtral).
 
 ### Attachments
 
@@ -184,9 +175,7 @@ First responses may take longer as the agent "wakes up".
 
 ### Voice messages not working
 
-1. Make sure `OPENAI_API_KEY` is set
-2. Check the logs for transcription errors
-3. Verify your OpenAI account has API access
+See [voice.md troubleshooting](./voice.md#troubleshooting) for common issues.
 
 ### Rate limiting
 

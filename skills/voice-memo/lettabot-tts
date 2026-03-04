@@ -8,7 +8,7 @@
 #
 #   ElevenLabs:
 #     ELEVENLABS_API_KEY   - Required. API key.
-#     ELEVENLABS_VOICE_ID  - Optional. Voice ID (default: 21m00Tcm4TlvDq8ikWAM / Rachel).
+#     ELEVENLABS_VOICE_ID  - Optional. Voice ID (default: onwK4e9ZLuTAKqWW03F9).
 #     ELEVENLABS_MODEL_ID  - Optional. Model ID (default: eleven_multilingual_v2).
 #
 #   OpenAI:
