@@ -576,23 +576,36 @@ const BYOK_PROVIDERS: ByokProvider[] = [
 async function stepProviders(config: OnboardConfig, env: Record<string, string>): Promise<void> {
   if (isDockerAuthMethod(config.authMethod)) return;
   const isFreeTier = config.billingTier === 'free';
-  const selectedProviderDefs = BYOK_PROVIDERS.filter(provider => isFreeTier || provider.id === 'codex');
-  if (selectedProviderDefs.length === 0) return;
+  const providerDefs = BYOK_PROVIDERS.filter(provider => isFreeTier || provider.id === 'codex');
+  if (providerDefs.length === 0) return;
   
-  const selectedProviders = await p.multiselect({
-    message: 'Add connected providers (optional)',
-    options: selectedProviderDefs.map(provider => ({
-      value: provider.id,
-      label: provider.displayName,
-      hint: provider.isOAuth ? 'Connect your ChatGPT subscription via OAuth' : `Connect your ${provider.displayName} API key`,
-    })),
-    required: false,
-  });
+  // Paid users only see the ChatGPT OAuth option -- use a confirm instead of multiselect.
+  const oauthOnly = providerDefs.length === 1 && providerDefs[0].isOAuth;
   
-  if (p.isCancel(selectedProviders)) { p.cancel('Setup cancelled'); process.exit(0); }
+  let selectedProviders: string[];
+  if (oauthOnly) {
+    const connect = await p.confirm({
+      message: 'Connect your ChatGPT subscription? (via OAuth)',
+      initialValue: false,
+    });
+    if (p.isCancel(connect)) { p.cancel('Setup cancelled'); process.exit(0); }
+    selectedProviders = connect ? [providerDefs[0].id] : [];
+  } else {
+    const result = await p.multiselect({
+      message: 'Add connected providers (optional)',
+      options: providerDefs.map(provider => ({
+        value: provider.id,
+        label: provider.displayName,
+        hint: provider.isOAuth ? 'Connect your ChatGPT subscription via OAuth' : `Connect your ${provider.displayName} API key`,
+      })),
+      required: false,
+    });
+    if (p.isCancel(result)) { p.cancel('Setup cancelled'); process.exit(0); }
+    selectedProviders = (result as string[]) || [];
+  }
   
   // If no providers selected, skip
-  if (!selectedProviders || selectedProviders.length === 0) {
+  if (selectedProviders.length === 0) {
     return;
   }
   
@@ -600,11 +613,11 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
   const apiKey = config.apiKey || env.LETTA_API_KEY || process.env.LETTA_API_KEY;
   
   // Collect API keys for each selected provider
-  for (const providerId of selectedProviders as string[]) {
+  for (const providerId of selectedProviders) {
     const provider = BYOK_PROVIDERS.find(p => p.id === providerId);
     if (!provider) continue;
     if (provider.isOAuth) {
-      const connected = await runChatgptConnect({ ...env, ...process.env, LETTA_BASE_URL: config.baseUrl || 'https://api.letta.com' });
+      const connected = await runChatgptConnect({ LETTA_BASE_URL: config.baseUrl || 'https://api.letta.com' });
       if (connected) {
         config.chatgptConnected = true;
       }
@@ -1222,12 +1235,20 @@ function showSummary(config: OnboardConfig): void {
   
   // Model
   if (config.model) {
-  lines.push(`Model:     ${config.model}`);
+    lines.push(`Model:     ${config.model}`);
   }
 
   // Providers
-  if (config.chatgptConnected) {
-    lines.push('Providers: ChatGPT subscription');
+  const providerNames: string[] = [];
+  if (config.chatgptConnected) providerNames.push('ChatGPT subscription');
+  if (config.providers?.length) {
+    for (const prov of config.providers) {
+      const def = BYOK_PROVIDERS.find(b => b.id === prov.id);
+      if (def && !def.isOAuth) providerNames.push(def.displayName);
+    }
+  }
+  if (providerNames.length > 0) {
+    lines.push(`Providers: ${providerNames.join(', ')}`);
   }
   
   // Channels

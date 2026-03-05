@@ -218,15 +218,6 @@ Then ask your bot things like:
 | `lettabot destroy` | Delete all local data and start fresh |
 | `lettabot help` | Show help |
 
-## Changelog
-
-### March 4, 2026
-
-- Added `lettabot connect` with `chatgpt`/`codex` provider aliases for subscription login via OAuth.
-- Added ChatGPT/Codex as an onboarding provider option so users can connect without manual key entry.
-- Included connected-provider models in the model picker for both free and paid users.
-
-
 ## Channel Setup
 
 By default, LettaBot uses a **single agent with a single shared conversation** across all channels:

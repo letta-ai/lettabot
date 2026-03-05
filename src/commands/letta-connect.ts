@@ -71,10 +71,14 @@ function getCandidateCommands(): CommandCandidate[] {
   }
 
   // Reuse globally installed `letta` when available before falling back to npx.
-  addCandidate({
-    command: process.platform === 'win32' ? 'letta.cmd' : 'letta',
-    args: ['connect'],
-  });
+  const globalBin = process.platform === 'win32' ? 'letta.cmd' : 'letta';
+  const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+  if (spawnSync(whichCmd, [globalBin], { stdio: 'ignore' }).status === 0) {
+    addCandidate({
+      command: globalBin,
+      args: ['connect'],
+    });
+  }
   
   // Fallback to npx from npm registry.
   const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
