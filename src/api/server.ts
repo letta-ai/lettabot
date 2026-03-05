@@ -268,7 +268,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           return;
         }
 
-        console.log(`[API] Async chat request for agent "${resolvedName}": ${chatReq.message.slice(0, 100)}...`);
+        log.info(`Async chat request for agent "${resolvedName}": ${chatReq.message.slice(0, 100)}...`);
 
         // Return 202 immediately
         const asyncRes: AsyncChatResponse = {
@@ -282,10 +282,10 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         // Process in background (detached promise)
         const context = { type: 'webhook' as const, outputMode: 'silent' as const };
         deliverer.sendToAgent(agentName, chatReq.message, context).catch((error: any) => {
-          console.error(`[API] Async chat background error for agent "${resolvedName}":`, error);
+          log.error(`Async chat background error for agent "${resolvedName}":`, error);
         });
       } catch (error: any) {
-        console.error('[API] Async chat error:', error);
+        log.error('Async chat error:', error);
         const asyncRes: AsyncChatResponse = {
           success: false,
           status: 'error',
@@ -816,4 +816,3 @@ if (apiKey) init();
 </script>
 </body>
 </html>`;
-
