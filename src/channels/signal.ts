@@ -11,9 +11,9 @@ import { applySignalGroupGating } from './signal/group-gating.js';
 import { resolveDailyLimits, checkDailyLimit } from './group-mode.js';
 import type { DmPolicy } from '../pairing/types.js';
 import {
-  isUserAllowed,
   upsertPairingRequest,
 } from '../pairing/store.js';
+import { checkDmAccess } from './shared/access-control.js';
 import { buildAttachmentPath } from './attachments.js';
 import { parseCommand, HELP_TEXT } from '../core/commands.js';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -178,31 +178,8 @@ export class SignalAdapter implements ChannelAdapter {
     this.baseUrl = `http://${host}:${port}`;
   }
   
-  /**
-   * Check if a user is authorized based on dmPolicy
-   * Returns 'allowed', 'blocked', or 'pairing'
-   */
   private async checkAccess(userId: string): Promise<'allowed' | 'blocked' | 'pairing'> {
-    const policy = this.config.dmPolicy || 'pairing';
-    
-    // Open policy: everyone allowed
-    if (policy === 'open') {
-      return 'allowed';
-    }
-    
-    // Check if already allowed (config or store)
-    const allowed = await isUserAllowed('signal', userId, this.config.allowedUsers);
-    if (allowed) {
-      return 'allowed';
-    }
-    
-    // Allowlist policy: not allowed if not in list
-    if (policy === 'allowlist') {
-      return 'blocked';
-    }
-    
-    // Pairing policy: needs pairing
-    return 'pairing';
+    return checkDmAccess('signal', userId, this.config.dmPolicy, this.config.allowedUsers);
   }
   
   /**

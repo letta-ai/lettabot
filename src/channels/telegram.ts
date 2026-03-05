@@ -14,6 +14,9 @@ import {
   upsertPairingRequest,
   formatPairingMessage,
 } from '../pairing/store.js';
+import { checkDmAccess } from './shared/access-control.js';
+import { resolveEmoji } from './shared/emoji.js';
+import { splitMessageText, splitFormattedText } from './shared/message-splitter.js';
 import { isGroupApproved, approveGroup } from '../pairing/group-store.js';
 import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
@@ -110,33 +113,9 @@ export class TelegramAdapter implements ChannelAdapter {
     return { isGroup, groupName, wasMentioned, isListeningMode };
   }
 
-  /**
-   * Check if a user is authorized based on dmPolicy
-   * Returns true if allowed, false if blocked, 'pairing' if pending pairing
-   */
-  private async checkAccess(userId: string, username?: string, firstName?: string): Promise<'allowed' | 'blocked' | 'pairing'> {
-    const policy = this.config.dmPolicy || 'pairing';
-    const userIdStr = userId;
-    
-    // Open policy: everyone allowed
-    if (policy === 'open') {
-      return 'allowed';
-    }
-    
-    // Check if already allowed (config or store)
+  private async checkAccess(userId: string, _username?: string, _firstName?: string): Promise<'allowed' | 'blocked' | 'pairing'> {
     const configAllowlist = this.config.allowedUsers?.map(String);
-    const allowed = await isUserAllowed('telegram', userIdStr, configAllowlist);
-    if (allowed) {
-      return 'allowed';
-    }
-    
-    // Allowlist policy: not allowed if not in list
-    if (policy === 'allowlist') {
-      return 'blocked';
-    }
-    
-    // Pairing policy: create/update pairing request
-    return 'pairing';
+    return checkDmAccess('telegram', userId, this.config.dmPolicy, configAllowlist);
   }
   
   private setupHandlers(): void {
@@ -533,7 +512,7 @@ export class TelegramAdapter implements ChannelAdapter {
     const { markdownToTelegramV2 } = await import('./telegram-format.js');
     
     // Split long messages into chunks (Telegram limit: 4096 chars)
-    const chunks = splitMessageText(msg.text);
+    const chunks = splitMessageText(msg.text, TELEGRAM_SPLIT_THRESHOLD);
     let lastMessageId = '';
     
     for (const chunk of chunks) {
@@ -560,7 +539,7 @@ export class TelegramAdapter implements ChannelAdapter {
         const formatted = await markdownToTelegramV2(chunk);
         // MarkdownV2 escaping can expand text beyond 4096 - re-split if needed
         if (formatted.length > TELEGRAM_MAX_LENGTH) {
-          const subChunks = splitFormattedText(formatted);
+          const subChunks = splitFormattedText(formatted, TELEGRAM_MAX_LENGTH);
           for (const sub of subChunks) {
             const result = await this.bot.api.sendMessage(msg.chatId, sub, {
               parse_mode: 'MarkdownV2',
@@ -578,7 +557,7 @@ export class TelegramAdapter implements ChannelAdapter {
       } catch (e) {
         // If MarkdownV2 fails, send raw text (also split if needed)
         log.warn('MarkdownV2 send failed, falling back to raw text:', e);
-        const plainChunks = splitFormattedText(chunk);
+        const plainChunks = splitFormattedText(chunk, TELEGRAM_MAX_LENGTH);
         for (const plain of plainChunks) {
           const result = await this.bot.api.sendMessage(msg.chatId, plain, {
             reply_to_message_id: replyId,
@@ -638,7 +617,7 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   async addReaction(chatId: string, messageId: string, emoji: string): Promise<void> {
-    const resolved = resolveTelegramEmoji(emoji);
+    const resolved = resolveEmoji(emoji);
     if (!TELEGRAM_REACTION_SET.has(resolved)) {
       throw new Error(`Unsupported Telegram reaction emoji: ${resolved}`);
     }
@@ -831,32 +810,6 @@ function extractTelegramReaction(reaction?: {
   return null;
 }
 
-const TELEGRAM_EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
-  eyes: '👀',
-  thumbsup: '👍',
-  thumbs_up: '👍',
-  '+1': '👍',
-  heart: '❤️',
-  fire: '🔥',
-  smile: '😄',
-  laughing: '😆',
-  tada: '🎉',
-  clap: '👏',
-  ok_hand: '👌',
-};
-
-function resolveTelegramEmoji(input: string): string {
-  const match = input.match(/^:([^:]+):$/);
-  const alias = match ? match[1] : null;
-  if (alias && TELEGRAM_EMOJI_ALIAS_TO_UNICODE[alias]) {
-    return TELEGRAM_EMOJI_ALIAS_TO_UNICODE[alias];
-  }
-  if (TELEGRAM_EMOJI_ALIAS_TO_UNICODE[input]) {
-    return TELEGRAM_EMOJI_ALIAS_TO_UNICODE[input];
-  }
-  return input;
-}
-
 const TELEGRAM_REACTION_EMOJIS = [
   '👍', '👎', '❤', '🔥', '🥰', '👏', '😁', '🤔', '🤯', '😱', '🤬', '😢',
   '🎉', '🤩', '🤮', '💩', '🙏', '👌', '🕊', '🤡', '🥱', '🥴', '😍', '🐳',
@@ -871,85 +824,6 @@ type TelegramReactionEmoji = typeof TELEGRAM_REACTION_EMOJIS[number];
 
 const TELEGRAM_REACTION_SET = new Set<string>(TELEGRAM_REACTION_EMOJIS);
 
-// Telegram message length limit
+// Telegram message length limits
 const TELEGRAM_MAX_LENGTH = 4096;
-// Leave room for MarkdownV2 escaping overhead when splitting raw text
 const TELEGRAM_SPLIT_THRESHOLD = 3800;
-
-/**
- * Split raw markdown text into chunks that will fit within Telegram's limit
- * after MarkdownV2 formatting. Splits at paragraph boundaries (double newlines),
- * falling back to single newlines, then hard-splitting at the threshold.
- */
-function splitMessageText(text: string): string[] {
-  if (text.length <= TELEGRAM_SPLIT_THRESHOLD) {
-    return [text];
-  }
-
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > TELEGRAM_SPLIT_THRESHOLD) {
-    let splitIdx = -1;
-
-    // Try paragraph boundary (double newline)
-    const searchRegion = remaining.slice(0, TELEGRAM_SPLIT_THRESHOLD);
-    const lastParagraph = searchRegion.lastIndexOf('\n\n');
-    if (lastParagraph > TELEGRAM_SPLIT_THRESHOLD * 0.3) {
-      splitIdx = lastParagraph;
-    }
-
-    // Fall back to single newline
-    if (splitIdx === -1) {
-      const lastNewline = searchRegion.lastIndexOf('\n');
-      if (lastNewline > TELEGRAM_SPLIT_THRESHOLD * 0.3) {
-        splitIdx = lastNewline;
-      }
-    }
-
-    // Hard split as last resort
-    if (splitIdx === -1) {
-      splitIdx = TELEGRAM_SPLIT_THRESHOLD;
-    }
-
-    chunks.push(remaining.slice(0, splitIdx).trimEnd());
-    remaining = remaining.slice(splitIdx).trimStart();
-  }
-
-  if (remaining.trim()) {
-    chunks.push(remaining.trim());
-  }
-
-  return chunks;
-}
-
-/**
- * Split already-formatted text (MarkdownV2 or plain) at the hard 4096 limit.
- * Used as a safety net when formatting expands text beyond the limit.
- * Tries to split at newlines to avoid breaking mid-word.
- */
-function splitFormattedText(text: string): string[] {
-  if (text.length <= TELEGRAM_MAX_LENGTH) {
-    return [text];
-  }
-
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > TELEGRAM_MAX_LENGTH) {
-    const searchRegion = remaining.slice(0, TELEGRAM_MAX_LENGTH);
-    let splitIdx = searchRegion.lastIndexOf('\n');
-    if (splitIdx < TELEGRAM_MAX_LENGTH * 0.3) {
-      // No good newline found - hard split
-      splitIdx = TELEGRAM_MAX_LENGTH;
-    }
-    chunks.push(remaining.slice(0, splitIdx));
-    remaining = remaining.slice(splitIdx).replace(/^\n/, '');
-  }
-
-  if (remaining) {
-    chunks.push(remaining);
-  }
-
-  return chunks;
-}

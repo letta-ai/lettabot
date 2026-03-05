@@ -8,7 +8,10 @@
 import type { ChannelAdapter } from './types.js';
 import type { InboundAttachment, InboundMessage, InboundReaction, OutboundFile, OutboundMessage } from '../core/types.js';
 import type { DmPolicy } from '../pairing/types.js';
-import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
+import { upsertPairingRequest } from '../pairing/store.js';
+import { checkDmAccess } from './shared/access-control.js';
+import { resolveEmoji } from './shared/emoji.js';
+import { splitMessageText } from './shared/message-splitter.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { HELP_TEXT } from '../core/commands.js';
 import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveReceiveBotMessages, resolveDailyLimits, checkDailyLimit, type GroupModeConfig } from './group-mode.js';
@@ -69,31 +72,8 @@ export class DiscordAdapter implements ChannelAdapter {
     this.attachmentsMaxBytes = config.attachmentsMaxBytes;
   }
 
-  /**
-   * Check if a user is authorized based on dmPolicy
-   * Returns 'allowed', 'blocked', or 'pairing'
-   */
   private async checkAccess(userId: string): Promise<'allowed' | 'blocked' | 'pairing'> {
-    const policy = this.config.dmPolicy || 'pairing';
-
-    // Open policy: everyone allowed
-    if (policy === 'open') {
-      return 'allowed';
-    }
-
-    // Check if already allowed (config or store)
-    const allowed = await isUserAllowed('discord', userId, this.config.allowedUsers);
-    if (allowed) {
-      return 'allowed';
-    }
-
-    // Allowlist policy: not allowed if not in list
-    if (policy === 'allowlist') {
-      return 'blocked';
-    }
-
-    // Pairing policy: needs pairing
-    return 'pairing';
+    return checkDmAccess('discord', userId, this.config.dmPolicy, this.config.allowedUsers);
   }
 
   /**
@@ -362,7 +342,7 @@ Ask the bot owner to approve with:
     }
 
     const sendable = channel as { send: (content: string) => Promise<{ id: string }> };
-    const chunks = splitMessageText(msg.text);
+    const chunks = splitMessageText(msg.text, DISCORD_SPLIT_THRESHOLD);
     let lastMessageId = '';
     for (const chunk of chunks) {
       const result = await sendable.send(chunk);
@@ -418,7 +398,7 @@ Ask the bot owner to approve with:
 
     const textChannel = channel as { messages: { fetch: (id: string) => Promise<{ react: (input: string) => Promise<unknown> }> } };
     const message = await textChannel.messages.fetch(messageId);
-    const resolved = resolveDiscordEmoji(emoji);
+    const resolved = resolveEmoji(emoji);
     await message.react(resolved);
   }
 
@@ -554,84 +534,9 @@ Ask the bot owner to approve with:
   }
 }
 
-const DISCORD_EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
-  eyes: '\u{1F440}',
-  thumbsup: '\u{1F44D}',
-  thumbs_up: '\u{1F44D}',
-  '+1': '\u{1F44D}',
-  heart: '\u2764\uFE0F',
-  fire: '\u{1F525}',
-  smile: '\u{1F604}',
-  laughing: '\u{1F606}',
-  tada: '\u{1F389}',
-  clap: '\u{1F44F}',
-  ok_hand: '\u{1F44C}',
-  white_check_mark: '\u2705',
-};
-
-function resolveDiscordEmoji(input: string): string {
-  const aliasMatch = input.match(/^:([^:]+):$/);
-  const alias = aliasMatch ? aliasMatch[1] : null;
-  if (alias && DISCORD_EMOJI_ALIAS_TO_UNICODE[alias]) {
-    return DISCORD_EMOJI_ALIAS_TO_UNICODE[alias];
-  }
-  if (DISCORD_EMOJI_ALIAS_TO_UNICODE[input]) {
-    return DISCORD_EMOJI_ALIAS_TO_UNICODE[input];
-  }
-  return input;
-}
-
-// Discord message length limit
+// Discord message length limits
 const DISCORD_MAX_LENGTH = 2000;
-// Leave some headroom when choosing split points
 const DISCORD_SPLIT_THRESHOLD = 1900;
-
-/**
- * Split text into chunks that fit within Discord's 2000-char limit.
- * Splits at paragraph boundaries (double newlines), falling back to
- * single newlines, then hard-splitting at the threshold.
- */
-function splitMessageText(text: string): string[] {
-  if (text.length <= DISCORD_SPLIT_THRESHOLD) {
-    return [text];
-  }
-
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > DISCORD_SPLIT_THRESHOLD) {
-    let splitIdx = -1;
-
-    const searchRegion = remaining.slice(0, DISCORD_SPLIT_THRESHOLD);
-    // Try paragraph boundary (double newline)
-    const lastParagraph = searchRegion.lastIndexOf('\n\n');
-    if (lastParagraph > DISCORD_SPLIT_THRESHOLD * 0.3) {
-      splitIdx = lastParagraph;
-    }
-
-    // Fall back to single newline
-    if (splitIdx === -1) {
-      const lastNewline = searchRegion.lastIndexOf('\n');
-      if (lastNewline > DISCORD_SPLIT_THRESHOLD * 0.3) {
-        splitIdx = lastNewline;
-      }
-    }
-
-    // Hard split as last resort
-    if (splitIdx === -1) {
-      splitIdx = DISCORD_SPLIT_THRESHOLD;
-    }
-
-    chunks.push(remaining.slice(0, splitIdx).trimEnd());
-    remaining = remaining.slice(splitIdx).trimStart();
-  }
-
-  if (remaining.trim()) {
-    chunks.push(remaining.trim());
-  }
-
-  return chunks;
-}
 
 type DiscordAttachment = {
   id?: string;
