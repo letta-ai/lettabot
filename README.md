@@ -1,6 +1,6 @@
 # LettaBot
 
-Your personal AI assistant that remembers everything across **Telegram, Slack, Discord, WhatsApp, and Signal**. Powered by the [Letta Code SDK](https://github.com/letta-ai/letta-code-sdk).
+Your personal AI assistant that remembers everything across **Telegram, Slack, Discord, WhatsApp, Signal, and Matrix**. Powered by the [Letta Code SDK](https://github.com/letta-ai/letta-code-sdk).
 
 <img width="750" alt="lettabot-preview" src="assets/preview.jpg" />
 
@@ -15,7 +15,7 @@ Your personal AI assistant that remembers everything across **Telegram, Slack, D
 
 ## Features
 
-- **Multi-Channel** - Chat seamlessly across Telegram, Slack, Discord, WhatsApp, and Signal
+- **Multi-Channel** - Chat seamlessly across Telegram, Slack, Discord, WhatsApp, Signal, and Matrix
 - **Unified Memory** - Single agent remembers everything from all channels
 - **Persistent Memory** - Agent remembers conversations across sessions (days/weeks/months)
 - **Local Tool Execution** - Agent can read files, search code, run commands on your machine
@@ -111,7 +111,7 @@ That's it! Message your bot on Telegram.
 
 LettaBot can transcribe incoming voice messages (via OpenAI Whisper or Mistral Voxtral) and reply with voice memos (via ElevenLabs or OpenAI TTS). Voice notes render as native bubbles on Telegram and WhatsApp.
 
-**Supported channels:** Telegram, WhatsApp, Signal, Slack, Discord
+**Supported channels:** Telegram, WhatsApp, Signal, Slack, Discord, Matrix
 
 See [docs/voice.md](./docs/voice.md) for full setup, configuration, and troubleshooting.
 
@@ -183,12 +183,13 @@ Telegram ──┐
 Slack ─────┤
 Discord ───┼──→ ONE AGENT ──→ ONE CONVERSATION
 WhatsApp ──┤    (memory)      (chat history)
-Signal ────┘
+Signal ────┤
+Matrix ────┘
 ```
 
 - Start a conversation on Telegram
 - Continue it on Slack
-- Pick it up on WhatsApp
+- Pick it up on WhatsApp or Matrix
 - The agent remembers everything!
 
 You can also enable **per-channel conversations** (one conversation per channel adapter, not per chat/user):
@@ -198,6 +199,7 @@ Telegram ──→ CONVERSATION (telegram)
 Slack ─────→ CONVERSATION (slack)
 Discord ───→ CONVERSATION (discord)
 WhatsApp ──→ CONVERSATION (whatsapp)
+Matrix ────→ CONVERSATION (matrix)
 Signal ────→ CONVERSATION (signal)
         (shared agent memory across channels)
 ```
@@ -227,6 +229,7 @@ agents:
 | Discord | [Setup Guide](docs/discord-setup.md) | Discord bot + Message Content Intent |
 | WhatsApp | [Setup Guide](docs/whatsapp-setup.md) | Phone with WhatsApp |
 | Signal | [Setup Guide](docs/signal-setup.md) | signal-cli + phone number |
+| Matrix | [Setup Guide](docs/matrix-setup.md) | Matrix account + access token |
 
 At least one channel is required. Telegram is the easiest to start with.
 
@@ -329,6 +332,7 @@ Supports sync and streaming responses. See the [full documentation](docs/openai-
 | Discord | Gateway (outbound WebSocket) | None |
 | WhatsApp | Outbound WebSocket via Baileys | None |
 | Signal | Local daemon on 127.0.0.1 | None |
+| Matrix | Client API (outbound HTTP) | None |
 
 ### Tool Execution
 
@@ -434,6 +438,7 @@ Check the [ADE](https://app.letta.com) to see if your agent is attempting to use
 - [Discord Setup](docs/discord-setup.md)
 - [WhatsApp Setup](docs/whatsapp-setup.md)
 - [Signal Setup](docs/signal-setup.md)
+- [Matrix Setup](docs/matrix-setup.md)
 
 ## Acknowledgement
 Some skills were adapted from [Moltbot](https://github.com/moltbot/moltbot). 
