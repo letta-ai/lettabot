@@ -4,6 +4,7 @@
 #
 # Excluded:
 #   - CLI commands (src/cli*, src/cron/cli.ts, onboard, setup) -- user-facing terminal output
+#   - src/commands/letta-connect.ts -- interactive OAuth URL/terminal guidance output
 #   - Test files (*.test.ts, mock-*) -- test output
 #   - banner.ts -- ASCII art display
 #   - JSDoc examples (lines starting with ' *')
@@ -18,6 +19,7 @@ hits=$(grep -rEn 'console\.(log|error|warn|info|debug|trace)[[:space:]]*\(' src/
   --exclude='setup.ts' \
   --exclude='onboard.ts' \
   --exclude='slack-wizard.ts' \
+  --exclude='letta-connect.ts' \
   --exclude='cli.ts' \
   --exclude-dir='cli' \
   | grep -Ev ':[0-9]+:[[:space:]]*\* ' \
