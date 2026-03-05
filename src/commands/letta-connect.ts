@@ -15,19 +15,15 @@ interface CommandCandidate {
 const require = createRequire(import.meta.url);
 
 async function runLettaCodeCommand(candidate: CommandCandidate, providerAlias: string, env: NodeJS.ProcessEnv): Promise<boolean> {
-  // Capture output so failed candidates don't leak error messages to the user.
+  // Pipe stderr so failed candidates don't leak "Unknown command" errors.
+  // Keep stdin/stdout inherited so the OAuth flow can display URLs and accept input.
   const result = spawnSync(candidate.command, [...candidate.args, providerAlias], {
-    stdio: ['inherit', 'pipe', 'pipe'],
+    stdio: ['inherit', 'inherit', 'pipe'],
     cwd: process.cwd(),
     env,
   });
   
-  if (result.status === 0 && !result.error) {
-    // Show the successful command's output.
-    if (result.stdout?.length) process.stdout.write(result.stdout);
-    return true;
-  }
-  return false;
+  return result.status === 0 && !result.error;
 }
 
 function getCandidateCommands(): CommandCandidate[] {
