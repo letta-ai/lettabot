@@ -691,7 +691,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
       }
 
       const { body, from, chatId, pushName, senderE164, chatType, isSelfChat: isExtractedSelfChat } = extracted;
-      const userId = normalizePhoneForStorage(from);
+      const userId = normalizePhoneForStorage(senderE164 || from);
       const isGroup = chatType === "group";
 
       // CRITICAL: Skip messages older than connection time (prevents duplicate responses on reconnect)

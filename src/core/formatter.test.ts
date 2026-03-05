@@ -80,10 +80,30 @@ describe('formatMessageEnvelope', () => {
   });
 
   describe('sender formatting', () => {
-    it('uses userName when available', () => {
+    it('uses userName when available (non-phone channels)', () => {
       const msg = createMessage({ userName: 'John Doe' });
       const result = formatMessageEnvelope(msg);
       expect(result).toContain('**Sender**: John Doe');
+    });
+
+    it('includes phone number alongside name for WhatsApp', () => {
+      const msg = createMessage({
+        channel: 'whatsapp',
+        userName: 'John',
+        userId: '+15551234567',
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('**Sender**: John (+1 (555) 123-4567)');
+    });
+
+    it('includes phone number alongside name for Signal', () => {
+      const msg = createMessage({
+        channel: 'signal',
+        userName: 'Jane',
+        userId: '+15559876543',
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('**Sender**: Jane (+1 (555) 987-6543)');
     });
 
     it('formats Slack users with @ prefix', () => {
