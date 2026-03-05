@@ -238,7 +238,7 @@ Commands:
   channels list-groups List group/channel IDs for Slack/Discord
   channels add <ch>    Add a channel (telegram, slack, discord, whatsapp, signal)
   channels remove <ch> Remove a channel
-  bluesky              Manage Bluesky config (dids, lists, kill switch)
+  bluesky              Manage Bluesky and run action commands (post/like/repost/read)
   logout               Logout from Letta Platform (revoke OAuth tokens)
   skills               Configure which skills are enabled
   skills status        Show skills status
@@ -260,6 +260,8 @@ Examples:
   lettabot channels                          # Interactive channel management
   lettabot channels add discord              # Add Discord integration
   lettabot channels remove telegram          # Remove Telegram
+  lettabot bluesky post --text "Hello" --agent MyAgent
+  lettabot bluesky like at://did:plc:.../app.bsky.feed.post/... --agent MyAgent
   lettabot todo add "Deliver morning report" --recurring "daily 8am"
   lettabot todo list --actionable
   lettabot pairing list telegram             # Show pending Telegram pairings
@@ -297,10 +299,20 @@ function getDefaultTodoAgentKey(): string {
   return configuredName;
 }
 
-async function blueskyCommand(action?: string, rest: string[] = []): Promise<void> {
-  if (!action) {
-    console.log(`
+const BLUESKY_MANAGEMENT_ACTIONS = new Set([
+  'add-did',
+  'add-list',
+  'set-default',
+  'refresh-lists',
+  'disable',
+  'enable',
+  'status',
+]);
+
+function showBlueskyCommandHelp(): void {
+  console.log(`
 Bluesky Commands:
+  # Management
   bluesky add-did <did> --agent <name> [--mode <open|listen|mention-only|disabled>]
   bluesky add-list <listUri> --agent <name> [--mode <open|listen|mention-only|disabled>]
   bluesky set-default <open|listen|mention-only|disabled> --agent <name>
@@ -308,7 +320,59 @@ Bluesky Commands:
   bluesky disable --agent <name>
   bluesky enable --agent <name>
   bluesky status --agent <name>
+
+  # Actions (same behavior as lettabot-bluesky)
+  bluesky post --text "Hello" --agent <name>
+  bluesky post --reply-to <at://...> --text "Reply" --agent <name>
+  bluesky like <at://...> --agent <name>
+  bluesky repost <at://...> --agent <name>
+  bluesky profile <did|handle> --agent <name>
 `);
+}
+
+function runBlueskyActionCommand(action: string, rest: string[]): void {
+  const distCliPath = resolve(__dirname, 'channels/bluesky/cli.js');
+  const srcCliPath = resolve(__dirname, 'channels/bluesky/cli.ts');
+
+  let commandToRun: string;
+  let argsToRun: string[];
+
+  if (existsSync(distCliPath)) {
+    commandToRun = 'node';
+    argsToRun = [distCliPath, action, ...rest];
+  } else if (existsSync(srcCliPath)) {
+    commandToRun = 'npx';
+    argsToRun = ['tsx', srcCliPath, action, ...rest];
+  } else {
+    console.error('Bluesky action commands are unavailable in this install.');
+    console.error('Expected channels/bluesky/cli to exist in either dist/ or src/.');
+    process.exit(1);
+  }
+
+  const result = spawnSync(commandToRun, argsToRun, {
+    stdio: 'inherit',
+    cwd: process.cwd(),
+    env: process.env,
+  });
+
+  if (result.error) {
+    console.error(`Failed to run Bluesky action command: ${result.error.message}`);
+    process.exit(1);
+  }
+
+  if (typeof result.status === 'number' && result.status !== 0) {
+    process.exit(result.status);
+  }
+}
+
+async function blueskyCommand(action?: string, rest: string[] = []): Promise<void> {
+  if (!action) {
+    showBlueskyCommandHelp();
+    return;
+  }
+
+  if (!BLUESKY_MANAGEMENT_ACTIONS.has(action)) {
+    runBlueskyActionCommand(action, rest);
     return;
   }
 
@@ -510,17 +574,9 @@ Bluesky Commands:
       break;
     }
     default: {
-      console.log(`
-Bluesky Commands:
-  bluesky add-did <did> --agent <name> [--mode <open|listen|mention-only|disabled>]
-  bluesky add-list <listUri> --agent <name> [--mode <open|listen|mention-only|disabled>]
-  bluesky set-default <open|listen|mention-only|disabled> --agent <name>
-  bluesky refresh-lists --agent <name>
-  bluesky disable --agent <name>
-  bluesky enable --agent <name>
-  bluesky status --agent <name>
-`);
-      process.exit(action ? 1 : 0);
+      console.error(`Unknown Bluesky management command: ${action}`);
+      showBlueskyCommandHelp();
+      process.exit(1);
     }
   }
 }

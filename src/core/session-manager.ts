@@ -20,6 +20,13 @@ import { createLogger } from '../logger.js';
 
 const log = createLogger('Session');
 
+function toConcreteConversationId(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === 'default') return null;
+  return trimmed;
+}
+
 export class SessionManager {
   private readonly store: Store;
   private readonly config: BotConfig;
@@ -226,11 +233,22 @@ export class SessionManager {
 
     // In disabled mode, always resume the agent's built-in default conversation.
     // Skip store lookup entirely -- no conversation ID is persisted.
-    const convId = key === 'default'
+    const rawConvId = key === 'default'
       ? null
       : key === 'shared'
         ? this.store.conversationId
         : this.store.getConversationId(key);
+    const convId = toConcreteConversationId(rawConvId);
+
+    // Cleanup legacy persisted alias values from older versions.
+    if (rawConvId === 'default') {
+      if (key === 'shared') {
+        this.store.conversationId = null;
+      } else {
+        this.store.clearConversation(key);
+      }
+      log.info(`Cleared legacy default conversation alias (key=${key})`);
+    }
 
     // Propagate per-agent cron store path to CLI subprocesses (lettabot-schedule)
     if (this.config.cronStorePath) {
@@ -503,9 +521,11 @@ export class SessionManager {
     let session = await this.ensureSessionForKey(convKey);
 
     // Resolve the conversation ID for this key (for error recovery)
-    const convId = convKey === 'shared'
-      ? this.store.conversationId
-      : this.store.getConversationId(convKey);
+    const convId = toConcreteConversationId(
+      convKey === 'shared'
+        ? this.store.conversationId
+        : this.store.getConversationId(convKey)
+    );
 
     // Send message with fallback chain
     try {

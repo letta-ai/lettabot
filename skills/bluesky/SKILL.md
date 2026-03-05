@@ -14,6 +14,20 @@ metadata: |
 
 Bluesky is **read-only by default** in Lettabot. To post, reply, like, or repost you must use the `lettabot-bluesky` CLI.
 
+## Availability
+
+When this skill is enabled, it ships a skill-local `lettabot-bluesky` shim,
+so the command is available to agent subprocesses without separate npm install.
+
+Both entrypoints are supported and equivalent:
+
+```bash
+lettabot-bluesky <command> ...
+lettabot bluesky <command> ...
+```
+
+The shim prefers project-local entrypoints (`./dist/cli.js` or `./src/cli.ts`) before falling back to an installed `lettabot` binary on PATH.
+
 ## Quick Reference
 
 ```bash

@@ -30,6 +30,7 @@ import {
   STATE_VERSION,
 } from './constants.js';
 import { extractPostDetails } from './formatter.js';
+import { AtpAgent } from '@atproto/api';
 import {
   buildAtUri,
   decodeJwtExp,
@@ -38,6 +39,7 @@ import {
   isRecord,
   normalizeList,
   parseAtUri,
+  parseFacets,
   pruneMap,
   readString,
   splitPostText,
@@ -1136,6 +1138,27 @@ export class BlueskyAdapter implements ChannelAdapter {
     }
   }
 
+  /**
+   * Parse text and generate facets for links, mentions, and hashtags.
+   * Uses an authenticated AtpAgent so that @mention handles resolve to DIDs.
+   * Falls back to unauthenticated detection if the session is unavailable.
+   */
+  private async parseFacets(text: string): Promise<Record<string, unknown>[]> {
+    if (this.accessJwt && this.refreshJwt && this.sessionDid) {
+      const agent = new AtpAgent({ service: this.getServiceUrl() });
+      const handle = this.handleByDid.get(this.sessionDid) ?? this.sessionDid;
+      await agent.resumeSession({
+        accessJwt: this.accessJwt,
+        refreshJwt: this.refreshJwt,
+        did: this.sessionDid,
+        handle,
+        active: true,
+      });
+      return parseFacets(text, agent);
+    }
+    return parseFacets(text);
+  }
+
   private async resolveHandleForDid(did: string): Promise<string | undefined> {
     if (!did || did === 'unknown') return undefined;
     const cached = this.handleByDid.get(did);
@@ -1336,7 +1359,10 @@ export class BlueskyAdapter implements ChannelAdapter {
       throw new Error('Missing reply root/parent metadata.');
     }
 
-    const record = {
+    // Parse facets for clickable links, mentions, hashtags
+    const facets = await this.parseFacets(text);
+
+    const record: Record<string, unknown> = {
       text,
       createdAt: new Date().toISOString(),
       reply: {
@@ -1344,6 +1370,11 @@ export class BlueskyAdapter implements ChannelAdapter {
         parent: { uri: parentUri, cid: parentCid },
       },
     };
+
+    // Add facets if any were detected (links, mentions, hashtags)
+    if (facets.length > 0) {
+      record.facets = facets;
+    }
 
     const res = await fetchWithTimeout(`${this.getServiceUrl()}/xrpc/com.atproto.repo.createRecord`, {
       method: 'POST',

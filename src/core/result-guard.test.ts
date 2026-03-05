@@ -104,4 +104,106 @@ describe('result divergence guard', () => {
     const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
     expect(sentTexts).toEqual(['streamed-segment']);
   });
+
+  it('stops after repeated failing lettabot CLI bash calls', async () => {
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+      maxToolCalls: 100,
+    });
+
+    const abort = vi.fn(async () => {});
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
+      session: { abort },
+      stream: async function* () {
+        yield { type: 'tool_call', toolCallId: 'tc-1', toolName: 'Bash', toolInput: { command: 'lettabot bluesky post --text "hi" --agent Bot' } };
+        yield { type: 'tool_result', toolCallId: 'tc-1', isError: true, content: 'Unknown command: bluesky' };
+        yield { type: 'tool_call', toolCallId: 'tc-2', toolName: 'Bash', toolInput: { command: 'lettabot bluesky post --text "hi" --agent Bot' } };
+        yield { type: 'tool_result', toolCallId: 'tc-2', isError: true, content: 'Unknown command: bluesky' };
+        yield { type: 'tool_call', toolCallId: 'tc-3', toolName: 'Bash', toolInput: { command: 'lettabot bluesky post --text "hi" --agent Bot' } };
+        yield { type: 'tool_result', toolCallId: 'tc-3', isError: true, content: 'Unknown command: bluesky' };
+      },
+    }));
+
+    const msg: InboundMessage = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    expect(abort).toHaveBeenCalled();
+    const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text as string);
+    expect(sentTexts.some(text => text.includes('repeated CLI command failures'))).toBe(true);
+  });
+
+  it('retries once after empty default-conversation result with no response', async () => {
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    const runSession = vi.fn()
+      .mockImplementationOnce(async () => ({
+        session: { abort: vi.fn(async () => {}) },
+        stream: async function* () {
+          yield { type: 'result', success: true, result: '', conversationId: 'default' };
+        },
+      }))
+      .mockImplementationOnce(async () => ({
+        session: { abort: vi.fn(async () => {}) },
+        stream: async function* () {
+          yield { type: 'assistant', content: 'retry-response' };
+          yield { type: 'result', success: true, result: 'retry-response', conversationId: 'default' };
+        },
+      }));
+
+    (bot as any).sessionManager.runSession = runSession;
+
+    const msg: InboundMessage = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    expect(runSession).toHaveBeenCalledTimes(2);
+    expect(runSession.mock.calls[1][1]?.retried).toBe(true);
+    const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text as string);
+    expect(sentTexts).toContain('retry-response');
+  });
 });

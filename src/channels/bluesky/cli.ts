@@ -31,7 +31,8 @@ import type { AgentConfig, BlueskyConfig } from '../../config/types.js';
 import { isPathAllowed } from '../../core/bot.js';
 import { createLogger } from '../../logger.js';
 import { DEFAULT_SERVICE_URL, POST_MAX_CHARS } from './constants.js';
-import { fetchWithTimeout, getAppViewUrl, parseAtUri, splitPostText } from './utils.js';
+import { AtpAgent } from '@atproto/api';
+import { fetchWithTimeout, getAppViewUrl, parseAtUri, parseFacets, splitPostText } from './utils.js';
 
 const log = createLogger('Bluesky');
 
@@ -80,7 +81,7 @@ function resolveBlueskyConfig(agent: AgentConfig): BlueskyConfig {
 }
 
 
-async function createSession(serviceUrl: string, handle: string, appPassword: string): Promise<{ accessJwt: string; did: string }> {
+async function createSession(serviceUrl: string, handle: string, appPassword: string): Promise<{ accessJwt: string; refreshJwt: string; handle: string; did: string }> {
   const res = await fetchWithTimeout(`${serviceUrl}/xrpc/com.atproto.server.createSession`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -90,7 +91,7 @@ async function createSession(serviceUrl: string, handle: string, appPassword: st
     const detail = await res.text();
     throw new Error(`createSession failed: ${detail}`);
   }
-  const data = await res.json() as { accessJwt: string; did: string };
+  const data = await res.json() as { accessJwt: string; refreshJwt: string; handle: string; did: string };
   return data;
 }
 
@@ -310,6 +311,9 @@ async function handlePost(
 
   const imageBlobs = await validateAndUploadImages(serviceUrl, session.accessJwt, images, features);
 
+  const agent = new AtpAgent({ service: serviceUrl });
+  await agent.resumeSession({ accessJwt: session.accessJwt, refreshJwt: session.refreshJwt, did: session.did, handle: session.handle, active: true });
+
   let rootUri: string | undefined;
   let rootCid: string | undefined;
   let parentUri: string | undefined;
@@ -335,10 +339,19 @@ async function handlePost(
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
+
+    // Parse facets for clickable links, mentions, hashtags
+    const facets = await parseFacets(chunk, agent);
+
     const record: Record<string, unknown> = {
       text: chunk,
       createdAt,
     };
+
+    // Add facets if any were detected (links, mentions, hashtags)
+    if (facets.length > 0) {
+      record.facets = facets;
+    }
 
     if (parentUri && parentCid && rootUri && rootCid) {
       record.reply = {
@@ -399,6 +412,9 @@ async function handleQuote(
     throw new Error('Refusing to post empty text.');
   }
 
+  const agent = new AtpAgent({ service: serviceUrl });
+  await agent.resumeSession({ accessJwt: session.accessJwt, refreshJwt: session.refreshJwt, did: session.did, handle: session.handle, active: true });
+
   let rootUri: string | undefined;
   let rootCid: string | undefined;
   let parentUri: string | undefined;
@@ -408,10 +424,19 @@ async function handleQuote(
   let lastUri = '';
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
+
+    // Parse facets for clickable links, mentions, hashtags
+    const facets = await parseFacets(chunk, agent);
+
     const record: Record<string, unknown> = {
       text: chunk,
       createdAt,
     };
+
+    // Add facets if any were detected (links, mentions, hashtags)
+    if (facets.length > 0) {
+      record.facets = facets;
+    }
 
     if (i === 0) {
       record.embed = {

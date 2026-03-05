@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -57,6 +57,25 @@ describe('skills loader', () => {
     it('has tts feature with voice-memo skill', () => {
       expect(FEATURE_SKILLS.tts).toBeDefined();
       expect(FEATURE_SKILLS.tts).toContain('voice-memo');
+    });
+
+    it('has bluesky feature with bluesky skill', () => {
+      expect(FEATURE_SKILLS.bluesky).toBeDefined();
+      expect(FEATURE_SKILLS.bluesky).toContain('bluesky');
+    });
+
+    it('bundled bluesky skill ships an executable helper shim', () => {
+      const shimPath = join(process.cwd(), 'skills', 'bluesky', 'lettabot-bluesky');
+      expect(existsSync(shimPath)).toBe(true);
+      expect(statSync(shimPath).mode & 0o111).not.toBe(0);
+    });
+
+    it('bundled bluesky shim prefers local CLI entrypoints', () => {
+      const shimPath = join(process.cwd(), 'skills', 'bluesky', 'lettabot-bluesky');
+      const shim = readFileSync(shimPath, 'utf-8');
+      expect(shim).toContain('node "./dist/cli.js" bluesky');
+      expect(shim).toContain('npx tsx "./src/cli.ts" bluesky');
+      expect(shim).toContain('exec lettabot bluesky "$@"');
     });
   });
 

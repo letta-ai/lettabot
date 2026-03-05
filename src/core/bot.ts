@@ -981,6 +981,17 @@ export class LettaBot implements AgentSession {
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
       const msgTypeCounts: Record<string, number> = {};
+      const bashCommandByToolCallId = new Map<string, string>();
+      let lastBashCommand = '';
+      let repeatedBashFailureKey: string | null = null;
+      let repeatedBashFailureCount = 0;
+      const maxRepeatedBashFailures = 3;
+      const toConcreteConversationId = (raw: unknown): string | undefined => {
+        if (typeof raw !== 'string') return undefined;
+        const value = raw.trim();
+        if (!value || value === 'default') return undefined;
+        return value;
+      };
 
       const parseAndHandleDirectives = async () => {
         if (!response.trim()) return;
@@ -1110,6 +1121,20 @@ export class LettaBot implements AgentSession {
             const tcName = streamMsg.toolName || 'unknown';
             const tcId = streamMsg.toolCallId?.slice(0, 12) || '?';
             log.info(`>>> TOOL CALL: ${tcName} (id: ${tcId})`);
+
+            if (tcName === 'Bash') {
+              const toolInput = (streamMsg.toolInput && typeof streamMsg.toolInput === 'object')
+                ? streamMsg.toolInput as Record<string, unknown>
+                : null;
+              const command = typeof toolInput?.command === 'string' ? toolInput.command : '';
+              if (command) {
+                lastBashCommand = command;
+                if (streamMsg.toolCallId) {
+                  bashCommandByToolCallId.set(streamMsg.toolCallId, command);
+                }
+              }
+            }
+
             sawNonAssistantSinceLastUuid = true;
             // Display tool call (args are fully accumulated by dedupedStream buffer-and-flush)
             if (this.config.display?.showToolCalls && !suppressDelivery) {
@@ -1123,6 +1148,48 @@ export class LettaBot implements AgentSession {
           } else if (streamMsg.type === 'tool_result') {
             log.info(`<<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
             sawNonAssistantSinceLastUuid = true;
+
+            const toolCallId = typeof streamMsg.toolCallId === 'string' ? streamMsg.toolCallId : '';
+            const mappedCommand = toolCallId ? bashCommandByToolCallId.get(toolCallId) : undefined;
+            if (toolCallId) {
+              bashCommandByToolCallId.delete(toolCallId);
+            }
+            const bashCommand = (mappedCommand || lastBashCommand || '').trim();
+            const toolResultContent = typeof (streamMsg as any).content === 'string'
+              ? (streamMsg as any).content
+              : typeof (streamMsg as any).result === 'string'
+                ? (streamMsg as any).result
+                : '';
+            const lowerContent = toolResultContent.toLowerCase();
+            const isLettabotCliCall = /^lettabot(?:-[a-z0-9-]+)?\b/i.test(bashCommand);
+            const looksCliCommandError = lowerContent.includes('unknown command')
+              || lowerContent.includes('command not found')
+              || lowerContent.includes('usage: lettabot')
+              || lowerContent.includes('usage: lettabot-bluesky')
+              || lowerContent.includes('error: --agent is required for bluesky commands');
+
+            if (streamMsg.isError && bashCommand && isLettabotCliCall && looksCliCommandError) {
+              const errorKind = lowerContent.includes('unknown command') || lowerContent.includes('command not found')
+                ? 'unknown-command'
+                : 'usage-error';
+              const failureKey = `${bashCommand.toLowerCase()}::${errorKind}`;
+              if (repeatedBashFailureKey === failureKey) {
+                repeatedBashFailureCount += 1;
+              } else {
+                repeatedBashFailureKey = failureKey;
+                repeatedBashFailureCount = 1;
+              }
+
+              if (repeatedBashFailureCount >= maxRepeatedBashFailures) {
+                log.error(`Stopping run after repeated Bash command failures (${repeatedBashFailureCount}) for: ${bashCommand}`);
+                session.abort().catch(() => {});
+                response = `(I stopped after repeated CLI command failures while running: ${bashCommand}. The command path appears mismatched. Please confirm Bluesky CLI commands are available, then resend your request.)`;
+                break;
+              }
+            } else {
+              repeatedBashFailureKey = null;
+              repeatedBashFailureCount = 0;
+            }
           } else if (streamMsg.type === 'assistant' && lastMsgType !== 'assistant') {
             log.info(`Generating response...`);
           } else if (streamMsg.type === 'reasoning') {
@@ -1287,12 +1354,12 @@ export class LettaBot implements AgentSession {
             // sentAnyMessage is the authoritative "did we deliver output" flag.
             const nothingDelivered = !hasResponse && !sentAnyMessage;
             const retryConvKey = this.resolveConversationKey(msg.channel, msg.chatId);
-            const retryConvIdFromStore = (retryConvKey === 'shared'
-              ? this.store.conversationId
-              : this.store.getConversationId(retryConvKey)) ?? undefined;
-            const retryConvId = (typeof streamMsg.conversationId === 'string' && streamMsg.conversationId.length > 0)
-              ? streamMsg.conversationId
-              : retryConvIdFromStore;
+            const retryConvIdFromStore = toConcreteConversationId(
+              retryConvKey === 'shared'
+                ? this.store.conversationId
+                : this.store.getConversationId(retryConvKey)
+            );
+            const retryConvId = toConcreteConversationId(streamMsg.conversationId) || retryConvIdFromStore;
 
             // Enrich opaque error detail from run metadata (single fast API call).
             // The wire protocol's stop_reason often just says "error" -- the run
@@ -1359,7 +1426,7 @@ export class LettaBot implements AgentSession {
 
             const shouldRetryForEmptyResult = streamMsg.success && resultText === '' && nothingDelivered;
             const shouldRetryForErrorResult = isTerminalError && nothingDelivered && !isConflictError && !isNonRetryableError;
-            if (shouldRetryForEmptyResult || shouldRetryForErrorResult) {
+            if ((shouldRetryForEmptyResult || shouldRetryForErrorResult) && !retried && !suppressDelivery) {
               if (shouldRetryForEmptyResult) {
                 log.error(`Warning: Agent returned empty result with no response. stopReason=${streamMsg.stopReason || 'N/A'}, conv=${streamMsg.conversationId || 'N/A'}`);
               }
@@ -1367,12 +1434,13 @@ export class LettaBot implements AgentSession {
                 log.error(`Warning: Agent returned terminal error (error=${streamMsg.error}, stopReason=${streamMsg.stopReason || 'N/A'}) with no response.`);
               }
 
-              if (!retried && this.store.agentId && retryConvId) {
-                const reason = shouldRetryForErrorResult ? 'error result' : 'empty result';
+              const reason = shouldRetryForErrorResult ? 'terminal error result' : 'empty result';
+              this.sessionManager.invalidateSession(retryConvKey);
+              session = null;
+              clearInterval(typingInterval);
+
+              if (this.store.agentId && retryConvId) {
                 log.info(`${reason} - attempting orphaned approval recovery...`);
-                this.sessionManager.invalidateSession(retryConvKey);
-                session = null;
-                clearInterval(typingInterval);
                 const convResult = await recoverOrphanedConversationApproval(
                   this.store.agentId,
                   retryConvId
@@ -1382,14 +1450,18 @@ export class LettaBot implements AgentSession {
                   return this.processMessage(msg, adapter, true);
                 }
                 log.warn(`No orphaned approvals found: ${convResult.details}`);
-
-                // Some client-side approval failures do not surface as pending approvals.
-                // Retry once anyway in case the previous run terminated mid-tool cycle.
-                if (shouldRetryForErrorResult) {
-                  log.info('Retrying once after terminal error (no orphaned approvals detected)...');
-                  return this.processMessage(msg, adapter, true);
-                }
+              } else if (this.store.agentId && !retryConvId) {
+                log.info(`${reason} - skipping orphaned approval recovery because no concrete conversation ID is available`);
               }
+
+              log.info(`Retrying once with a fresh session after ${reason}...`);
+              return this.processMessage(msg, adapter, true);
+            }
+
+            // After retry exhausted (or skipped for listening mode), give the
+            // user a visible fallback rather than silence.
+            if (nothingDelivered && !isTerminalError && retried && !suppressDelivery) {
+              response = '(The agent returned an empty response. Try sending your message again, or /reset if this persists.)';
             }
 
             if (isTerminalError && !hasResponse && !sentAnyMessage) {
