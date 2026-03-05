@@ -15,13 +15,19 @@ interface CommandCandidate {
 const require = createRequire(import.meta.url);
 
 async function runLettaCodeCommand(candidate: CommandCandidate, providerAlias: string, env: NodeJS.ProcessEnv): Promise<boolean> {
+  // Capture output so failed candidates don't leak error messages to the user.
   const result = spawnSync(candidate.command, [...candidate.args, providerAlias], {
-    stdio: 'inherit',
+    stdio: ['inherit', 'pipe', 'pipe'],
     cwd: process.cwd(),
     env,
   });
   
-  return result.status === 0 && !result.error;
+  if (result.status === 0 && !result.error) {
+    // Show the successful command's output.
+    if (result.stdout?.length) process.stdout.write(result.stdout);
+    return true;
+  }
+  return false;
 }
 
 function getCandidateCommands(): CommandCandidate[] {
@@ -74,7 +80,7 @@ function getCandidateCommands(): CommandCandidate[] {
   const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
   addCandidate({
     command: npxCommand,
-    args: ['-y', '@letta-ai/letta-code', 'connect'],
+    args: ['-y', '@letta-ai/letta-code@latest', 'connect'],
   });
   
   return commands;
