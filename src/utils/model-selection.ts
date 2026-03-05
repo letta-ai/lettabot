@@ -178,18 +178,39 @@ export async function buildModelOptions(options?: {
   // Include connected provider models for both free and paid users.
   const byokModels = await fetchByokModels(options?.apiKey);
   if (byokModels.length > 0) {
-    addModelOption(result, seenHandles, {
-      value: '__byok_header__',
-      label: '── Your Connected Providers ──',
-      hint: 'Models from connected accounts / API keys',
-    });
-    byokModels.forEach(model => {
+    // ChatGPT subscription models get their own section at the top.
+    const chatgptModels = byokModels.filter(m => m.provider_type === 'chatgpt_oauth');
+    const otherModels = byokModels.filter(m => m.provider_type !== 'chatgpt_oauth');
+    
+    if (chatgptModels.length > 0) {
       addModelOption(result, seenHandles, {
-        value: model.handle,
-        label: model.display_name || model.name,
-        hint: `🔑 ${model.provider_name}`,
+        value: '__chatgpt_header__',
+        label: '── ChatGPT Subscription ──',
+        hint: 'Included with your ChatGPT plan',
       });
-    });
+      chatgptModels.forEach(model => {
+        addModelOption(result, seenHandles, {
+          value: model.handle,
+          label: model.display_name || model.name,
+          hint: 'ChatGPT',
+        });
+      });
+    }
+    
+    if (otherModels.length > 0) {
+      addModelOption(result, seenHandles, {
+        value: '__byok_header__',
+        label: '── Your API Keys ──',
+        hint: 'Models from your API keys',
+      });
+      otherModels.forEach(model => {
+        addModelOption(result, seenHandles, {
+          value: model.handle,
+          label: model.display_name || model.name,
+          hint: `🔑 ${model.provider_name}`,
+        });
+      });
+    }
   }
   
   // Add custom option
@@ -247,7 +268,7 @@ export async function handleModelSelection(
   if (p.isCancel(selection)) return null;
   
   // Skip header selections
-  if (selection === '__byok_header__') return null;
+  if (selection === '__byok_header__' || selection === '__chatgpt_header__') return null;
   
   // Handle custom model input
   if (selection === '__custom__') {
