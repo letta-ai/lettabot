@@ -925,6 +925,27 @@ data: {"type":"result","success":true}
 
 ```
 
+**Asynchronous** (fire-and-forget):
+
+```bash
+curl -X POST http://localhost:8080/api/v1/chat/async \
+  -H "Content-Type: application/json" \
+  -H "X-Api-Key: YOUR_API_KEY" \
+  -d '{"message": "Check my todos and let me know if anything is urgent."}'
+```
+
+Response (`202 Accepted`):
+
+```json
+{
+  "success": true,
+  "status": "queued",
+  "agentName": "LettaBot"
+}
+```
+
+Use this when you want to enqueue work and return immediately. The API does not return the agent's final text for this route.
+
 **Request fields:**
 
 | Field | Type | Required | Description |
