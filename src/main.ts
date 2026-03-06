@@ -467,6 +467,7 @@ function createChannelsForAgent(
       attachmentsMaxBytes,
       groups: agentConfig.channels.discord.groups,
       agentName: agentConfig.name,
+      ignoreBotReactions: agentConfig.channels.discord.ignoreBotReactions,
     }));
   }
 

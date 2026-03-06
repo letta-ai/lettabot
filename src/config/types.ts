@@ -372,6 +372,7 @@ export interface DiscordConfig {
   instantGroups?: string[];       // Guild/server IDs or channel IDs that bypass batching
   listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
   groups?: Record<string, GroupConfig>;  // Per-guild/channel settings, "*" for defaults
+  ignoreBotReactions?: boolean;   // Ignore all bot reactions (default: true). Set false for multi-bot setups.
 }
 
 /**
