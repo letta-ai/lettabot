@@ -728,7 +728,58 @@ polling:
 | `polling.intervalMs` | number | `60000` | Polling interval in milliseconds |
 | `polling.gmail.enabled` | boolean | auto | Enable Gmail polling. Auto-detected from `account` or `accounts` |
 | `polling.gmail.account` | string | - | Gmail account to poll for unread messages |
-| `polling.gmail.accounts` | string[] | - | Gmail accounts to poll for unread messages |
+| `polling.gmail.accounts` | (string \| object)[] | - | Gmail accounts to poll. Can be strings or objects with `account`, `prompt`, `promptFile` |
+| `polling.gmail.prompt` | string | - | Default custom prompt for all accounts |
+| `polling.gmail.promptFile` | string | - | Path to default prompt file for all accounts |
+
+### Custom Email Prompts
+
+You can customize what the agent is told when new emails are detected. The custom text replaces the default body while keeping the silent mode envelope (account, time, trigger metadata, and messaging instructions).
+
+**Inline prompt for all accounts:**
+
+```yaml
+polling:
+  gmail:
+    enabled: true
+    prompt: "Summarize these emails and flag anything urgent."
+    accounts:
+      - user@example.com
+```
+
+**Per-account prompts:**
+
+```yaml
+polling:
+  gmail:
+    enabled: true
+    prompt: "Review these emails and notify me of anything important."
+    accounts:
+      - "personal@gmail.com"           # Uses global prompt above
+      - account: "work@company.com"
+        prompt: "Focus on emails from executives and flag urgent matters."
+      - account: "notifications@example.com"
+        promptFile: ./prompts/notifications.txt  # Re-read each poll
+```
+
+**Prompt file for live editing:**
+
+```yaml
+polling:
+  gmail:
+    enabled: true
+    promptFile: ./prompts/email-review.md  # Re-read each poll for live editing
+    accounts:
+      - user@example.com
+```
+
+**Priority order:**
+
+1. Account-specific `prompt` (inline in accounts array)
+2. Account-specific `promptFile`
+3. Global `polling.gmail.prompt`
+4. Global `polling.gmail.promptFile`
+5. Built-in default prompt
 
 ### Legacy config path
 
@@ -758,44 +809,30 @@ The top-level `polling` section takes priority if both are present.
 
 ## Transcription Configuration
 
-Voice message transcription via OpenAI Whisper:
+Voice message transcription (OpenAI Whisper or Mistral Voxtral):
 
 ```yaml
 transcription:
-  provider: openai
-  apiKey: sk-...       # Optional: uses OPENAI_API_KEY env var
-  model: whisper-1     # Default
+  provider: openai       # "openai" (default) or "mistral"
+  apiKey: sk-...         # Optional: falls back to OPENAI_API_KEY / MISTRAL_API_KEY env var
+  model: whisper-1       # Default (OpenAI) or voxtral-mini-latest (Mistral)
 ```
+
+See [voice.md](./voice.md) for provider details, supported formats, and troubleshooting.
 
 ## Text-to-Speech (TTS) Configuration
 
-Voice memo generation via the `<voice>` directive. The agent can reply with voice notes on Telegram and WhatsApp:
+Voice memo generation via the `<voice>` directive (ElevenLabs or OpenAI):
 
 ```yaml
 tts:
   provider: elevenlabs    # "elevenlabs" (default) or "openai"
   apiKey: sk_475a...      # Provider API key
-  voiceId: 21m00Tcm4TlvDq8ikWAM  # Voice selection (see below)
+  voiceId: onwK4e9ZLuTAKqWW03F9   # Voice selection
   model: eleven_multilingual_v2   # Optional model override
 ```
 
-**ElevenLabs** (default):
-- `voiceId` is an ElevenLabs voice ID. Default: `21m00Tcm4TlvDq8ikWAM` (Rachel). Browse voices at [elevenlabs.io/voice-library](https://elevenlabs.io/voice-library).
-- `model` defaults to `eleven_multilingual_v2`.
-
-**OpenAI**:
-- `voiceId` is one of: `alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`. Default: `alloy`.
-- `model` defaults to `tts-1`. Use `tts-1-hd` for higher quality.
-
-The agent uses the `<voice>` directive in responses:
-
-```xml
-<actions>
-  <voice>Hey, here's a quick voice reply!</voice>
-</actions>
-```
-
-The `lettabot-tts` CLI tool is also available for background tasks (heartbeats, cron).
+See [voice.md](./voice.md) for provider options, channel support, and CLI tools.
 
 ## Attachments Configuration
 
@@ -936,7 +973,7 @@ Reference:
 | `LETTABOT_WORKING_DIR` | Agent working directory (overridden by per-agent `workingDir`) |
 | `TTS_PROVIDER` | TTS backend: `elevenlabs` (default) or `openai` |
 | `ELEVENLABS_API_KEY` | API key for ElevenLabs TTS |
-| `ELEVENLABS_VOICE_ID` | ElevenLabs voice ID (default: `21m00Tcm4TlvDq8ikWAM` / Rachel) |
+| `ELEVENLABS_VOICE_ID` | ElevenLabs voice ID (default: `onwK4e9ZLuTAKqWW03F9`) |
 | `ELEVENLABS_MODEL_ID` | ElevenLabs model (default: `eleven_multilingual_v2`) |
 | `OPENAI_TTS_VOICE` | OpenAI TTS voice (default: `alloy`) |
 | `OPENAI_TTS_MODEL` | OpenAI TTS model (default: `tts-1`) |

@@ -7,26 +7,100 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { resolve, join } from 'node:path';
 import type { AgentSession } from '../core/interfaces.js';
+import type { TriggerContext } from '../core/types.js';
+import type { GmailAccountConfig } from '../config/types.js';
+import { buildEmailPrompt } from '../core/prompts.js';
 
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Polling');
+
 /**
- * Parse Gmail accounts from a string (comma-separated) or string array.
- * Deduplicates and trims whitespace.
+ * Resolve the custom prompt for a Gmail account.
+ * Pure function extracted for testability.
+ *
+ * Priority: account prompt > account promptFile > global prompt > global promptFile > undefined (built-in)
  */
-export function parseGmailAccounts(raw?: string | string[]): string[] {
-  if (!raw) return [];
-  const values = Array.isArray(raw) ? raw : raw.split(',');
-  const seen = new Set<string>();
-  for (const value of values) {
-    const trimmed = value.trim();
-    if (!trimmed || seen.has(trimmed)) continue;
-    seen.add(trimmed);
+export function resolveEmailPrompt(
+  accountConfig: GmailAccountConfig,
+  globalPrompt?: string,
+  globalPromptFile?: string,
+  workingDir?: string,
+): string | undefined {
+  // Account-specific inline prompt
+  if (accountConfig.prompt) {
+    return accountConfig.prompt;
   }
-  return Array.from(seen);
+
+  // Account-specific promptFile
+  if (accountConfig.promptFile) {
+    try {
+      const path = workingDir ? resolve(workingDir, accountConfig.promptFile) : accountConfig.promptFile;
+      return readFileSync(path, 'utf-8').trim();
+    } catch (err) {
+      log.warn(`Failed to read promptFile for ${accountConfig.account}: ${(err as Error).message}`);
+    }
+  }
+
+  // Global inline prompt
+  if (globalPrompt) {
+    return globalPrompt;
+  }
+
+  // Global promptFile
+  if (globalPromptFile) {
+    try {
+      const path = workingDir ? resolve(workingDir, globalPromptFile) : globalPromptFile;
+      return readFileSync(path, 'utf-8').trim();
+    } catch (err) {
+      log.warn(`Failed to read global promptFile: ${(err as Error).message}`);
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Parse Gmail accounts from various formats.
+ * Handles: string (comma-separated), string array, or GmailAccountConfig array.
+ * Deduplicates by account email.
+ */
+export function parseGmailAccounts(raw?: string | (string | GmailAccountConfig)[]): GmailAccountConfig[] {
+  if (!raw) return [];
+
+  let items: (string | GmailAccountConfig)[];
+  if (typeof raw === 'string') {
+    items = raw.split(',').map(s => s.trim()).filter(Boolean);
+  } else {
+    items = raw;
+  }
+
+  const seen = new Set<string>();
+  const result: GmailAccountConfig[] = [];
+
+  for (const item of items) {
+    if (typeof item === 'string') {
+      const account = item.trim();
+      if (account && !seen.has(account)) {
+        seen.add(account);
+        result.push({ account });
+      }
+    } else if (item && typeof item === 'object' && item.account) {
+      const account = item.account.trim();
+      if (account && !seen.has(account)) {
+        seen.add(account);
+        result.push({
+          account,
+          prompt: item.prompt,
+          promptFile: item.promptFile,
+        });
+      }
+    }
+  }
+
+  return result;
 }
 
 export interface PollingConfig {
@@ -34,7 +108,11 @@ export interface PollingConfig {
   workingDir: string;  // For persisting state
   gmail?: {
     enabled: boolean;
-    accounts: string[];
+    accounts: GmailAccountConfig[];
+    /** Default prompt for all accounts (can be overridden per-account) */
+    prompt?: string;
+    /** Default prompt file for all accounts (re-read each poll for live editing) */
+    promptFile?: string;
   };
 }
 
@@ -77,7 +155,7 @@ export class PollingService {
         // Legacy single-account format: { ids: [...] }
         if (data && Array.isArray(data.ids)) {
           const accounts = this.config.gmail?.accounts || [];
-          const targetAccount = accounts[0];
+          const targetAccount = accounts[0]?.account;
           if (targetAccount) {
             this.seenEmailIdsByAccount.set(targetAccount, new Set(data.ids));
             log.info(`Migrated legacy seen emails to ${targetAccount}`);
@@ -159,16 +237,27 @@ export class PollingService {
    */
   private async poll(): Promise<void> {
     if (this.config.gmail?.enabled) {
-      for (const account of this.config.gmail.accounts) {
-        await this.pollGmail(account);
+      for (const accountConfig of this.config.gmail.accounts) {
+        await this.pollGmail(accountConfig);
       }
     }
   }
   
   /**
+   * Resolve custom prompt for an account.
+   * Delegates to the exported pure function.
+   */
+  private resolvePrompt(accountConfig: GmailAccountConfig): string | undefined {
+    const gmail = this.config.gmail;
+    if (!gmail) return undefined;
+    return resolveEmailPrompt(accountConfig, gmail.prompt, gmail.promptFile, this.config.workingDir);
+  }
+  
+  /**
    * Poll Gmail for new unread messages
    */
-  private async pollGmail(account: string): Promise<void> {
+  private async pollGmail(accountConfig: GmailAccountConfig): Promise<void> {
+    const account = accountConfig.account;
     if (!account) return;
     if (!this.seenEmailIdsByAccount.has(account)) {
       this.seenEmailIdsByAccount.set(account, new Set());
@@ -229,22 +318,23 @@ export class PollingService {
       const header = lines[0];
       const newEmailsOutput = [header, ...newEmails].join('\n');
       
-      // Send to agent for processing (SILENT MODE - no auto-delivery)
-      // Agent must use `lettabot-message` CLI to notify user
-      const message = [
-        '╔════════════════════════════════════════════════════════════════╗',
-        '║  [SILENT MODE] - Your text output is NOT sent to anyone.       ║',
-        '║  To send a message, use: lettabot-message send --text "..."    ║',
-        '╚════════════════════════════════════════════════════════════════╝',
-        '',
-        `[email] ${newEmails.length} new unread email(s) for ${account}:`,
-        '',
-        newEmailsOutput,
-        '',
-        'Review and summarize important emails. Use `lettabot-message send --text "..."` to notify the user if needed.',
-      ].join('\n');
+      // Resolve custom prompt (re-read each poll for live editing)
+      const customPrompt = this.resolvePrompt(accountConfig);
+      const now = new Date();
+      const time = now.toLocaleString();
       
-      const response = await this.bot.sendToAgent(message);
+      // Build message using prompt builder
+      const message = buildEmailPrompt(account, newEmails.length, newEmailsOutput, time, customPrompt);
+      
+      // Build trigger context for silent mode
+      const context: TriggerContext = {
+        type: 'feed',
+        outputMode: 'silent',
+        sourceChannel: 'gmail',
+        sourceChatId: account,
+      };
+      
+      const response = await this.bot.sendToAgent(message, context);
       
       // Log response but do NOT auto-deliver (silent mode)
       log.info(`Agent finished (SILENT MODE)`);

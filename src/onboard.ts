@@ -7,9 +7,10 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as p from '@clack/prompts';
 import { saveConfig, syncProviders, isApiServerMode } from './config/index.js';
-import type { AgentConfig, LettaBotConfig, ProviderConfig } from './config/types.js';
+import type { AgentConfig, LettaBotConfig } from './config/types.js';
 import { isLettaApiUrl } from './utils/server.js';
 import { parseCsvList, parseOptionalInt } from './utils/parse.js';
+import { runChatgptConnect } from './commands/letta-connect.js';
 import { CHANNELS, getChannelHint, isSignalCliInstalled, setupTelegram, setupSlack, setupDiscord, setupWhatsApp, setupSignal } from './channels/setup.js';
 
 // ============================================================================
@@ -221,8 +222,9 @@ interface OnboardConfig {
   // Model (only for new agents)
   model?: string;
   
-  // BYOK Providers (for free tier)
+  // BYOK/connected providers
   providers?: Array<{ id: string; name: string; apiKey: string }>;
+  chatgptConnected?: boolean;
   
   // Channels (with access control)
   telegram: {
@@ -552,8 +554,17 @@ async function stepAgent(config: OnboardConfig, env: Record<string, string>): Pr
   }
 }
 
+type ByokProvider = {
+  id: string;
+  name: string;
+  displayName: string;
+  providerType: string;
+  isOAuth?: boolean;
+};
+
 // BYOK Provider definitions (same as letta-code)
-const BYOK_PROVIDERS = [
+const BYOK_PROVIDERS: ByokProvider[] = [
+  { id: 'codex', name: 'chatgpt-plus-pro', displayName: 'ChatGPT / Codex', providerType: 'chatgpt_oauth', isOAuth: true },
   { id: 'anthropic', name: 'lc-anthropic', displayName: 'Anthropic (Claude)', providerType: 'anthropic' },
   { id: 'openai', name: 'lc-openai', displayName: 'OpenAI', providerType: 'openai' },
   { id: 'gemini', name: 'lc-gemini', displayName: 'Google Gemini', providerType: 'google_ai' },
@@ -563,34 +574,55 @@ const BYOK_PROVIDERS = [
 ];
 
 async function stepProviders(config: OnboardConfig, env: Record<string, string>): Promise<void> {
-  // Only for free tier users on Letta API (not Docker/custom servers, not paid)
   if (isDockerAuthMethod(config.authMethod)) return;
-  if (config.billingTier !== 'free') return;
+  const isFreeTier = config.billingTier === 'free';
+  const providerDefs = BYOK_PROVIDERS.filter(provider => isFreeTier || provider.id === 'codex');
+  if (providerDefs.length === 0) return;
   
-  const selectedProviders = await p.multiselect({
-    message: 'Add LLM provider keys (optional - for BYOK models)',
-    options: BYOK_PROVIDERS.map(provider => ({
-      value: provider.id,
-      label: provider.displayName,
-      hint: `Connect your ${provider.displayName} API key`,
-    })),
-    required: false,
-  });
+  // Paid users only see the ChatGPT OAuth option -- use a confirm instead of multiselect.
+  const oauthOnly = providerDefs.length === 1 && providerDefs[0].isOAuth;
   
-  if (p.isCancel(selectedProviders)) { p.cancel('Setup cancelled'); process.exit(0); }
+  let selectedProviders: string[];
+  if (oauthOnly) {
+    const connect = await p.confirm({
+      message: 'Connect your ChatGPT subscription? (via OAuth)',
+      initialValue: false,
+    });
+    if (p.isCancel(connect)) { p.cancel('Setup cancelled'); process.exit(0); }
+    selectedProviders = connect ? [providerDefs[0].id] : [];
+  } else {
+    const result = await p.multiselect({
+      message: 'Add connected providers (optional)',
+      options: providerDefs.map(provider => ({
+        value: provider.id,
+        label: provider.displayName,
+        hint: provider.isOAuth ? 'Connect your ChatGPT subscription via OAuth' : `Connect your ${provider.displayName} API key`,
+      })),
+      required: false,
+    });
+    if (p.isCancel(result)) { p.cancel('Setup cancelled'); process.exit(0); }
+    selectedProviders = (result as string[]) || [];
+  }
   
   // If no providers selected, skip
-  if (!selectedProviders || selectedProviders.length === 0) {
+  if (selectedProviders.length === 0) {
     return;
   }
   
-  config.providers = [];
+  const providersById = new Map((config.providers ?? []).map(provider => [provider.id, provider]));
   const apiKey = config.apiKey || env.LETTA_API_KEY || process.env.LETTA_API_KEY;
   
   // Collect API keys for each selected provider
-  for (const providerId of selectedProviders as string[]) {
+  for (const providerId of selectedProviders) {
     const provider = BYOK_PROVIDERS.find(p => p.id === providerId);
     if (!provider) continue;
+    if (provider.isOAuth) {
+      const connected = await runChatgptConnect({ LETTA_BASE_URL: config.baseUrl || 'https://api.letta.com' });
+      if (connected) {
+        config.chatgptConnected = true;
+      }
+      continue;
+    }
     
     const providerKey = await p.text({
       message: `${provider.displayName} API Key`,
@@ -650,7 +682,7 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
         
         if (response.ok) {
           spinner.stop(`Connected ${provider.displayName}`);
-          config.providers.push({ id: provider.id, name: provider.name, apiKey: providerKey });
+          providersById.set(provider.id, { id: provider.id, name: provider.name, apiKey: providerKey });
 
           // If OpenAI was just connected, offer to enable voice transcription
           if (provider.id === 'openai') {
@@ -672,6 +704,13 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
         spinner.stop(`Failed to connect ${provider.displayName}`);
       }
     }
+  }
+
+  const mergedProviders = Array.from(providersById.values());
+  if (mergedProviders.length > 0) {
+    config.providers = mergedProviders;
+  } else {
+    delete config.providers;
   }
 }
 
@@ -814,12 +853,18 @@ async function stepFeatures(config: OnboardConfig): Promise<void> {
   config.heartbeat.enabled = setupHeartbeat;
   
   if (setupHeartbeat) {
+    p.log.warn(
+      'Each heartbeat triggers a full agent invocation — real API cost, billed by your model.\n' +
+      'A 30-minute interval runs 48 invocations/day. A 4-hour interval runs 6.\n' +
+      'Most heartbeats are no-ops, but you pay for each one regardless.\n' +
+      'Set a longer interval if you\'re watching your spend.'
+    );
     const interval = await p.text({
       message: 'Interval (minutes)',
-      placeholder: '30',
-      initialValue: config.heartbeat.interval || '30',
+      placeholder: '240',
+      initialValue: config.heartbeat.interval || '240',
     });
-    if (!p.isCancel(interval)) config.heartbeat.interval = interval || '30';
+    if (!p.isCancel(interval)) config.heartbeat.interval = interval || '240';
   }
   
   // Cron
@@ -1191,6 +1236,19 @@ function showSummary(config: OnboardConfig): void {
   // Model
   if (config.model) {
     lines.push(`Model:     ${config.model}`);
+  }
+
+  // Providers
+  const providerNames: string[] = [];
+  if (config.chatgptConnected) providerNames.push('ChatGPT subscription');
+  if (config.providers?.length) {
+    for (const prov of config.providers) {
+      const def = BYOK_PROVIDERS.find(b => b.id === prov.id);
+      if (def && !def.isOAuth) providerNames.push(def.displayName);
+    }
+  }
+  if (providerNames.length > 0) {
+    lines.push(`Providers: ${providerNames.join(', ')}`);
   }
   
   // Channels

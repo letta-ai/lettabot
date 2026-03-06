@@ -23,6 +23,7 @@ import {
   hasInlineConfig,
   isDockerServerMode,
   serverModeLabel,
+  wasLoadedFromFleetConfig,
 } from './config/index.js';
 import { isLettaApiUrl } from './utils/server.js';
 import { getCronDataDir, getDataDir, getWorkingDir, hasRailwayVolume, resolveWorkingDirPath } from './utils/paths.js';
@@ -192,10 +193,13 @@ No config file found. Searched locations:
   2. LETTABOT_CONFIG env var (file path)
   3. ./lettabot.yaml (project-local - recommended for local dev)
   4. ./lettabot.yml
-  5. ~/.lettabot/config.yaml (user global)
-  6. ~/.lettabot/config.yml
+  5. ./agents.yml (fleet config from lettactl)
+  6. ./agents.yaml
+  7. ~/.lettabot/config.yaml (user global)
+  8. ~/.lettabot/config.yml
 
-Run "lettabot onboard" to create a config, or set LETTABOT_CONFIG_YAML for cloud deploys.
+Run "lettabot onboard" to create a config, set LETTABOT_CONFIG_YAML for cloud deploys,
+or use an agents.yml from lettactl with a lettabot: section.
 Encode your config: base64 < lettabot.yaml | tr -d '\\n'
 `);
   process.exit(1);
@@ -370,6 +374,7 @@ function createChannelsForAgent(
       attachmentsMaxBytes,
       groups: agentConfig.channels.telegram!.groups,
       mentionPatterns: agentConfig.channels.telegram!.mentionPatterns,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -401,6 +406,7 @@ function createChannelsForAgent(
       attachmentsDir,
       attachmentsMaxBytes,
       groups: agentConfig.channels.slack.groups,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -421,6 +427,7 @@ function createChannelsForAgent(
       attachmentsMaxBytes,
       groups: agentConfig.channels.whatsapp.groups,
       mentionPatterns: agentConfig.channels.whatsapp.mentionPatterns,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -444,6 +451,7 @@ function createChannelsForAgent(
       attachmentsMaxBytes,
       groups: agentConfig.channels.signal.groups,
       mentionPatterns: agentConfig.channels.signal.mentionPatterns,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -458,6 +466,7 @@ function createChannelsForAgent(
       attachmentsDir,
       attachmentsMaxBytes,
       groups: agentConfig.channels.discord.groups,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -643,8 +652,9 @@ async function main() {
       }
     }
 
-    // Container deploy: discover by name under an inter-process lock to avoid startup races.
-    if (!initialStatus.agentId && isContainerDeploy) {
+    // Discover by name under an inter-process lock to avoid startup races.
+    // Fleet configs rely on pre-created agents from lettactl apply.
+    if (!initialStatus.agentId && (isContainerDeploy || wasLoadedFromFleetConfig())) {
       try {
         await withDiscoveryLock(agentConfig.name, async () => {
           // Re-read status after lock acquisition in case another instance already set it.
@@ -704,7 +714,7 @@ async function main() {
     const heartbeatConfig = agentConfig.features?.heartbeat;
     const heartbeatService = new HeartbeatService(bot, {
       enabled: heartbeatConfig?.enabled ?? false,
-      intervalMinutes: heartbeatConfig?.intervalMin ?? 30,
+      intervalMinutes: heartbeatConfig?.intervalMin ?? 240,
       skipRecentUserMinutes: heartbeatConfig?.skipRecentUserMin ?? globalConfig.heartbeatSkipRecentUserMin,
       agentKey: agentConfig.name,
       prompt: heartbeatConfig?.prompt || process.env.HEARTBEAT_PROMPT,
@@ -745,7 +755,12 @@ async function main() {
           ?? (agentConfig.integrations?.google?.pollIntervalSec
             ? agentConfig.integrations.google.pollIntervalSec * 1000
             : 60000),
-        gmail: { enabled: gmailEnabled, accounts: gmailAccounts },
+        gmail: {
+          enabled: gmailEnabled,
+          accounts: gmailAccounts,
+          prompt: agentConfig.polling?.gmail?.prompt,
+          promptFile: agentConfig.polling?.gmail?.promptFile,
+        },
       };
     })();
     
@@ -793,7 +808,7 @@ async function main() {
       channels: status.channels,
       features: {
         cron: cfg?.features?.cron ?? globalConfig.cronEnabled,
-        heartbeatIntervalMin: hbCfg?.enabled ? (hbCfg.intervalMin ?? 30) : undefined,
+        heartbeatIntervalMin: hbCfg?.enabled ? (hbCfg.intervalMin ?? 240) : undefined,
       },
     };
   });
@@ -809,9 +824,10 @@ async function main() {
     services.cronServices.forEach(c => c.stop());
     services.pollingServices.forEach(p => p.stop());
     await gateway.stop();
+    apiServer.close();
     process.exit(0);
   };
-  
+
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }

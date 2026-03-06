@@ -36,7 +36,7 @@ vi.mock('./system-prompt.js', () => ({
 }));
 
 import { createAgent, createSession, resumeSession } from '@letta-ai/letta-code-sdk';
-import { getLatestRunError } from '../tools/letta-api.js';
+import { getLatestRunError, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
 import { LettaBot } from './bot.js';
 
 function deferred<T>() {
@@ -647,6 +647,111 @@ describe('SDK session contract', () => {
     await expect(bot.sendToAgent('trigger error')).rejects.toThrow(
       'Agent run failed: timeout'
     );
+  });
+
+  it('retries sendToAgent once after approval-stuck result error and succeeds', async () => {
+    let streamCall = 0;
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() => {
+        const call = streamCall++;
+        return (async function* () {
+          if (call === 0) {
+            yield { type: 'result', success: false, error: 'error', conversationId: 'conv-approval' };
+            return;
+          }
+          yield { type: 'assistant', content: 'recovered response' };
+          yield { type: 'result', success: true, result: 'done', conversationId: 'conv-approval' };
+        })();
+      }),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-approval',
+    };
+
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+    vi.mocked(getLatestRunError).mockResolvedValueOnce({
+      message: 'Run run-stuck stuck waiting for tool approval (status=created)',
+      stopReason: 'requires_approval',
+      isApprovalError: true,
+    });
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    const response = await bot.sendToAgent('trigger approval retry');
+    expect(response).toBe('recovered response');
+    expect(mockSession.send).toHaveBeenCalledTimes(2);
+    expect(getLatestRunError).toHaveBeenCalledWith('agent-contract-test', 'conv-approval');
+  });
+
+  it('retries processMessage once after approval conflict even when orphan scan finds nothing', async () => {
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    let runCall = 0;
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
+      session: { abort: vi.fn(async () => undefined) },
+      stream: async function* () {
+        if (runCall++ === 0) {
+          yield { type: 'result', success: false, error: 'error', conversationId: 'conv-approval' };
+          return;
+        }
+        yield { type: 'assistant', content: 'after retry' };
+        yield { type: 'result', success: true, result: 'after retry', conversationId: 'conv-approval' };
+      },
+    }));
+
+    vi.mocked(getLatestRunError).mockResolvedValueOnce({
+      message: 'Run run-stuck stuck waiting for tool approval (status=created)',
+      stopReason: 'requires_approval',
+      isApprovalError: true,
+    });
+    vi.mocked(recoverOrphanedConversationApproval).mockResolvedValueOnce({
+      recovered: false,
+      details: 'No unresolved approval requests found',
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_payload: unknown) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    const msg = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    expect((bot as any).sessionManager.runSession).toHaveBeenCalledTimes(2);
+    expect(recoverOrphanedConversationApproval).toHaveBeenCalledWith(
+      'agent-contract-test',
+      'conv-approval',
+      true
+    );
+    const sentTexts = adapter.sendMessage.mock.calls.map((call) => {
+      const payload = call[0] as { text?: string };
+      return payload.text;
+    });
+    expect(sentTexts).toContain('after retry');
   });
 
   it('passes tags: [origin:lettabot] to createAgent when creating a new agent', async () => {

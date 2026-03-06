@@ -5,7 +5,8 @@
  * 1. LETTABOT_CONFIG_YAML env var (inline YAML or base64-encoded YAML)
  * 2. LETTABOT_CONFIG env var (file path)
  * 3. ./lettabot.yaml or ./lettabot.yml (project-local)
- * 4. ~/.lettabot/config.yaml or ~/.lettabot/config.yml (user global)
+ * 4. ./agents.yml or ./agents.yaml (fleet config from lettactl)
+ * 5. ~/.lettabot/config.yaml or ~/.lettabot/config.yml (user global)
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -14,18 +15,23 @@ import { dirname, join, resolve } from 'node:path';
 import YAML from 'yaml';
 import type { LettaBotConfig, ProviderConfig } from './types.js';
 import { DEFAULT_CONFIG, canonicalizeServerMode, isApiServerMode, isDockerServerMode } from './types.js';
+import { isFleetConfig, fleetConfigToLettaBotConfig, setLoadedFromFleetConfig } from './fleet-adapter.js';
 import { LETTA_API_URL } from '../auth/oauth.js';
 
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Config');
 // Config file locations (checked in order)
-const CONFIG_PATHS = [
-  resolve(process.cwd(), 'lettabot.yaml'),           // Project-local
-  resolve(process.cwd(), 'lettabot.yml'),            // Project-local alt
-  join(homedir(), '.lettabot', 'config.yaml'),       // User global
-  join(homedir(), '.lettabot', 'config.yml'),        // User global alt
-];
+function getConfigPaths(): string[] {
+  return [
+    resolve(process.cwd(), 'lettabot.yaml'),           // Project-local
+    resolve(process.cwd(), 'lettabot.yml'),            // Project-local alt
+    resolve(process.cwd(), 'agents.yml'),              // Fleet config
+    resolve(process.cwd(), 'agents.yaml'),             // Fleet config alt
+    join(homedir(), '.lettabot', 'config.yaml'),       // User global
+    join(homedir(), '.lettabot', 'config.yml'),        // User global alt
+  ];
+}
 
 const DEFAULT_CONFIG_PATH = join(homedir(), '.lettabot', 'config.yaml');
 
@@ -81,8 +87,10 @@ export function encodeConfigForEnv(yamlContent: string): string {
  * 1. LETTABOT_CONFIG env var (explicit override)
  * 2. ./lettabot.yaml (project-local)
  * 3. ./lettabot.yml (project-local alt)
- * 4. ~/.lettabot/config.yaml (user global)
- * 5. ~/.lettabot/config.yml (user global alt)
+ * 4. ./agents.yml (fleet config from lettactl)
+ * 5. ./agents.yaml (fleet config alt)
+ * 6. ~/.lettabot/config.yaml (user global)
+ * 7. ~/.lettabot/config.yml (user global alt)
  */
 export function resolveConfigPath(): string {
   // Environment variable takes priority
@@ -90,7 +98,7 @@ export function resolveConfigPath(): string {
     return resolve(process.env.LETTABOT_CONFIG);
   }
   
-  for (const p of CONFIG_PATHS) {
+  for (const p of getConfigPaths()) {
     if (existsSync(p)) {
       return p;
     }
@@ -110,16 +118,50 @@ function hasObject(value: unknown): value is Record<string, unknown> {
 }
 
 function parseAndNormalizeConfig(content: string): LettaBotConfig {
-  const parsed = YAML.parse(content) as Partial<LettaBotConfig>;
+  const parsed = YAML.parse(content);
+
+  // Fleet config detection: agents.yml from lettactl with llm_config/system_prompt
+  if (isFleetConfig(parsed)) {
+    const parsedFleet = parsed as Record<string, unknown>;
+
+    // Preserve large numeric IDs under agents[].lettabot.channels before conversion.
+    fixLargeGroupIdsInFleetConfig(content, parsedFleet);
+
+    const converted = fleetConfigToLettaBotConfig(parsedFleet);
+    setLoadedFromFleetConfig(true);
+
+    // Safety pass on converted top-level channels (single-agent format).
+    fixLargeGroupIds(content, converted);
+
+    // Merge with defaults and canonicalize server mode (same as native path)
+    const merged = {
+      ...DEFAULT_CONFIG,
+      ...converted,
+      server: { ...DEFAULT_CONFIG.server, ...converted.server },
+      agent: { ...DEFAULT_CONFIG.agent, ...converted.agent },
+      channels: { ...DEFAULT_CONFIG.channels, ...converted.channels },
+    };
+
+    return {
+      ...merged,
+      server: {
+        ...merged.server,
+        mode: canonicalizeServerMode(merged.server.mode),
+      },
+    };
+  }
+
+  setLoadedFromFleetConfig(false);
+  const typedParsed = parsed as Partial<LettaBotConfig>;
 
   // Fix instantGroups: YAML parses large numeric IDs (e.g. Discord snowflakes)
   // as JavaScript numbers, losing precision for values > Number.MAX_SAFE_INTEGER.
   // Re-extract from document AST to preserve the original string representation.
-  fixLargeGroupIds(content, parsed);
+  fixLargeGroupIds(content, typedParsed);
 
   // Reject ambiguous API server configuration. During migration from top-level
   // `api` to `server.api`, having both can silently drop fields.
-  if (hasObject(parsed.api) && hasObject(parsed.server) && hasObject(parsed.server.api)) {
+  if (hasObject(typedParsed.api) && hasObject(typedParsed.server) && hasObject(typedParsed.server.api)) {
     throw new Error(
       'Conflicting API config: both top-level `api` and `server.api` are set. Remove top-level `api` and keep only `server.api`.'
     );
@@ -128,10 +170,10 @@ function parseAndNormalizeConfig(content: string): LettaBotConfig {
   // Merge with defaults and canonicalize server mode.
   const merged = {
     ...DEFAULT_CONFIG,
-    ...parsed,
-    server: { ...DEFAULT_CONFIG.server, ...parsed.server },
-    agent: { ...DEFAULT_CONFIG.agent, ...parsed.agent },
-    channels: { ...DEFAULT_CONFIG.channels, ...parsed.channels },
+    ...typedParsed,
+    server: { ...DEFAULT_CONFIG.server, ...typedParsed.server },
+    agent: { ...DEFAULT_CONFIG.agent, ...typedParsed.agent },
+    channels: { ...DEFAULT_CONFIG.channels, ...typedParsed.channels },
   };
 
   const config = {
@@ -155,6 +197,7 @@ function parseAndNormalizeConfig(content: string): LettaBotConfig {
  */
 export function loadConfig(): LettaBotConfig {
   _lastLoadFailed = false;
+  setLoadedFromFleetConfig(false);
 
   // Inline config takes priority over file-based config
   if (hasInlineConfig()) {
@@ -192,6 +235,7 @@ export function loadConfig(): LettaBotConfig {
  */
 export function loadConfigStrict(): LettaBotConfig {
   _lastLoadFailed = false;
+  setLoadedFromFleetConfig(false);
 
   // Inline config takes priority over file-based config
   if (hasInlineConfig()) {
@@ -544,6 +588,130 @@ export async function syncProviders(config: Partial<LettaBotConfig> & Pick<Letta
       }
     } catch (err) {
       log.error(`Failed to sync provider ${provider.name}:`, err);
+    }
+  }
+}
+
+/**
+ * Fleet config variant of large group ID preservation.
+ * Targets: agents[].lettabot.channels.*.{instantGroups,listeningGroups,groups}
+ */
+function fixLargeGroupIdsInFleetConfig(yamlContent: string, parsed: Record<string, unknown>): void {
+  const channels = ['telegram', 'slack', 'whatsapp', 'signal', 'discord'] as const;
+  const groupFields = ['instantGroups', 'listeningGroups'] as const;
+
+  const rawAgents = parsed.agents;
+  if (!Array.isArray(rawAgents)) return;
+
+  try {
+    const doc = YAML.parseDocument(yamlContent);
+
+    for (let i = 0; i < rawAgents.length; i += 1) {
+      const rawAgent = rawAgents[i];
+      if (!rawAgent || typeof rawAgent !== 'object' || Array.isArray(rawAgent)) continue;
+      const agent = rawAgent as Record<string, unknown>;
+
+      const rawLettabot = agent.lettabot;
+      if (!rawLettabot || typeof rawLettabot !== 'object' || Array.isArray(rawLettabot)) continue;
+      const lettabot = rawLettabot as Record<string, unknown>;
+
+      const rawChannels = lettabot.channels;
+      if (!rawChannels || typeof rawChannels !== 'object' || Array.isArray(rawChannels)) continue;
+      const channelsConfig = rawChannels as Record<string, unknown>;
+
+      for (const ch of channels) {
+        const rawChannelCfg = channelsConfig[ch];
+        if (!rawChannelCfg || typeof rawChannelCfg !== 'object' || Array.isArray(rawChannelCfg)) continue;
+        const channelCfg = rawChannelCfg as Record<string, unknown>;
+
+        for (const field of groupFields) {
+          const seq = doc.getIn(['agents', i, 'lettabot', 'channels', ch, field], true);
+          if (YAML.isSeq(seq)) {
+            channelCfg[field] = seq.items.map((item: unknown) => {
+              if (YAML.isScalar(item)) {
+                if (typeof item.value === 'number' && item.source) {
+                  return item.source;
+                }
+                return String(item.value);
+              }
+              return String(item);
+            });
+          }
+        }
+
+        const groupsNode = doc.getIn(['agents', i, 'lettabot', 'channels', ch, 'groups'], true);
+        if (YAML.isMap(groupsNode)) {
+          const fixedGroups: Record<string, unknown> = {};
+          for (const pair of groupsNode.items) {
+            const keyNode = (pair as { key?: unknown }).key;
+            const valueNode = (pair as { value?: unknown }).value;
+
+            let groupKey: string;
+            if (YAML.isScalar(keyNode)) {
+              if (typeof keyNode.value === 'number' && keyNode.source) {
+                groupKey = keyNode.source;
+              } else {
+                groupKey = String(keyNode.value);
+              }
+            } else {
+              groupKey = String(keyNode);
+            }
+
+            if (YAML.isMap(valueNode)) {
+              const groupConfig: Record<string, unknown> = {};
+              for (const settingPair of valueNode.items) {
+                const settingKeyNode = (settingPair as { key?: unknown }).key;
+                const settingValueNode = (settingPair as { value?: unknown }).value;
+                const settingKey = YAML.isScalar(settingKeyNode)
+                  ? String(settingKeyNode.value)
+                  : String(settingKeyNode);
+                if (YAML.isScalar(settingValueNode)) {
+                  groupConfig[settingKey] = settingValueNode.value;
+                } else {
+                  groupConfig[settingKey] = settingValueNode as unknown;
+                }
+              }
+              fixedGroups[groupKey] = groupConfig;
+            } else if (YAML.isScalar(valueNode)) {
+              fixedGroups[groupKey] = valueNode.value;
+            } else {
+              fixedGroups[groupKey] = valueNode as unknown;
+            }
+          }
+          channelCfg.groups = fixedGroups;
+        }
+      }
+    }
+  } catch {
+    for (const rawAgent of rawAgents) {
+      if (!rawAgent || typeof rawAgent !== 'object' || Array.isArray(rawAgent)) continue;
+      const agent = rawAgent as Record<string, unknown>;
+      const rawLettabot = agent.lettabot;
+      if (!rawLettabot || typeof rawLettabot !== 'object' || Array.isArray(rawLettabot)) continue;
+      const lettabot = rawLettabot as Record<string, unknown>;
+      const rawChannels = lettabot.channels;
+      if (!rawChannels || typeof rawChannels !== 'object' || Array.isArray(rawChannels)) continue;
+      const channelsConfig = rawChannels as Record<string, unknown>;
+
+      for (const ch of channels) {
+        const rawChannelCfg = channelsConfig[ch];
+        if (!rawChannelCfg || typeof rawChannelCfg !== 'object' || Array.isArray(rawChannelCfg)) continue;
+        const channelCfg = rawChannelCfg as Record<string, unknown>;
+
+        for (const field of groupFields) {
+          if (Array.isArray(channelCfg[field])) {
+            channelCfg[field] = (channelCfg[field] as unknown[]).map((v: unknown) => String(v));
+          }
+        }
+
+        if (channelCfg.groups && typeof channelCfg.groups === 'object' && !Array.isArray(channelCfg.groups)) {
+          const fixedGroups: Record<string, unknown> = {};
+          for (const [key, value] of Object.entries(channelCfg.groups as Record<string, unknown>)) {
+            fixedGroups[String(key)] = value;
+          }
+          channelCfg.groups = fixedGroups;
+        }
+      }
     }
   }
 }

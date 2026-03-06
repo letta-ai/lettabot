@@ -140,6 +140,8 @@ lettabot skills sync
 lettabot skills status
 ```
 
+> **Important:** These commands discover skills relative to the current working directory. Run them from the lettabot project root to ensure all project-level skills (`.skills/`) and bundled skills (`skills/`) are found. Running from a different directory will only show globally installed skills.
+
 External skill sources:
 
 - [Clawdhub](https://clawdhub.com/) -- `npx clawdhub@latest install <skill>`

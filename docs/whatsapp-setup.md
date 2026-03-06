@@ -141,7 +141,7 @@ This uses your personal WhatsApp account:
 LettaBot supports receiving images, documents, and voice messages:
 
 - **Images**: Downloaded and shown to the agent (agent can view using Read tool)
-- **Voice messages**: Automatically transcribed via OpenAI Whisper
+- **Voice messages**: Automatically transcribed (see [voice.md](./voice.md) for setup)
 - **Documents**: Downloaded with metadata shown to agent
 
 Configure attachment handling in `lettabot.yaml`:

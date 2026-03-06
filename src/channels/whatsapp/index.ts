@@ -41,6 +41,7 @@ import {
   formatPairingMessage,
 } from "./inbound/access-control.js";
 import { applyGroupGating } from "./inbound/group-gating.js";
+import { resolveDailyLimits, checkDailyLimit } from "../group-mode.js";
 
 // Outbound message handling
 import {
@@ -690,7 +691,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
       }
 
       const { body, from, chatId, pushName, senderE164, chatType, isSelfChat: isExtractedSelfChat } = extracted;
-      const userId = normalizePhoneForStorage(from);
+      const userId = normalizePhoneForStorage(senderE164 || from);
       const isGroup = chatType === "group";
 
       // CRITICAL: Skip messages older than connection time (prevents duplicate responses on reconnect)
@@ -818,6 +819,17 @@ export class WhatsAppAdapter implements ChannelAdapter {
           if (result) await this.sendMessage({ chatId, text: result });
         }
         return; // Don't pass commands to agent
+      }
+
+      // Daily rate limit check (after commands so /help, /reset etc. always work)
+      if (isGroup) {
+        const limits = resolveDailyLimits(this.config.groups, [remoteJid]);
+        const counterKey = `${this.config.agentName ?? ''}:whatsapp:${limits.matchedKey ?? remoteJid}`;
+        const limitResult = checkDailyLimit(counterKey, userId, limits);
+        if (!limitResult.allowed) {
+          log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
+          continue;
+        }
       }
 
       // Debounce and forward to bot core (unless history)

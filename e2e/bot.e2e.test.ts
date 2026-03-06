@@ -16,6 +16,18 @@ import { join } from 'node:path';
 
 // Skip if no API key (local dev without secrets)
 const SKIP_E2E = !process.env.LETTA_API_KEY || !process.env.LETTA_E2E_AGENT_ID;
+const DEFAULT_MESSAGE_TIMEOUT_MS = 120000;
+
+function parseTimeoutMs(envName: string, fallback: number): number {
+  const value = process.env[envName];
+  if (!value) return fallback;
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const E2E_MESSAGE_TIMEOUT_MS = parseTimeoutMs('LETTA_E2E_MESSAGE_TIMEOUT_MS', DEFAULT_MESSAGE_TIMEOUT_MS);
+const E2E_MULTI_TURN_TIMEOUT_MS = parseTimeoutMs('LETTA_E2E_MULTI_TURN_TIMEOUT_MS', E2E_MESSAGE_TIMEOUT_MS * 2);
 
 describe.skipIf(SKIP_E2E)('e2e: LettaBot with Letta API', () => {
   let bot: LettaBot;
@@ -52,13 +64,15 @@ describe.skipIf(SKIP_E2E)('e2e: LettaBot with Letta API', () => {
   });
 
   it('responds to a simple message', async () => {
-    const response = await mockAdapter.simulateMessage('Say "E2E TEST OK" and nothing else.');
+    const response = await mockAdapter.simulateMessage('Say "E2E TEST OK" and nothing else.', {
+      timeoutMs: E2E_MESSAGE_TIMEOUT_MS,
+    });
     
     expect(response).toBeTruthy();
     expect(response.length).toBeGreaterThan(0);
     // The agent should respond with something containing our test phrase
     expect(response.toUpperCase()).toContain('E2E TEST OK');
-  }, 60000); // 60s timeout
+  }, E2E_MESSAGE_TIMEOUT_MS + 10000);
 
   it('handles /status command', async () => {
     const response = await mockAdapter.simulateMessage('/status');
@@ -78,14 +92,18 @@ describe.skipIf(SKIP_E2E)('e2e: LettaBot with Letta API', () => {
 
   it('maintains conversation context', async () => {
     // First message - set context
-    await mockAdapter.simulateMessage('Remember this number: 42424242');
+    await mockAdapter.simulateMessage('Remember this number: 42424242', {
+      timeoutMs: E2E_MESSAGE_TIMEOUT_MS,
+    });
     
     // Clear messages but keep session
     mockAdapter.clearMessages();
     
     // Second message - recall context
-    const response = await mockAdapter.simulateMessage('What number did I just tell you to remember?');
+    const response = await mockAdapter.simulateMessage('What number did I just tell you to remember?', {
+      timeoutMs: E2E_MULTI_TURN_TIMEOUT_MS,
+    });
     
     expect(response).toContain('42424242');
-  }, 120000); // 2 min timeout for multi-turn
+  }, E2E_MULTI_TURN_TIMEOUT_MS + 10000);
 });

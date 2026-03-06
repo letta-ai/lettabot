@@ -644,15 +644,15 @@ export class LettaBot implements AgentSession {
         const current = await getAgentModel(agentId);
         const { models: recommendedModels } = await import('../utils/model-selection.js');
         const lines = [
-          `Current model: ${current || '(unknown)'}`,
+          `Current model: \`${current || '(unknown)'}\``,
           '',
           'Recommended models:',
         ];
         for (const m of recommendedModels) {
           const marker = m.handle === current ? ' (current)' : '';
-          lines.push(`  ${m.label} - ${m.handle}${marker}`);
+          lines.push(`  ${m.label} - \`${m.handle}\`${marker}`);
         }
-        lines.push('', 'Use /model <handle> to switch.');
+        lines.push('', 'Use `/model <handle>` to switch.');
         return lines.join('\n');
       }
       default:
@@ -977,7 +977,7 @@ export class LettaBot implements AgentSession {
       let sentAnyMessage = false;
       let receivedAnyData = false;
       let sawNonAssistantSinceLastUuid = false;
-      let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | null = null;
+      let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown>; isApprovalError?: boolean } | null = null;
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
       const msgTypeCounts: Record<string, number> = {};
@@ -1301,7 +1301,11 @@ export class LettaBot implements AgentSession {
                 (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
               const enriched = await getLatestRunError(this.store.agentId, retryConvId);
               if (enriched) {
-                lastErrorDetail = { message: enriched.message, stopReason: enriched.stopReason };
+                lastErrorDetail = {
+                  message: enriched.message,
+                  stopReason: enriched.stopReason,
+                  isApprovalError: enriched.isApprovalError,
+                };
               }
             }
 
@@ -1311,8 +1315,12 @@ export class LettaBot implements AgentSession {
 
             // For approval-specific conflicts, attempt recovery directly (don't
             // enter the generic retry path which would just get another CONFLICT).
-            const isApprovalConflict = isConflictError &&
-              lastErrorDetail?.message?.toLowerCase().includes('waiting for approval');
+            // Use isApprovalError from run metadata as a fallback when the
+            // error message doesn't contain the expected strings (e.g. when
+            // the type=error event was lost and enrichment detected a stuck run).
+            const isApprovalConflict = (isConflictError &&
+              lastErrorDetail?.message?.toLowerCase().includes('waiting for approval')) ||
+              lastErrorDetail?.isApprovalError === true;
             if (isApprovalConflict && !retried && this.store.agentId) {
               if (retryConvId) {
                 log.info('Approval conflict detected -- attempting targeted recovery...');
@@ -1327,6 +1335,8 @@ export class LettaBot implements AgentSession {
                   return this.processMessage(msg, adapter, true);
                 }
                 log.warn(`Approval recovery failed: ${convResult.details}`);
+                log.info('Retrying once with a fresh session after approval conflict...');
+                return this.processMessage(msg, adapter, true);
               }
             }
 
@@ -1573,10 +1583,16 @@ export class LettaBot implements AgentSession {
         try {
           let response = '';
           let sawStaleDuplicateResult = false;
-          let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown> } | undefined;
+          let approvalRetryPending = false;
+          let usedMessageCli = false;
+          let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown>; isApprovalError?: boolean } | undefined;
           for await (const msg of stream()) {
             if (msg.type === 'tool_call') {
               this.sessionManager.syncTodoToolCall(msg);
+              if (isSilent && msg.toolName === 'Bash') {
+                const cmd = String((msg as any).toolInput?.command ?? msg.rawArguments ?? '');
+                if (cmd.includes('lettabot-message send')) usedMessageCli = true;
+              }
             }
             if (msg.type === 'error') {
               lastErrorDetail = {
@@ -1603,8 +1619,22 @@ export class LettaBot implements AgentSession {
                     (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
                   const enriched = await getLatestRunError(this.store.agentId, convId);
                   if (enriched) {
-                    lastErrorDetail = { message: enriched.message, stopReason: enriched.stopReason };
+                    lastErrorDetail = {
+                      message: enriched.message,
+                      stopReason: enriched.stopReason,
+                      isApprovalError: enriched.isApprovalError,
+                    };
                   }
+                }
+                const isApprovalIssue = lastErrorDetail?.isApprovalError === true
+                  || ((lastErrorDetail?.message?.toLowerCase().includes('conflict') || false)
+                  && (lastErrorDetail?.message?.toLowerCase().includes('waiting for approval') || false));
+                if (isApprovalIssue && !retried) {
+                  log.info('sendToAgent: approval issue detected -- retrying once with fresh session...');
+                  this.sessionManager.invalidateSession(convKey);
+                  retried = true;
+                  approvalRetryPending = true;
+                  break;
                 }
                 const errMsg = lastErrorDetail?.message || msg.error || 'error';
                 const errReason = lastErrorDetail?.stopReason || msg.error || 'error';
@@ -1613,6 +1643,10 @@ export class LettaBot implements AgentSession {
               }
               break;
             }
+          }
+
+          if (approvalRetryPending) {
+            continue;
           }
 
           if (sawStaleDuplicateResult) {
@@ -1626,7 +1660,11 @@ export class LettaBot implements AgentSession {
           }
 
           if (isSilent && response.trim()) {
-            log.info(`Silent mode: collected ${response.length} chars (not delivered)`);
+            if (usedMessageCli) {
+              log.info(`Silent mode: agent used lettabot-message CLI, collected ${response.length} chars (not delivered)`);
+            } else {
+              log.warn(`Silent mode: agent produced ${response.length} chars but did NOT use lettabot-message CLI — response discarded. If this keeps happening, the agent's model may not be following silent mode instructions.`);
+            }
           }
           return response;
         } catch (error) {

@@ -525,6 +525,21 @@ export async function getLatestRunError(
     const detail = typeof err?.detail === 'string' ? err.detail : '';
     const stopReason = typeof run.stop_reason === 'string' ? run.stop_reason : 'error';
 
+    // Run has no metadata error but is stuck waiting for approval.
+    // This happens when the 409 prevents a new run from starting --
+    // the latest run is the one blocking, and it has no error, just a
+    // stop_reason indicating it needs approval.
+    const status = typeof run.status === 'string' ? run.status : '';
+    if (!detail && stopReason === 'requires_approval') {
+      const runId = typeof run.id === 'string' ? run.id : 'unknown';
+      log.info(`Latest run stuck on approval: run=${runId} status=${status} stop_reason=${stopReason}`);
+      return {
+        message: `Run ${runId} stuck waiting for tool approval (status=${status})`,
+        stopReason,
+        isApprovalError: true,
+      };
+    }
+
     if (!detail) return null;
 
     const isApprovalError = detail.toLowerCase().includes('waiting for approval')

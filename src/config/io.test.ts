@@ -19,6 +19,7 @@ vi.mock('../logger.js', () => ({
 
 import { saveConfig, loadConfig, loadConfigStrict, configToEnv, didLoadFail } from './io.js';
 import { normalizeAgents, DEFAULT_CONFIG } from './types.js';
+import { wasLoadedFromFleetConfig, setLoadedFromFleetConfig } from './fleet-adapter.js';
 import type { LettaBotConfig } from './types.js';
 
 describe('saveConfig with agents[] format', () => {
@@ -447,5 +448,237 @@ describe('loadConfigStrict', () => {
       process.env.LETTABOT_CONFIG = originalEnv;
       rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('loadConfig with fleet config', () => {
+  let tmpDir: string;
+  let originalEnv: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'lettabot-fleet-test-'));
+    originalEnv = process.env.LETTABOT_CONFIG;
+    delete process.env.LETTABOT_CONFIG_YAML;
+    setLoadedFromFleetConfig(false);
+  });
+
+  afterEach(() => {
+    process.env.LETTABOT_CONFIG = originalEnv;
+    delete process.env.LETTABOT_CONFIG_YAML;
+    setLoadedFromFleetConfig(false);
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should load fleet config (agents.yml) and convert to LettaBot format', () => {
+    const fleetYaml = YAML.stringify({
+      agents: [
+        {
+          name: 'TestBot',
+          description: 'A test agent',
+          llm_config: { model: 'gpt-4', context_window: 128000 },
+          system_prompt: { value: 'You are helpful' },
+          lettabot: {
+            server: { mode: 'docker', baseUrl: 'http://localhost:8283' },
+            displayName: 'Testy',
+            channels: {
+              telegram: { enabled: true, token: 'tg-fleet-token', dmPolicy: 'open' },
+            },
+            features: { cron: true },
+          },
+        },
+      ],
+    });
+
+    const configPath = join(tmpDir, 'agents.yml');
+    writeFileSync(configPath, fleetYaml, 'utf-8');
+    process.env.LETTABOT_CONFIG = configPath;
+
+    const config = loadConfig();
+
+    expect(config.agent.name).toBe('TestBot');
+    expect(config.agent.displayName).toBe('Testy');
+    expect(config.server.mode).toBe('docker');
+    expect(config.server.baseUrl).toBe('http://localhost:8283');
+    expect(config.channels.telegram?.token).toBe('tg-fleet-token');
+    expect(config.features?.cron).toBe(true);
+    expect(wasLoadedFromFleetConfig()).toBe(true);
+
+    // lettactl-only fields should not leak through
+    expect((config as any).llm_config).toBeUndefined();
+    expect((config as any).system_prompt).toBeUndefined();
+  });
+
+  it('should reset wasLoadedFromFleetConfig to false when config file is missing', () => {
+    process.env.LETTABOT_CONFIG = join(tmpDir, 'missing.yaml');
+    setLoadedFromFleetConfig(true);
+
+    loadConfig();
+
+    expect(wasLoadedFromFleetConfig()).toBe(false);
+  });
+
+  it('should set wasLoadedFromFleetConfig to false for native config', () => {
+    const configPath = join(tmpDir, 'lettabot.yaml');
+    writeFileSync(
+      configPath,
+      'server:\n  mode: api\nagent:\n  name: NativeBot\nchannels: {}\n',
+      'utf-8',
+    );
+    process.env.LETTABOT_CONFIG = configPath;
+
+    loadConfig();
+
+    expect(wasLoadedFromFleetConfig()).toBe(false);
+  });
+
+  it('lettabot.yaml should take priority over agents.yml', () => {
+    // Write both files in an isolated cwd and rely on resolveConfigPath() scanning.
+    const nativePath = join(tmpDir, 'lettabot.yaml');
+    writeFileSync(
+      nativePath,
+      YAML.stringify({
+        server: { mode: 'api' },
+        agent: { name: 'NativeWins' },
+        channels: {},
+      }),
+      'utf-8',
+    );
+
+    writeFileSync(
+      join(tmpDir, 'agents.yml'),
+      YAML.stringify({
+        agents: [{
+          name: 'FleetLoses',
+          llm_config: { model: 'gpt-4' },
+          system_prompt: { value: 'hi' },
+          lettabot: { channels: {} },
+        }],
+      }),
+      'utf-8',
+    );
+
+    const originalCwd = process.cwd();
+    delete process.env.LETTABOT_CONFIG;
+    delete process.env.LETTABOT_CONFIG_YAML;
+    process.chdir(tmpDir);
+
+    try {
+      const config = loadConfig();
+      expect(config.agent.name).toBe('NativeWins');
+      expect(wasLoadedFromFleetConfig()).toBe(false);
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  it('should not treat agents.yml without lettabot section as fleet config', () => {
+    const configPath = join(tmpDir, 'agents.yml');
+    writeFileSync(
+      configPath,
+      YAML.stringify({
+        agents: [
+          {
+            name: 'ServerOnly',
+            llm_config: { model: 'gpt-4' },
+            system_prompt: { value: 'hi' },
+          },
+        ],
+      }),
+      'utf-8',
+    );
+    process.env.LETTABOT_CONFIG = configPath;
+
+    const config = loadConfig();
+
+    expect(config.agent.name).toBe(DEFAULT_CONFIG.agent.name);
+    expect(wasLoadedFromFleetConfig()).toBe(false);
+  });
+
+  it('should not throw via loadConfigStrict when agents.yml has no lettabot sections', () => {
+    const configPath = join(tmpDir, 'agents.yml');
+    writeFileSync(
+      configPath,
+      YAML.stringify({
+        agents: [
+          { name: 'Bot1', llm_config: { model: 'gpt-4' }, system_prompt: { value: 'hi' } },
+        ],
+      }),
+      'utf-8',
+    );
+    process.env.LETTABOT_CONFIG = configPath;
+
+    const config = loadConfigStrict();
+    expect(config.agent.name).toBe(DEFAULT_CONFIG.agent.name);
+    expect(wasLoadedFromFleetConfig()).toBe(false);
+  });
+
+  it('should preserve large discord group IDs from fleet config', () => {
+    const configPath = join(tmpDir, 'agents.yml');
+    writeFileSync(
+      configPath,
+      [
+        'agents:',
+        '  - name: SnowflakeBot',
+        '    llm_config:',
+        '      model: gpt-4',
+        '    system_prompt:',
+        '      value: hi',
+        '    lettabot:',
+        '      channels:',
+        '        discord:',
+        '          enabled: true',
+        '          token: test-token',
+        '          instantGroups:',
+        '            - 123456789012345678',
+        '          groups:',
+        '            123456789012345678:',
+        '              mode: listen',
+      ].join('\n'),
+      'utf-8',
+    );
+    process.env.LETTABOT_CONFIG = configPath;
+
+    const config = loadConfig();
+
+    expect(config.channels.discord?.instantGroups?.[0]).toBe('123456789012345678');
+    expect(config.channels.discord?.groups?.['123456789012345678']).toEqual({ mode: 'listen' });
+  });
+
+  it('should handle multi-agent fleet config', () => {
+    const configPath = join(tmpDir, 'agents.yml');
+    writeFileSync(
+      configPath,
+      YAML.stringify({
+        agents: [
+          {
+            name: 'Agent1',
+            llm_config: { model: 'gpt-4' },
+            system_prompt: { value: 'First' },
+            lettabot: {
+              server: { mode: 'docker', baseUrl: 'http://localhost:8283' },
+              channels: { telegram: { enabled: true, token: 'tg1' } },
+            },
+          },
+          {
+            name: 'Agent2',
+            llm_config: { model: 'claude-3' },
+            system_prompt: { value: 'Second' },
+            lettabot: {
+              channels: { slack: { enabled: true, appToken: 'xapp', botToken: 'xoxb' } },
+            },
+          },
+        ],
+      }),
+      'utf-8',
+    );
+    process.env.LETTABOT_CONFIG = configPath;
+
+    const config = loadConfig();
+
+    expect(config.agents).toHaveLength(2);
+    expect(config.agents![0].name).toBe('Agent1');
+    expect(config.agents![1].name).toBe('Agent2');
+    expect(config.server.mode).toBe('docker');
+    expect(wasLoadedFromFleetConfig()).toBe(true);
   });
 });

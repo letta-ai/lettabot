@@ -229,6 +229,7 @@ Commands:
   configure            View and edit configuration
   config encode        Encode config file as base64 for LETTABOT_CONFIG_YAML
   config decode        Decode and print LETTABOT_CONFIG_YAML env var
+  connect <provider>   Connect model providers (e.g., chatgpt/codex)
   model                Interactive model selector
   model show           Show current agent model
   model set <handle>   Set model by handle (e.g., anthropic/claude-sonnet-4-5-20250929)
@@ -262,6 +263,7 @@ Examples:
   lettabot todo list --actionable
   lettabot pairing list telegram             # Show pending Telegram pairings
   lettabot pairing approve telegram ABCD1234 # Approve a pairing code
+  lettabot connect chatgpt                  # Connect ChatGPT subscription (via OAuth)
 
 Environment:
   LETTABOT_CONFIG_YAML    Inline YAML or base64-encoded config (for cloud deploys)
@@ -369,6 +371,18 @@ async function main() {
     case 'model': {
       const { modelCommand } = await import('./commands/model.js');
       await modelCommand(subCommand, args[2]);
+      break;
+    }
+
+    case 'connect': {
+      const { runLettaConnect } = await import('./commands/letta-connect.js');
+      const requestedProvider = subCommand || 'chatgpt';
+      const providers = requestedProvider === 'chatgpt' ? ['chatgpt', 'codex'] : [requestedProvider];
+      const connected = await runLettaConnect(providers);
+      if (!connected) {
+        console.error(`Failed to run letta connect for provider: ${requestedProvider}`);
+        process.exit(1);
+      }
       break;
     }
     
@@ -617,7 +631,7 @@ async function main() {
       
     case undefined:
       console.log('Usage: lettabot <command>\n');
-      console.log('Commands: onboard, server, configure, model, channels, skills, reset-conversation, destroy, help\n');
+      console.log('Commands: onboard, server, configure, connect, model, channels, skills, reset-conversation, destroy, help\n');
       console.log('Run "lettabot help" for more information.');
       break;
       
