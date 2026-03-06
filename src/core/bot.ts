@@ -994,7 +994,8 @@ export class LettaBot implements AgentSession {
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
       let expectedForegroundRunId: string | null = null;
-      let sawForegroundAssistant = false;
+      let expectedForegroundRunSource: 'assistant' | 'result' | null = null;
+      let foregroundRunSwitchCount = 0;
       let filteredRunEventCount = 0;
       const msgTypeCounts: Record<string, number> = {};
 
@@ -1074,20 +1075,36 @@ export class LettaBot implements AgentSession {
           if (!firstChunkLogged) { lap('first stream chunk'); firstChunkLogged = true; }
           const eventRunIds = this.normalizeStreamRunIds(streamMsg);
           if (expectedForegroundRunId === null && eventRunIds.length > 0) {
-            expectedForegroundRunId = eventRunIds[0];
-            log.info(`Selected foreground run for stream delivery (seq=${seq}, key=${convKey}, runId=${expectedForegroundRunId})`);
-          } else if (expectedForegroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(expectedForegroundRunId)) {
-            // If we selected a run from early non-assistant events, allow one
-            // switch before any assistant text is emitted.
-            if (!sawForegroundAssistant && streamMsg.type === 'assistant') {
-              const previousRunId = expectedForegroundRunId;
+            if (streamMsg.type === 'assistant' || streamMsg.type === 'result') {
               expectedForegroundRunId = eventRunIds[0];
-              // Drop pre-assistant state from the old run so it cannot flush
-              // into user-facing display after the switch.
+              expectedForegroundRunSource = streamMsg.type === 'assistant' ? 'assistant' : 'result';
+              log.info(`Selected foreground run for stream delivery (seq=${seq}, key=${convKey}, runId=${expectedForegroundRunId}, source=${streamMsg.type})`);
+            } else {
+              // Do not lock to a run based on pre-assistant non-terminal events;
+              // these can belong to a concurrent background run.
+              filteredRunEventCount++;
+              log.info(`Deferring run-scoped pre-foreground event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')})`);
+              continue;
+            }
+          } else if (expectedForegroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(expectedForegroundRunId)) {
+            const canSafelySwitchForeground = !sentAnyMessage || messageId !== null;
+            if (streamMsg.type === 'result'
+                && foregroundRunSwitchCount === 0
+                && canSafelySwitchForeground) {
+              const previousRunId = expectedForegroundRunId;
+              const previousRunSource = expectedForegroundRunSource;
+              expectedForegroundRunId = eventRunIds[0];
+              expectedForegroundRunSource = 'result';
+              foregroundRunSwitchCount += 1;
+              // Drop any state collected from the previous run so it cannot
+              // flush to user-facing delivery after the switch.
               response = '';
               reasoningBuffer = '';
+              streamedAssistantText = '';
               lastMsgType = null;
-              log.warn(`Switching foreground run before first assistant output (seq=${seq}, key=${convKey}, from=${previousRunId}, to=${expectedForegroundRunId})`);
+              lastAssistantUuid = null;
+              sawNonAssistantSinceLastUuid = false;
+              log.warn(`Switching foreground run at result boundary (seq=${seq}, key=${convKey}, from=${previousRunId}, to=${expectedForegroundRunId}, prevSource=${previousRunSource || 'unknown'})`);
             } else {
               filteredRunEventCount++;
               log.info(`Skipping non-foreground stream event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
@@ -1215,9 +1232,6 @@ export class LettaBot implements AgentSession {
             const assistantChunk = streamMsg.content || '';
             response += assistantChunk;
             streamedAssistantText += assistantChunk;
-            if (assistantChunk.length > 0) {
-              sawForegroundAssistant = true;
-            }
             
             // Live-edit streaming for channels that support it
             // Hold back streaming edits while response could still be <no-reply/> or <actions> block
