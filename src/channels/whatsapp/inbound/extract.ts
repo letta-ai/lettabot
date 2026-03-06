@@ -5,7 +5,7 @@
  * Based on OpenClaw's extract.ts pattern.
  */
 
-import { jidToE164, isGroupJid } from "../utils.js";
+import { jidToE164, isGroupJid, isLid } from "../utils.js";
 import type { WebInboundMessage, AttachmentExtractionConfig } from "./types.js";
 import type { GroupMetaCache } from "../utils.js";
 import { unwrapMessageContent, extractMediaPreview, collectAttachments } from "./media.js";
@@ -115,6 +115,49 @@ export function extractMentionedJids(message: import("@whiskeysockets/baileys").
  * @param groupMetaCache - Group metadata cache
  * @returns Normalized message or null if invalid
  */
+/**
+ * Resolve an LID (Linked ID) to a real phone number JID for inbound messages.
+ *
+ * LIDs are privacy-focused identifiers used by WhatsApp Web. The same user
+ * has different JIDs depending on their device:
+ * - Phone app: 34600...@s.whatsapp.net (real phone number)
+ * - WhatsApp Web: xxxxx@lid (opaque linked ID)
+ *
+ * Without resolution, the same user gets different userIds, breaking
+ * debouncing, daily limits, and conversation routing.
+ *
+ * Resolution order:
+ * 1. msg.key.senderPn - provided by Baileys when available
+ * 2. sock.signalRepository.lidMapping - Baileys built-in mapping
+ * 3. Fall back to LID-stripped number (current behavior)
+ *
+ * @param lidJid - The LID JID to resolve (e.g., "12345@lid")
+ * @param msg - Baileys message (may contain senderPn)
+ * @param sock - Baileys socket (has signalRepository)
+ * @returns Resolved phone number JID or null if not resolvable
+ */
+function resolveLidToPhoneJid(
+  lidJid: string,
+  msg: import("@whiskeysockets/baileys").WAMessage,
+  sock: import("@whiskeysockets/baileys").WASocket
+): string | null {
+  // Try senderPn from message key (most reliable)
+  const senderPn = (msg.key as any).senderPn;
+  if (senderPn && typeof senderPn === 'string') {
+    return senderPn;
+  }
+
+  // Try signalRepository.lidMapping (Baileys built-in)
+  const signalRepo = sock.signalRepository as unknown as { lidMapping?: Map<string, string> } | undefined;
+  const signalMapping = signalRepo?.lidMapping?.get(lidJid);
+  if (signalMapping) {
+    return signalMapping;
+  }
+
+  // Could not resolve
+  return null;
+}
+
 export async function extractInboundMessage(
   msg: import("@whiskeysockets/baileys").WAMessage,
   sock: import("@whiskeysockets/baileys").WASocket,
@@ -163,10 +206,13 @@ export async function extractInboundMessage(
     return null; // Skip messages with no text and no media
   }
 
-  // Determine sender
+  // Determine sender and chatId
+  // For LID-based DMs, we need to resolve to the real phone number
+  // so the same user gets consistent userIds regardless of device
   let from: string;
   let senderE164: string | undefined;
   let senderJid: string | undefined;
+  let resolvedChatId = remoteJid; // Normalized chat ID (phone JID for LID DMs)
 
   if (isGroup) {
     // Group message - sender is the participant
@@ -174,9 +220,26 @@ export async function extractInboundMessage(
     senderJid = participantJid ? participantJid : undefined;
     senderE164 = participantJid ? jidToE164(participantJid) : undefined;
   } else {
-    // DM - sender is the remote JID
-    from = jidToE164(remoteJid);
-    senderE164 = from;
+    // DM - check if this is an LID that needs resolution
+    if (isLid(remoteJid)) {
+      // Try to resolve LID to real phone number JID
+      const resolvedJid = resolveLidToPhoneJid(remoteJid, msg, sock);
+      if (resolvedJid) {
+        // Successfully resolved - use real phone number
+        from = jidToE164(resolvedJid);
+        senderE164 = from;
+        resolvedChatId = resolvedJid; // Normalize chatId to phone JID
+      } else {
+        // Could not resolve - fall back to LID-stripped number
+        // This maintains backward compatibility but may cause user ID fragmentation
+        from = jidToE164(remoteJid);
+        senderE164 = from;
+      }
+    } else {
+      // Regular phone JID - use as-is
+      from = jidToE164(remoteJid);
+      senderE164 = from;
+    }
   }
 
   // Fetch group metadata if needed
@@ -209,7 +272,7 @@ export async function extractInboundMessage(
     id: messageId ?? undefined,
     from,
     to: selfE164 ?? "me",
-    chatId: remoteJid,
+    chatId: resolvedChatId, // Use resolved chatId (phone JID for LID DMs)
     body: finalBody,
     pushName: msg.pushName ?? undefined,
     timestamp: new Date(Number(msg.messageTimestamp) * 1000),
