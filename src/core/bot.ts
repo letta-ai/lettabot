@@ -187,7 +187,7 @@ export function resolveHeartbeatConversationKey(
 }
 
 export class LettaBot implements AgentSession {
-  private store: Store;
+  readonly store: Store;
   private config: BotConfig;
   private channels: Map<string, ChannelAdapter> = new Map();
   private messageQueue: Array<{ msg: InboundMessage; adapter: ChannelAdapter }> = [];
@@ -483,6 +483,14 @@ export class LettaBot implements AgentSession {
    */
   async warmSession(): Promise<void> {
     return this.sessionManager.warmSession();
+  }
+
+  /**
+   * Invalidate cached session(s), forcing a fresh session on next message.
+   * The next message will create a fresh session using the current store state.
+   */
+  invalidateSession(key?: string): void {
+    this.sessionManager.invalidateSession(key);
   }
 
   // =========================================================================
