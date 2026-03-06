@@ -255,12 +255,12 @@ export class SessionManager {
       }
       session = resumeSession(convId, opts);
     } else if (this.store.agentId) {
-      // Agent exists but no conversation stored -- resume the default conversation
+      // Agent exists but no conversation stored for this non-default key -- create a fresh one.
       process.env.LETTA_AGENT_ID = this.store.agentId;
       installSkillsToAgent(this.store.agentId, this.config.skills);
       sessionAgentId = this.store.agentId;
-      prependSkillDirsToPath(sessionAgentId); // must be before resumeSession spawns subprocess
-      session = resumeSession(this.store.agentId, opts);
+      prependSkillDirsToPath(sessionAgentId); // must be before createSession spawns subprocess
+      session = createSession(this.store.agentId, opts);
     } else {
       // Create new agent -- persist immediately so we don't orphan it on later failures
       log.info('Creating new agent');
