@@ -512,11 +512,19 @@ describe('SDK session contract', () => {
           await bothSendsStarted.promise;
           await allowCallbackDispatch.promise;
 
-          const result = await opts.canUseTool?.('AskUserQuestion', { sessionName });
+          const canUseTool = opts?.canUseTool;
+          if (!canUseTool) {
+            throw new Error('Expected mocked session options to include canUseTool');
+          }
+
+          const result = await canUseTool('AskUserQuestion', { sessionName });
+          const updatedInput = 'updatedInput' in result
+            ? result.updatedInput as Record<string, unknown> | undefined
+            : undefined;
           callbackResults.push({
             sessionName,
-            answer: typeof result?.updatedInput?.answer === 'string'
-              ? result.updatedInput.answer
+            answer: typeof updatedInput?.answer === 'string'
+              ? updatedInput.answer
               : undefined,
           });
         }),
