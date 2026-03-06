@@ -141,15 +141,35 @@ function resolveLidToPhoneJid(
   msg: import("@whiskeysockets/baileys").WAMessage,
   sock: import("@whiskeysockets/baileys").WASocket
 ): string | null {
+  const normalizePhoneJid = (value: string | undefined): string | null => {
+    if (!value) return null;
+
+    const trimmed = value.trim();
+    if (!trimmed || isLid(trimmed)) {
+      return null;
+    }
+
+    if (trimmed.includes('@')) {
+      return trimmed;
+    }
+
+    // Defensive fallback: handle plain phone numbers by converting to a PN JID.
+    const digits = trimmed.replace(/[^\d]/g, '');
+    if (!digits) {
+      return null;
+    }
+    return `${digits}@s.whatsapp.net`;
+  };
+
   // Try senderPn from message key (most reliable)
-  const senderPn = (msg.key as any).senderPn;
-  if (senderPn && typeof senderPn === 'string') {
+  const senderPn = normalizePhoneJid(msg.key?.senderPn);
+  if (senderPn) {
     return senderPn;
   }
 
   // Try signalRepository.lidMapping (Baileys built-in)
   const signalRepo = sock.signalRepository as unknown as { lidMapping?: Map<string, string> } | undefined;
-  const signalMapping = signalRepo?.lidMapping?.get(lidJid);
+  const signalMapping = normalizePhoneJid(signalRepo?.lidMapping?.get(lidJid));
   if (signalMapping) {
     return signalMapping;
   }
