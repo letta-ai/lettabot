@@ -817,6 +817,9 @@ const portalHtml = `<!DOCTYPE html>
   .auth label { display: block; font-size: 13px; color: #888; margin-bottom: 8px; }
   .auth input { width: 100%; padding: 10px 12px; background: #0a0a0a; border: 1px solid #333; border-radius: 6px; color: #fff; font-size: 14px; font-family: monospace; }
   .auth input:focus { outline: none; border-color: #555; }
+  .auth-help { margin-top: 10px; font-size: 12px; color: #888; }
+  .auth-help a { color: #fff; text-decoration: underline; }
+  .auth-help a:hover { color: #ddd; }
   .auth button { margin-top: 12px; padding: 8px 20px; background: #fff; color: #000; border: none; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
   .auth button:hover { background: #ddd; }
 
@@ -889,6 +892,7 @@ const portalHtml = `<!DOCTYPE html>
   <div class="auth" id="auth">
     <label for="key">API Key</label>
     <input type="password" id="key" placeholder="Paste your LETTABOT_API_KEY" autocomplete="off" onkeydown="if(event.key==='Enter')login()">
+    <div class="auth-help">Find your API key at <a href="https://app.letta.com/projects/default-project/api-keys" target="_blank" rel="noopener noreferrer">app.letta.com/projects/default-project/api-keys</a>.</div>
     <button onclick="login()">Connect</button>
   </div>
 

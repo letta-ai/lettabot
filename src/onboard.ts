@@ -1403,7 +1403,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     // Validate required fields
     if (!config.apiKey && isLettaApiUrl(config.baseUrl)) {
       console.error('❌ Error: LETTA_API_KEY is required');
-      console.error('   Get your API key from: https://app.letta.com/settings');
+      console.error('   Get your API key from: https://app.letta.com/projects/default-project/api-keys');
       console.error('   Then run: export LETTA_API_KEY="letta_..."');
       console.error('');
       console.error('   Or use a Docker server:');

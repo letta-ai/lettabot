@@ -526,7 +526,7 @@ const globalConfig = {
 // Validate LETTA_API_KEY is set for API mode (docker mode doesn't require it)
 if (!isDockerServerMode(yamlConfig.server.mode) && !process.env.LETTA_API_KEY) {
   log.error('LETTA_API_KEY is required for Letta API.');
-  log.error('  Get your API key from https://app.letta.com and set it as an environment variable.');
+  log.error('  Get your API key from https://app.letta.com/projects/default-project/api-keys and set it as an environment variable.');
   log.error('Or use docker mode: run "lettabot onboard" and select "Enter Docker server URL".');
   process.exit(1);
 }
