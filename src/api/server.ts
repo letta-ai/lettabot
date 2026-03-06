@@ -647,6 +647,62 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
       return;
     }
 
+    // Route: GET /api/v1/conversations - List conversations from Letta API
+    if (req.url?.startsWith('/api/v1/conversations') && req.method === 'GET') {
+      try {
+        if (!validateApiKey(req.headers, options.apiKey)) {
+          sendError(res, 401, 'Unauthorized');
+          return;
+        }
+        if (!options.stores || options.stores.size === 0) {
+          sendError(res, 500, 'No stores configured');
+          return;
+        }
+
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const agentName = url.searchParams.get('agent') || options.stores.keys().next().value!;
+        const store = options.stores.get(agentName);
+        if (!store) {
+          sendError(res, 404, `Agent not found: ${agentName}`);
+          return;
+        }
+
+        const agentId = store.getInfo().agentId;
+        if (!agentId) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ conversations: [] }));
+          return;
+        }
+
+        const { Letta } = await import('@letta-ai/letta-client');
+        const client = new Letta({
+          apiKey: process.env.LETTA_API_KEY || '',
+          baseURL: process.env.LETTA_BASE_URL || 'https://api.letta.com',
+        });
+        const convos = await client.conversations.list({
+          agent_id: agentId,
+          limit: 50,
+          order: 'desc',
+          order_by: 'last_run_completion',
+        });
+
+        const conversations = convos.map(c => ({
+          id: c.id,
+          createdAt: c.created_at,
+          updatedAt: c.updated_at,
+          summary: c.summary || null,
+          messageCount: c.in_context_message_ids?.length || 0,
+        }));
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ conversations }));
+      } catch (error: any) {
+        log.error('List conversations error:', error);
+        sendError(res, 500, error.message || 'Internal server error');
+      }
+      return;
+    }
+
     // Route: GET /portal - Admin portal for pairing approvals
     if ((req.url === '/portal' || req.url === '/portal/') && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -813,6 +869,15 @@ const portalHtml = `<!DOCTYPE html>
   .set-conv-btn { padding: 8px 20px; background: #1a7f37; color: #fff; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; }
   .set-conv-btn:hover { background: #238636; }
   .set-conv-btn:disabled { background: #333; color: #666; cursor: default; }
+  .conv-list { margin-top: 12px; }
+  .conv-list h3 { font-size: 14px; color: #fff; margin-bottom: 8px; }
+  .conv-row { display: flex; align-items: center; padding: 10px 12px; background: #141414; border: 1px solid #222; border-radius: 6px; margin-bottom: 4px; cursor: pointer; gap: 12px; }
+  .conv-row:hover { border-color: #444; }
+  .conv-row.active { border-color: #1a7f37; background: #0d1117; }
+  .conv-row .conv-id { font-family: monospace; font-size: 12px; color: #ccc; min-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-row .conv-meta { flex: 1; font-size: 12px; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-row .conv-msgs { font-size: 11px; color: #555; white-space: nowrap; }
+  .conv-loading { padding: 16px; text-align: center; color: #555; font-size: 13px; }
 
   .hidden { display: none; }
 </style>
@@ -841,6 +906,7 @@ let apiKey = sessionStorage.getItem('lbkey') || '';
 let activeTab = 'telegram';
 let data = {};
 let statusData = {};
+let convListData = {};
 let refreshTimer;
 
 function login() {
@@ -878,6 +944,7 @@ async function refresh() {
   } catch (e) { if (e.message === 'Unauthorized') return; }
   renderTabs();
   renderContent();
+  if (activeTab === '__status__') loadConversations();
   document.getElementById('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
 
@@ -928,6 +995,29 @@ function renderStatus() {
     if (info.baseUrl) html += '<div class="agent-field"><span class="label">Server</span><span class="value">' + esc(info.baseUrl) + '</span></div>';
     if (info.lastUsedAt) html += '<div class="agent-field"><span class="label">Last used</span><span class="value">' + esc(info.lastUsedAt) + '</span></div>';
     html += '</div>';
+
+    // Conversation list from Letta API
+    const conversations = convListData[name] || [];
+    const activeConvId = info.conversationId;
+    html += '<div class="conv-list"><h3>Conversations</h3>';
+    if (conversations === 'loading') {
+      html += '<div class="conv-loading">Loading...</div>';
+    } else if (conversations.length === 0) {
+      html += '<div class="conv-loading">No conversations found</div>';
+    } else {
+      for (const c of conversations) {
+        const isActive = c.id === activeConvId ? ' active' : '';
+        const summary = c.summary ? esc(c.summary) : '';
+        const msgs = c.messageCount ? c.messageCount + ' msgs' : '';
+        const ago = c.updatedAt ? timeAgo(c.updatedAt) : '';
+        html += '<div class="conv-row' + isActive + '" onclick="pickConversation(\\'' + esc(c.id) + '\\',\\'' + esc(name) + '\\')">';
+        html += '<div class="conv-id">' + esc(c.id) + '</div>';
+        html += '<div class="conv-meta">' + (summary || ago) + '</div>';
+        html += '<div class="conv-msgs">' + msgs + '</div>';
+        html += '</div>';
+      }
+    }
+    html += '</div>';
   }
   html += '<div class="set-conv-form"><h3>Set Conversation</h3>';
   html += '<div class="form-row"><label>Agent</label><select id="sc-agent">';
@@ -938,6 +1028,27 @@ function renderStatus() {
   html += '<button class="set-conv-btn" onclick="setConversation(this)">Set Conversation</button>';
   html += '</div>';
   el.innerHTML = html;
+}
+
+async function loadConversations() {
+  for (const name of Object.keys(statusData)) {
+    convListData[name] = 'loading';
+    try {
+      const res = await apiFetch('/api/v1/conversations?agent=' + encodeURIComponent(name));
+      const json = await res.json();
+      convListData[name] = json.conversations || [];
+    } catch (e) { convListData[name] = []; }
+  }
+  if (activeTab === '__status__') renderStatus();
+}
+
+async function pickConversation(id, agent) {
+  try {
+    const res = await apiFetch('/api/v1/conversation', { method: 'POST', body: JSON.stringify({ conversationId: id, agent }) });
+    const json = await res.json();
+    if (json.success) { toast('Switched to ' + id.slice(0, 20) + '...'); await refresh(); }
+    else { toast(json.error || 'Failed', true); }
+  } catch (e) { toast('Error: ' + e.message, true); }
 }
 
 function switchTab(t) { activeTab = t; renderTabs(); renderContent(); }
