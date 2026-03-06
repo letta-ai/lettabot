@@ -247,6 +247,7 @@ Commands:
   todo complete <id>   Mark a todo complete
   todo remove <id>     Remove a todo
   todo snooze <id>     Snooze a todo until a date
+  set-conversation <id>  Set a specific conversation ID
   reset-conversation   Clear conversation ID (fixes corrupted conversations)
   destroy              Delete all local data and start fresh
   pairing list <ch>    List pending pairing requests
@@ -507,6 +508,54 @@ async function main() {
       break;
     }
     
+    case 'set-conversation': {
+      const p = await import('@clack/prompts');
+      const config = getConfig();
+      const newConvId = subCommand;
+
+      if (!newConvId) {
+        console.error('Usage: lettabot set-conversation <conversation-id>');
+        process.exit(1);
+      }
+
+      p.intro('Set Conversation');
+
+      const configuredName =
+        (config.agent?.name?.trim())
+        || (config.agents?.length && config.agents[0].name?.trim())
+        || 'LettaBot';
+
+      const configuredAgents = (config.agents?.length ? config.agents : [{ name: configuredName }])
+        .map(agent => agent.name?.trim())
+        .filter((name): name is string => !!name);
+
+      const uniqueAgents = Array.from(new Set(configuredAgents));
+
+      let targetAgent = uniqueAgents[0];
+      if (uniqueAgents.length > 1) {
+        const choice = await p.select({
+          message: 'Which agent?',
+          options: uniqueAgents.map(name => ({ value: name, label: name })),
+        });
+        if (p.isCancel(choice)) {
+          p.cancel('Cancelled');
+          break;
+        }
+        targetAgent = choice as string;
+      }
+
+      const store = new Store('lettabot-agent.json', targetAgent);
+      const oldConvId = store.conversationId;
+      store.conversationId = newConvId;
+
+      if (oldConvId) {
+        p.log.info(`Previous conversation: ${oldConvId}`);
+      }
+      p.log.success(`Conversation set to: ${newConvId} (agent: ${targetAgent})`);
+      p.outro('Restart the server for the change to take effect.');
+      break;
+    }
+
     case 'reset-conversation': {
       const p = await import('@clack/prompts');
       const config = getConfig();
@@ -631,7 +680,7 @@ async function main() {
       
     case undefined:
       console.log('Usage: lettabot <command>\n');
-      console.log('Commands: onboard, server, configure, connect, model, channels, skills, reset-conversation, destroy, help\n');
+      console.log('Commands: onboard, server, configure, connect, model, channels, skills, set-conversation, reset-conversation, destroy, help\n');
       console.log('Run "lettabot help" for more information.');
       break;
       

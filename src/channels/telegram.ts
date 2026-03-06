@@ -267,6 +267,15 @@ export class TelegramAdapter implements ChannelAdapter {
         await ctx.reply(result || 'No model info available');
       }
     });
+
+    // Handle /setconv <id>
+    this.bot.command('setconv', async (ctx) => {
+      if (this.onCommand) {
+        const args = ctx.match?.trim() || undefined;
+        const result = await this.onCommand('setconv', String(ctx.chat.id), args);
+        await ctx.reply(result || 'Failed to set conversation');
+      }
+    });
     
     // Handle text messages
     this.bot.on('message:text', async (ctx) => {

@@ -187,7 +187,7 @@ export function resolveHeartbeatConversationKey(
 }
 
 export class LettaBot implements AgentSession {
-  private store: Store;
+  readonly store: Store;
   private config: BotConfig;
   private channels: Map<string, ChannelAdapter> = new Map();
   private messageQueue: Array<{ msg: InboundMessage; adapter: ChannelAdapter }> = [];
@@ -654,6 +654,26 @@ export class LettaBot implements AgentSession {
         }
         lines.push('', 'Use `/model <handle>` to switch.');
         return lines.join('\n');
+      }
+      case 'setconv': {
+        if (!args?.trim()) {
+          return 'Usage: /setconv <conversation-id>';
+        }
+        const newConvId = args.trim();
+        const convKey = channelId ? this.resolveConversationKey(channelId, chatId) : 'shared';
+
+        if (convKey === 'default') {
+          return 'Conversations are disabled -- cannot set conversation ID.';
+        }
+
+        if (convKey === 'shared') {
+          this.store.conversationId = newConvId;
+        } else {
+          this.store.setConversationId(convKey, newConvId);
+        }
+        this.sessionManager.invalidateSession(convKey);
+        log.info(`/setconv - conversation set to ${newConvId} for key="${convKey}"`);
+        return `Conversation set to: ${newConvId}`;
       }
       default:
         return null;

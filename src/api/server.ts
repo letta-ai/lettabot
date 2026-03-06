@@ -11,6 +11,7 @@ import { listPairingRequests, approvePairingCode } from '../pairing/store.js';
 import { parseMultipart } from './multipart.js';
 import type { AgentRouter } from '../core/interfaces.js';
 import type { ChannelId } from '../core/types.js';
+import type { Store } from '../core/store.js';
 import {
   generateCompletionId, extractLastUserMessage, buildCompletion,
   buildChunk, buildToolCallChunk, formatSSE, SSE_DONE,
@@ -31,6 +32,7 @@ interface ServerOptions {
   apiKey: string;
   host?: string; // Bind address (default: 127.0.0.1 for security)
   corsOrigin?: string; // CORS origin (default: same-origin only)
+  stores?: Map<string, Store>; // Agent stores for management endpoints
 }
 
 /**
@@ -555,6 +557,89 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
       return;
     }
 
+    // Route: GET /api/v1/status - Agent status (conversation IDs, channels)
+    if (req.url === '/api/v1/status' && req.method === 'GET') {
+      try {
+        if (!validateApiKey(req.headers, options.apiKey)) {
+          sendError(res, 401, 'Unauthorized');
+          return;
+        }
+        const agents: Record<string, any> = {};
+        if (options.stores) {
+          for (const [name, store] of options.stores) {
+            const info = store.getInfo();
+            const agentSession = deliverer.getAgentNames().includes(name)
+              ? { channels: deliverer.getAgentNames() } : {};
+            agents[name] = {
+              agentId: info.agentId,
+              conversationId: info.conversationId || null,
+              conversations: info.conversations || {},
+              baseUrl: info.baseUrl,
+              createdAt: info.createdAt,
+              lastUsedAt: info.lastUsedAt,
+            };
+          }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ agents }));
+      } catch (error: any) {
+        log.error('Status error:', error);
+        sendError(res, 500, error.message || 'Internal server error');
+      }
+      return;
+    }
+
+    // Route: POST /api/v1/conversation - Set conversation ID
+    if (req.url === '/api/v1/conversation' && req.method === 'POST') {
+      try {
+        if (!validateApiKey(req.headers, options.apiKey)) {
+          sendError(res, 401, 'Unauthorized');
+          return;
+        }
+        if (!options.stores || options.stores.size === 0) {
+          sendError(res, 500, 'No stores configured');
+          return;
+        }
+
+        const body = await readBody(req, MAX_BODY_SIZE);
+        let request: { conversationId?: string; agent?: string; key?: string };
+        try {
+          request = JSON.parse(body);
+        } catch {
+          sendError(res, 400, 'Invalid JSON body');
+          return;
+        }
+
+        if (!request.conversationId || typeof request.conversationId !== 'string') {
+          sendError(res, 400, 'Missing required field: conversationId');
+          return;
+        }
+
+        // Resolve agent name (default to first store)
+        const agentName = request.agent || options.stores.keys().next().value!;
+        const store = options.stores.get(agentName);
+        if (!store) {
+          sendError(res, 404, `Agent not found: ${agentName}`);
+          return;
+        }
+
+        const key = request.key || 'shared';
+        if (key === 'shared') {
+          store.conversationId = request.conversationId;
+        } else {
+          store.setConversationId(key, request.conversationId);
+        }
+
+        log.info(`API set conversation: agent=${agentName} key=${key} conv=${request.conversationId}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, agent: agentName, key, conversationId: request.conversationId }));
+      } catch (error: any) {
+        log.error('Set conversation error:', error);
+        sendError(res, 500, error.message || 'Internal server error');
+      }
+      return;
+    }
+
     // Route: GET /portal - Admin portal for pairing approvals
     if ((req.url === '/portal' || req.url === '/portal/') && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -704,6 +789,24 @@ const portalHtml = `<!DOCTYPE html>
   /* Status bar */
   .status { font-size: 12px; color: #444; text-align: center; margin-top: 16px; }
 
+  /* Management tab */
+  .agent-card { background: #141414; border: 1px solid #222; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  .agent-card h3 { font-size: 14px; color: #fff; margin-bottom: 10px; }
+  .agent-field { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #1a1a1a; font-size: 13px; }
+  .agent-field:last-child { border-bottom: none; }
+  .agent-field .label { color: #888; }
+  .agent-field .value { color: #ccc; font-family: monospace; font-size: 12px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+  .conv-entry { padding: 4px 0 4px 12px; font-size: 12px; color: #888; font-family: monospace; }
+  .set-conv-form { background: #141414; border: 1px solid #222; border-radius: 8px; padding: 16px; margin-top: 12px; }
+  .set-conv-form h3 { font-size: 14px; color: #fff; margin-bottom: 12px; }
+  .form-row { margin-bottom: 10px; }
+  .form-row label { display: block; font-size: 12px; color: #888; margin-bottom: 4px; }
+  .form-row input, .form-row select { width: 100%; padding: 8px 10px; background: #0a0a0a; border: 1px solid #333; border-radius: 6px; color: #fff; font-size: 13px; font-family: monospace; }
+  .form-row input:focus, .form-row select:focus { outline: none; border-color: #555; }
+  .set-conv-btn { padding: 8px 20px; background: #1a7f37; color: #fff; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .set-conv-btn:hover { background: #238636; }
+  .set-conv-btn:disabled { background: #333; color: #666; cursor: default; }
+
   .hidden { display: none; }
 </style>
 </head>
@@ -728,8 +831,9 @@ const portalHtml = `<!DOCTYPE html>
 <script>
 const CHANNELS = ['telegram', 'discord', 'slack'];
 let apiKey = sessionStorage.getItem('lbkey') || '';
-let activeChannel = 'telegram';
+let activeTab = 'telegram';
 let data = {};
+let statusData = {};
 let refreshTimer;
 
 function login() {
@@ -760,33 +864,93 @@ async function refresh() {
       data[ch] = json.requests || [];
     } catch (e) { if (e.message === 'Unauthorized') return; data[ch] = []; }
   }
+  try {
+    const res = await apiFetch('/api/v1/status');
+    const json = await res.json();
+    statusData = json.agents || {};
+  } catch (e) { if (e.message === 'Unauthorized') return; }
   renderTabs();
-  renderList();
+  renderContent();
   document.getElementById('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
 
 function renderTabs() {
   const el = document.getElementById('tabs');
-  el.innerHTML = CHANNELS.map(ch => {
+  let html = CHANNELS.map(ch => {
     const n = (data[ch] || []).length;
-    const cls = ch === activeChannel ? 'tab active' : 'tab';
+    const cls = ch === activeTab ? 'tab active' : 'tab';
     const count = n > 0 ? '<span class="count">' + n + '</span>' : '';
     return '<div class="' + cls + '" onclick="switchTab(\\'' + ch + '\\')">' + ch.charAt(0).toUpperCase() + ch.slice(1) + count + '</div>';
   }).join('');
+  const statusCls = activeTab === '__status__' ? 'tab active' : 'tab';
+  html += '<div class="' + statusCls + '" onclick="switchTab(\\'__status__\\')">Status</div>';
+  el.innerHTML = html;
+}
+
+function renderContent() {
+  if (activeTab === '__status__') { renderStatus(); return; }
+  renderList();
 }
 
 function renderList() {
   const el = document.getElementById('list');
-  const items = data[activeChannel] || [];
+  const items = data[activeTab] || [];
   if (items.length === 0) { el.innerHTML = '<div class="empty">No pending pairing requests</div>'; return; }
   el.innerHTML = items.map(r => {
     const name = r.meta?.username ? '@' + r.meta.username : r.meta?.firstName || 'User ' + r.id;
     const ago = timeAgo(r.createdAt);
-    return '<div class="request"><div class="code">' + esc(r.code) + '</div><div class="meta"><div class="name">' + esc(name) + '</div><div class="time">' + ago + '</div></div><button class="approve-btn" onclick="approve(\\'' + activeChannel + '\\',\\'' + r.code + '\\', this)">Approve</button></div>';
+    return '<div class="request"><div class="code">' + esc(r.code) + '</div><div class="meta"><div class="name">' + esc(name) + '</div><div class="time">' + ago + '</div></div><button class="approve-btn" onclick="approve(\\'' + activeTab + '\\',\\'' + r.code + '\\', this)">Approve</button></div>';
   }).join('');
 }
 
-function switchTab(ch) { activeChannel = ch; renderTabs(); renderList(); }
+function renderStatus() {
+  const el = document.getElementById('list');
+  const agents = Object.entries(statusData);
+  if (agents.length === 0) { el.innerHTML = '<div class="empty">No agents configured</div>'; return; }
+  let html = '';
+  const agentNames = agents.map(a => a[0]);
+  for (const [name, info] of agents) {
+    html += '<div class="agent-card"><h3>' + esc(name) + '</h3>';
+    html += '<div class="agent-field"><span class="label">Agent ID</span><span class="value">' + esc(info.agentId || '(none)') + '</span></div>';
+    html += '<div class="agent-field"><span class="label">Conversation</span><span class="value">' + esc(info.conversationId || '(none)') + '</span></div>';
+    const convs = Object.entries(info.conversations || {});
+    if (convs.length > 0) {
+      html += '<div class="agent-field"><span class="label">Per-key conversations</span><span class="value">' + convs.length + '</span></div>';
+      for (const [k, v] of convs) { html += '<div class="conv-entry">' + esc(k) + ' = ' + esc(v) + '</div>'; }
+    }
+    if (info.baseUrl) html += '<div class="agent-field"><span class="label">Server</span><span class="value">' + esc(info.baseUrl) + '</span></div>';
+    if (info.lastUsedAt) html += '<div class="agent-field"><span class="label">Last used</span><span class="value">' + esc(info.lastUsedAt) + '</span></div>';
+    html += '</div>';
+  }
+  html += '<div class="set-conv-form"><h3>Set Conversation</h3>';
+  html += '<div class="form-row"><label>Agent</label><select id="sc-agent">';
+  for (const n of agentNames) { html += '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }
+  html += '</select></div>';
+  html += '<div class="form-row"><label>Key (leave empty for shared)</label><input id="sc-key" placeholder="e.g. telegram:12345"></div>';
+  html += '<div class="form-row"><label>Conversation ID</label><input id="sc-id" placeholder="conversation-xxx"></div>';
+  html += '<button class="set-conv-btn" onclick="setConversation(this)">Set Conversation</button>';
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function switchTab(t) { activeTab = t; renderTabs(); renderContent(); }
+
+async function setConversation(btn) {
+  const agent = document.getElementById('sc-agent').value;
+  const key = document.getElementById('sc-key').value.trim() || undefined;
+  const conversationId = document.getElementById('sc-id').value.trim();
+  if (!conversationId) { toast('Conversation ID is required', true); return; }
+  btn.disabled = true; btn.textContent = '...';
+  try {
+    const body = { conversationId, agent };
+    if (key) body.key = key;
+    const res = await apiFetch('/api/v1/conversation', { method: 'POST', body: JSON.stringify(body) });
+    const json = await res.json();
+    if (json.success) { toast('Conversation set'); await refresh(); }
+    else { toast(json.error || 'Failed', true); }
+  } catch (e) { toast('Error: ' + e.message, true); }
+  btn.disabled = false; btn.textContent = 'Set Conversation';
+}
 
 async function approve(channel, code, btn) {
   btn.disabled = true; btn.textContent = '...';

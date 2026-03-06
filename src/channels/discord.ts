@@ -236,7 +236,7 @@ Ask the bot owner to approve with:
           return;
         }
         if (this.onCommand) {
-          if (command === 'status' || command === 'reset' || command === 'heartbeat' || command === 'cancel' || command === 'model') {
+          if (command === 'status' || command === 'reset' || command === 'heartbeat' || command === 'cancel' || command === 'model' || command === 'setconv') {
             const result = await this.onCommand(command, message.channel.id, cmdArgs);
             if (result) {
               await message.channel.send(result);

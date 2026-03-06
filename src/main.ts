@@ -167,6 +167,7 @@ await refreshTokensIfNeeded();
 import { normalizeAgents } from './config/types.js';
 import { LettaGateway } from './core/gateway.js';
 import { LettaBot } from './core/bot.js';
+import type { Store } from './core/store.js';
 import { TelegramAdapter } from './channels/telegram.js';
 import { TelegramMTProtoAdapter } from './channels/telegram-mtproto.js';
 import { SlackAdapter } from './channels/slack.js';
@@ -569,6 +570,7 @@ async function main() {
   }
   
   const gateway = new LettaGateway();
+  const agentStores = new Map<string, Store>();
   const voiceMemoEnabled = isVoiceMemoConfigured();
   const services: { 
     cronServices: CronService[], 
@@ -775,6 +777,7 @@ async function main() {
     }
     
     gateway.addAgent(agentConfig.name, bot);
+    agentStores.set(agentConfig.name, bot.store);
   }
   
   // Start all agents
@@ -793,6 +796,7 @@ async function main() {
     apiKey: apiKey,
     host: apiHost,
     corsOrigin: apiCorsOrigin,
+    stores: agentStores,
   });
   
   // Startup banner
