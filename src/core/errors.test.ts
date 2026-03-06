@@ -80,6 +80,34 @@ describe('formatApiErrorForUser', () => {
       .toContain('server error');
   });
 
+  it('maps approval-specific 409 conflict to stuck-approval guidance', () => {
+    const msg = formatApiErrorForUser({
+      message: 'CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.',
+      stopReason: 'error',
+    });
+    expect(msg).toContain('stuck tool approval');
+    expect(msg).toContain('reset-conversation');
+    // Should NOT match the generic conflict message
+    expect(msg).not.toContain('Another request is still processing');
+  });
+
+  it('maps pending_approval variant to stuck-approval guidance', () => {
+    const msg = formatApiErrorForUser({
+      message: '409 pending_approval: run is waiting for approval',
+      stopReason: 'error',
+    });
+    expect(msg).toContain('stuck tool approval');
+  });
+
+  it('maps requires_approval stop_reason enrichment message to stuck-approval guidance', () => {
+    const msg = formatApiErrorForUser({
+      message: 'Run run-stuck stuck waiting for tool approval (status=created)',
+      stopReason: 'requires_approval',
+    });
+    expect(msg).toContain('stuck tool approval');
+    expect(msg).toContain('reset-conversation');
+  });
+
   it('falls back to sanitized original message when no mapping matches', () => {
     const msg = formatApiErrorForUser({
       message: `${'x'.repeat(205)}.   `,

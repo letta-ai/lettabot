@@ -12,7 +12,7 @@ lettabot-message send --text "Hello from a background task"
 lettabot-message send --text "Hello" --channel slack --chat C123456
 lettabot-message send --file /tmp/report.pdf --text "Report attached" --channel discord --chat 123456789
 lettabot-message send --text "Heartbeat ping" --channel telegram --chat 123456 --trigger heartbeat --output-mode silent
-lettabot-message send --file /tmp/voice.ogg --voice    # Send as native voice note
+lettabot-message send --file /tmp/voice.ogg --voice    # Send as native voice note (see voice.md)
 ```
 
 ## lettabot-react

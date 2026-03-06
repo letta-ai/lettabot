@@ -2,7 +2,7 @@
 
 Your personal AI assistant that remembers everything across **Telegram, Slack, Discord, WhatsApp, and Signal**. Powered by the [Letta Code SDK](https://github.com/letta-ai/letta-code-sdk).
 
-<img width="750" alt="lettabot-preview" src="https://github.com/user-attachments/assets/9f01b845-d5b0-447b-927d-ae15f9ec7511" />
+<img width="750" alt="lettabot-preview" src="assets/preview.jpg" />
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/lettabot?utm_medium=integration&utm_source=template&utm_campaign=generic)
 
@@ -31,6 +31,7 @@ Your personal AI assistant that remembers everything across **Telegram, Slack, D
 - Node.js 20+
 - A Letta API key from [app.letta.com](https://app.letta.com) (or a running [Letta Docker server](https://docs.letta.com/guides/docker/))
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
+- Optional: a ChatGPT subscription account you want to use for model credits
 
 ### Install
 
@@ -97,6 +98,14 @@ npm install && npm run build && npm link
 lettabot onboard
 ```
 
+Prefer to use your ChatGPT subscription instead of another API key? After onboarding (or anytime), run:
+
+```bash
+lettabot connect chatgpt
+```
+
+This opens a browser flow and enables connected subscription handles in the model picker.
+
 ### Run
 
 ```bash
@@ -107,48 +116,13 @@ That's it! Message your bot on Telegram.
 
 > **Note:** For detailed environment variable reference and multi-channel setup, see [SKILL.md](./SKILL.md)
 
-## Voice Messages
+## Voice
 
-LettaBot can transcribe voice messages using either OpenAI Whisper or Mistral Voxtral. Voice messages are automatically converted to text and sent to the agent with a `[Voice message]:` prefix.
+LettaBot can transcribe incoming voice messages (via OpenAI Whisper or Mistral Voxtral) and reply with voice memos (via ElevenLabs or OpenAI TTS). Voice notes render as native bubbles on Telegram and WhatsApp.
 
 **Supported channels:** Telegram, WhatsApp, Signal, Slack, Discord
 
-### Configuration
-
-**Option 1: OpenAI Whisper**
-
-Add your OpenAI API key to `lettabot.yaml`:
-
-```yaml
-transcription:
-  provider: openai
-  apiKey: sk-...
-  model: whisper-1  # optional, defaults to whisper-1
-```
-
-Or set via environment variable:
-
-```bash
-export OPENAI_API_KEY=sk-...
-```
-
-**Option 2: Mistral Voxtral** (2x faster, 2x cheaper)
-
-Add your Mistral API key to `lettabot.yaml`:
-
-```yaml
-transcription:
-  provider: mistral
-  apiKey: ...
-```
-
-Or set via environment variable:
-
-```bash
-export MISTRAL_API_KEY=...
-```
-
-If no API key is configured, users will receive an error message with a link to this section.
+See [docs/voice.md](./docs/voice.md) for full setup, configuration, and troubleshooting.
 
 ## Skills
 LettaBot is compatible with [skills.sh](https://skills.sh) and [Clawdhub](https://clawdhub.com/). 
@@ -202,13 +176,13 @@ Then ask your bot things like:
 | Command | Description |
 |---------|-------------|
 | `lettabot onboard` | Interactive setup wizard |
+| `lettabot connect` | Connect model providers (for example, `chatgpt`) |
 | `lettabot server` | Start the bot server |
 | `lettabot configure` | View and edit configuration |
 | `lettabot channels list-groups [channel]` | List group/channel IDs for Slack/Discord |
 | `lettabot skills status` | Show enabled and available skills |
 | `lettabot destroy` | Delete all local data and start fresh |
 | `lettabot help` | Show help |
-
 
 ## Channel Setup
 

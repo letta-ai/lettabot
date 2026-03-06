@@ -50,6 +50,17 @@ export interface ChatResponse {
 }
 
 /**
+ * POST /api/v1/chat/async - Fire-and-forget message to the agent
+ * Returns 202 immediately; agent processes in background.
+ */
+export interface AsyncChatResponse {
+  success: boolean;
+  status: 'queued' | 'error';
+  agentName?: string;
+  error?: string;
+}
+
+/**
  * GET /api/v1/pairing/:channel - List pending pairing requests
  */
 export interface PairingListResponse {

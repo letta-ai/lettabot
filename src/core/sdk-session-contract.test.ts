@@ -36,8 +36,10 @@ vi.mock('./system-prompt.js', () => ({
 }));
 
 import { createAgent, createSession, resumeSession } from '@letta-ai/letta-code-sdk';
-import { getLatestRunError } from '../tools/letta-api.js';
+import { getLatestRunError, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
 import { LettaBot } from './bot.js';
+import { SessionManager } from './session-manager.js';
+import { Store } from './store.js';
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -487,6 +489,130 @@ describe('SDK session contract', () => {
     expect(opts).not.toHaveProperty('memfs');
   });
 
+  it('keeps canUseTool callbacks isolated for concurrent keyed sessions', async () => {
+    const store = new Store(undefined, 'LettaBot');
+    store.setAgent('agent-contract-test', 'https://api.letta.com');
+
+    const allowCallbackDispatch = deferred<void>();
+    const bothSendsStarted = deferred<void>();
+    const callbackResults: Array<{ sessionName: string; answer: string | undefined }> = [];
+    let createdSessions = 0;
+    let startedSends = 0;
+
+    vi.mocked(resumeSession).mockImplementation((_id, opts) => {
+      const sessionName = createdSessions++ === 0 ? 'chat-a' : 'chat-b';
+      return {
+        initialize: vi.fn(async () => undefined),
+        bootstrapState: vi.fn(async () => ({ hasPendingApproval: false })),
+        send: vi.fn(async (_message: unknown) => {
+          startedSends += 1;
+          if (startedSends === 2) {
+            bothSendsStarted.resolve();
+          }
+          await bothSendsStarted.promise;
+          await allowCallbackDispatch.promise;
+
+          const canUseTool = opts?.canUseTool;
+          if (!canUseTool) {
+            throw new Error('Expected mocked session options to include canUseTool');
+          }
+
+          const result = await canUseTool('AskUserQuestion', { sessionName });
+          const updatedInput = 'updatedInput' in result
+            ? result.updatedInput as Record<string, unknown> | undefined
+            : undefined;
+          callbackResults.push({
+            sessionName,
+            answer: typeof updatedInput?.answer === 'string'
+              ? updatedInput.answer
+              : undefined,
+          });
+        }),
+        stream: vi.fn(() =>
+          (async function* () {
+            yield { type: 'result', success: true };
+          })()
+        ),
+        close: vi.fn(() => undefined),
+        agentId: 'agent-contract-test',
+        conversationId: `${sessionName}-conversation`,
+      } as never;
+    });
+
+    const canUseToolA = vi.fn(async () => ({
+      behavior: 'allow' as const,
+      updatedInput: { answer: 'from-chat-a' },
+    }));
+    const canUseToolB = vi.fn(async () => ({
+      behavior: 'allow' as const,
+      updatedInput: { answer: 'from-chat-b' },
+    }));
+
+    const sessionManager = new SessionManager(
+      store,
+      {
+        workingDir: join(dataDir, 'working'),
+        allowedTools: [],
+        conversationMode: 'per-chat',
+      },
+      new Set<string>(),
+      new Map<string, string>(),
+    );
+
+    const runA = sessionManager.runSession('message-a', {
+      convKey: 'slack:C123',
+      canUseTool: canUseToolA,
+    });
+    const runB = sessionManager.runSession('message-b', {
+      convKey: 'discord:C456',
+      canUseTool: canUseToolB,
+    });
+
+    await bothSendsStarted.promise;
+    allowCallbackDispatch.resolve();
+    await Promise.all([runA, runB]);
+
+    expect(canUseToolA).toHaveBeenCalledTimes(1);
+    expect(canUseToolB).toHaveBeenCalledTimes(1);
+    expect(callbackResults).toEqual([
+      { sessionName: 'chat-a', answer: 'from-chat-a' },
+      { sessionName: 'chat-b', answer: 'from-chat-b' },
+    ]);
+  });
+
+  it('treats dedicated heartbeat sends as a keyed lock target', async () => {
+    vi.useFakeTimers();
+    try {
+      const bot = new LettaBot({
+        workingDir: join(dataDir, 'working'),
+        allowedTools: [],
+        heartbeatConversation: 'dedicated',
+      });
+      const botInternal = bot as any;
+
+      const acquiredFirst = await botInternal.acquireLock('heartbeat');
+      let secondResolved = false;
+      const secondAcquire = botInternal.acquireLock('heartbeat').then((value: boolean) => {
+        secondResolved = true;
+        return value;
+      });
+
+      await Promise.resolve();
+
+      expect(acquiredFirst).toBe(true);
+      expect(botInternal.processingKeys.has('heartbeat')).toBe(true);
+      expect(secondResolved).toBe(false);
+
+      botInternal.releaseLock('heartbeat', acquiredFirst);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(await secondAcquire).toBe(true);
+      botInternal.releaseLock('heartbeat', true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('restarts a keyed queue after non-shared lock release when backlog exists', async () => {
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
@@ -647,6 +773,111 @@ describe('SDK session contract', () => {
     await expect(bot.sendToAgent('trigger error')).rejects.toThrow(
       'Agent run failed: timeout'
     );
+  });
+
+  it('retries sendToAgent once after approval-stuck result error and succeeds', async () => {
+    let streamCall = 0;
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() => {
+        const call = streamCall++;
+        return (async function* () {
+          if (call === 0) {
+            yield { type: 'result', success: false, error: 'error', conversationId: 'conv-approval' };
+            return;
+          }
+          yield { type: 'assistant', content: 'recovered response' };
+          yield { type: 'result', success: true, result: 'done', conversationId: 'conv-approval' };
+        })();
+      }),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-approval',
+    };
+
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+    vi.mocked(getLatestRunError).mockResolvedValueOnce({
+      message: 'Run run-stuck stuck waiting for tool approval (status=created)',
+      stopReason: 'requires_approval',
+      isApprovalError: true,
+    });
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    const response = await bot.sendToAgent('trigger approval retry');
+    expect(response).toBe('recovered response');
+    expect(mockSession.send).toHaveBeenCalledTimes(2);
+    expect(getLatestRunError).toHaveBeenCalledWith('agent-contract-test', 'conv-approval');
+  });
+
+  it('retries processMessage once after approval conflict even when orphan scan finds nothing', async () => {
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    let runCall = 0;
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
+      session: { abort: vi.fn(async () => undefined) },
+      stream: async function* () {
+        if (runCall++ === 0) {
+          yield { type: 'result', success: false, error: 'error', conversationId: 'conv-approval' };
+          return;
+        }
+        yield { type: 'assistant', content: 'after retry' };
+        yield { type: 'result', success: true, result: 'after retry', conversationId: 'conv-approval' };
+      },
+    }));
+
+    vi.mocked(getLatestRunError).mockResolvedValueOnce({
+      message: 'Run run-stuck stuck waiting for tool approval (status=created)',
+      stopReason: 'requires_approval',
+      isApprovalError: true,
+    });
+    vi.mocked(recoverOrphanedConversationApproval).mockResolvedValueOnce({
+      recovered: false,
+      details: 'No unresolved approval requests found',
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_payload: unknown) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    const msg = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    expect((bot as any).sessionManager.runSession).toHaveBeenCalledTimes(2);
+    expect(recoverOrphanedConversationApproval).toHaveBeenCalledWith(
+      'agent-contract-test',
+      'conv-approval',
+      true
+    );
+    const sentTexts = adapter.sendMessage.mock.calls.map((call) => {
+      const payload = call[0] as { text?: string };
+      return payload.text;
+    });
+    expect(sentTexts).toContain('after retry');
   });
 
   it('passes tags: [origin:lettabot] to createAgent when creating a new agent', async () => {

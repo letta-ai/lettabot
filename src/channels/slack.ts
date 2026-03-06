@@ -11,8 +11,9 @@ import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { parseCommand, HELP_TEXT } from '../core/commands.js';
 import { markdownToSlackMrkdwn } from './slack-format.js';
-import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, type GroupMode, type GroupModeConfig } from './group-mode.js';
+import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveDailyLimits, checkDailyLimit, type GroupMode, type GroupModeConfig } from './group-mode.js';
 
+import { EMOJI_ALIASES } from './shared/emoji.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Slack');
@@ -28,6 +29,7 @@ export interface SlackConfig {
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
   groups?: Record<string, GroupModeConfig>;  // Per-channel settings
+  agentName?: string;       // For scoping daily limit counters in multi-agent mode
 }
 
 export class SlackAdapter implements ChannelAdapter {
@@ -80,7 +82,7 @@ export class SlackAdapter implements ChannelAdapter {
         try {
           const { isTranscriptionConfigured } = await import('../transcription/index.js');
           if (!isTranscriptionConfigured()) {
-            await say('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages');
+            await say('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice');
           } else {
             // Download file (requires bot token for auth)
             const response = await fetch(audioFile.url_private_download, {
@@ -153,6 +155,15 @@ export class SlackAdapter implements ChannelAdapter {
             // The app_mention handler will process actual @mentions.
             return;
           }
+
+          // Daily rate limit check
+          const limits = resolveDailyLimits(this.config.groups, [channelId]);
+          const counterKey = `${this.config.agentName ?? ''}:slack:${limits.matchedKey ?? channelId}`;
+          const limitResult = checkDailyLimit(counterKey, userId || '', limits);
+          if (!limitResult.allowed) {
+            log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
+            return;
+          }
         }
         
         await this.onMessage({
@@ -188,7 +199,7 @@ export class SlackAdapter implements ChannelAdapter {
         try {
           const { isTranscriptionConfigured } = await import('../transcription/index.js');
           if (!isTranscriptionConfigured()) {
-            await this.sendMessage({ chatId: channelId, text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages', threadId: threadTs });
+            await this.sendMessage({ chatId: channelId, text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice', threadId: threadTs });
             return;
           }
           // Download file (requires bot token for auth)
@@ -231,8 +242,8 @@ export class SlackAdapter implements ChannelAdapter {
       if (!isGroupUserAllowed(this.config.groups, [channelId], userId)) {
         return; // User not in group allowedUsers -- silent drop
       }
-      
-      // Handle slash commands
+
+      // Handle slash commands (before rate limiting -- commands should always work)
       const parsed = parseCommand(text);
       if (parsed) {
         if (parsed.command === 'help' || parsed.command === 'start') {
@@ -242,6 +253,15 @@ export class SlackAdapter implements ChannelAdapter {
           if (result) await this.sendMessage({ chatId: channelId, text: result, threadId: threadTs });
         }
         return; // Don't pass commands to agent
+      }
+
+      // Daily rate limit check (after commands so /help, /reset etc. always work)
+      const mentionLimits = resolveDailyLimits(this.config.groups, [channelId]);
+      const mentionCounterKey = `${this.config.agentName ?? ''}:slack:${mentionLimits.matchedKey ?? channelId}`;
+      const mentionLimitResult = checkDailyLimit(mentionCounterKey, userId, mentionLimits);
+      if (!mentionLimitResult.allowed) {
+        log.info(`Daily limit reached for ${mentionCounterKey} (${mentionLimitResult.reason})`);
+        return;
       }
       
       if (this.onMessage) {
@@ -516,22 +536,9 @@ async function collectSlackAttachments(
   return attachments;
 }
 
-const EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
-  eyes: '👀',
-  thumbsup: '👍',
-  thumbs_up: '👍',
-  '+1': '👍',
-  heart: '❤️',
-  fire: '🔥',
-  smile: '😄',
-  laughing: '😆',
-  tada: '🎉',
-  clap: '👏',
-  ok_hand: '👌',
-};
-
+// Reverse lookup: unicode -> alias name (for Slack API which uses names, not unicode)
 const UNICODE_TO_ALIAS = new Map<string, string>(
-  Object.entries(EMOJI_ALIAS_TO_UNICODE).map(([name, value]) => [value, name])
+  Object.entries(EMOJI_ALIASES).map(([name, value]) => [value, name])
 );
 
 function resolveSlackEmojiName(input: string): string | null {
@@ -539,7 +546,7 @@ function resolveSlackEmojiName(input: string): string | null {
   if (aliasMatch) {
     return aliasMatch[1];
   }
-  if (EMOJI_ALIAS_TO_UNICODE[input]) {
+  if (EMOJI_ALIASES[input]) {
     return input;
   }
   return UNICODE_TO_ALIAS.get(input) || null;

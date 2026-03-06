@@ -8,11 +8,12 @@
 import type { ChannelAdapter } from './types.js';
 import type { InboundAttachment, InboundMessage, OutboundFile, OutboundMessage } from '../core/types.js';
 import { applySignalGroupGating } from './signal/group-gating.js';
+import { resolveDailyLimits, checkDailyLimit } from './group-mode.js';
 import type { DmPolicy } from '../pairing/types.js';
 import {
-  isUserAllowed,
   upsertPairingRequest,
 } from '../pairing/store.js';
+import { checkDmAccess } from './shared/access-control.js';
 import { buildAttachmentPath } from './attachments.js';
 import { parseCommand, HELP_TEXT } from '../core/commands.js';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -43,6 +44,7 @@ export interface SignalConfig {
   // Group gating
   mentionPatterns?: string[]; // Regex patterns for mention detection (e.g., ["@bot"])
   groups?: Record<string, SignalGroupConfig>;  // Per-group settings, "*" for defaults
+  agentName?: string;       // For scoping daily limit counters in multi-agent mode
 }
 
 type SignalRpcResponse<T> = {
@@ -176,31 +178,8 @@ export class SignalAdapter implements ChannelAdapter {
     this.baseUrl = `http://${host}:${port}`;
   }
   
-  /**
-   * Check if a user is authorized based on dmPolicy
-   * Returns 'allowed', 'blocked', or 'pairing'
-   */
   private async checkAccess(userId: string): Promise<'allowed' | 'blocked' | 'pairing'> {
-    const policy = this.config.dmPolicy || 'pairing';
-    
-    // Open policy: everyone allowed
-    if (policy === 'open') {
-      return 'allowed';
-    }
-    
-    // Check if already allowed (config or store)
-    const allowed = await isUserAllowed('signal', userId, this.config.allowedUsers);
-    if (allowed) {
-      return 'allowed';
-    }
-    
-    // Allowlist policy: not allowed if not in list
-    if (policy === 'allowlist') {
-      return 'blocked';
-    }
-    
-    // Pairing policy: needs pairing
-    return 'pairing';
+    return checkDmAccess('signal', userId, this.config.dmPolicy, this.config.allowedUsers);
   }
   
   /**
@@ -700,7 +679,7 @@ This code expires in 1 hour.`;
             if (chatId) {
               await this.sendMessage({
                 chatId,
-                text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages'
+                text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice'
               });
             }
           } else {
@@ -851,6 +830,16 @@ This code expires in 1 hour.`;
         
         if (!gatingResult.shouldProcess) {
           log.info(`Group message filtered: ${gatingResult.reason}`);
+          return;
+        }
+
+        // Daily rate limit check
+        const groupKeys = [groupInfo.groupId, `group:${groupInfo.groupId}`];
+        const limits = resolveDailyLimits(this.config.groups, groupKeys);
+        const counterKey = `${this.config.agentName ?? ''}:signal:${limits.matchedKey ?? groupInfo.groupId}`;
+        const limitResult = checkDailyLimit(counterKey, source, limits);
+        if (!limitResult.allowed) {
+          log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
           return;
         }
         
