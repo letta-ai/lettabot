@@ -255,12 +255,16 @@ export class SessionManager {
       }
       session = resumeSession(convId, opts);
     } else if (this.store.agentId) {
-      // Agent exists but no conversation stored for this non-default key -- create a fresh one.
+      // Agent exists but no conversation stored for this key.
+      // 'shared' is the single shared conversation — resume it like the default.
+      // Channel-specific keys (per-channel/per-chat mode) need a fresh conversation.
       process.env.LETTA_AGENT_ID = this.store.agentId;
       installSkillsToAgent(this.store.agentId, this.config.skills);
       sessionAgentId = this.store.agentId;
-      prependSkillDirsToPath(sessionAgentId); // must be before createSession spawns subprocess
-      session = createSession(this.store.agentId, opts);
+      prependSkillDirsToPath(sessionAgentId); // must be before resumeSession/createSession spawns subprocess
+      session = key === 'shared'
+        ? resumeSession(this.store.agentId, opts)
+        : createSession(this.store.agentId, opts);
     } else {
       // Create new agent -- persist immediately so we don't orphan it on later failures
       log.info('Creating new agent');

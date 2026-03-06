@@ -499,7 +499,7 @@ describe('SDK session contract', () => {
     let createdSessions = 0;
     let startedSends = 0;
 
-    vi.mocked(resumeSession).mockImplementation((_id, opts) => {
+    vi.mocked(createSession).mockImplementation((_id, opts) => {
       const sessionName = createdSessions++ === 0 ? 'chat-a' : 'chat-b';
       return {
         initialize: vi.fn(async () => undefined),
@@ -655,7 +655,7 @@ describe('SDK session contract', () => {
       agentId: 'agent-contract-test',
       conversationId: 'conv-new',
     };
-    vi.mocked(resumeSession).mockReturnValue(createdSession as never);
+    vi.mocked(createSession).mockReturnValue(createdSession as never);
 
     const activeSession = {
       close: vi.fn(() => undefined),
