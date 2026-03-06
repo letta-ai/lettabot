@@ -1527,13 +1527,12 @@ export class LettaBot implements AgentSession {
   
   /**
    * Acquire the appropriate lock for a conversation key.
-   * In per-channel mode with a dedicated key, no lock needed (parallel OK).
-   * In per-channel mode with a channel key, wait for that key's queue.
+   * In per-channel mode, wait for that key's queue to drain before proceeding.
    * In shared mode, use the global processing flag.
+   * All keys — including 'heartbeat' — are serialized to prevent concurrent
+   * sends on the same Session object, which the SDK does not support.
    */
   private async acquireLock(convKey: string): Promise<boolean> {
-    if (convKey === 'heartbeat') return false; // No lock needed
-
     if (convKey !== 'shared') {
       while (this.processingKeys.has(convKey)) {
         await new Promise(resolve => setTimeout(resolve, 1000));
