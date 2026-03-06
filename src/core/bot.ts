@@ -1253,12 +1253,15 @@ export class LettaBot implements AgentSession {
                   `(resultLen=${resultText.length}, streamLen=${streamedAssistantText.length}). ` +
                   `Preferring streamed content to avoid n-1 desync.`
                 );
-              } else if (streamedTextTrimmed.length === 0) {
+              } else if (streamedTextTrimmed.length === 0 && streamMsg.success !== false && !streamMsg.error) {
                 // Fallback for models/providers that only populate result text.
+                // Skip on error results -- the result field may contain reasoning
+                // text or other non-deliverable content (e.g. llm_api_error).
                 response = resultText;
-              } else if (!sentAnyMessage && response.trim().length === 0) {
+              } else if (!sentAnyMessage && response.trim().length === 0 && streamMsg.success !== false && !streamMsg.error) {
                 // Safety fallback: if we streamed text but nothing was
                 // delivered yet, allow a single result-based resend.
+                // Skip on error results for the same reason as above.
                 response = resultText;
               }
             }
