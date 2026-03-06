@@ -243,20 +243,32 @@ export class LettaBot implements AgentSession {
     return `${this.config.displayName}: ${text}`;
   }
 
-  private normalizeResultRunIds(msg: StreamMsg): string[] {
-    // Forward-looking compatibility:
-    // - Current SDK releases often emit result.run_ids as null/undefined.
-    // - When runIds are absent, caller gets [] and falls back to streamed vs
-    //   result text comparison (which works with today's wire payloads).
+  private normalizeStreamRunIds(msg: StreamMsg): string[] {
+    const ids: string[] = [];
+
+    const rawRunId = (msg as StreamMsg & { runId?: unknown; run_id?: unknown }).runId
+      ?? (msg as StreamMsg & { run_id?: unknown }).run_id;
+    if (typeof rawRunId === 'string' && rawRunId.trim().length > 0) {
+      ids.push(rawRunId.trim());
+    }
+
     const rawRunIds = (msg as StreamMsg & { runIds?: unknown; run_ids?: unknown }).runIds
       ?? (msg as StreamMsg & { run_ids?: unknown }).run_ids;
-    if (!Array.isArray(rawRunIds)) return [];
+    if (Array.isArray(rawRunIds)) {
+      for (const id of rawRunIds) {
+        if (typeof id === 'string' && id.trim().length > 0) {
+          ids.push(id.trim());
+        }
+      }
+    }
 
-    const runIds = rawRunIds.filter((id): id is string =>
-      typeof id === 'string' && id.trim().length > 0
-    );
+    if (ids.length === 0) return [];
+    return [...new Set(ids)];
+  }
+
+  private normalizeResultRunIds(msg: StreamMsg): string[] {
+    const runIds = this.normalizeStreamRunIds(msg);
     if (runIds.length === 0) return [];
-
     return [...new Set(runIds)].sort();
   }
 
@@ -470,6 +482,14 @@ export class LettaBot implements AgentSession {
    */
   async warmSession(): Promise<void> {
     return this.sessionManager.warmSession();
+  }
+
+  /**
+   * Invalidate the live session for a conversation key.
+   * The next message will create a fresh session using the current store state.
+   */
+  invalidateSession(key?: string): void {
+    this.sessionManager.invalidateSession(key);
   }
 
   // =========================================================================
@@ -1000,6 +1020,10 @@ export class LettaBot implements AgentSession {
       let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown>; isApprovalError?: boolean } | null = null;
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
+      let expectedForegroundRunId: string | null = null;
+      let expectedForegroundRunSource: 'assistant' | 'result' | null = null;
+      let foregroundRunSwitchCount = 0;
+      let filteredRunEventCount = 0;
       const msgTypeCounts: Record<string, number> = {};
 
       const parseAndHandleDirectives = async () => {
@@ -1076,6 +1100,46 @@ export class LettaBot implements AgentSession {
             break;
           }
           if (!firstChunkLogged) { lap('first stream chunk'); firstChunkLogged = true; }
+
+          const eventRunIds = this.normalizeStreamRunIds(streamMsg);
+          if (expectedForegroundRunId === null && eventRunIds.length > 0) {
+            if (streamMsg.type === 'assistant' || streamMsg.type === 'result') {
+              expectedForegroundRunId = eventRunIds[0];
+              expectedForegroundRunSource = streamMsg.type === 'assistant' ? 'assistant' : 'result';
+              log.info(`Selected foreground run for stream delivery (seq=${seq}, key=${convKey}, runId=${expectedForegroundRunId}, source=${streamMsg.type})`);
+            } else {
+              // Do not lock to a run based on pre-assistant non-terminal events;
+              // these can belong to a concurrent background run.
+              filteredRunEventCount++;
+              log.info(`Deferring run-scoped pre-foreground event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')})`);
+              continue;
+            }
+          } else if (expectedForegroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(expectedForegroundRunId)) {
+            const canSafelySwitchForeground = !sentAnyMessage || messageId !== null;
+            if (streamMsg.type === 'result'
+                && foregroundRunSwitchCount === 0
+                && canSafelySwitchForeground) {
+              const previousRunId = expectedForegroundRunId;
+              const previousRunSource = expectedForegroundRunSource;
+              expectedForegroundRunId = eventRunIds[0];
+              expectedForegroundRunSource = 'result';
+              foregroundRunSwitchCount += 1;
+              // Drop any state collected from the previous run so it cannot
+              // flush to user-facing delivery after the switch.
+              response = '';
+              reasoningBuffer = '';
+              streamedAssistantText = '';
+              lastMsgType = null;
+              lastAssistantUuid = null;
+              sawNonAssistantSinceLastUuid = false;
+              log.warn(`Switching foreground run at result boundary (seq=${seq}, key=${convKey}, from=${previousRunId}, to=${expectedForegroundRunId}, prevSource=${previousRunSource || 'unknown'})`);
+            } else {
+              filteredRunEventCount++;
+              log.info(`Skipping non-foreground stream event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
+              continue;
+            }
+          }
+
           receivedAnyData = true;
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
@@ -1292,6 +1356,9 @@ export class LettaBot implements AgentSession {
               log.debug(`Stream result preview: seq=${seq} responsePreview=${response.trim().slice(0, 60)}`);
             }
             log.info(`Stream message counts:`, msgTypeCounts);
+            if (filteredRunEventCount > 0) {
+              log.info(`Filtered ${filteredRunEventCount} non-foreground event(s) from stream (seq=${seq}, key=${convKey}, expectedRunId=${expectedForegroundRunId || 'unknown'})`);
+            }
             if (streamMsg.error) {
               const detail = resultText.trim();
               const parts = [`error=${streamMsg.error}`];

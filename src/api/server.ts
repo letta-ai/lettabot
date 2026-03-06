@@ -33,6 +33,8 @@ interface ServerOptions {
   host?: string; // Bind address (default: 127.0.0.1 for security)
   corsOrigin?: string; // CORS origin (default: same-origin only)
   stores?: Map<string, Store>; // Agent stores for management endpoints
+  agentChannels?: Map<string, string[]>; // Channel IDs per agent name
+  sessionInvalidators?: Map<string, (key?: string) => void>; // Invalidate live sessions after store writes
 }
 
 /**
@@ -568,12 +570,11 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         if (options.stores) {
           for (const [name, store] of options.stores) {
             const info = store.getInfo();
-            const agentSession = deliverer.getAgentNames().includes(name)
-              ? { channels: deliverer.getAgentNames() } : {};
             agents[name] = {
               agentId: info.agentId,
               conversationId: info.conversationId || null,
               conversations: info.conversations || {},
+              channels: options.agentChannels?.get(name) || [],
               baseUrl: info.baseUrl,
               createdAt: info.createdAt,
               lastUsedAt: info.lastUsedAt,
@@ -628,6 +629,12 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           store.conversationId = request.conversationId;
         } else {
           store.setConversationId(key, request.conversationId);
+        }
+
+        // Invalidate the live session so the next message uses the new conversation
+        const invalidate = options.sessionInvalidators?.get(agentName);
+        if (invalidate) {
+          invalidate(key === 'shared' ? undefined : key);
         }
 
         log.info(`API set conversation: agent=${agentName} key=${key} conv=${request.conversationId}`);
