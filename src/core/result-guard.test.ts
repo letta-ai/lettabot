@@ -104,4 +104,58 @@ describe('result divergence guard', () => {
     const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
     expect(sentTexts).toEqual(['streamed-segment']);
   });
+
+  it('does not deliver reasoning text from error results as the response', async () => {
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
+      session: { abort: vi.fn(async () => {}) },
+      stream: async function* () {
+        // Reproduce the exact bug path: reasoning tokens only, then an error
+        // result whose result field contains the leaked reasoning text.
+        yield { type: 'reasoning', content: '**Evaluating response protocol**\n\nI\'m trying to figure out how to respond...' };
+        yield {
+          type: 'result',
+          success: false,
+          error: 'error',
+          stopReason: 'llm_api_error',
+          result: '**Evaluating response protocol**\n\nI\'m trying to figure out how to respond...',
+        };
+      },
+    }));
+
+    const msg: InboundMessage = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
+    // Must show a formatted error message, never the raw reasoning text.
+    expect(sentTexts.length).toBeGreaterThanOrEqual(1);
+    const lastSent = sentTexts[sentTexts.length - 1];
+    expect(lastSent).not.toContain('Evaluating response protocol');
+    expect(lastSent).toMatch(/\(.*\)/); // Parenthesized system message
+  });
 });
