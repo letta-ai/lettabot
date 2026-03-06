@@ -104,4 +104,95 @@ describe('result divergence guard', () => {
     const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
     expect(sentTexts).toEqual(['streamed-segment']);
   });
+
+  it('filters non-foreground run events during processMessage stream delivery', async () => {
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+      display: { showReasoning: true, showToolCalls: true },
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
+      session: { abort: vi.fn(async () => {}) },
+      stream: async function* () {
+        yield { type: 'assistant', content: 'primary ', runId: 'run-main' };
+        yield { type: 'reasoning', content: 'background-thinking', runId: 'run-bg' };
+        yield { type: 'tool_call', toolCallId: 'tc-bg', toolName: 'Bash', toolInput: { command: 'echo leak' }, runId: 'run-bg' };
+        yield { type: 'assistant', content: 'background text', runId: 'run-bg' };
+        yield { type: 'assistant', content: 'reply', runId: 'run-main' };
+        yield { type: 'result', success: true, result: 'primary reply', runIds: ['run-main'] };
+      },
+    }));
+
+    const msg: InboundMessage = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
+    expect(sentTexts).toEqual(['primary reply']);
+  });
+
+  it('switches foreground run before first assistant output without flushing prior reasoning', async () => {
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+      display: { showReasoning: true, showToolCalls: true },
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
+      session: { abort: vi.fn(async () => {}) },
+      stream: async function* () {
+        yield { type: 'reasoning', content: 'background-thinking', runId: 'run-bg' };
+        yield { type: 'assistant', content: 'main reply', runId: 'run-main' };
+        yield { type: 'result', success: true, result: 'main reply', runIds: ['run-main'] };
+      },
+    }));
+
+    const msg: InboundMessage = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
+    expect(sentTexts).toEqual(['main reply']);
+  });
 });

@@ -243,18 +243,31 @@ export class LettaBot implements AgentSession {
     return `${this.config.displayName}: ${text}`;
   }
 
-  private normalizeResultRunIds(msg: StreamMsg): string[] {
-    // Forward-looking compatibility:
-    // - Current SDK releases often emit result.run_ids as null/undefined.
-    // - When runIds are absent, caller gets [] and falls back to streamed vs
-    //   result text comparison (which works with today's wire payloads).
+  private normalizeStreamRunIds(msg: StreamMsg): string[] {
+    const ids: string[] = [];
+
+    const rawRunId = (msg as StreamMsg & { runId?: unknown; run_id?: unknown }).runId
+      ?? (msg as StreamMsg & { run_id?: unknown }).run_id;
+    if (typeof rawRunId === 'string' && rawRunId.trim().length > 0) {
+      ids.push(rawRunId.trim());
+    }
+
     const rawRunIds = (msg as StreamMsg & { runIds?: unknown; run_ids?: unknown }).runIds
       ?? (msg as StreamMsg & { run_ids?: unknown }).run_ids;
-    if (!Array.isArray(rawRunIds)) return [];
+    if (Array.isArray(rawRunIds)) {
+      for (const id of rawRunIds) {
+        if (typeof id === 'string' && id.trim().length > 0) {
+          ids.push(id.trim());
+        }
+      }
+    }
 
-    const runIds = rawRunIds.filter((id): id is string =>
-      typeof id === 'string' && id.trim().length > 0
-    );
+    if (ids.length === 0) return [];
+    return [...new Set(ids)];
+  }
+
+  private normalizeResultRunIds(msg: StreamMsg): string[] {
+    const runIds = this.normalizeStreamRunIds(msg);
     if (runIds.length === 0) return [];
 
     return [...new Set(runIds)].sort();
@@ -980,6 +993,9 @@ export class LettaBot implements AgentSession {
       let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown>; isApprovalError?: boolean } | null = null;
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
+      let expectedForegroundRunId: string | null = null;
+      let sawForegroundAssistant = false;
+      let filteredRunEventCount = 0;
       const msgTypeCounts: Record<string, number> = {};
 
       const parseAndHandleDirectives = async () => {
@@ -1056,6 +1072,29 @@ export class LettaBot implements AgentSession {
             break;
           }
           if (!firstChunkLogged) { lap('first stream chunk'); firstChunkLogged = true; }
+          const eventRunIds = this.normalizeStreamRunIds(streamMsg);
+          if (expectedForegroundRunId === null && eventRunIds.length > 0) {
+            expectedForegroundRunId = eventRunIds[0];
+            log.info(`Selected foreground run for stream delivery (seq=${seq}, key=${convKey}, runId=${expectedForegroundRunId})`);
+          } else if (expectedForegroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(expectedForegroundRunId)) {
+            // If we selected a run from early non-assistant events, allow one
+            // switch before any assistant text is emitted.
+            if (!sawForegroundAssistant && streamMsg.type === 'assistant') {
+              const previousRunId = expectedForegroundRunId;
+              expectedForegroundRunId = eventRunIds[0];
+              // Drop pre-assistant state from the old run so it cannot flush
+              // into user-facing display after the switch.
+              response = '';
+              reasoningBuffer = '';
+              lastMsgType = null;
+              log.warn(`Switching foreground run before first assistant output (seq=${seq}, key=${convKey}, from=${previousRunId}, to=${expectedForegroundRunId})`);
+            } else {
+              filteredRunEventCount++;
+              log.info(`Skipping non-foreground stream event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
+              continue;
+            }
+          }
+
           receivedAnyData = true;
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
@@ -1176,6 +1215,9 @@ export class LettaBot implements AgentSession {
             const assistantChunk = streamMsg.content || '';
             response += assistantChunk;
             streamedAssistantText += assistantChunk;
+            if (assistantChunk.length > 0) {
+              sawForegroundAssistant = true;
+            }
             
             // Live-edit streaming for channels that support it
             // Hold back streaming edits while response could still be <no-reply/> or <actions> block
@@ -1269,6 +1311,9 @@ export class LettaBot implements AgentSession {
               log.debug(`Stream result preview: seq=${seq} responsePreview=${response.trim().slice(0, 60)}`);
             }
             log.info(`Stream message counts:`, msgTypeCounts);
+            if (filteredRunEventCount > 0) {
+              log.info(`Filtered ${filteredRunEventCount} non-foreground event(s) from stream (seq=${seq}, key=${convKey}, expectedRunId=${expectedForegroundRunId || 'unknown'})`);
+            }
             if (streamMsg.error) {
               const detail = resultText.trim();
               const parts = [`error=${streamMsg.error}`];
