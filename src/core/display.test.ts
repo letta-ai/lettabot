@@ -88,6 +88,14 @@ describe('formatReasoningDisplay', () => {
     expect(result.text).toBe('<blockquote expandable><b>Thinking</b>\na &lt; b &amp; c &gt; d</blockquote>');
   });
 
+  it('converts markdown bold and italic to HTML tags in telegram output', () => {
+    const result = formatReasoningDisplay('**Responding with warmth**\nSome text with *emphasis* here', 'telegram');
+    expect(result.parseMode).toBe('HTML');
+    expect(result.text).toBe(
+      '<blockquote expandable><b>Thinking</b>\n<b>Responding with warmth</b>\nSome text with <i>emphasis</i> here</blockquote>',
+    );
+  });
+
   it('formats non-signal/telegram channels as markdown blockquote', () => {
     const result = formatReasoningDisplay('line 1\n line 2', 'discord');
     expect(result).toEqual({ text: '> **Thinking**\n> line 1\n> line 2' });
