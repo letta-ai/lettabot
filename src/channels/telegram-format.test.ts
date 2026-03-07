@@ -40,4 +40,14 @@ describe('markdownToTelegramV2', () => {
     const result = await markdownToTelegramV2('Just some plain text');
     expect(result).toContain('Just some plain text');
   });
+
+  it('escapes leading blockquote markers to avoid accidental quote rendering', async () => {
+    const result = await markdownToTelegramV2('> got annexed by the relationship problem.');
+    expect(result).toContain('\\> got annexed by the relationship problem');
+  });
+
+  it('does not alter greater-than signs in the middle of a line', async () => {
+    const result = await markdownToTelegramV2('2 > 1');
+    expect(result).toContain('2 \\> 1');
+  });
 });
