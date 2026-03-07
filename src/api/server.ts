@@ -6,7 +6,7 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import { validateApiKey } from './auth.js';
-import type { SendMessageRequest, SendMessageResponse, SendFileResponse, ChatRequest, ChatResponse, AsyncChatResponse, PairingListResponse, PairingApproveRequest, PairingApproveResponse } from './types.js';
+import type { SendMessageResponse, ChatRequest, ChatResponse, AsyncChatResponse, PairingListResponse, PairingApproveRequest, PairingApproveResponse } from './types.js';
 import { listPairingRequests, approvePairingCode } from '../pairing/store.js';
 import { parseMultipart } from './multipart.js';
 import type { AgentRouter } from '../core/interfaces.js';
@@ -26,6 +26,14 @@ const VALID_CHANNELS: ChannelId[] = ['telegram', 'slack', 'discord', 'whatsapp',
 const MAX_BODY_SIZE = 10 * 1024; // 10KB
 const MAX_TEXT_LENGTH = 10000; // 10k chars
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const WEBHOOK_CONTEXT = { type: 'webhook' as const, outputMode: 'silent' as const };
+const PORTAL_HTML = fs.readFileSync(new URL('./portal.html', import.meta.url), 'utf-8');
+
+type ResolvedChatRequest = {
+  message: string;
+  agentName: string | undefined;
+  resolvedName: string;
+};
 
 interface ServerOptions {
   port: number;
@@ -138,49 +146,11 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     // Route: POST /api/v1/chat (send a message to the agent, get response)
     if (req.url === '/api/v1/chat' && req.method === 'POST') {
       try {
-        if (!validateApiKey(req.headers, options.apiKey)) {
-          sendError(res, 401, 'Unauthorized');
+        const resolved = await parseWebhookChatRequest(req, res, options.apiKey, deliverer);
+        if (!resolved) {
           return;
         }
-
-        const contentType = req.headers['content-type'] || '';
-        if (!contentType.includes('application/json')) {
-          sendError(res, 400, 'Content-Type must be application/json');
-          return;
-        }
-
-        const body = await readBody(req, MAX_BODY_SIZE);
-        let chatReq: ChatRequest;
-        try {
-          chatReq = JSON.parse(body);
-        } catch {
-          sendError(res, 400, 'Invalid JSON body');
-          return;
-        }
-
-        if (!chatReq.message || typeof chatReq.message !== 'string') {
-          sendError(res, 400, 'Missing required field: message');
-          return;
-        }
-
-        if (chatReq.message.length > MAX_TEXT_LENGTH) {
-          sendError(res, 400, `Message too long (max ${MAX_TEXT_LENGTH} chars)`);
-          return;
-        }
-
-        // Resolve agent name (defaults to first agent)
-        const agentName = chatReq.agent;
-        const agentNames = deliverer.getAgentNames();
-        const resolvedName = agentName || agentNames[0];
-
-        if (agentName && !agentNames.includes(agentName)) {
-          sendError(res, 404, `Agent not found: ${agentName}. Available: ${agentNames.join(', ')}`);
-          return;
-        }
-
-        log.info(`Chat request for agent "${resolvedName}": ${chatReq.message.slice(0, 100)}...`);
-
-        const context = { type: 'webhook' as const, outputMode: 'silent' as const };
+        log.info(`Chat request for agent "${resolved.resolvedName}": ${resolved.message.slice(0, 100)}...`);
         const wantsStream = (req.headers.accept || '').includes('text/event-stream');
 
         if (wantsStream) {
@@ -195,7 +165,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           req.on('close', () => { clientDisconnected = true; });
 
           try {
-            for await (const msg of deliverer.streamToAgent(agentName, chatReq.message, context)) {
+            for await (const msg of deliverer.streamToAgent(resolved.agentName, resolved.message, WEBHOOK_CONTEXT)) {
               if (clientDisconnected) break;
               res.write(`data: ${JSON.stringify(msg)}\n\n`);
               if (msg.type === 'result') break;
@@ -208,12 +178,12 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           res.end();
         } else {
           // Sync: wait for full response
-          const response = await deliverer.sendToAgent(agentName, chatReq.message, context);
+          const response = await deliverer.sendToAgent(resolved.agentName, resolved.message, WEBHOOK_CONTEXT);
 
           const chatRes: ChatResponse = {
             success: true,
             response,
-            agentName: resolvedName,
+            agentName: resolved.resolvedName,
           };
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(chatRes));
@@ -233,60 +203,24 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     // Route: POST /api/v1/chat/async (fire-and-forget: returns 202, processes in background)
     if (req.url === '/api/v1/chat/async' && req.method === 'POST') {
       try {
-        if (!validateApiKey(req.headers, options.apiKey)) {
-          sendError(res, 401, 'Unauthorized');
+        const resolved = await parseWebhookChatRequest(req, res, options.apiKey, deliverer);
+        if (!resolved) {
           return;
         }
-
-        const contentType = req.headers['content-type'] || '';
-        if (!contentType.includes('application/json')) {
-          sendError(res, 400, 'Content-Type must be application/json');
-          return;
-        }
-
-        const body = await readBody(req, MAX_BODY_SIZE);
-        let chatReq: ChatRequest;
-        try {
-          chatReq = JSON.parse(body);
-        } catch {
-          sendError(res, 400, 'Invalid JSON body');
-          return;
-        }
-
-        if (!chatReq.message || typeof chatReq.message !== 'string') {
-          sendError(res, 400, 'Missing required field: message');
-          return;
-        }
-
-        if (chatReq.message.length > MAX_TEXT_LENGTH) {
-          sendError(res, 400, `Message too long (max ${MAX_TEXT_LENGTH} chars)`);
-          return;
-        }
-
-        const agentName = chatReq.agent;
-        const agentNames = deliverer.getAgentNames();
-        const resolvedName = agentName || agentNames[0];
-
-        if (agentName && !agentNames.includes(agentName)) {
-          sendError(res, 404, `Agent not found: ${agentName}. Available: ${agentNames.join(', ')}`);
-          return;
-        }
-
-        log.info(`Async chat request for agent "${resolvedName}": ${chatReq.message.slice(0, 100)}...`);
+        log.info(`Async chat request for agent "${resolved.resolvedName}": ${resolved.message.slice(0, 100)}...`);
 
         // Return 202 immediately
         const asyncRes: AsyncChatResponse = {
           success: true,
           status: 'queued',
-          agentName: resolvedName,
+          agentName: resolved.resolvedName,
         };
         res.writeHead(202, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(asyncRes));
 
         // Process in background (detached promise)
-        const context = { type: 'webhook' as const, outputMode: 'silent' as const };
-        deliverer.sendToAgent(agentName, chatReq.message, context).catch((error: any) => {
-          log.error(`Async chat background error for agent "${resolvedName}":`, error);
+        deliverer.sendToAgent(resolved.agentName, resolved.message, WEBHOOK_CONTEXT).catch((error: any) => {
+          log.error(`Async chat background error for agent "${resolved.resolvedName}":`, error);
         });
       } catch (error: any) {
         log.error('Async chat error:', error);
@@ -706,7 +640,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     // Route: GET /portal - Admin portal for pairing approvals
     if ((req.url === '/portal' || req.url === '/portal/') && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(portalHtml);
+      res.end(PORTAL_HTML);
       return;
     }
 
@@ -752,35 +686,83 @@ function readBody(req: http.IncomingMessage, maxSize: number): Promise<string> {
   });
 }
 
-/**
- * Validate send message request
- */
-function validateRequest(request: SendMessageRequest): { message: string; field?: string } | null {
-  if (!request.channel) {
-    return { message: 'Missing required field: channel', field: 'channel' };
+function ensureAuthorized(req: http.IncomingMessage, res: http.ServerResponse, apiKey: string): boolean {
+  if (validateApiKey(req.headers, apiKey)) {
+    return true;
+  }
+  sendError(res, 401, 'Unauthorized');
+  return false;
+}
+
+function ensureJsonContentType(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('application/json')) {
+    return true;
+  }
+  sendError(res, 400, 'Content-Type must be application/json');
+  return false;
+}
+
+async function parseJsonBody<T>(req: http.IncomingMessage, res: http.ServerResponse): Promise<T | null> {
+  const body = await readBody(req, MAX_BODY_SIZE);
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    sendError(res, 400, 'Invalid JSON body');
+    return null;
+  }
+}
+
+function resolveAgentNameOrError(
+  deliverer: AgentRouter,
+  requestedAgentName: string | undefined,
+  res: http.ServerResponse,
+): { agentName: string | undefined; resolvedName: string } | null {
+  const agentNames = deliverer.getAgentNames();
+  const resolvedName = requestedAgentName || agentNames[0];
+  if (requestedAgentName && !agentNames.includes(requestedAgentName)) {
+    sendError(res, 404, `Agent not found: ${requestedAgentName}. Available: ${agentNames.join(', ')}`);
+    return null;
+  }
+  return { agentName: requestedAgentName, resolvedName };
+}
+
+async function parseWebhookChatRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  apiKey: string,
+  deliverer: AgentRouter,
+): Promise<ResolvedChatRequest | null> {
+  if (!ensureAuthorized(req, res, apiKey)) {
+    return null;
+  }
+  if (!ensureJsonContentType(req, res)) {
+    return null;
   }
 
-  if (!request.chatId) {
-    return { message: 'Missing required field: chatId', field: 'chatId' };
+  const chatReq = await parseJsonBody<ChatRequest>(req, res);
+  if (!chatReq) {
+    return null;
+  }
+  if (!chatReq.message || typeof chatReq.message !== 'string') {
+    sendError(res, 400, 'Missing required field: message');
+    return null;
+  }
+  if (chatReq.message.length > MAX_TEXT_LENGTH) {
+    sendError(res, 400, `Message too long (max ${MAX_TEXT_LENGTH} chars)`);
+    return null;
   }
 
-  if (!request.text) {
-    return { message: 'Missing required field: text', field: 'text' };
+  const agent = resolveAgentNameOrError(deliverer, chatReq.agent, res);
+  if (!agent) {
+    return null;
   }
 
-  if (!VALID_CHANNELS.includes(request.channel as ChannelId)) {
-    return { message: `Invalid channel: ${request.channel}`, field: 'channel' };
-  }
-
-  if (typeof request.text !== 'string') {
-    return { message: 'Field "text" must be a string', field: 'text' };
-  }
-
-  if (request.text.length > MAX_TEXT_LENGTH) {
-    return { message: `Text too long (max ${MAX_TEXT_LENGTH} chars)`, field: 'text' };
-  }
-
-  return null;
+  return {
+    message: chatReq.message,
+    agentName: agent.agentName,
+    resolvedName: agent.resolvedName,
+  };
 }
 
 /**
@@ -795,310 +777,3 @@ function sendError(res: http.ServerResponse, status: number, message: string, fi
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(response));
 }
-
-/**
- * Admin portal HTML - self-contained page for pairing approvals
- */
-const portalHtml = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LettaBot Portal</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0a0a; color: #e0e0e0; min-height: 100vh; }
-  .container { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
-  h1 { font-size: 18px; font-weight: 600; margin-bottom: 24px; color: #fff; }
-  h1 span { color: #666; font-weight: 400; }
-
-  /* Auth */
-  .auth { background: #141414; border: 1px solid #222; border-radius: 8px; padding: 24px; margin-bottom: 24px; }
-  .auth label { display: block; font-size: 13px; color: #888; margin-bottom: 8px; }
-  .auth input { width: 100%; padding: 10px 12px; background: #0a0a0a; border: 1px solid #333; border-radius: 6px; color: #fff; font-size: 14px; font-family: monospace; }
-  .auth input:focus { outline: none; border-color: #555; }
-  .auth-help { margin-top: 10px; font-size: 12px; color: #888; }
-  .auth-help a { color: #fff; text-decoration: underline; }
-  .auth-help a:hover { color: #ddd; }
-  .auth button { margin-top: 12px; padding: 8px 20px; background: #fff; color: #000; border: none; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
-  .auth button:hover { background: #ddd; }
-
-  /* Tabs */
-  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
-  .tab { padding: 6px 14px; background: #141414; border: 1px solid #222; border-radius: 6px; font-size: 13px; cursor: pointer; color: #888; }
-  .tab:hover { color: #ccc; border-color: #333; }
-  .tab.active { background: #1a1a1a; color: #fff; border-color: #444; }
-  .tab .count { background: #333; color: #aaa; font-size: 11px; padding: 1px 6px; border-radius: 10px; margin-left: 6px; }
-  .tab.active .count { background: #fff; color: #000; }
-
-  /* Table */
-  .requests { background: #141414; border: 1px solid #222; border-radius: 8px; overflow: hidden; }
-  .request { display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid #1a1a1a; gap: 16px; }
-  .request:last-child { border-bottom: none; }
-  .code { font-family: monospace; font-size: 15px; font-weight: 600; color: #fff; min-width: 90px; }
-  .meta { flex: 1; }
-  .meta .name { font-size: 13px; color: #ccc; }
-  .meta .time { font-size: 12px; color: #555; margin-top: 2px; }
-  .approve-btn { padding: 6px 16px; background: #1a7f37; color: #fff; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; white-space: nowrap; }
-  .approve-btn:hover { background: #238636; }
-  .approve-btn:disabled { background: #333; color: #666; cursor: default; }
-
-  /* Empty */
-  .empty { padding: 40px 16px; text-align: center; color: #555; font-size: 14px; }
-
-  /* Toast */
-  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); padding: 10px 20px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
-  .toast.show { opacity: 1; }
-  .toast.ok { background: #1a7f37; color: #fff; }
-  .toast.err { background: #d1242f; color: #fff; }
-
-  /* Status bar */
-  .status { font-size: 12px; color: #444; text-align: center; margin-top: 16px; }
-
-  /* Management tab */
-  .agent-card { background: #141414; border: 1px solid #222; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
-  .agent-card h3 { font-size: 14px; color: #fff; margin-bottom: 10px; }
-  .agent-field { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #1a1a1a; font-size: 13px; }
-  .agent-field:last-child { border-bottom: none; }
-  .agent-field .label { color: #888; }
-  .agent-field .value { color: #ccc; font-family: monospace; font-size: 12px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
-  .conv-entry { padding: 4px 0 4px 12px; font-size: 12px; color: #888; font-family: monospace; }
-  .set-conv-form { background: #141414; border: 1px solid #222; border-radius: 8px; padding: 16px; margin-top: 12px; }
-  .set-conv-form h3 { font-size: 14px; color: #fff; margin-bottom: 12px; }
-  .form-row { margin-bottom: 10px; }
-  .form-row label { display: block; font-size: 12px; color: #888; margin-bottom: 4px; }
-  .form-row input, .form-row select { width: 100%; padding: 8px 10px; background: #0a0a0a; border: 1px solid #333; border-radius: 6px; color: #fff; font-size: 13px; font-family: monospace; }
-  .form-row input:focus, .form-row select:focus { outline: none; border-color: #555; }
-  .set-conv-btn { padding: 8px 20px; background: #1a7f37; color: #fff; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; }
-  .set-conv-btn:hover { background: #238636; }
-  .set-conv-btn:disabled { background: #333; color: #666; cursor: default; }
-  .conv-list { margin-top: 12px; }
-  .conv-list h3 { font-size: 14px; color: #fff; margin-bottom: 8px; }
-  .conv-row { display: flex; align-items: center; padding: 10px 12px; background: #141414; border: 1px solid #222; border-radius: 6px; margin-bottom: 4px; cursor: pointer; gap: 12px; }
-  .conv-row:hover { border-color: #444; }
-  .conv-row.active { border-color: #1a7f37; background: #0d1117; }
-  .conv-row .conv-id { font-family: monospace; font-size: 12px; color: #ccc; min-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .conv-row .conv-meta { flex: 1; font-size: 12px; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .conv-row .conv-msgs { font-size: 11px; color: #555; white-space: nowrap; }
-  .conv-loading { padding: 16px; text-align: center; color: #555; font-size: 13px; }
-
-  .hidden { display: none; }
-</style>
-</head>
-<body>
-<div class="container">
-  <h1>LettaBot <span>Portal</span></h1>
-
-  <div class="auth" id="auth">
-    <label for="key">API Key</label>
-    <input type="password" id="key" placeholder="Paste your LETTABOT_API_KEY" autocomplete="off" onkeydown="if(event.key==='Enter')login()">
-    <div class="auth-help">Find your API key at <a href="https://app.letta.com/projects/default-project/api-keys" target="_blank" rel="noopener noreferrer">app.letta.com/projects/default-project/api-keys</a>.</div>
-    <button onclick="login()">Connect</button>
-  </div>
-
-  <div id="app" class="hidden">
-    <div class="tabs" id="tabs"></div>
-    <div class="requests" id="list"></div>
-    <div class="status" id="status"></div>
-  </div>
-</div>
-<div class="toast" id="toast"></div>
-
-<script>
-const CHANNELS = ['telegram', 'discord', 'slack'];
-let apiKey = sessionStorage.getItem('lbkey') || '';
-let activeTab = 'telegram';
-let data = {};
-let statusData = {};
-let convListData = {};
-let refreshTimer;
-
-function login() {
-  apiKey = document.getElementById('key').value.trim();
-  if (!apiKey) return;
-  sessionStorage.setItem('lbkey', apiKey);
-  init();
-}
-
-async function init() {
-  document.getElementById('auth').classList.add('hidden');
-  document.getElementById('app').classList.remove('hidden');
-  await refresh();
-  refreshTimer = setInterval(refresh, 10000);
-}
-
-async function apiFetch(path, opts = {}) {
-  const res = await fetch(path, { ...opts, headers: { 'X-Api-Key': apiKey, 'Content-Type': 'application/json', ...opts.headers } });
-  if (res.status === 401) { sessionStorage.removeItem('lbkey'); apiKey = ''; document.getElementById('auth').classList.remove('hidden'); document.getElementById('app').classList.add('hidden'); clearInterval(refreshTimer); toast('Invalid API key', true); throw new Error('Unauthorized'); }
-  return res;
-}
-
-async function refresh() {
-  for (const ch of CHANNELS) {
-    try {
-      const res = await apiFetch('/api/v1/pairing/' + ch);
-      const json = await res.json();
-      data[ch] = json.requests || [];
-    } catch (e) { if (e.message === 'Unauthorized') return; data[ch] = []; }
-  }
-  try {
-    const res = await apiFetch('/api/v1/status');
-    const json = await res.json();
-    statusData = json.agents || {};
-  } catch (e) { if (e.message === 'Unauthorized') return; }
-  renderTabs();
-  renderContent();
-  if (activeTab === '__status__') loadConversations();
-  document.getElementById('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
-}
-
-function renderTabs() {
-  const el = document.getElementById('tabs');
-  let html = CHANNELS.map(ch => {
-    const n = (data[ch] || []).length;
-    const cls = ch === activeTab ? 'tab active' : 'tab';
-    const count = n > 0 ? '<span class="count">' + n + '</span>' : '';
-    return '<div class="' + cls + '" onclick="switchTab(\\'' + ch + '\\')">' + ch.charAt(0).toUpperCase() + ch.slice(1) + count + '</div>';
-  }).join('');
-  const statusCls = activeTab === '__status__' ? 'tab active' : 'tab';
-  html += '<div class="' + statusCls + '" onclick="switchTab(\\'__status__\\')">Status</div>';
-  el.innerHTML = html;
-}
-
-function renderContent() {
-  if (activeTab === '__status__') { renderStatus(); return; }
-  renderList();
-}
-
-function renderList() {
-  const el = document.getElementById('list');
-  const items = data[activeTab] || [];
-  if (items.length === 0) { el.innerHTML = '<div class="empty">No pending pairing requests</div>'; return; }
-  el.innerHTML = items.map(r => {
-    const name = r.meta?.username ? '@' + r.meta.username : r.meta?.firstName || 'User ' + r.id;
-    const ago = timeAgo(r.createdAt);
-    return '<div class="request"><div class="code">' + esc(r.code) + '</div><div class="meta"><div class="name">' + esc(name) + '</div><div class="time">' + ago + '</div></div><button class="approve-btn" onclick="approve(\\'' + activeTab + '\\',\\'' + r.code + '\\', this)">Approve</button></div>';
-  }).join('');
-}
-
-function renderStatus() {
-  const el = document.getElementById('list');
-  const agents = Object.entries(statusData);
-  if (agents.length === 0) { el.innerHTML = '<div class="empty">No agents configured</div>'; return; }
-  let html = '';
-  const agentNames = agents.map(a => a[0]);
-  for (const [name, info] of agents) {
-    html += '<div class="agent-card"><h3>' + esc(name) + '</h3>';
-    html += '<div class="agent-field"><span class="label">Agent ID</span><span class="value">' + esc(info.agentId || '(none)') + '</span></div>';
-    html += '<div class="agent-field"><span class="label">Conversation</span><span class="value">' + esc(info.conversationId || '(none)') + '</span></div>';
-    const convs = Object.entries(info.conversations || {});
-    if (convs.length > 0) {
-      html += '<div class="agent-field"><span class="label">Per-key conversations</span><span class="value">' + convs.length + '</span></div>';
-      for (const [k, v] of convs) { html += '<div class="conv-entry">' + esc(k) + ' = ' + esc(v) + '</div>'; }
-    }
-    if (info.baseUrl) html += '<div class="agent-field"><span class="label">Server</span><span class="value">' + esc(info.baseUrl) + '</span></div>';
-    if (info.lastUsedAt) html += '<div class="agent-field"><span class="label">Last used</span><span class="value">' + esc(info.lastUsedAt) + '</span></div>';
-    html += '</div>';
-
-    // Conversation list from Letta API
-    const conversations = convListData[name] || [];
-    const activeConvId = info.conversationId;
-    html += '<div class="conv-list"><h3>Conversations</h3>';
-    if (conversations === 'loading') {
-      html += '<div class="conv-loading">Loading...</div>';
-    } else if (conversations.length === 0) {
-      html += '<div class="conv-loading">No conversations found</div>';
-    } else {
-      for (const c of conversations) {
-        const isActive = c.id === activeConvId ? ' active' : '';
-        const summary = c.summary ? esc(c.summary) : '';
-        const msgs = c.messageCount ? c.messageCount + ' msgs' : '';
-        const ago = c.updatedAt ? timeAgo(c.updatedAt) : '';
-        html += '<div class="conv-row' + isActive + '" onclick="pickConversation(\\'' + esc(c.id) + '\\',\\'' + esc(name) + '\\')">';
-        html += '<div class="conv-id">' + esc(c.id) + '</div>';
-        html += '<div class="conv-meta">' + (summary || ago) + '</div>';
-        html += '<div class="conv-msgs">' + msgs + '</div>';
-        html += '</div>';
-      }
-    }
-    html += '</div>';
-  }
-  html += '<div class="set-conv-form"><h3>Set Conversation</h3>';
-  html += '<div class="form-row"><label>Agent</label><select id="sc-agent">';
-  for (const n of agentNames) { html += '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }
-  html += '</select></div>';
-  html += '<div class="form-row"><label>Key (leave empty for shared)</label><input id="sc-key" placeholder="e.g. telegram:12345"></div>';
-  html += '<div class="form-row"><label>Conversation ID</label><input id="sc-id" placeholder="conversation-xxx"></div>';
-  html += '<button class="set-conv-btn" onclick="setConversation(this)">Set Conversation</button>';
-  html += '</div>';
-  el.innerHTML = html;
-}
-
-async function loadConversations() {
-  for (const name of Object.keys(statusData)) {
-    convListData[name] = 'loading';
-    try {
-      const res = await apiFetch('/api/v1/conversations?agent=' + encodeURIComponent(name));
-      const json = await res.json();
-      convListData[name] = json.conversations || [];
-    } catch (e) { convListData[name] = []; }
-  }
-  if (activeTab === '__status__') renderStatus();
-}
-
-async function pickConversation(id, agent) {
-  try {
-    const res = await apiFetch('/api/v1/conversation', { method: 'POST', body: JSON.stringify({ conversationId: id, agent }) });
-    const json = await res.json();
-    if (json.success) { toast('Switched to ' + id.slice(0, 20) + '...'); await refresh(); }
-    else { toast(json.error || 'Failed', true); }
-  } catch (e) { toast('Error: ' + e.message, true); }
-}
-
-function switchTab(t) { activeTab = t; renderTabs(); renderContent(); }
-
-async function setConversation(btn) {
-  const agent = document.getElementById('sc-agent').value;
-  const key = document.getElementById('sc-key').value.trim() || undefined;
-  const conversationId = document.getElementById('sc-id').value.trim();
-  if (!conversationId) { toast('Conversation ID is required', true); return; }
-  btn.disabled = true; btn.textContent = '...';
-  try {
-    const body = { conversationId, agent };
-    if (key) body.key = key;
-    const res = await apiFetch('/api/v1/conversation', { method: 'POST', body: JSON.stringify(body) });
-    const json = await res.json();
-    if (json.success) { toast('Conversation set'); await refresh(); }
-    else { toast(json.error || 'Failed', true); }
-  } catch (e) { toast('Error: ' + e.message, true); }
-  btn.disabled = false; btn.textContent = 'Set Conversation';
-}
-
-async function approve(channel, code, btn) {
-  btn.disabled = true; btn.textContent = '...';
-  try {
-    const res = await apiFetch('/api/v1/pairing/' + channel + '/approve', { method: 'POST', body: JSON.stringify({ code }) });
-    const json = await res.json();
-    if (json.success) { toast('Approved'); await refresh(); }
-    else { toast(json.error || 'Failed', true); btn.disabled = false; btn.textContent = 'Approve'; }
-  } catch (e) { toast('Error: ' + e.message, true); btn.disabled = false; btn.textContent = 'Approve'; }
-}
-
-function toast(msg, err) {
-  const el = document.getElementById('toast');
-  el.textContent = msg; el.className = 'toast show ' + (err ? 'err' : 'ok');
-  setTimeout(() => el.className = 'toast', 2500);
-}
-
-function timeAgo(iso) {
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return s + 's ago'; if (s < 3600) return Math.floor(s/60) + 'm ago';
-  return Math.floor(s/3600) + 'h ago';
-}
-
-function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-
-if (apiKey) init();
-</script>
-</body>
-</html>`;

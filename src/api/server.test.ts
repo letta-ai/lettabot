@@ -211,6 +211,78 @@ describe('POST /api/v1/chat', () => {
   });
 });
 
+describe('POST /api/v1/chat/async', () => {
+  let server: http.Server;
+  let port: number;
+  let router: AgentRouter;
+
+  beforeAll(async () => {
+    router = createMockRouter();
+    server = createApiServer(router, {
+      port: TEST_PORT,
+      apiKey: TEST_API_KEY,
+      host: '127.0.0.1',
+    });
+    await new Promise<void>((resolve) => {
+      if (server.listening) { resolve(); return; }
+      server.once('listening', resolve);
+    });
+    port = getPort(server);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('reuses shared validation: content-type guard', async () => {
+    const res = await request(port, 'POST', '/api/v1/chat/async', 'hello', {
+      'content-type': 'text/plain',
+      'x-api-key': TEST_API_KEY,
+    });
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toContain('application/json');
+  });
+
+  it('reuses shared validation: missing message', async () => {
+    const res = await request(port, 'POST', '/api/v1/chat/async', '{"agent":"LettaBot"}', {
+      'content-type': 'application/json',
+      'x-api-key': TEST_API_KEY,
+    });
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toContain('message');
+  });
+
+  it('reuses shared validation: unknown agent', async () => {
+    const res = await request(port, 'POST', '/api/v1/chat/async', '{"message":"hi","agent":"unknown"}', {
+      'content-type': 'application/json',
+      'x-api-key': TEST_API_KEY,
+    });
+    expect(res.status).toBe(404);
+    expect(JSON.parse(res.body).error).toContain('Agent not found');
+    expect(JSON.parse(res.body).error).toContain('LettaBot');
+  });
+
+  it('returns 202 and queues background delivery', async () => {
+    (router as any).sendToAgent = vi.fn().mockResolvedValue('done');
+
+    const res = await request(port, 'POST', '/api/v1/chat/async', '{"message":"queue me"}', {
+      'content-type': 'application/json',
+      'x-api-key': TEST_API_KEY,
+    });
+    expect(res.status).toBe(202);
+    const body = JSON.parse(res.body);
+    expect(body.success).toBe(true);
+    expect(body.status).toBe('queued');
+    expect(body.agentName).toBe('LettaBot');
+    expect((router as any).sendToAgent).toHaveBeenCalledWith(
+      undefined,
+      'queue me',
+      { type: 'webhook', outputMode: 'silent' },
+    );
+
+  });
+});
+
 describe('GET /portal', () => {
   let server: http.Server;
   let port: number;

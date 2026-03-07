@@ -300,4 +300,89 @@ describe('result divergence guard', () => {
     const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
     expect(sentTexts).toEqual(['main reply']);
   });
+
+  it('treats <no-reply/> as intentional silence and does not deliver a visible message', async () => {
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
+      session: { abort: vi.fn(async () => {}) },
+      stream: async function* () {
+        yield { type: 'assistant', content: '<no-reply/>' };
+        yield { type: 'result', success: true, result: '<no-reply/>' };
+      },
+    }));
+
+    const msg: InboundMessage = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    expect(adapter.sendMessage).not.toHaveBeenCalled();
+    expect(adapter.editMessage).not.toHaveBeenCalled();
+  });
+
+  it('skips all post-stream delivery when message processing is cancelled', async () => {
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
+      session: { abort: vi.fn(async () => {}) },
+      stream: async function* () {
+        yield { type: 'assistant', content: 'this should never be delivered' };
+        yield { type: 'result', success: true, result: 'this should never be delivered' };
+      },
+    }));
+
+    const msg: InboundMessage = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    (bot as any).cancelledKeys.add('shared');
+    await (bot as any).processMessage(msg, adapter);
+
+    expect(adapter.sendMessage).not.toHaveBeenCalled();
+    expect(adapter.editMessage).not.toHaveBeenCalled();
+  });
 });

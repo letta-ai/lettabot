@@ -115,7 +115,7 @@ Pull the latest changes and rebuild:
 npm run update
 ```
 
-This resets the lockfile, pulls from git, installs dependencies, and rebuilds. If you've modified source files locally, stash them first with `git stash`.
+This performs a fast-forward-only pull, installs dependencies, and rebuilds without resetting tracked files.
 
 ## Next Steps
 

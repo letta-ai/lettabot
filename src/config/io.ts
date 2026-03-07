@@ -527,6 +527,65 @@ export function applyConfigToEnv(config: LettaBotConfig): void {
   }
 }
 
+async function listProviders(apiKey: string): Promise<Array<{ id: string; name: string }>> {
+  const listResponse = await fetch(`${LETTA_API_URL}/v1/providers`, {
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+  });
+
+  if (!listResponse.ok) {
+    throw new Error(`Failed to list providers: ${listResponse.status} ${listResponse.statusText}`);
+  }
+
+  return listResponse.json() as Promise<Array<{ id: string; name: string }>>;
+}
+
+/**
+ * Create or update a BYOK provider on Letta API.
+ * Returns whether the provider was created or updated.
+ */
+export async function upsertProvider(
+  apiKey: string,
+  provider: ProviderConfig,
+): Promise<'created' | 'updated'> {
+  const existingProviders = await listProviders(apiKey);
+  const existing = existingProviders.find((p) => p.name === provider.name);
+
+  if (existing) {
+    const response = await fetch(`${LETTA_API_URL}/v1/providers/${existing.id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ api_key: provider.apiKey }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to update provider ${provider.name}: ${response.status} ${response.statusText}`);
+    }
+    return 'updated';
+  }
+
+  const response = await fetch(`${LETTA_API_URL}/v1/providers`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      name: provider.name,
+      provider_type: provider.type,
+      api_key: provider.apiKey,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to create provider ${provider.name}: ${response.status} ${response.statusText}`);
+  }
+  return 'created';
+}
+
 /**
  * Create BYOK providers on Letta API
  */
@@ -540,52 +599,12 @@ export async function syncProviders(config: Partial<LettaBotConfig> & Pick<Letta
   }
   
   const apiKey = config.server.apiKey;
-  const baseUrl = LETTA_API_URL;
-  
-  // List existing providers
-  const listResponse = await fetch(`${baseUrl}/v1/providers`, {
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-  });
-  
-  const existingProviders = listResponse.ok 
-    ? await listResponse.json() as Array<{ id: string; name: string }>
-    : [];
   
   // Create or update each provider
   for (const provider of config.providers) {
-    const existing = existingProviders.find(p => p.name === provider.name);
-    
     try {
-      if (existing) {
-        // Update existing
-        await fetch(`${baseUrl}/v1/providers/${existing.id}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({ api_key: provider.apiKey }),
-        });
-        log.info(`Updated provider: ${provider.name}`);
-      } else {
-        // Create new
-        await fetch(`${baseUrl}/v1/providers`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            name: provider.name,
-            provider_type: provider.type,
-            api_key: provider.apiKey,
-          }),
-        });
-        log.info(`Created provider: ${provider.name}`);
-      }
+      const action = await upsertProvider(apiKey, provider);
+      log.info(`${action === 'updated' ? 'Updated' : 'Created'} provider: ${provider.name}`);
     } catch (err) {
       log.error(`Failed to sync provider ${provider.name}:`, err);
     }
