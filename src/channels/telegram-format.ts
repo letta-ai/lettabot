@@ -16,26 +16,13 @@ export async function markdownToTelegramV2(markdown: string): Promise<string> {
   try {
     // Dynamic import to handle ESM module
     const telegramifyMarkdown = (await import('telegramify-markdown')).default;
-    // Use 'keep' strategy for broad markdown support, then escape leading
-    // blockquote markers so Telegram doesn't unexpectedly render quote UI.
-    const converted = telegramifyMarkdown(markdown, 'keep');
-    return escapeLeadingBlockquotes(converted);
+    // Use 'keep' strategy for broad markdown support, including blockquotes.
+    return telegramifyMarkdown(markdown, 'keep');
   } catch (e) {
     log.error('Markdown conversion failed, using escape fallback:', e);
     // Fallback: escape special characters manually (loses formatting)
     return escapeMarkdownV2(markdown);
   }
-}
-
-/**
- * Escape leading `>` per line so line-start text doesn't become a Telegram
- * blockquote unexpectedly.
- */
-function escapeLeadingBlockquotes(text: string): string {
-  return text
-    .split('\n')
-    .map(line => line.replace(/^(\s*)>(?=\s|$)/, '$1\\>'))
-    .join('\n');
 }
 
 /**

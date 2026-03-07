@@ -41,13 +41,18 @@ describe('markdownToTelegramV2', () => {
     expect(result).toContain('Just some plain text');
   });
 
-  it('escapes leading blockquote markers to avoid accidental quote rendering', async () => {
+  it('preserves intentional markdown blockquotes', async () => {
     const result = await markdownToTelegramV2('> got annexed by the relationship problem.');
-    expect(result).toContain('\\> got annexed by the relationship problem');
+    expect(result).toContain('> got annexed by the relationship problem');
   });
 
   it('does not alter greater-than signs in the middle of a line', async () => {
     const result = await markdownToTelegramV2('2 > 1');
     expect(result).toContain('2 \\> 1');
+  });
+
+  it('preserves greater-than signs inside fenced code blocks', async () => {
+    const result = await markdownToTelegramV2('```\n> code\n```');
+    expect(result).toContain('```\n> code\n```');
   });
 });
