@@ -1276,11 +1276,11 @@ export class LettaBot implements AgentSession {
               if (runId && (streamMsg.type === 'reasoning' || streamMsg.type === 'tool_call')) {
                 bufferRunScopedDisplayEvent(runId, streamMsg);
                 filteredRunEventCount++;
-                log.info(`Buffering run-scoped pre-foreground display event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runId=${runId})`);
+                log.debug(`Buffering run-scoped pre-foreground display event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runId=${runId})`);
                 continue;
               }
               filteredRunEventCount++;
-              log.info(`Deferring run-scoped pre-foreground event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')})`);
+              log.debug(`Deferring run-scoped pre-foreground event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')})`);
               continue;
             }
           } else if (expectedForegroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(expectedForegroundRunId)) {
@@ -1291,7 +1291,7 @@ export class LettaBot implements AgentSession {
               ignoredNonForegroundResultCount++;
               log.warn(`Ignoring non-foreground result event (seq=${seq}, key=${convKey}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId}, source=${expectedForegroundRunSource || 'unknown'})`);
             } else {
-              log.info(`Skipping non-foreground stream event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
+              log.debug(`Skipping non-foreground stream event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
             }
             continue;
           }
