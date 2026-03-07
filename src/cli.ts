@@ -80,6 +80,7 @@ async function configure() {
     message: 'What would you like to do?',
     options: [
       { value: 'onboard', label: 'Run setup wizard', hint: 'lettabot onboard' },
+      { value: 'tui', label: 'Open TUI editor', hint: 'lettabot config tui' },
       { value: 'edit', label: 'Edit config file', hint: resolveConfigPath() },
       { value: 'exit', label: 'Exit', hint: '' },
     ],
@@ -94,6 +95,11 @@ async function configure() {
     case 'onboard':
       await onboard();
       break;
+    case 'tui': {
+      const { configTui } = await import('./cli/config-tui.js');
+      await configTui();
+      break;
+    }
     case 'edit': {
       const configPath = resolveConfigPath();
       const editor = process.env.EDITOR || 'nano';
@@ -227,6 +233,7 @@ Commands:
   onboard              Setup wizard (integrations, skills, configuration)
   server               Start the bot server
   configure            View and edit configuration
+  config tui           Interactive core config editor
   config encode        Encode config file as base64 for LETTABOT_CONFIG_YAML
   config decode        Decode and print LETTABOT_CONFIG_YAML env var
   connect <provider>   Connect model providers (e.g., chatgpt/codex)
@@ -257,6 +264,7 @@ Commands:
 Examples:
   lettabot onboard                           # First-time setup
   lettabot server                            # Start the bot
+  lettabot config tui                        # Interactive core config editor
   lettabot channels                          # Interactive channel management
   lettabot channels add discord              # Add Discord integration
   lettabot channels remove telegram          # Remove Telegram
@@ -332,6 +340,9 @@ async function main() {
         await configEncode();
       } else if (subCommand === 'decode') {
         await configDecode();
+      } else if (subCommand === 'tui') {
+        const { configTui } = await import('./cli/config-tui.js');
+        await configTui();
       } else {
         await configure();
       }
