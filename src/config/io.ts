@@ -549,8 +549,9 @@ async function listProviders(apiKey: string): Promise<Array<{ id: string; name: 
 export async function upsertProvider(
   apiKey: string,
   provider: ProviderConfig,
+  knownProviders?: Array<{ id: string; name: string }>,
 ): Promise<'created' | 'updated'> {
-  const existingProviders = await listProviders(apiKey);
+  const existingProviders = knownProviders ?? await listProviders(apiKey);
   const existing = existingProviders.find((p) => p.name === provider.name);
 
   if (existing) {
@@ -600,10 +601,13 @@ export async function syncProviders(config: Partial<LettaBotConfig> & Pick<Letta
   
   const apiKey = config.server.apiKey;
   
+  // List existing providers once, then pass to each upsert call.
+  const existingProviders = await listProviders(apiKey).catch(() => [] as Array<{ id: string; name: string }>);
+  
   // Create or update each provider
   for (const provider of config.providers) {
     try {
-      const action = await upsertProvider(apiKey, provider);
+      const action = await upsertProvider(apiKey, provider, existingProviders);
       log.info(`${action === 'updated' ? 'Updated' : 'Created'} provider: ${provider.name}`);
     } catch (err) {
       log.error(`Failed to sync provider ${provider.name}:`, err);

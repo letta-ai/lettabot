@@ -1006,7 +1006,8 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
           }
         }
       } catch (err) {
-        spinner.stop(`Failed to connect ${provider.displayName}`);
+        const detail = err instanceof Error ? `: ${err.message}` : '';
+        spinner.stop(`Failed to connect ${provider.displayName}${detail}`);
       }
     }
   }
