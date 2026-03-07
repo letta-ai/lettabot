@@ -96,6 +96,14 @@ describe('formatReasoningDisplay', () => {
     );
   });
 
+  it('does not convert math-like asterisks to telegram italic formatting', () => {
+    const spaced = formatReasoningDisplay('2 * 3 * 4', 'telegram');
+    const compact = formatReasoningDisplay('2*3*4', 'telegram');
+    expect(spaced.parseMode).toBe('HTML');
+    expect(spaced.text).toBe('<blockquote expandable><b>Thinking</b>\n2 * 3 * 4</blockquote>');
+    expect(compact.text).toBe('<blockquote expandable><b>Thinking</b>\n2*3*4</blockquote>');
+  });
+
   it('formats non-signal/telegram channels as markdown blockquote', () => {
     const result = formatReasoningDisplay('line 1\n line 2', 'discord');
     expect(result).toEqual({ text: '> **Thinking**\n> line 1\n> line 2' });
