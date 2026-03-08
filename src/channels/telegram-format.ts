@@ -16,7 +16,7 @@ export async function markdownToTelegramV2(markdown: string): Promise<string> {
   try {
     // Dynamic import to handle ESM module
     const telegramifyMarkdown = (await import('telegramify-markdown')).default;
-    // Use 'keep' strategy to preserve blockquotes (>) and other unsupported elements
+    // Use 'keep' strategy for broad markdown support, including blockquotes.
     return telegramifyMarkdown(markdown, 'keep');
   } catch (e) {
     log.error('Markdown conversion failed, using escape fallback:', e);
