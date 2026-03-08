@@ -17,6 +17,7 @@ import {
   buildErrorResponse, buildModelList, validateChatRequest,
 } from './openai-compat.js';
 import type { OpenAIChatRequest } from './openai-compat.js';
+import { getTurnViewerHtml } from '../core/turn-viewer.js';
 
 import { createLogger } from '../logger.js';
 
@@ -29,14 +30,45 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 interface ServerOptions {
   port: number;
   apiKey: string;
-  host?: string; // Bind address (default: 127.0.0.1 for security)
+  host?: string;      // Bind address (default: 127.0.0.1 for security)
   corsOrigin?: string; // CORS origin (default: same-origin only)
+  turnLogFile?: string; // If set, enables GET /turns viewer
+}
+
+// ── Turn viewer helpers ───────────────────────────────────────────────────
+
+const sseClients = new Set<http.ServerResponse>();
+
+function readTurns(filePath: string): unknown[] {
+  try {
+    return fs.readFileSync(filePath, 'utf8')
+      .split('\n')
+      .filter(l => l.trim())
+      .map(l => { try { return JSON.parse(l); } catch { return null; } })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function broadcastTurns(filePath: string): void {
+  if (sseClients.size === 0) return;
+  const payload = `data: ${JSON.stringify(readTurns(filePath))}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(payload); } catch { sseClients.delete(res); }
+  }
 }
 
 /**
  * Create and start the HTTP API server
  */
 export function createApiServer(deliverer: AgentRouter, options: ServerOptions): http.Server {
+  // Watch the turn log file and push updates to SSE clients
+  if (options.turnLogFile) {
+    fs.watchFile(options.turnLogFile, { interval: 500, persistent: false }, () => {
+      broadcastTurns(options.turnLogFile!);
+    });
+  }
   const server = http.createServer(async (req, res) => {
     // Set CORS headers (configurable origin, defaults to same-origin for security)
     const corsOrigin = options.corsOrigin || req.headers.origin || 'null';
@@ -56,6 +88,34 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('ok');
       return;
+    }
+
+    // Turn viewer routes (no auth — dev tool, localhost only)
+    if (options.turnLogFile && req.method === 'GET') {
+      if (req.url === '/turns') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(getTurnViewerHtml(options.turnLogFile));
+        return;
+      }
+      if (req.url === '/turns/data') {
+        const turns = readTurns(options.turnLogFile);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(turns));
+        return;
+      }
+      if (req.url === '/turns/stream') {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-store',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+        // Send current data immediately
+        res.write(`data: ${JSON.stringify(readTurns(options.turnLogFile))}\n\n`);
+        sseClients.add(res);
+        req.on('close', () => sseClients.delete(res));
+        return;
+      }
     }
 
     // Route: POST /api/v1/messages (unified: supports both text and files)

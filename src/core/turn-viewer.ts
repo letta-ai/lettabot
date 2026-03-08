@@ -1,0 +1,414 @@
+/**
+ * Static HTML for the turn viewer SPA.
+ * Served by the API server at GET /turns.
+ * Fetches data from GET /turns/data and subscribes to GET /turns/stream for live updates.
+ */
+
+export function getTurnViewerHtml(filePath: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Turn Viewer</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2e3348;
+  --accent:#6c8ef7;--accent2:#a78bfa;
+  --text:#e2e6f0;--text2:#8b92a8;--text3:#5a6080;
+  --green:#4ade80;--red:#f87171;--yellow:#fbbf24;
+  --rb:#1e1a2e;--rbd:#5b4daa;
+  --tb:#172434;--tbd:#2563eb;
+  --trb:#1a2d1a;--trbd:#16a34a;
+  --treb:#2d1a1a;--trebd:#dc2626;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.header{padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0}
+.header h1{font-size:16px;font-weight:600}
+.file-path{font-size:11px;color:var(--text3);font-family:monospace}
+.turn-count{font-size:12px;color:var(--text2);margin-left:auto}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0}
+.status-dot.stale{background:var(--text3)}
+.status-dot.live{animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.filters{padding:10px 20px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0}
+.filter-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em}
+.filter-group{display:flex;gap:4px;align-items:center}
+.tab{padding:4px 12px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);font-size:13px;cursor:pointer;transition:all .15s}
+.tab:hover{border-color:var(--accent);color:var(--text)}
+.tab.active{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.search-input{padding:4px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:13px;outline:none;width:180px}
+.search-input:focus{border-color:var(--accent)}
+.search-input::placeholder{color:var(--text3)}
+.table-wrapper{flex:1;overflow-y:auto}
+table{width:100%;border-collapse:collapse}
+thead{position:sticky;top:0;z-index:10;background:var(--surface2)}
+th{padding:9px 14px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:9px 14px;border-bottom:1px solid var(--border);vertical-align:top}
+tr:hover td{background:var(--surface2);cursor:pointer}
+.col-time{width:155px;color:var(--text2);font-size:12px;font-family:monospace;white-space:nowrap}
+.col-trigger{width:130px}
+.col-channel{width:100px}
+.col-events{width:65px;text-align:center;color:var(--text2);font-size:12px}
+.truncated{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;color:var(--text2);font-size:13px}
+.empty-state{padding:60px;text-align:center;color:var(--text3)}
+.empty-state p{margin-top:8px;font-size:13px}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;letter-spacing:.03em}
+.badge-user_message{background:#1e3a5f;color:#60a5fa}
+.badge-heartbeat{background:#3b2d14;color:#fbbf24}
+.badge-email{background:#1e3a2f;color:#4ade80}
+.badge-cron{background:#2d1e3a;color:#c084fc}
+.badge-webhook{background:#2d1e1e;color:#f87171}
+.badge-feed{background:#1e2d3a;color:#38bdf8}
+.badge-channel{background:var(--surface2);color:var(--text2);border:1px solid var(--border)}
+.detail-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;display:none}
+.detail-overlay.open{display:block}
+.detail-panel{position:fixed;top:0;right:0;bottom:0;width:660px;max-width:90vw;background:var(--surface);border-left:1px solid var(--border);overflow-y:auto;z-index:101;transform:translateX(100%);transition:transform .2s ease;display:flex;flex-direction:column}
+.detail-panel.open{transform:translateX(0)}
+.detail-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px;flex-shrink:0;background:var(--surface);position:sticky;top:0;z-index:5}
+.detail-meta{flex:1;min-width:0}
+.detail-ts{font-size:12px;color:var(--text3);font-family:monospace}
+.detail-trigger-row{display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap}
+.close-btn{background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;flex-shrink:0}
+.close-btn:hover{color:var(--text)}
+.detail-body{padding:18px;display:flex;flex-direction:column;gap:18px}
+.section{display:flex;flex-direction:column;gap:8px}
+.section-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3)}
+.msg-box{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:13px;color:var(--text);line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:280px;overflow-y:auto}
+.msg-box.output{border-color:var(--accent2);background:#1a1a2e}
+.events-list{display:flex;flex-direction:column;gap:6px}
+.event{border-radius:8px;overflow:hidden}
+.event-hdr{padding:7px 12px;display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;cursor:pointer;user-select:none}
+.event-hdr:hover{filter:brightness(1.1)}
+.event-toggle{font-size:10px;margin-left:auto;opacity:.7}
+.event-bdy{padding:10px 12px;font-size:12px;font-family:'SF Mono','Fira Code',monospace;white-space:pre-wrap;word-break:break-word;line-height:1.5;max-height:360px;overflow-y:auto}
+.ev-reasoning{background:var(--rb);border:1px solid var(--rbd)}
+.ev-reasoning .event-hdr{background:var(--rbd);color:#c4b5fd}
+.ev-reasoning .event-bdy{color:#ddd6fe;font-family:inherit;font-style:italic;font-size:13px}
+.ev-tool_call{background:var(--tb);border:1px solid var(--tbd)}
+.ev-tool_call .event-hdr{background:var(--tbd);color:#93c5fd}
+.ev-tool_call .event-bdy{color:#bfdbfe}
+.ev-tool_result{background:var(--trb);border:1px solid var(--trbd)}
+.ev-tool_result .event-hdr{background:var(--trbd);color:#bbf7d0}
+.ev-tool_result .event-bdy{color:#d1fae5}
+.ev-tool_result.is-error{background:var(--treb);border-color:var(--trebd)}
+.ev-tool_result.is-error .event-hdr{background:var(--trebd);color:#fecaca}
+.ev-tool_result.is-error .event-bdy{color:#fee2e2}
+.no-events{color:var(--text3);font-size:13px;font-style:italic}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Turn Viewer</h1>
+  <span class="file-path">${filePath}</span>
+  <span class="turn-count" id="turnCount"></span>
+  <div class="status-dot stale" id="statusDot" title="Connecting\u2026"></div>
+</div>
+
+<div class="filters">
+  <span class="filter-label">Trigger</span>
+  <div class="filter-group" id="triggerTabs">
+    <button class="tab active" data-trigger="all">All</button>
+    <button class="tab" data-trigger="user_message">User Message</button>
+    <button class="tab" data-trigger="heartbeat">Heartbeat</button>
+    <button class="tab" data-trigger="email">Email</button>
+    <button class="tab" data-trigger="cron">Cron</button>
+    <button class="tab" data-trigger="webhook">Webhook</button>
+    <button class="tab" data-trigger="feed">Feed</button>
+  </div>
+  <div class="filter-group" id="channelFilterGroup" style="display:none">
+    <span class="filter-label">Channel</span>
+    <div id="channelTabs"></div>
+  </div>
+  <div class="filter-group" style="margin-left:auto">
+    <input class="search-input" id="searchInput" type="text" placeholder="Search input / output\u2026">
+  </div>
+</div>
+
+<div class="table-wrapper" id="tableWrapper">
+  <table>
+    <thead>
+      <tr>
+        <th class="col-time">Time</th>
+        <th class="col-trigger">Trigger</th>
+        <th class="col-channel">Channel</th>
+        <th class="col-events">Events</th>
+        <th>Input</th>
+        <th>Output</th>
+      </tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+  <div class="empty-state" id="emptyState" style="display:none">
+    <div style="font-size:32px">&#x1F4CB;</div>
+    <p id="emptyMsg">Waiting for turns\u2026</p>
+  </div>
+</div>
+
+<div class="detail-overlay" id="detailOverlay"></div>
+<div class="detail-panel" id="detailPanel">
+  <div class="detail-header">
+    <div class="detail-meta">
+      <div class="detail-ts" id="detailTs"></div>
+      <div class="detail-trigger-row">
+        <span id="detailTrigger"></span>
+        <span id="detailChannel"></span>
+        <span style="font-size:11px;color:var(--text3)" id="detailUserId"></span>
+      </div>
+    </div>
+    <button class="close-btn" id="closeBtn">&#x2715;</button>
+  </div>
+  <div class="detail-body">
+    <div class="section">
+      <div class="section-label">Input</div>
+      <div class="msg-box" id="detailInput"></div>
+    </div>
+    <div class="section">
+      <div class="section-label">Events (<span id="detailEventsCount">0</span>)</div>
+      <div class="events-list" id="detailEvents"></div>
+    </div>
+    <div class="section">
+      <div class="section-label">Output</div>
+      <div class="msg-box output" id="detailOutput"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+var allTurns = [];
+var activeTrigger = 'all';
+var activeChannel = 'all';
+var searchQuery = '';
+var openTurnTs = null;
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtTime(ts) {
+  if (!ts) return '\u2014';
+  var d = new Date(ts);
+  if (isNaN(d.getTime())) return ts;
+  var p = function(n){return n<10?'0'+n:''+n;};
+  var mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return mo[d.getMonth()]+' '+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+}
+
+function triggerBadge(t) {
+  return '<span class="badge badge-'+esc(t||'unknown')+'">'+esc(t||'unknown')+'</span>';
+}
+function channelBadge(c) {
+  return c ? '<span class="badge badge-channel">'+esc(c)+'</span>' : '';
+}
+function trunc(str, n) {
+  n = n||120;
+  if (!str) return '<span style="color:var(--text3);font-style:italic">\u2014</span>';
+  str = str.trim();
+  return str.length > n ? esc(str.slice(0,n))+'<span style="color:var(--text3)">\u2026</span>' : esc(str);
+}
+
+function getChannels() {
+  var seen = {};
+  allTurns.forEach(function(t){ if (t.trigger==='user_message'&&t.channel) seen[t.channel]=true; });
+  return Object.keys(seen).sort();
+}
+
+function filterTurns() {
+  return allTurns.filter(function(t) {
+    if (activeTrigger !== 'all' && t.trigger !== activeTrigger) return false;
+    if (activeTrigger === 'user_message' && activeChannel !== 'all' && t.channel !== activeChannel) return false;
+    if (searchQuery) {
+      var q = searchQuery.toLowerCase();
+      if (((t.input||'').toLowerCase().indexOf(q)===-1) && ((t.output||'').toLowerCase().indexOf(q)===-1)) return false;
+    }
+    return true;
+  });
+}
+
+function setTurns(turns) {
+  allTurns = turns.slice().reverse(); // newest first
+  render();
+}
+
+function render() {
+  renderTriggerTabs();
+  renderChannelTabs();
+  renderTable();
+}
+
+function renderTriggerTabs() {
+  document.querySelectorAll('#triggerTabs .tab').forEach(function(btn) {
+    btn.classList.toggle('active', btn.getAttribute('data-trigger') === activeTrigger);
+  });
+}
+
+function renderChannelTabs() {
+  var group = document.getElementById('channelFilterGroup');
+  var container = document.getElementById('channelTabs');
+  if (activeTrigger !== 'user_message') { group.style.display = 'none'; return; }
+  var channels = getChannels();
+  if (!channels.length) { group.style.display = 'none'; return; }
+  group.style.display = 'flex';
+  container.innerHTML = ['all'].concat(channels).map(function(ch) {
+    return '<button class="tab'+(activeChannel===ch?' active':'')+'" data-channel="'+esc(ch)+'">'+(ch==='all'?'All':esc(ch))+'</button>';
+  }).join('');
+  container.querySelectorAll('[data-channel]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      activeChannel = btn.getAttribute('data-channel');
+      renderChannelTabs();
+      renderTable();
+    });
+  });
+}
+
+function renderTable() {
+  var turns = filterTurns();
+  var tbody = document.getElementById('tableBody');
+  var empty = document.getElementById('emptyState');
+  document.getElementById('turnCount').textContent =
+    allTurns.length === turns.length ? allTurns.length+' turns' : turns.length+' / '+allTurns.length+' turns';
+
+  if (!turns.length) {
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    document.getElementById('emptyMsg').textContent =
+      allTurns.length === 0 ? 'Waiting for turns\u2026' : 'No turns match the current filter.';
+    return;
+  }
+  empty.style.display = 'none';
+
+  tbody.innerHTML = turns.map(function(t, i) {
+    return '<tr data-idx="'+i+'">'+
+      '<td class="col-time">'+fmtTime(t.ts)+'</td>'+
+      '<td class="col-trigger">'+triggerBadge(t.trigger)+'</td>'+
+      '<td class="col-channel">'+channelBadge(t.channel)+'</td>'+
+      '<td class="col-events">'+((t.events||[]).length)+'</td>'+
+      '<td><div class="truncated">'+trunc(t.input)+'</div></td>'+
+      '<td><div class="truncated">'+trunc(t.output)+'</div></td>'+
+      '</tr>';
+  }).join('');
+
+  tbody.querySelectorAll('tr').forEach(function(row) {
+    row.addEventListener('click', function() {
+      openDetail(turns[parseInt(row.getAttribute('data-idx'),10)]);
+    });
+  });
+
+  // Re-open detail panel if it was open and the turn still exists
+  if (openTurnTs) {
+    var match = turns.find(function(t){ return t.ts === openTurnTs; });
+    if (match) openDetail(match);
+    else openTurnTs = null;
+  }
+}
+
+function renderEvent(e, i) {
+  if (e.type === 'reasoning') {
+    return '<div class="event ev-reasoning">'+
+      '<div class="event-hdr"><span>&#x1F4AD; Reasoning #'+(i+1)+'</span><span class="event-toggle">&#x25B2;</span></div>'+
+      '<div class="event-bdy">'+esc(e.content||'')+'</div></div>';
+  }
+  if (e.type === 'tool_call') {
+    var args=''; try{args=JSON.stringify(e.args,null,2);}catch(ex){args=String(e.args);}
+    return '<div class="event ev-tool_call">'+
+      '<div class="event-hdr"><span>&#x2699;&#xFE0F; '+esc(e.name||'unknown')+'</span>'+
+      '<span style="font-family:monospace;opacity:.5;font-size:11px">'+esc((e.id||'').slice(0,12))+'</span>'+
+      '<span class="event-toggle">&#x25B2;</span></div>'+
+      '<div class="event-bdy">'+esc(args)+'</div></div>';
+  }
+  if (e.type === 'tool_result') {
+    var errCls=e.isError?' is-error':'', icon=e.isError?'&#x274C;':'&#x2705;';
+    return '<div class="event ev-tool_result'+errCls+'">'+
+      '<div class="event-hdr"><span>'+icon+' Result'+(e.isError?' (error)':'')+'</span>'+
+      '<span style="font-family:monospace;opacity:.5;font-size:11px">'+esc((e.id||'').slice(0,12))+'</span>'+
+      '<span class="event-toggle">&#x25B2;</span></div>'+
+      '<div class="event-bdy">'+esc(e.content||'')+'</div></div>';
+  }
+  return '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text3);font-size:12px">Unknown event: '+esc(e.type)+'</div>';
+}
+
+function openDetail(turn) {
+  if (!turn) return;
+  openTurnTs = turn.ts;
+  document.getElementById('detailTs').textContent = fmtTime(turn.ts);
+  document.getElementById('detailTrigger').innerHTML = triggerBadge(turn.trigger);
+  document.getElementById('detailChannel').innerHTML = channelBadge(turn.channel);
+  document.getElementById('detailUserId').textContent = turn.userId ? 'user: '+turn.userId : '';
+  document.getElementById('detailInput').textContent = turn.input||'(empty)';
+  document.getElementById('detailOutput').textContent = turn.output||'(empty)';
+  var events = turn.events||[];
+  document.getElementById('detailEventsCount').textContent = events.length;
+  var evList = document.getElementById('detailEvents');
+  evList.innerHTML = events.length===0
+    ? '<div class="no-events">No events recorded for this turn.</div>'
+    : events.map(renderEvent).join('');
+  evList.querySelectorAll('.event-hdr').forEach(function(h) {
+    h.addEventListener('click', function() {
+      var body=h.nextElementSibling, toggle=h.querySelector('.event-toggle');
+      var hidden=body.style.display==='none';
+      body.style.display=hidden?'':'none';
+      toggle.innerHTML=hidden?'&#x25B2;':'&#x25BC;';
+    });
+  });
+  document.getElementById('detailPanel').classList.add('open');
+  document.getElementById('detailOverlay').classList.add('open');
+}
+
+function closeDetail() {
+  openTurnTs = null;
+  document.getElementById('detailPanel').classList.remove('open');
+  document.getElementById('detailOverlay').classList.remove('open');
+}
+
+document.getElementById('closeBtn').addEventListener('click', closeDetail);
+document.getElementById('detailOverlay').addEventListener('click', closeDetail);
+document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeDetail(); });
+
+document.querySelectorAll('#triggerTabs .tab').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    activeTrigger = btn.getAttribute('data-trigger');
+    activeChannel = 'all';
+    render();
+  });
+});
+
+document.getElementById('searchInput').addEventListener('input', function(e) {
+  searchQuery = e.target.value;
+  renderTable();
+});
+
+// ── Live data via SSE ──────────────────────────────────────────────────────
+var dot = document.getElementById('statusDot');
+
+function connect() {
+  var es = new EventSource('/turns/stream');
+  es.onopen = function() {
+    dot.className = 'status-dot live';
+    dot.title = 'Live \u2014 auto-updating';
+  };
+  es.onmessage = function(e) {
+    try { setTurns(JSON.parse(e.data)); } catch(ex) {}
+  };
+  es.onerror = function() {
+    dot.className = 'status-dot stale';
+    dot.title = 'Disconnected \u2014 reconnecting\u2026';
+    es.close();
+    setTimeout(connect, 3000);
+  };
+}
+
+// Initial load then connect SSE
+fetch('/turns/data').then(function(r){ return r.json(); }).then(setTurns).catch(function(){});
+connect();
+})();
+</script>
+</body>
+</html>`;
+}

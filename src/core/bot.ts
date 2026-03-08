@@ -5,7 +5,7 @@
  */
 
 import { imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
-import { mkdirSync, existsSync, appendFileSync } from 'node:fs';
+import { mkdirSync, existsSync, appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { extname, resolve, join, dirname } from 'node:path';
@@ -206,12 +206,16 @@ interface TurnRecord {
   output: string;
 }
 
+const DEFAULT_MAX_TURNS = 1000;
+
 class TurnLogger {
   private filePath: string;
+  private maxTurns: number;
   private ready = false;
 
-  constructor(filePath: string) {
+  constructor(filePath: string, maxTurns = DEFAULT_MAX_TURNS) {
     this.filePath = filePath;
+    this.maxTurns = maxTurns;
     try {
       mkdirSync(dirname(filePath), { recursive: true });
       this.ready = true;
@@ -224,8 +228,22 @@ class TurnLogger {
     if (!this.ready) return;
     try {
       appendFileSync(this.filePath, JSON.stringify(record) + '\n');
+      this.trim();
     } catch (err) {
       log.warn(`TurnLogger: failed to write turn record:`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  private trim(): void {
+    try {
+      const content = readFileSync(this.filePath, 'utf8');
+      const lines = content.split('\n').filter(l => l.trim());
+      if (lines.length <= this.maxTurns) return;
+      // Remove oldest entries (from the top), keep the most recent maxTurns
+      const trimmed = lines.slice(lines.length - this.maxTurns).join('\n') + '\n';
+      writeFileSync(this.filePath, trimmed);
+    } catch (err) {
+      log.warn(`TurnLogger: failed to trim turn log:`, err instanceof Error ? err.message : err);
     }
   }
 }
@@ -962,7 +980,7 @@ export class LettaBot implements AgentSession {
 
     // Turn accumulator for JSONL logging
     const turnLogger = this.config.logging?.turnLogFile
-      ? new TurnLogger(this.config.logging.turnLogFile)
+      ? new TurnLogger(this.config.logging.turnLogFile, this.config.logging.maxTurns)
       : null;
     const turnEvents: TurnEvent[] = [];
     let reasoningAcc = '';
@@ -1670,7 +1688,7 @@ export class LettaBot implements AgentSession {
 
     // Turn accumulator for JSONL logging
     const turnLogger = this.config.logging?.turnLogFile
-      ? new TurnLogger(this.config.logging.turnLogFile)
+      ? new TurnLogger(this.config.logging.turnLogFile, this.config.logging.maxTurns)
       : null;
     const turnEvents: TurnEvent[] = [];
     let reasoningAcc = '';
@@ -1841,7 +1859,7 @@ export class LettaBot implements AgentSession {
 
     // Turn accumulator for JSONL logging
     const turnLogger = this.config.logging?.turnLogFile
-      ? new TurnLogger(this.config.logging.turnLogFile)
+      ? new TurnLogger(this.config.logging.turnLogFile, this.config.logging.maxTurns)
       : null;
     const turnEvents: TurnEvent[] = [];
     let reasoningAcc = '';

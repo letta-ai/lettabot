@@ -168,6 +168,7 @@ export interface BotConfig {
   // Logging
   logging?: {
     turnLogFile?: string; // Path to JSONL file for turn logging (one record per agent turn)
+    maxTurns?: number;    // Max turns to retain in the log file (default: 1000, oldest trimmed)
   };
 
   // Cron

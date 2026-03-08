@@ -93,6 +93,7 @@ export interface AgentConfig {
     disallowedTools?: string[];    // Per-agent tool blocklist (overrides global/env DISALLOWED_TOOLS)
     logging?: {
       turnLogFile?: string;        // Path to JSONL file for turn logging (one record per agent turn)
+      maxTurns?: number;           // Max turns to retain in the log file (default: 1000, oldest trimmed)
     };
   };
   /** Security settings */
@@ -187,6 +188,7 @@ export interface LettaBotConfig {
     disallowedTools?: string[];    // Global tool blocklist (overridden by per-agent, falls back to DISALLOWED_TOOLS env)
     logging?: {
       turnLogFile?: string;        // Path to JSONL file for turn logging (one record per agent turn)
+      maxTurns?: number;           // Max turns to retain in the log file (default: 1000, oldest trimmed)
     };
   };
 

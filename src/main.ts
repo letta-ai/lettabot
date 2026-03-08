@@ -789,11 +789,13 @@ async function main() {
   const apiPort = parseInt(process.env.PORT || '8080', 10);
   const apiHost = process.env.API_HOST || (isContainerDeploy ? '0.0.0.0' : undefined); // Container platforms need 0.0.0.0 for health checks
   const apiCorsOrigin = process.env.API_CORS_ORIGIN; // undefined = same-origin only
+  const turnLogFile = agents.find(a => a.features?.logging?.turnLogFile)?.features?.logging?.turnLogFile;
   const apiServer = createApiServer(gateway, {
     port: apiPort,
     apiKey: apiKey,
     host: apiHost,
     corsOrigin: apiCorsOrigin,
+    turnLogFile,
   });
   
   // Startup banner
