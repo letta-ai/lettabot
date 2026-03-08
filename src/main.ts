@@ -547,6 +547,16 @@ async function main() {
   const isMultiAgent = agents.length > 1;
   log.info(`${agents.length} agent(s) configured: ${agents.map(a => a.name).join(', ')}`);
   
+  // Validate no two agents share the same turnLogFile
+  const turnLogFilePaths = agents
+    .map(a => a.features?.logging?.turnLogFile)
+    .filter((p): p is string => !!p);
+  const duplicateTurnLog = turnLogFilePaths.find((p, i) => turnLogFilePaths.indexOf(p) !== i);
+  if (duplicateTurnLog) {
+    log.error(`Multiple agents share the same turnLogFile: "${duplicateTurnLog}". Each agent must use a unique log file path.`);
+    process.exit(1);
+  }
+
   // Validate at least one agent has channels
   const totalChannels = agents.reduce((sum, a) => sum + Object.keys(a.channels).length, 0);
   if (totalChannels === 0) {
