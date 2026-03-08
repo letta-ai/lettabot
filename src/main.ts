@@ -620,6 +620,7 @@ async function main() {
       maxSessions: agentConfig.conversations?.maxSessions,
       reuseSession: agentConfig.conversations?.reuseSession,
       redaction: agentConfig.security?.redaction,
+      logging: agentConfig.features?.logging,
       cronStorePath,
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,

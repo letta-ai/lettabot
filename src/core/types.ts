@@ -165,6 +165,11 @@ export interface BotConfig {
   sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
   sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete files after send (default: false)
 
+  // Logging
+  logging?: {
+    turnLogFile?: string; // Path to JSONL file for turn logging (one record per agent turn)
+  };
+
   // Cron
   cronStorePath?: string; // Resolved cron store path (per-agent in multi-agent mode)
 

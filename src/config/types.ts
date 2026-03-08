@@ -91,6 +91,9 @@ export interface AgentConfig {
     display?: DisplayConfig;
     allowedTools?: string[];       // Per-agent tool whitelist (overrides global/env ALLOWED_TOOLS)
     disallowedTools?: string[];    // Per-agent tool blocklist (overrides global/env DISALLOWED_TOOLS)
+    logging?: {
+      turnLogFile?: string;        // Path to JSONL file for turn logging (one record per agent turn)
+    };
   };
   /** Security settings */
   security?: {
@@ -182,6 +185,9 @@ export interface LettaBotConfig {
     display?: DisplayConfig;  // Show tool calls / reasoning in channel output
     allowedTools?: string[];       // Global tool whitelist (overridden by per-agent, falls back to ALLOWED_TOOLS env)
     disallowedTools?: string[];    // Global tool blocklist (overridden by per-agent, falls back to DISALLOWED_TOOLS env)
+    logging?: {
+      turnLogFile?: string;        // Path to JSONL file for turn logging (one record per agent turn)
+    };
   };
 
   // Polling - system-level background checks (Gmail, etc.)
