@@ -37,9 +37,6 @@ interface ServerOptions {
 
 // ── Turn viewer helpers ───────────────────────────────────────────────────
 
-// SSE clients keyed by agent name
-const sseClientsByAgent = new Map<string, Set<http.ServerResponse>>();
-
 function readTurns(filePath: string): unknown[] {
   try {
     return fs.readFileSync(filePath, 'utf8')
@@ -52,19 +49,22 @@ function readTurns(filePath: string): unknown[] {
   }
 }
 
-function broadcastTurns(agentName: string, filePath: string): void {
-  const clients = sseClientsByAgent.get(agentName);
-  if (!clients || clients.size === 0) return;
-  const payload = `data: ${JSON.stringify(readTurns(filePath))}\n\n`;
-  for (const res of clients) {
-    try { res.write(payload); } catch { clients.delete(res); }
-  }
-}
-
 /**
  * Create and start the HTTP API server
  */
 export function createApiServer(deliverer: AgentRouter, options: ServerOptions): http.Server {
+  // SSE clients keyed by agent name — scoped to this server instance
+  const sseClientsByAgent = new Map<string, Set<http.ServerResponse>>();
+
+  function broadcastTurns(agentName: string, filePath: string): void {
+    const clients = sseClientsByAgent.get(agentName);
+    if (!clients || clients.size === 0) return;
+    const payload = `data: ${JSON.stringify(readTurns(filePath))}\n\n`;
+    for (const res of clients) {
+      try { res.write(payload); } catch { clients.delete(res); }
+    }
+  }
+
   // Watch each agent's turn log file and push updates to SSE clients
   if (options.turnLogFiles) {
     for (const [agentName, filePath] of Object.entries(options.turnLogFiles)) {

@@ -212,6 +212,7 @@ class TurnLogger {
   private filePath: string;
   private maxTurns: number;
   private ready = false;
+  private lineCount = 0;
 
   constructor(filePath: string, maxTurns = DEFAULT_MAX_TURNS) {
     this.filePath = filePath;
@@ -219,6 +220,13 @@ class TurnLogger {
     try {
       mkdirSync(dirname(filePath), { recursive: true });
       this.ready = true;
+      // Count existing lines so the in-memory counter starts accurate
+      try {
+        const existing = readFileSync(filePath, 'utf8');
+        this.lineCount = existing.split('\n').filter(l => l.trim()).length;
+      } catch {
+        this.lineCount = 0; // file doesn't exist yet
+      }
     } catch (err) {
       log.warn(`TurnLogger: failed to create log directory for ${filePath}:`, err instanceof Error ? err.message : err);
     }
@@ -228,7 +236,10 @@ class TurnLogger {
     if (!this.ready) return;
     try {
       appendFileSync(this.filePath, JSON.stringify(record) + '\n');
-      this.trim();
+      this.lineCount++;
+      if (this.lineCount > this.maxTurns) {
+        this.trim();
+      }
     } catch (err) {
       log.warn(`TurnLogger: failed to write turn record:`, err instanceof Error ? err.message : err);
     }
@@ -238,10 +249,10 @@ class TurnLogger {
     try {
       const content = readFileSync(this.filePath, 'utf8');
       const lines = content.split('\n').filter(l => l.trim());
-      if (lines.length <= this.maxTurns) return;
       // Remove oldest entries (from the top), keep the most recent maxTurns
       const trimmed = lines.slice(lines.length - this.maxTurns).join('\n') + '\n';
       writeFileSync(this.filePath, trimmed);
+      this.lineCount = this.maxTurns;
     } catch (err) {
       log.warn(`TurnLogger: failed to trim turn log:`, err instanceof Error ? err.message : err);
     }
@@ -277,11 +288,15 @@ export class LettaBot implements AgentSession {
 
   private conversationOverrides: Set<string> = new Set();
   private readonly sessionManager: SessionManager;
+  private readonly turnLogger: TurnLogger | null;
 
   constructor(config: BotConfig) {
     this.config = config;
     mkdirSync(config.workingDir, { recursive: true });
     this.store = new Store('lettabot-agent.json', config.agentName);
+    this.turnLogger = config.logging?.turnLogFile
+      ? new TurnLogger(config.logging.turnLogFile, config.logging.maxTurns)
+      : null;
     if (config.reuseSession === false) {
       log.warn('Session reuse disabled (conversations.reuseSession=false): each foreground/background message uses a fresh SDK subprocess (~5s overhead per turn).');
     }
@@ -979,9 +994,6 @@ export class LettaBot implements AgentSession {
     lap('format message');
 
     // Turn accumulator for JSONL logging
-    const turnLogger = this.config.logging?.turnLogFile
-      ? new TurnLogger(this.config.logging.turnLogFile, this.config.logging.maxTurns)
-      : null;
     const turnEvents: TurnEvent[] = [];
     let reasoningAcc = '';
 
@@ -1160,7 +1172,7 @@ export class LettaBot implements AgentSession {
               }
             }
             // Flush accumulated reasoning into turn events on type change
-            if (turnLogger && reasoningAcc.trim()) {
+            if (this.turnLogger && reasoningAcc.trim()) {
               turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
               reasoningAcc = '';
             }
@@ -1185,7 +1197,7 @@ export class LettaBot implements AgentSession {
             const tcId = streamMsg.toolCallId?.slice(0, 12) || '?';
             log.info(`>>> TOOL CALL: ${tcName} (id: ${tcId})`);
             sawNonAssistantSinceLastUuid = true;
-            if (turnLogger) {
+            if (this.turnLogger) {
               turnEvents.push({
                 type: 'tool_call',
                 id: streamMsg.toolCallId || '',
@@ -1205,7 +1217,7 @@ export class LettaBot implements AgentSession {
           } else if (streamMsg.type === 'tool_result') {
             log.info(`<<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
             sawNonAssistantSinceLastUuid = true;
-            if (turnLogger) {
+            if (this.turnLogger) {
               const resultContent = (streamMsg as any).content ?? '';
               turnEvents.push({
                 type: 'tool_result',
@@ -1226,7 +1238,7 @@ export class LettaBot implements AgentSession {
             if (this.config.display?.showReasoning) {
               reasoningBuffer += chunk;
             }
-            if (turnLogger) {
+            if (this.turnLogger) {
               reasoningAcc += chunk;
             }
           } else if (streamMsg.type === 'error') {
@@ -1507,11 +1519,11 @@ export class LettaBot implements AgentSession {
       lap('stream complete');
 
       // Write turn JSONL record
-      if (turnLogger) {
+      if (this.turnLogger) {
         if (reasoningAcc.trim()) {
           turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
         }
-        turnLogger.write({
+        this.turnLogger.write({
           ts: new Date().toISOString(),
           trigger: 'user_message',
           channel: msg.channel,
@@ -1687,9 +1699,6 @@ export class LettaBot implements AgentSession {
     const acquired = await this.acquireLock(convKey);
 
     // Turn accumulator for JSONL logging
-    const turnLogger = this.config.logging?.turnLogFile
-      ? new TurnLogger(this.config.logging.turnLogFile, this.config.logging.maxTurns)
-      : null;
     const turnEvents: TurnEvent[] = [];
     let reasoningAcc = '';
 
@@ -1712,7 +1721,7 @@ export class LettaBot implements AgentSession {
                 const cmd = String((msg as any).toolInput?.command ?? msg.rawArguments ?? '');
                 if (cmd.includes('lettabot-message send')) usedMessageCli = true;
               }
-              if (turnLogger) {
+              if (this.turnLogger) {
                 if (reasoningAcc.trim()) {
                   turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
                   reasoningAcc = '';
@@ -1725,7 +1734,7 @@ export class LettaBot implements AgentSession {
                 });
               }
             }
-            if (msg.type === 'tool_result' && turnLogger) {
+            if (msg.type === 'tool_result' && this.turnLogger) {
               const resultContent = (msg as any).content ?? '';
               turnEvents.push({
                 type: 'tool_result',
@@ -1735,11 +1744,11 @@ export class LettaBot implements AgentSession {
               });
             }
             if (msg.type === 'reasoning') {
-              if (lastMsgType !== 'reasoning' && turnLogger && reasoningAcc.trim()) {
+              if (lastMsgType !== 'reasoning' && this.turnLogger && reasoningAcc.trim()) {
                 turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
                 reasoningAcc = '';
               }
-              if (turnLogger) reasoningAcc += msg.content || '';
+              if (this.turnLogger) reasoningAcc += msg.content || '';
             }
             lastMsgType = msg.type;
             if (msg.type === 'error') {
@@ -1816,12 +1825,12 @@ export class LettaBot implements AgentSession {
           }
 
           // Write turn JSONL record
-          if (turnLogger) {
+          if (this.turnLogger) {
             if (reasoningAcc.trim()) {
               turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
               reasoningAcc = '';
             }
-            turnLogger.write({
+            this.turnLogger.write({
               ts: new Date().toISOString(),
               trigger: context?.type || 'heartbeat',
               input: text,
@@ -1858,9 +1867,6 @@ export class LettaBot implements AgentSession {
     const acquired = await this.acquireLock(convKey);
 
     // Turn accumulator for JSONL logging
-    const turnLogger = this.config.logging?.turnLogFile
-      ? new TurnLogger(this.config.logging.turnLogFile, this.config.logging.maxTurns)
-      : null;
     const turnEvents: TurnEvent[] = [];
     let reasoningAcc = '';
     let lastMsgType: string | null = null;
@@ -1872,7 +1878,7 @@ export class LettaBot implements AgentSession {
       try {
         for await (const msg of stream()) {
           // Accumulate turn events for logging
-          if (turnLogger) {
+          if (this.turnLogger) {
             if (msg.type === 'reasoning') {
               if (lastMsgType !== 'reasoning' && reasoningAcc.trim()) {
                 turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
@@ -1911,11 +1917,11 @@ export class LettaBot implements AgentSession {
       }
     } finally {
       // Write JSONL record after stream ends (success or error)
-      if (turnLogger) {
+      if (this.turnLogger) {
         if (reasoningAcc.trim()) {
           turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
         }
-        turnLogger.write({
+        this.turnLogger.write({
           ts: new Date().toISOString(),
           trigger: context?.type || 'webhook',
           input: text,
