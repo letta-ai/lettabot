@@ -30,14 +30,15 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 interface ServerOptions {
   port: number;
   apiKey: string;
-  host?: string;      // Bind address (default: 127.0.0.1 for security)
+  host?: string;       // Bind address (default: 127.0.0.1 for security)
   corsOrigin?: string; // CORS origin (default: same-origin only)
-  turnLogFile?: string; // If set, enables GET /turns viewer
+  turnLogFiles?: Record<string, string>; // agentName -> filePath; enables GET /turns viewer
 }
 
 // ── Turn viewer helpers ───────────────────────────────────────────────────
 
-const sseClients = new Set<http.ServerResponse>();
+// SSE clients keyed by agent name
+const sseClientsByAgent = new Map<string, Set<http.ServerResponse>>();
 
 function readTurns(filePath: string): unknown[] {
   try {
@@ -51,11 +52,12 @@ function readTurns(filePath: string): unknown[] {
   }
 }
 
-function broadcastTurns(filePath: string): void {
-  if (sseClients.size === 0) return;
+function broadcastTurns(agentName: string, filePath: string): void {
+  const clients = sseClientsByAgent.get(agentName);
+  if (!clients || clients.size === 0) return;
   const payload = `data: ${JSON.stringify(readTurns(filePath))}\n\n`;
-  for (const res of sseClients) {
-    try { res.write(payload); } catch { sseClients.delete(res); }
+  for (const res of clients) {
+    try { res.write(payload); } catch { clients.delete(res); }
   }
 }
 
@@ -63,11 +65,14 @@ function broadcastTurns(filePath: string): void {
  * Create and start the HTTP API server
  */
 export function createApiServer(deliverer: AgentRouter, options: ServerOptions): http.Server {
-  // Watch the turn log file and push updates to SSE clients
-  if (options.turnLogFile) {
-    fs.watchFile(options.turnLogFile, { interval: 500, persistent: false }, () => {
-      broadcastTurns(options.turnLogFile!);
-    });
+  // Watch each agent's turn log file and push updates to SSE clients
+  if (options.turnLogFiles) {
+    for (const [agentName, filePath] of Object.entries(options.turnLogFiles)) {
+      sseClientsByAgent.set(agentName, new Set());
+      fs.watchFile(filePath, { interval: 500, persistent: false }, () => {
+        broadcastTurns(agentName, filePath);
+      });
+    }
   }
   const server = http.createServer(async (req, res) => {
     // Set CORS headers (configurable origin, defaults to same-origin for security)
@@ -91,29 +96,37 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     }
 
     // Turn viewer routes (no auth — dev tool, localhost only)
-    if (options.turnLogFile && req.method === 'GET') {
-      if (req.url === '/turns') {
+    if (options.turnLogFiles && req.method === 'GET') {
+      const agentNames = Object.keys(options.turnLogFiles);
+      const parsedUrl = new URL(req.url ?? '/', `http://localhost`);
+
+      if (parsedUrl.pathname === '/turns') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(getTurnViewerHtml(options.turnLogFile));
+        res.end(getTurnViewerHtml(agentNames));
         return;
       }
-      if (req.url === '/turns/data') {
-        const turns = readTurns(options.turnLogFile);
+      if (parsedUrl.pathname === '/turns/data') {
+        const agentName = parsedUrl.searchParams.get('agent') || agentNames[0];
+        const filePath = options.turnLogFiles[agentName];
+        if (!filePath) { res.writeHead(404); res.end('Unknown agent'); return; }
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify(turns));
+        res.end(JSON.stringify(readTurns(filePath)));
         return;
       }
-      if (req.url === '/turns/stream') {
+      if (parsedUrl.pathname === '/turns/stream') {
+        const agentName = parsedUrl.searchParams.get('agent') || agentNames[0];
+        const filePath = options.turnLogFiles[agentName];
+        if (!filePath) { res.writeHead(404); res.end('Unknown agent'); return; }
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-store',
           'Connection': 'keep-alive',
           'X-Accel-Buffering': 'no',
         });
-        // Send current data immediately
-        res.write(`data: ${JSON.stringify(readTurns(options.turnLogFile))}\n\n`);
-        sseClients.add(res);
-        req.on('close', () => sseClients.delete(res));
+        res.write(`data: ${JSON.stringify(readTurns(filePath))}\n\n`);
+        const clients = sseClientsByAgent.get(agentName)!;
+        clients.add(res);
+        req.on('close', () => clients.delete(res));
         return;
       }
     }

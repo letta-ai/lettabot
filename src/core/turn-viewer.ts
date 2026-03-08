@@ -4,7 +4,9 @@
  * Fetches data from GET /turns/data and subscribes to GET /turns/stream for live updates.
  */
 
-export function getTurnViewerHtml(filePath: string): string {
+export function getTurnViewerHtml(agentNames: string[]): string {
+  const defaultAgent = agentNames[0] ?? '';
+  const agentNamesJson = JSON.stringify(agentNames);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -106,7 +108,10 @@ tr:hover td{background:var(--surface2);cursor:pointer}
 
 <div class="header">
   <h1>Turn Viewer</h1>
-  <span class="file-path">${filePath}</span>
+  <span class="file-path" id="agentLabel" style="display:${agentNames.length > 1 ? 'none' : 'inline'}">${defaultAgent}</span>
+  <select id="agentSelect" style="display:${agentNames.length > 1 ? 'inline-block' : 'none'};background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer;outline:none">
+    ${agentNames.map(n => `<option value="${n}">${n}</option>`).join('')}
+  </select>
   <span class="turn-count" id="turnCount"></span>
   <div class="status-dot stale" id="statusDot" title="Connecting\u2026"></div>
 </div>
@@ -182,6 +187,8 @@ tr:hover td{background:var(--surface2);cursor:pointer}
 
 <script>
 (function() {
+var AGENT_NAMES = ${agentNamesJson};
+var activeAgent = AGENT_NAMES[0] || '';
 var allTurns = [];
 var activeTrigger = 'all';
 var activeChannel = 'all';
@@ -384,11 +391,29 @@ document.getElementById('searchInput').addEventListener('input', function(e) {
   renderTable();
 });
 
+// ── Agent selector ─────────────────────────────────────────────────────────
+var agentSelect = document.getElementById('agentSelect');
+if (agentSelect) {
+  agentSelect.addEventListener('change', function() {
+    activeAgent = agentSelect.value;
+    allTurns = [];
+    activeTrigger = 'all';
+    activeChannel = 'all';
+    openTurnTs = null;
+    render();
+    switchAgent();
+  });
+}
+
 // ── Live data via SSE ──────────────────────────────────────────────────────
 var dot = document.getElementById('statusDot');
+var currentEs = null;
 
 function connect() {
-  var es = new EventSource('/turns/stream');
+  if (currentEs) { currentEs.close(); currentEs = null; }
+  var url = '/turns/stream' + (activeAgent ? '?agent='+encodeURIComponent(activeAgent) : '');
+  var es = new EventSource(url);
+  currentEs = es;
   es.onopen = function() {
     dot.className = 'status-dot live';
     dot.title = 'Live \u2014 auto-updating';
@@ -397,6 +422,7 @@ function connect() {
     try { setTurns(JSON.parse(e.data)); } catch(ex) {}
   };
   es.onerror = function() {
+    if (es !== currentEs) return; // stale, ignore
     dot.className = 'status-dot stale';
     dot.title = 'Disconnected \u2014 reconnecting\u2026';
     es.close();
@@ -404,9 +430,14 @@ function connect() {
   };
 }
 
-// Initial load then connect SSE
-fetch('/turns/data').then(function(r){ return r.json(); }).then(setTurns).catch(function(){});
-connect();
+function switchAgent() {
+  var url = '/turns/data' + (activeAgent ? '?agent='+encodeURIComponent(activeAgent) : '');
+  fetch(url).then(function(r){ return r.json(); }).then(setTurns).catch(function(){});
+  connect();
+}
+
+// Initial load
+switchAgent();
 })();
 </script>
 </body>
