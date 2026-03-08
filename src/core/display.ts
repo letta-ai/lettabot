@@ -239,8 +239,11 @@ export function formatReasoningDisplay(
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
     const html = escaped
-      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-      .replace(/\*(.+?)\*/g, '<i>$1</i>');
+      // Only convert likely markdown delimiters:
+      // - ignore escaped asterisks (\*)
+      // - ignore in-word/math operators (e.g., 2*3*4, 2 * 3 * 4)
+      .replace(/(?<![\\\w])\*\*(?=\S)([\s\S]*?\S)\*\*(?!\w)/g, '<b>$1</b>')
+      .replace(/(?<![\\\w])\*(?=\S)([^*\n]*?\S)\*(?!\w)/g, '<i>$1</i>');
     return {
       text: `<blockquote expandable><b>Thinking</b>\n${html}</blockquote>`,
       parseMode: 'HTML',
