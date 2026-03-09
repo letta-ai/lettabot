@@ -1365,11 +1365,11 @@ export class LettaBot implements AgentSession {
               if (runId && (streamMsg.type === 'reasoning' || streamMsg.type === 'tool_call')) {
                 bufferRunScopedDisplayEvent(runId, streamMsg);
                 filteredRunEventCount++;
-                log.debug(`Buffering run-scoped pre-foreground display event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runId=${runId})`);
+                log.trace(`Buffering run-scoped pre-foreground display event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runId=${runId})`);
                 continue;
               }
               filteredRunEventCount++;
-              log.debug(`Deferring run-scoped pre-foreground event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')})`);
+              log.trace(`Deferring run-scoped pre-foreground event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')})`);
               continue;
             }
           } else if (expectedForegroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(expectedForegroundRunId)) {
@@ -1380,7 +1380,7 @@ export class LettaBot implements AgentSession {
               ignoredNonForegroundResultCount++;
               log.warn(`Ignoring non-foreground result event (seq=${seq}, key=${convKey}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId}, source=${expectedForegroundRunSource || 'unknown'})`);
             } else {
-              log.debug(`Skipping non-foreground stream event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
+              log.trace(`Skipping non-foreground stream event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
             }
             continue;
           }
@@ -1388,12 +1388,7 @@ export class LettaBot implements AgentSession {
           receivedAnyData = true;
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
-          const preview = JSON.stringify(streamMsg).slice(0, 300);
-          if (streamMsg.type === 'reasoning' || streamMsg.type === 'assistant') {
-            log.debug(`type=${streamMsg.type} ${preview}`);
-          } else {
-            log.info(`type=${streamMsg.type} ${preview}`);
-          }
+          log.trace(`type=${streamMsg.type} ${JSON.stringify(streamMsg).slice(0, 300)}`);
           
           // stream_event is a low-level streaming primitive (partial deltas), not a
           // semantic type change. Skip it for type-transition logic so it doesn't
