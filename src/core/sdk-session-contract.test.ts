@@ -489,6 +489,72 @@ describe('SDK session contract', () => {
     expect(opts).not.toHaveProperty('memfs');
   });
 
+  it('passes sleeptime options to resumeSession when configured', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'ack' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      sleeptime: {
+        trigger: 'step-count',
+        behavior: 'reminder',
+        stepCount: 25,
+      },
+    });
+
+    await bot.sendToAgent('test');
+
+    const opts = vi.mocked(resumeSession).mock.calls[0][1];
+    expect(opts).toHaveProperty('sleeptime');
+    expect((opts as Record<string, unknown>).sleeptime).toEqual({
+      trigger: 'step-count',
+      behavior: 'reminder',
+      stepCount: 25,
+    });
+  });
+
+  it('omits sleeptime key from resumeSession options when config sleeptime is undefined', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'ack' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    await bot.sendToAgent('test');
+
+    const opts = vi.mocked(resumeSession).mock.calls[0][1];
+    expect(opts).not.toHaveProperty('sleeptime');
+  });
+
   it('keeps canUseTool callbacks isolated for concurrent keyed sessions', async () => {
     const store = new Store(undefined, 'LettaBot');
     store.setAgent('agent-contract-test', 'https://api.letta.com');
@@ -904,6 +970,11 @@ describe('SDK session contract', () => {
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
       allowedTools: [],
+      memfs: true,
+      sleeptime: {
+        trigger: 'compaction-event',
+        behavior: 'auto-launch',
+      },
     });
 
     await bot.sendToAgent('first message');
@@ -912,6 +983,10 @@ describe('SDK session contract', () => {
     expect(vi.mocked(createAgent)).toHaveBeenCalledWith(
       expect.objectContaining({
         tags: ['origin:lettabot'],
+        sleeptime: {
+          trigger: 'compaction-event',
+          behavior: 'auto-launch',
+        },
       })
     );
   });

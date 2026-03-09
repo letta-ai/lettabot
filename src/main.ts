@@ -303,6 +303,18 @@ async function main() {
     // Default false prevents the SDK from auto-enabling memfs, which crashes on
     // self-hosted Letta servers that don't have the git endpoint.
     const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : false);
+    const configuredSleeptime = agentConfig.features?.sleeptime;
+    const sleeptimeRequiresMemfs = !!configuredSleeptime && configuredSleeptime.trigger !== 'off';
+    const effectiveSleeptime = !resolvedMemfs && sleeptimeRequiresMemfs
+      ? undefined
+      : configuredSleeptime;
+
+    if (!resolvedMemfs && sleeptimeRequiresMemfs) {
+      log.warn(
+        `Agent ${agentConfig.name}: sleeptime is configured but memfs is disabled; ` +
+        `sleeptime will be ignored. Enable features.memfs (or LETTABOT_MEMFS=true) to use sleeptime.`
+      );
+    }
 
     // Create LettaBot for this agent
     const resolvedWorkingDir = agentConfig.workingDir
@@ -327,6 +339,7 @@ async function main() {
       sendFileMaxSize: agentConfig.features?.sendFileMaxSize,
       sendFileCleanup: agentConfig.features?.sendFileCleanup,
       memfs: resolvedMemfs,
+      sleeptime: effectiveSleeptime,
       display: agentConfig.features?.display,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',

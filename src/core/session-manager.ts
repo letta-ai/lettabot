@@ -161,6 +161,7 @@ export class SessionManager {
       tools: [createManageTodoTool(this.getTodoAgentKey())],
       // Memory filesystem (context repository): true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
       ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
+      ...(this.config.sleeptime ? { sleeptime: this.config.sleeptime } : {}),
       // In bypassPermissions mode, canUseTool is only called for interactive
       // tools (AskUserQuestion, ExitPlanMode). When no callback is provided
       // (background triggers), the SDK auto-denies interactive tools.
@@ -273,6 +274,7 @@ export class SessionManager {
         memory: loadMemoryBlocks(this.config.agentName),
         tags: ['origin:lettabot'],
         ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
+        ...(this.config.sleeptime ? { sleeptime: this.config.sleeptime } : {}),
       });
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
       this.store.setAgent(newAgentId, currentBaseUrl);

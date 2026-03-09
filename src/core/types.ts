@@ -131,6 +131,15 @@ export interface SkillsConfig {
   additionalSkills?: string[];
 }
 
+export type SleeptimeTrigger = 'off' | 'step-count' | 'compaction-event';
+export type SleeptimeBehavior = 'reminder' | 'auto-launch';
+
+export interface SleeptimeConfig {
+  trigger?: SleeptimeTrigger;
+  behavior?: SleeptimeBehavior;
+  stepCount?: number;
+}
+
 /**
  * Bot configuration
  */
@@ -157,6 +166,7 @@ export interface BotConfig {
 
   // Memory filesystem (context repository)
   memfs?: boolean; // true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
+  sleeptime?: SleeptimeConfig; // Configure SDK reflection reminders (/sleeptime equivalent)
 
   // Security
   redaction?: import('./redact.js').RedactionConfig;

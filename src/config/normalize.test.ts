@@ -34,6 +34,7 @@ describe('normalizeAgents', () => {
     'BLUESKY_NOTIFICATIONS_ENABLED', 'BLUESKY_NOTIFICATIONS_INTERVAL_SEC', 'BLUESKY_NOTIFICATIONS_LIMIT',
     'BLUESKY_NOTIFICATIONS_PRIORITY', 'BLUESKY_NOTIFICATIONS_REASONS',
     'HEARTBEAT_ENABLED', 'HEARTBEAT_INTERVAL_MIN', 'HEARTBEAT_SKIP_RECENT_USER_MIN',
+    'SLEEPTIME_TRIGGER', 'SLEEPTIME_BEHAVIOR', 'SLEEPTIME_STEP_COUNT',
     'CRON_ENABLED',
   ];
   const savedEnv: Record<string, string | undefined> = {};
@@ -392,6 +393,26 @@ describe('normalizeAgents', () => {
       });
     });
 
+    it('should pick up sleeptime from env vars when YAML features is empty', () => {
+      process.env.SLEEPTIME_TRIGGER = 'step-count';
+      process.env.SLEEPTIME_BEHAVIOR = 'reminder';
+      process.env.SLEEPTIME_STEP_COUNT = '25';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.sleeptime).toEqual({
+        trigger: 'step-count',
+        behavior: 'reminder',
+        stepCount: 25,
+      });
+    });
+
     it('should pick up cron from env vars when YAML features is empty', () => {
       process.env.CRON_ENABLED = 'true';
 
@@ -432,6 +453,30 @@ describe('normalizeAgents', () => {
       expect(agents[0].features?.maxToolCalls).toBe(50);
     });
 
+    it('should merge env var sleeptime into existing YAML features', () => {
+      process.env.SLEEPTIME_TRIGGER = 'compaction-event';
+      process.env.SLEEPTIME_BEHAVIOR = 'auto-launch';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+        features: {
+          cron: true,
+          maxToolCalls: 50,
+        },
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.sleeptime).toEqual({
+        trigger: 'compaction-event',
+        behavior: 'auto-launch',
+      });
+      expect(agents[0].features?.cron).toBe(true);
+      expect(agents[0].features?.maxToolCalls).toBe(50);
+    });
+
     it('should not override YAML heartbeat with env vars', () => {
       process.env.HEARTBEAT_ENABLED = 'true';
       process.env.HEARTBEAT_INTERVAL_MIN = '99';
@@ -454,6 +499,33 @@ describe('normalizeAgents', () => {
       // YAML values should win
       expect(agents[0].features?.heartbeat?.intervalMin).toBe(10);
       expect(agents[0].features?.heartbeat?.skipRecentUserMin).toBe(3);
+    });
+
+    it('should not override YAML sleeptime with env vars', () => {
+      process.env.SLEEPTIME_TRIGGER = 'step-count';
+      process.env.SLEEPTIME_BEHAVIOR = 'reminder';
+      process.env.SLEEPTIME_STEP_COUNT = '99';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+        features: {
+          sleeptime: {
+            trigger: 'compaction-event',
+            behavior: 'auto-launch',
+            stepCount: 10,
+          },
+        },
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.sleeptime).toEqual({
+        trigger: 'compaction-event',
+        behavior: 'auto-launch',
+        stepCount: 10,
+      });
     });
 
     it('should handle heartbeat env var with defaults when interval not set', () => {
