@@ -168,6 +168,7 @@ tr:hover td{background:var(--surface2);cursor:pointer}
         <span style="font-size:11px;color:var(--text3)" id="detailUserId"></span>
         <span style="font-size:11px;color:var(--text3);margin-left:auto;font-family:monospace" id="detailDuration"></span>
       </div>
+      <div style="font-size:10px;color:var(--text3);font-family:monospace;margin-top:2px" id="detailTurnId"></div>
     </div>
     <button class="close-btn" id="closeBtn">&#x2715;</button>
   </div>
@@ -359,6 +360,7 @@ function openDetail(turn) {
   document.getElementById('detailChannel').innerHTML = channelBadge(turn.channel);
   document.getElementById('detailUserId').textContent = turn.userId ? 'user: '+turn.userId : '';
   document.getElementById('detailDuration').innerHTML = turn.durationMs != null ? fmtDuration(turn.durationMs) : '';
+  document.getElementById('detailTurnId').textContent = turn.turnId ? 'turn: '+turn.turnId : '';
   document.getElementById('detailInput').textContent = turn.input||'(empty)';
   document.getElementById('detailOutput').textContent = turn.output||'(empty)';
   var events = turn.events||[];

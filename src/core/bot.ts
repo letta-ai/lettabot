@@ -197,6 +197,7 @@ type TurnEvent =
 
 interface TurnRecord {
   ts: string;
+  turnId: string;
   trigger: string;
   channel?: string;
   chatId?: string;
@@ -938,9 +939,9 @@ export class LettaBot implements AgentSession {
   private async processMessage(msg: InboundMessage, adapter: ChannelAdapter, retried = false): Promise<void> {
     // Track timing and last target
     const debugTiming = !!process.env.LETTABOT_DEBUG_TIMING;
-    const t0 = debugTiming ? performance.now() : 0;
+    const t0 = performance.now();
     const lap = (label: string) => {
-      log.debug(`${label}: ${(performance.now() - t0).toFixed(0)}ms`);
+      if (debugTiming) log.debug(`${label}: ${(performance.now() - t0).toFixed(0)}ms`);
     };
     const suppressDelivery = isResponseDeliverySuppressed(msg);
     this.lastUserMessageTime = new Date();
@@ -1526,6 +1527,7 @@ export class LettaBot implements AgentSession {
         }
         this.turnLogger.write({
           ts: new Date().toISOString(),
+          turnId,
           trigger: 'user_message',
           channel: msg.channel,
           chatId: msg.chatId,
@@ -1835,6 +1837,7 @@ export class LettaBot implements AgentSession {
             }
             this.turnLogger.write({
               ts: new Date().toISOString(),
+              turnId,
               trigger: context?.type || 'heartbeat',
               input: text,
               events: turnEvents,
@@ -1870,6 +1873,7 @@ export class LettaBot implements AgentSession {
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
     const t0 = performance.now();
+    const turnId = crypto.randomUUID();
 
     // Turn accumulator for JSONL logging
     const turnEvents: TurnEvent[] = [];
@@ -1928,6 +1932,7 @@ export class LettaBot implements AgentSession {
         }
         this.turnLogger.write({
           ts: new Date().toISOString(),
+          turnId,
           trigger: context?.type || 'webhook',
           input: text,
           events: turnEvents,
