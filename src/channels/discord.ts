@@ -355,6 +355,17 @@ Ask the bot owner to approve with:
           }
           isListeningMode = mode === 'listen' && !wasMentioned;
 
+          // Daily rate limit check before side-effectful actions (like thread creation)
+          // so over-limit mentions don't create empty threads.
+          const limits = resolveDailyLimits(this.config.groups, keys);
+          const counterScope = limits.matchedKey ?? chatId;
+          const counterKey = `${this.config.agentName ?? ''}:discord:${counterScope}`;
+          const limitResult = checkDailyLimit(counterKey, userId, limits);
+          if (!limitResult.allowed) {
+            log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
+            return;
+          }
+
           const threadMode = resolveDiscordThreadMode(this.config.groups, keys);
           if (threadMode === 'thread-only' && !isThreadMessage) {
             const shouldCreateThread =
@@ -369,16 +380,6 @@ Ask the bot owner to approve with:
             }
             effectiveChatId = createdThread.id;
             effectiveGroupName = createdThread.name || effectiveGroupName;
-          }
-
-          // Daily rate limit check (after all other gating so we only count real triggers)
-          const limits = resolveDailyLimits(this.config.groups, keys);
-          const counterScope = limits.matchedKey ?? chatId;
-          const counterKey = `${this.config.agentName ?? ''}:discord:${counterScope}`;
-          const limitResult = checkDailyLimit(counterKey, userId, limits);
-          if (!limitResult.allowed) {
-            log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
-            return;
           }
         }
 
