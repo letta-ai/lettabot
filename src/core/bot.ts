@@ -204,6 +204,7 @@ interface TurnRecord {
   input: string;
   events: TurnEvent[];
   output: string;
+  durationMs?: number;
 }
 
 const DEFAULT_MAX_TURNS = 1000;
@@ -1532,6 +1533,7 @@ export class LettaBot implements AgentSession {
           input: formattedText,
           events: turnEvents,
           output: response,
+          durationMs: Math.round(performance.now() - t0),
         });
       }
 
@@ -1697,6 +1699,7 @@ export class LettaBot implements AgentSession {
     const isSilent = context?.outputMode === 'silent';
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
+    const t0 = performance.now();
 
     // Turn accumulator for JSONL logging
     const turnEvents: TurnEvent[] = [];
@@ -1836,6 +1839,7 @@ export class LettaBot implements AgentSession {
               input: text,
               events: turnEvents,
               output: response,
+              durationMs: Math.round(performance.now() - t0),
             });
           }
 
@@ -1865,6 +1869,7 @@ export class LettaBot implements AgentSession {
   ): AsyncGenerator<StreamMsg> {
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
+    const t0 = performance.now();
 
     // Turn accumulator for JSONL logging
     const turnEvents: TurnEvent[] = [];
@@ -1927,6 +1932,7 @@ export class LettaBot implements AgentSession {
           input: text,
           events: turnEvents,
           output: outputAcc,
+          durationMs: Math.round(performance.now() - t0),
         });
       }
       if (this.config.reuseSession === false) {

@@ -53,6 +53,7 @@ tr:hover td{background:var(--surface2);cursor:pointer}
 .col-trigger{width:130px}
 .col-channel{width:100px}
 .col-events{width:65px;text-align:center;color:var(--text2);font-size:12px}
+.col-duration{width:80px;text-align:right;color:var(--text2);font-size:12px;font-family:monospace;white-space:nowrap}
 .truncated{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;color:var(--text2);font-size:13px}
 .empty-state{padding:60px;text-align:center;color:var(--text3)}
 .empty-state p{margin-top:8px;font-size:13px}
@@ -122,7 +123,6 @@ tr:hover td{background:var(--surface2);cursor:pointer}
     <button class="tab active" data-trigger="all">All</button>
     <button class="tab" data-trigger="user_message">User Message</button>
     <button class="tab" data-trigger="heartbeat">Heartbeat</button>
-    <button class="tab" data-trigger="email">Email</button>
     <button class="tab" data-trigger="cron">Cron</button>
     <button class="tab" data-trigger="webhook">Webhook</button>
     <button class="tab" data-trigger="feed">Feed</button>
@@ -144,6 +144,7 @@ tr:hover td{background:var(--surface2);cursor:pointer}
         <th class="col-trigger">Trigger</th>
         <th class="col-channel">Channel</th>
         <th class="col-events">Events</th>
+        <th class="col-duration">Duration</th>
         <th>Input</th>
         <th>Output</th>
       </tr>
@@ -165,6 +166,7 @@ tr:hover td{background:var(--surface2);cursor:pointer}
         <span id="detailTrigger"></span>
         <span id="detailChannel"></span>
         <span style="font-size:11px;color:var(--text3)" id="detailUserId"></span>
+        <span style="font-size:11px;color:var(--text3);margin-left:auto;font-family:monospace" id="detailDuration"></span>
       </div>
     </div>
     <button class="close-btn" id="closeBtn">&#x2715;</button>
@@ -214,6 +216,13 @@ function triggerBadge(t) {
 function channelBadge(c) {
   return c ? '<span class="badge badge-channel">'+esc(c)+'</span>' : '';
 }
+function fmtDuration(ms) {
+  if (ms == null) return '<span style="color:var(--text3)">\u2014</span>';
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+  return Math.floor(ms / 60000) + 'm ' + ((ms % 60000) / 1000).toFixed(0) + 's';
+}
+
 function trunc(str, n) {
   n = n||120;
   if (!str) return '<span style="color:var(--text3);font-style:italic">\u2014</span>';
@@ -297,6 +306,7 @@ function renderTable() {
       '<td class="col-trigger">'+triggerBadge(t.trigger)+'</td>'+
       '<td class="col-channel">'+channelBadge(t.channel)+'</td>'+
       '<td class="col-events">'+((t.events||[]).length)+'</td>'+
+      '<td class="col-duration">'+fmtDuration(t.durationMs)+'</td>'+
       '<td><div class="truncated">'+trunc(t.input)+'</div></td>'+
       '<td><div class="truncated">'+trunc(t.output)+'</div></td>'+
       '</tr>';
@@ -348,6 +358,7 @@ function openDetail(turn) {
   document.getElementById('detailTrigger').innerHTML = triggerBadge(turn.trigger);
   document.getElementById('detailChannel').innerHTML = channelBadge(turn.channel);
   document.getElementById('detailUserId').textContent = turn.userId ? 'user: '+turn.userId : '';
+  document.getElementById('detailDuration').innerHTML = turn.durationMs != null ? fmtDuration(turn.durationMs) : '';
   document.getElementById('detailInput').textContent = turn.input||'(empty)';
   document.getElementById('detailOutput').textContent = turn.output||'(empty)';
   var events = turn.events||[];
