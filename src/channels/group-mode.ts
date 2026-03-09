@@ -14,6 +14,10 @@ export interface GroupModeConfig {
   dailyLimit?: number;
   /** Maximum bot triggers per user per day in this group. Omit for unlimited. */
   dailyUserLimit?: number;
+  /** Discord only: require messages to be in a thread before the bot responds. */
+  threadMode?: 'any' | 'thread-only';
+  /** Discord only: when true, @mentions in parent channels auto-create a thread. */
+  autoCreateThreadOnMention?: boolean;
   /**
    * @deprecated Use mode: "mention-only" (true) or "open" (false).
    */

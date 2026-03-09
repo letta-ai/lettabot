@@ -440,6 +440,27 @@ Resolution follows the same priority as `mode`: specific channel/group ID > guil
 
 This works across all channels (Discord, Telegram, Slack, Signal, WhatsApp).
 
+### Discord Thread Controls
+
+Discord supports extra per-group controls for thread-first workflows:
+
+- `groups.<id>.threadMode: thread-only` -- bot responds only to messages in threads
+- `groups.<id>.autoCreateThreadOnMention: true` -- for top-level @mentions, create a thread and reply there
+
+Example (`#ezra` style):
+
+```yaml
+channels:
+  discord:
+    groups:
+      "EZRA_CHANNEL_ID":
+        mode: open
+        threadMode: thread-only
+        autoCreateThreadOnMention: true
+```
+
+Thread messages inherit parent channel config, so child threads under `EZRA_CHANNEL_ID` use the same group rules.
+
 ### Finding Group IDs
 
 Each channel uses different identifiers for groups:
