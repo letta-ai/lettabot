@@ -229,6 +229,7 @@ Ask the bot owner to approve with:
         serverId: message.guildId,
       });
       const selfUserId = this.client?.user?.id;
+      const wasMentioned = isGroup && !!this.client?.user && message.mentions.has(this.client.user);
 
       if (!shouldProcessDiscordBotMessage({
         isFromBot,
@@ -309,6 +310,25 @@ Ask the bot owner to approve with:
       if (!content && attachments.length === 0) return;
 
       if (content.startsWith('/')) {
+        if (isGroup && this.config.groups) {
+          const threadMode = resolveDiscordThreadMode(this.config.groups, keys);
+          if (threadMode === 'thread-only' && !isThreadMessage) {
+            const shouldCreateThread =
+              wasMentioned && resolveDiscordAutoCreateThreadOnMention(this.config.groups, keys);
+            if (!shouldCreateThread) {
+              return;
+            }
+
+            // Keep command behavior aligned with normal message gating in thread-only mode.
+            // If a mention-triggered thread is created, drop the parent-channel command.
+            const createdThread = await this.createThreadForMention(message, content);
+            if (!createdThread) {
+              return;
+            }
+            return;
+          }
+        }
+
         const parts = content.slice(1).split(/\s+/);
         const command = parts[0]?.toLowerCase();
         const cmdArgs = parts.slice(1).join(' ') || undefined;
@@ -330,7 +350,6 @@ Ask the bot owner to approve with:
       if (this.onMessage) {
         const groupName = isGroup && 'name' in message.channel ? message.channel.name : undefined;
         const displayName = message.member?.displayName || message.author.globalName || message.author.username;
-        const wasMentioned = isGroup && !!this.client?.user && message.mentions.has(this.client.user);
         let isListeningMode = false;
         let effectiveChatId = message.channel.id;
         let effectiveGroupName = groupName;
