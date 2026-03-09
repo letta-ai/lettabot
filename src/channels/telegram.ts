@@ -595,8 +595,14 @@ export class TelegramAdapter implements ChannelAdapter {
       } catch (err: any) {
         const reason = err?.description || err?.message || String(err);
         log.warn('sendVoice failed, falling back to sendAudio:', reason);
-        const result = await this.bot.api.sendAudio(file.chatId, new InputFile(file.filePath), { caption });
-        return { messageId: String(result.message_id) };
+        try {
+          const result = await this.bot.api.sendAudio(file.chatId, new InputFile(file.filePath), { caption });
+          return { messageId: String(result.message_id) };
+        } catch (fallbackErr: any) {
+          const fallbackReason = fallbackErr?.description || fallbackErr?.message || String(fallbackErr);
+          log.error('sendAudio fallback also failed:', fallbackReason);
+          throw fallbackErr;
+        }
       }
     }
 
