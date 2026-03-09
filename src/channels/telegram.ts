@@ -593,13 +593,10 @@ export class TelegramAdapter implements ChannelAdapter {
         const result = await this.bot.api.sendVoice(file.chatId, input, { caption });
         return { messageId: String(result.message_id) };
       } catch (err: any) {
-        // Fall back to sendAudio if voice messages are restricted (Telegram Premium privacy setting)
-        if (err?.description?.includes('VOICE_MESSAGES_FORBIDDEN')) {
-          log.warn('sendVoice forbidden, falling back to sendAudio');
-          const result = await this.bot.api.sendAudio(file.chatId, new InputFile(file.filePath), { caption });
-          return { messageId: String(result.message_id) };
-        }
-        throw err;
+        const reason = err?.description || err?.message || String(err);
+        log.warn('sendVoice failed, falling back to sendAudio:', reason);
+        const result = await this.bot.api.sendAudio(file.chatId, new InputFile(file.filePath), { caption });
+        return { messageId: String(result.message_id) };
       }
     }
 

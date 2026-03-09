@@ -425,10 +425,23 @@ export class LettaBot implements AgentSession {
           .map(dir => join(dir, 'lettabot-tts'))
           .find(p => existsSync(p));
 
+        const ttsProvider = (process.env.TTS_PROVIDER || 'elevenlabs').toLowerCase();
+        const ttsVoice = ttsProvider === 'openai'
+          ? (process.env.OPENAI_TTS_VOICE || 'alloy')
+          : (process.env.ELEVENLABS_VOICE_ID || 'onwK4e9ZLuTAKqWW03F9');
+        const ttsModel = ttsProvider === 'openai'
+          ? (process.env.OPENAI_TTS_MODEL || 'tts-1')
+          : (process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2');
+
         if (!ttsPath) {
           log.warn('Directive voice skipped: lettabot-tts not found in skill dirs');
           continue;
         }
+
+        log.info(
+          `Directive voice: generating memo (provider=${ttsProvider}, model=${ttsModel}, voice=${ttsVoice}, textLen=${directive.text.length})`,
+        );
+        log.info(`Directive voice: helper=${ttsPath}`);
 
         try {
           const outputPath = await new Promise<string>((resolve, reject) => {
@@ -438,12 +451,36 @@ export class LettaBot implements AgentSession {
               timeout: 30_000,
             }, (err, stdout, stderr) => {
               if (err) {
-                reject(new Error(stderr?.trim() || err.message));
+                const execErr = new Error(stderr?.trim() || err.message) as Error & {
+                  code?: string | number | null;
+                  signal?: NodeJS.Signals;
+                  stdout?: string;
+                  stderr?: string;
+                };
+                execErr.code = err.code;
+                execErr.signal = err.signal;
+                execErr.stdout = stdout?.trim();
+                execErr.stderr = stderr?.trim();
+                reject(execErr);
               } else {
-                resolve(stdout.trim());
+                const output = stdout.trim();
+                if (!output) {
+                  reject(new Error('lettabot-tts returned an empty output path'));
+                  return;
+                }
+                if (stderr?.trim()) {
+                  log.warn('Directive voice: lettabot-tts stderr:', stderr.trim());
+                }
+                resolve(output.split('\n').at(-1)?.trim() || output);
               }
             });
           });
+
+          const outputStats = await stat(outputPath);
+          if (!outputStats.isFile()) {
+            throw new Error(`Generated TTS output is not a file: ${outputPath}`);
+          }
+          log.info(`Directive voice: generated file ${outputPath} (${outputStats.size} bytes)`);
 
           await adapter.sendFile({
             chatId,
@@ -457,7 +494,23 @@ export class LettaBot implements AgentSession {
           // Clean up generated file
           try { await unlink(outputPath); } catch {}
         } catch (err) {
-          log.warn('Directive voice failed:', err instanceof Error ? err.message : err);
+          const execErr = err as Error & {
+            code?: string | number | null;
+            signal?: NodeJS.Signals;
+            stdout?: string;
+            stderr?: string;
+          };
+          log.warn('Directive voice failed:', {
+            message: execErr?.message || String(err),
+            code: execErr?.code,
+            signal: execErr?.signal,
+            stdout: typeof execErr?.stdout === 'string' ? execErr.stdout.slice(0, 300) : undefined,
+            stderr: typeof execErr?.stderr === 'string' ? execErr.stderr.slice(0, 1200) : undefined,
+            provider: ttsProvider,
+            model: ttsModel,
+            voice: ttsVoice,
+            helper: ttsPath,
+          });
         }
       }
     }
