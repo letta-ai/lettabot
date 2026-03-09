@@ -1922,12 +1922,27 @@ export class LettaBot implements AgentSession {
           if (response.trim()) {
             const parsed = parseDirectives(response);
             if (parsed.directives.length > 0) {
-              const sourceAdapter = (context?.sourceChannel ? this.channels.get(context.sourceChannel) : undefined)
-                ?? this.channels.values().next().value;
-              if (sourceAdapter) {
-                executedDirectives = await this.executeDirectives(
-                  parsed.directives, sourceAdapter, context?.sourceChatId ?? '',
-                );
+              const sourceAdapter = context?.sourceChannel ? this.channels.get(context.sourceChannel) : undefined;
+              const sourceChatId = context?.sourceChatId ?? '';
+
+              // Without a valid source adapter, only explicitly targeted directives can run.
+              // Non-targeted directives (react, voice, untargeted send-file) need a source
+              // chat context and must be filtered out to avoid executing against a wrong channel.
+              const directives = sourceAdapter
+                ? parsed.directives
+                : parsed.directives.filter(d =>
+                    d.type === 'send-message' || (d.type === 'send-file' && d.channel && d.chat)
+                  );
+
+              if (directives.length > 0) {
+                // Targeted directives resolve their own adapter; the fallback here is only
+                // used by non-targeted directives (which are filtered out when no source).
+                const adapter = sourceAdapter ?? this.channels.values().next().value;
+                if (adapter) {
+                  executedDirectives = await this.executeDirectives(
+                    directives, adapter, sourceChatId,
+                  );
+                }
               }
               response = parsed.cleanText;
             }
