@@ -73,6 +73,7 @@ export class MockChannelAdapter implements ChannelAdapter {
       userId?: string;
       chatId?: string;
       userName?: string;
+      timeoutMs?: number;
     } = {}
   ): Promise<string> {
     if (!this.onMessage) {
@@ -114,8 +115,9 @@ export class MockChannelAdapter implements ChannelAdapter {
     });
     
     // Wait for response with timeout
+    const timeoutMs = options.timeoutMs ?? 60000;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Response timeout (60s)')), 60000);
+      setTimeout(() => reject(new Error(`Response timeout (${Math.round(timeoutMs / 1000)}s)`)), timeoutMs);
     });
     
     const response = await Promise.race([responsePromise, timeoutPromise]);

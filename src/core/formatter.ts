@@ -87,34 +87,37 @@ function formatPhoneNumber(phone: string): string {
  * Format the sender identifier nicely based on channel
  */
 function formatSender(msg: InboundMessage): string {
-  // Use display name if available
-  if (msg.userName?.trim()) {
-    return msg.userName.trim();
-  }
-  
+  const name = msg.userName?.trim();
+
   // Format based on channel
   switch (msg.channel) {
     case 'slack':
       // Add @ prefix for Slack usernames/IDs
-      return msg.userHandle ? `@${msg.userHandle}` : `@${msg.userId}`;
+      return name || (msg.userHandle ? `@${msg.userHandle}` : `@${msg.userId}`);
 
     case 'discord':
       // Add @ prefix for Discord usernames/IDs
-      return msg.userHandle ? `@${msg.userHandle}` : `@${msg.userId}`;
+      return name || (msg.userHandle ? `@${msg.userHandle}` : `@${msg.userId}`);
     
     case 'whatsapp':
-    case 'signal':
-      // Format phone numbers nicely
-      if (/^\+?\d{10,}$/.test(msg.userId.replace(/\D/g, ''))) {
+    case 'signal': {
+      // For phone-based channels, always include the phone number so the agent
+      // can uniquely identify senders (pushName is user-chosen and not unique).
+      const isPhone = /^\+?\d{10,}$/.test(msg.userId.replace(/\D/g, ''));
+      if (name && isPhone) {
+        return `${name} (${formatPhoneNumber(msg.userId)})`;
+      }
+      if (isPhone) {
         return formatPhoneNumber(msg.userId);
       }
-      return msg.userId;
+      return name || msg.userId;
+    }
     
     case 'telegram':
-      return msg.userHandle ? `@${msg.userHandle}` : msg.userId;
+      return name || (msg.userHandle ? `@${msg.userHandle}` : msg.userId);
     
     default:
-      return msg.userId;
+      return name || msg.userId;
   }
 }
 

@@ -18,7 +18,8 @@
 import type { ChannelAdapter } from './types.js';
 import type { InboundMessage, OutboundMessage } from '../core/types.js';
 import type { DmPolicy } from '../pairing/types.js';
-import { isUserAllowed, upsertPairingRequest, approvePairingCode } from '../pairing/store.js';
+import { upsertPairingRequest, approvePairingCode } from '../pairing/store.js';
+import { checkDmAccess } from './shared/access-control.js';
 import { markdownToTdlib } from './telegram-mtproto-format.js';
 import * as readline from 'node:readline';
 
@@ -89,30 +90,13 @@ export class TelegramMTProtoAdapter implements ChannelAdapter {
     };
   }
 
-  /**
-   * Check if a user is authorized based on dmPolicy
-   */
   private async checkAccess(userId: number): Promise<'allowed' | 'blocked' | 'pairing'> {
-    const policy = this.config.dmPolicy || 'pairing';
-
-    if (policy === 'open') {
-      return 'allowed';
-    }
-
-    const allowed = await isUserAllowed(
+    return checkDmAccess(
       'telegram-mtproto',
       String(userId),
-      this.config.allowedUsers?.map(String)
+      this.config.dmPolicy,
+      this.config.allowedUsers?.map(String),
     );
-    if (allowed) {
-      return 'allowed';
-    }
-
-    if (policy === 'allowlist') {
-      return 'blocked';
-    }
-
-    return 'pairing';
   }
 
   /**

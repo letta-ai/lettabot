@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { isGroupAllowed, isGroupUserAllowed, resolveGroupAllowedUsers, resolveGroupMode, resolveReceiveBotMessages, type GroupsConfig } from './group-mode.js';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { isGroupAllowed, isGroupUserAllowed, resolveGroupAllowedUsers, resolveGroupMode, resolveReceiveBotMessages, resolveDailyLimits, checkDailyLimit, resetDailyLimitCounters, type GroupsConfig } from './group-mode.js';
 
 describe('group-mode helpers', () => {
   describe('isGroupAllowed', () => {
@@ -215,6 +215,146 @@ describe('group-mode helpers', () => {
       // other groups fall back to wildcard
       expect(isGroupUserAllowed(groups, ['other-group'], 'owner')).toBe(true);
       expect(isGroupUserAllowed(groups, ['other-group'], 'guest')).toBe(false);
+    });
+  });
+
+  describe('resolveDailyLimits', () => {
+    it('returns empty when groups config is missing', () => {
+      expect(resolveDailyLimits(undefined, ['group-1'])).toEqual({});
+    });
+
+    it('returns empty when no daily limits configured', () => {
+      const groups: GroupsConfig = { 'group-1': { mode: 'open' } };
+      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({});
+    });
+
+    it('resolves dailyLimit from specific key', () => {
+      const groups: GroupsConfig = {
+        'group-1': { mode: 'open', dailyLimit: 50 },
+      };
+      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: 50, dailyUserLimit: undefined, matchedKey: 'group-1' });
+    });
+
+    it('resolves dailyUserLimit from specific key', () => {
+      const groups: GroupsConfig = {
+        'group-1': { mode: 'open', dailyUserLimit: 10 },
+      };
+      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: undefined, dailyUserLimit: 10, matchedKey: 'group-1' });
+    });
+
+    it('resolves both limits together', () => {
+      const groups: GroupsConfig = {
+        'group-1': { mode: 'open', dailyLimit: 100, dailyUserLimit: 20 },
+      };
+      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: 100, dailyUserLimit: 20, matchedKey: 'group-1' });
+    });
+
+    it('uses wildcard as fallback', () => {
+      const groups: GroupsConfig = {
+        '*': { mode: 'open', dailyLimit: 30 },
+      };
+      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: 30, dailyUserLimit: undefined, matchedKey: '*' });
+    });
+
+    it('prefers specific key over wildcard', () => {
+      const groups: GroupsConfig = {
+        '*': { mode: 'open', dailyLimit: 100 },
+        'group-1': { mode: 'open', dailyLimit: 10 },
+      };
+      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({ dailyLimit: 10, dailyUserLimit: undefined, matchedKey: 'group-1' });
+    });
+
+    it('uses first matching key in priority order', () => {
+      const groups: GroupsConfig = {
+        'chat-1': { mode: 'open', dailyLimit: 5 },
+        'server-1': { mode: 'open', dailyLimit: 50 },
+      };
+      expect(resolveDailyLimits(groups, ['chat-1', 'server-1'])).toEqual({ dailyLimit: 5, dailyUserLimit: undefined, matchedKey: 'chat-1' });
+      expect(resolveDailyLimits(groups, ['chat-2', 'server-1'])).toEqual({ dailyLimit: 50, dailyUserLimit: undefined, matchedKey: 'server-1' });
+    });
+
+    it('inherits undefined fields from wildcard', () => {
+      const groups: GroupsConfig = {
+        '*': { mode: 'open', dailyUserLimit: 10 },
+        'channel-123': { mode: 'open', dailyLimit: 50 },
+      };
+      // channel-123 sets dailyLimit, wildcard provides dailyUserLimit
+      expect(resolveDailyLimits(groups, ['channel-123'])).toEqual({
+        dailyLimit: 50,
+        dailyUserLimit: 10,
+        matchedKey: 'channel-123',
+      });
+    });
+
+    it('specific key overrides wildcard for the same field', () => {
+      const groups: GroupsConfig = {
+        '*': { mode: 'open', dailyLimit: 100, dailyUserLimit: 20 },
+        'group-1': { mode: 'open', dailyLimit: 10 },
+      };
+      // group-1 overrides dailyLimit, inherits dailyUserLimit from wildcard
+      expect(resolveDailyLimits(groups, ['group-1'])).toEqual({
+        dailyLimit: 10,
+        dailyUserLimit: 20,
+        matchedKey: 'group-1',
+      });
+    });
+  });
+
+  describe('checkDailyLimit', () => {
+    beforeEach(() => {
+      resetDailyLimitCounters();
+    });
+
+    it('allows when no limits configured', () => {
+      const result = checkDailyLimit('test:group', 'user-1', {});
+      expect(result).toEqual({ allowed: true });
+    });
+
+    it('enforces dailyLimit (group-wide total)', () => {
+      const limits = { dailyLimit: 3 };
+      expect(checkDailyLimit('test:group', 'user-1', limits).allowed).toBe(true);
+      expect(checkDailyLimit('test:group', 'user-2', limits).allowed).toBe(true);
+      expect(checkDailyLimit('test:group', 'user-3', limits).allowed).toBe(true);
+      // 4th message exceeds group-wide limit regardless of user
+      const result = checkDailyLimit('test:group', 'user-4', limits);
+      expect(result).toEqual({ allowed: false, reason: 'daily-limit' });
+    });
+
+    it('enforces dailyUserLimit (per-user)', () => {
+      const limits = { dailyUserLimit: 2 };
+      expect(checkDailyLimit('test:group', 'user-1', limits).allowed).toBe(true);
+      expect(checkDailyLimit('test:group', 'user-1', limits).allowed).toBe(true);
+      // user-1 is blocked
+      const result = checkDailyLimit('test:group', 'user-1', limits);
+      expect(result).toEqual({ allowed: false, reason: 'daily-user-limit' });
+      // user-2 is still allowed
+      expect(checkDailyLimit('test:group', 'user-2', limits).allowed).toBe(true);
+    });
+
+    it('checks group limit before user limit', () => {
+      const limits = { dailyLimit: 2, dailyUserLimit: 5 };
+      expect(checkDailyLimit('test:group', 'user-1', limits).allowed).toBe(true);
+      expect(checkDailyLimit('test:group', 'user-2', limits).allowed).toBe(true);
+      // Group limit hit -- reason should be daily-limit, not daily-user-limit
+      const result = checkDailyLimit('test:group', 'user-3', limits);
+      expect(result).toEqual({ allowed: false, reason: 'daily-limit' });
+    });
+
+    it('isolates counters between different groups', () => {
+      const limits = { dailyLimit: 1 };
+      expect(checkDailyLimit('discord:group-a', 'user-1', limits).allowed).toBe(true);
+      expect(checkDailyLimit('discord:group-b', 'user-1', limits).allowed).toBe(true);
+      // group-a is full, group-b is full, but they're independent
+      expect(checkDailyLimit('discord:group-a', 'user-1', limits).allowed).toBe(false);
+      expect(checkDailyLimit('discord:group-b', 'user-1', limits).allowed).toBe(false);
+    });
+
+    it('does not increment counters when denied', () => {
+      const limits = { dailyLimit: 2 };
+      expect(checkDailyLimit('test:group', 'user-1', limits).allowed).toBe(true);  // count=1
+      expect(checkDailyLimit('test:group', 'user-1', limits).allowed).toBe(true);  // count=2
+      expect(checkDailyLimit('test:group', 'user-1', limits).allowed).toBe(false); // denied, count stays 2
+      expect(checkDailyLimit('test:group', 'user-1', limits).allowed).toBe(false); // still denied, count stays 2
     });
   });
 });

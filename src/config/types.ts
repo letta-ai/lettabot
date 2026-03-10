@@ -40,6 +40,15 @@ export interface DisplayConfig {
   reasoningMaxChars?: number;
 }
 
+export type SleeptimeTrigger = 'off' | 'step-count' | 'compaction-event';
+export type SleeptimeBehavior = 'reminder' | 'auto-launch';
+
+export interface SleeptimeConfig {
+  trigger?: SleeptimeTrigger;
+  behavior?: SleeptimeBehavior;
+  stepCount?: number;
+}
+
 /**
  * Configuration for a single agent in multi-agent mode.
  * Each agent has its own name, channels, and features.
@@ -85,6 +94,7 @@ export interface AgentConfig {
       target?: string;       // Delivery target ("telegram:123", "slack:C123", etc.)
     };
     memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
+    sleeptime?: SleeptimeConfig; // Configure SDK reflection reminders (/sleeptime equivalent)
     maxToolCalls?: number;
     sendFileDir?: string;    // Restrict <send-file> directive to this directory (default: data/outbound)
     sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
@@ -177,6 +187,7 @@ export interface LettaBotConfig {
     };
     inlineImages?: boolean;   // Send images directly to the LLM (default: true). Set false to only send file paths.
     memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
+    sleeptime?: SleeptimeConfig; // Configure SDK reflection reminders (/sleeptime equivalent)
     maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)
     sendFileDir?: string;   // Restrict <send-file> directive to this directory (default: data/outbound)
     sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
@@ -279,6 +290,14 @@ export interface GroupConfig {
   allowedUsers?: string[];
   /** Process messages from other bots instead of dropping them. Default: false. */
   receiveBotMessages?: boolean;
+  /** Maximum total bot triggers per day in this group. Omit for unlimited. */
+  dailyLimit?: number;
+  /** Maximum bot triggers per user per day in this group. Omit for unlimited. */
+  dailyUserLimit?: number;
+  /** Discord only: require messages to be in a thread before the bot responds. */
+  threadMode?: 'any' | 'thread-only';
+  /** Discord only: when true, @mentions in parent channels auto-create a thread. */
+  autoCreateThreadOnMention?: boolean;
   /**
    * @deprecated Use mode: "mention-only" (true) or "open" (false).
    */
@@ -370,6 +389,7 @@ export interface DiscordConfig {
   instantGroups?: string[];       // Guild/server IDs or channel IDs that bypass batching
   listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
   groups?: Record<string, GroupConfig>;  // Per-guild/channel settings, "*" for defaults
+  ignoreBotReactions?: boolean;   // Ignore all bot reactions (default: true). Set false for multi-bot setups.
 }
 
 export interface BlueskyConfig {
@@ -740,6 +760,33 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       enabled: true,
       ...(Number.isFinite(intervalMin) ? { intervalMin } : {}),
       ...(Number.isFinite(skipRecentUserMin) ? { skipRecentUserMin } : {}),
+    };
+  }
+
+  const sleeptimeTriggerRaw = process.env.SLEEPTIME_TRIGGER;
+  const sleeptimeBehaviorRaw = process.env.SLEEPTIME_BEHAVIOR;
+  const sleeptimeStepCountRaw = process.env.SLEEPTIME_STEP_COUNT;
+
+  const sleeptimeTrigger = sleeptimeTriggerRaw === 'off'
+    || sleeptimeTriggerRaw === 'step-count'
+    || sleeptimeTriggerRaw === 'compaction-event'
+    ? sleeptimeTriggerRaw
+    : undefined;
+  const sleeptimeBehavior = sleeptimeBehaviorRaw === 'reminder'
+    || sleeptimeBehaviorRaw === 'auto-launch'
+    ? sleeptimeBehaviorRaw
+    : undefined;
+  const sleeptimeStepCountParsed = sleeptimeStepCountRaw ? parseInt(sleeptimeStepCountRaw, 10) : undefined;
+  const sleeptimeStepCount = Number.isFinite(sleeptimeStepCountParsed)
+    && (sleeptimeStepCountParsed as number) > 0
+    ? sleeptimeStepCountParsed
+    : undefined;
+
+  if (!features.sleeptime && (sleeptimeTrigger || sleeptimeBehavior || sleeptimeStepCount)) {
+    features.sleeptime = {
+      ...(sleeptimeTrigger ? { trigger: sleeptimeTrigger } : {}),
+      ...(sleeptimeBehavior ? { behavior: sleeptimeBehavior } : {}),
+      ...(sleeptimeStepCount ? { stepCount: sleeptimeStepCount } : {}),
     };
   }
 

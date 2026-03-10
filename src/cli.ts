@@ -81,6 +81,7 @@ async function configure() {
     message: 'What would you like to do?',
     options: [
       { value: 'onboard', label: 'Run setup wizard', hint: 'lettabot onboard' },
+      { value: 'tui', label: 'Open TUI editor', hint: 'lettabot config tui' },
       { value: 'edit', label: 'Edit config file', hint: resolveConfigPath() },
       { value: 'exit', label: 'Exit', hint: '' },
     ],
@@ -95,6 +96,11 @@ async function configure() {
     case 'onboard':
       await onboard();
       break;
+    case 'tui': {
+      const { configTui } = await import('./cli/config-tui.js');
+      await configTui();
+      break;
+    }
     case 'edit': {
       const configPath = resolveConfigPath();
       const editor = process.env.EDITOR || 'nano';
@@ -228,8 +234,10 @@ Commands:
   onboard              Setup wizard (integrations, skills, configuration)
   server               Start the bot server
   configure            View and edit configuration
+  config tui           Interactive core config editor
   config encode        Encode config file as base64 for LETTABOT_CONFIG_YAML
   config decode        Decode and print LETTABOT_CONFIG_YAML env var
+  connect <provider>   Connect model providers (e.g., chatgpt/codex)
   model                Interactive model selector
   model show           Show current agent model
   model set <handle>   Set model by handle (e.g., anthropic/claude-sonnet-4-5-20250929)
@@ -248,6 +256,7 @@ Commands:
   todo complete <id>   Mark a todo complete
   todo remove <id>     Remove a todo
   todo snooze <id>     Snooze a todo until a date
+  set-conversation <id>  Set a specific conversation ID
   reset-conversation   Clear conversation ID (fixes corrupted conversations)
   destroy              Delete all local data and start fresh
   pairing list <ch>    List pending pairing requests
@@ -257,6 +266,7 @@ Commands:
 Examples:
   lettabot onboard                           # First-time setup
   lettabot server                            # Start the bot
+  lettabot config tui                        # Interactive core config editor
   lettabot channels                          # Interactive channel management
   lettabot channels add discord              # Add Discord integration
   lettabot channels remove telegram          # Remove Telegram
@@ -266,6 +276,7 @@ Examples:
   lettabot todo list --actionable
   lettabot pairing list telegram             # Show pending Telegram pairings
   lettabot pairing approve telegram ABCD1234 # Approve a pairing code
+  lettabot connect chatgpt                  # Connect ChatGPT subscription (via OAuth)
 
 Environment:
   LETTABOT_CONFIG_YAML    Inline YAML or base64-encoded config (for cloud deploys)
@@ -615,6 +626,9 @@ async function main() {
         await configEncode();
       } else if (subCommand === 'decode') {
         await configDecode();
+      } else if (subCommand === 'tui') {
+        const { configTui } = await import('./cli/config-tui.js');
+        await configTui();
       } else {
         await configure();
       }
@@ -655,6 +669,18 @@ async function main() {
     case 'model': {
       const { modelCommand } = await import('./commands/model.js');
       await modelCommand(subCommand, args[2]);
+      break;
+    }
+
+    case 'connect': {
+      const { runLettaConnect } = await import('./commands/letta-connect.js');
+      const requestedProvider = subCommand || 'chatgpt';
+      const providers = requestedProvider === 'chatgpt' ? ['chatgpt', 'codex'] : [requestedProvider];
+      const connected = await runLettaConnect(providers);
+      if (!connected) {
+        console.error(`Failed to run letta connect for provider: ${requestedProvider}`);
+        process.exit(1);
+      }
       break;
     }
     
@@ -784,6 +810,54 @@ async function main() {
       break;
     }
     
+    case 'set-conversation': {
+      const p = await import('@clack/prompts');
+      const config = getConfig();
+      const newConvId = subCommand;
+
+      if (!newConvId) {
+        console.error('Usage: lettabot set-conversation <conversation-id>');
+        process.exit(1);
+      }
+
+      p.intro('Set Conversation');
+
+      const configuredName =
+        (config.agent?.name?.trim())
+        || (config.agents?.length && config.agents[0].name?.trim())
+        || 'LettaBot';
+
+      const configuredAgents = (config.agents?.length ? config.agents : [{ name: configuredName }])
+        .map(agent => agent.name?.trim())
+        .filter((name): name is string => !!name);
+
+      const uniqueAgents = Array.from(new Set(configuredAgents));
+
+      let targetAgent = uniqueAgents[0];
+      if (uniqueAgents.length > 1) {
+        const choice = await p.select({
+          message: 'Which agent?',
+          options: uniqueAgents.map(name => ({ value: name, label: name })),
+        });
+        if (p.isCancel(choice)) {
+          p.cancel('Cancelled');
+          break;
+        }
+        targetAgent = choice as string;
+      }
+
+      const store = new Store('lettabot-agent.json', targetAgent);
+      const oldConvId = store.conversationId;
+      store.conversationId = newConvId;
+
+      if (oldConvId) {
+        p.log.info(`Previous conversation: ${oldConvId}`);
+      }
+      p.log.success(`Conversation set to: ${newConvId} (agent: ${targetAgent})`);
+      p.outro('Restart the server for the change to take effect.');
+      break;
+    }
+
     case 'reset-conversation': {
       const p = await import('@clack/prompts');
       const config = getConfig();
@@ -908,7 +982,7 @@ async function main() {
       
     case undefined:
       console.log('Usage: lettabot <command>\n');
-      console.log('Commands: onboard, server, configure, model, channels, bluesky, skills, reset-conversation, destroy, help\n');
+      console.log('Commands: onboard, server, configure, connect, model, channels, bluesky, skills, set-conversation, reset-conversation, destroy, help\n');
       console.log('Run "lettabot help" for more information.');
       break;
       

@@ -17,6 +17,12 @@ vi.mock('../tools/letta-api.js', () => ({
   rejectApproval: vi.fn(),
   cancelRuns: vi.fn(),
   recoverOrphanedConversationApproval: vi.fn(),
+  recoverPendingApprovalsForAgent: vi.fn(),
+  isRecoverableConversationId: vi.fn((conversationId?: string | null) => (
+    typeof conversationId === 'string' && conversationId.length > 0
+      && conversationId !== 'default'
+      && conversationId !== 'shared'
+  )),
   getLatestRunError: vi.fn().mockResolvedValue(null),
 }));
 
@@ -36,8 +42,10 @@ vi.mock('./system-prompt.js', () => ({
 }));
 
 import { createAgent, createSession, resumeSession } from '@letta-ai/letta-code-sdk';
-import { getLatestRunError, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
+import { getLatestRunError, recoverOrphanedConversationApproval, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { LettaBot } from './bot.js';
+import { SessionManager } from './session-manager.js';
+import { Store } from './store.js';
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -69,6 +77,10 @@ describe('SDK session contract', () => {
     delete process.env.LETTA_SESSION_TIMEOUT_MS;
 
     vi.clearAllMocks();
+    vi.mocked(recoverPendingApprovalsForAgent).mockResolvedValue({
+      recovered: false,
+      details: 'No pending approvals found on agent',
+    });
   });
 
   afterEach(() => {
@@ -400,6 +412,59 @@ describe('SDK session contract', () => {
     expect(vi.mocked(resumeSession)).not.toHaveBeenCalled();
   });
 
+  it('uses agent-level proactive recovery when bootstrap conversation id is default alias', async () => {
+    const initialSession = {
+      initialize: vi.fn(async () => undefined),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: true, conversationId: 'default' })),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'default',
+    };
+
+    const recoveredSession = {
+      initialize: vi.fn(async () => undefined),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: false, conversationId: 'default' })),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'ok' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'default',
+    };
+
+    vi.mocked(recoverPendingApprovalsForAgent).mockResolvedValueOnce({
+      recovered: true,
+      details: 'Rejected 1 pending approval(s) and cancelled 1 run(s)',
+    });
+
+    vi.mocked(resumeSession)
+      .mockReturnValueOnce(initialSession as never)
+      .mockReturnValueOnce(recoveredSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    const response = await bot.sendToAgent('hello');
+
+    expect(response).toBe('ok');
+    expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(2);
+    expect(recoverOrphanedConversationApproval).not.toHaveBeenCalled();
+    expect(recoverPendingApprovalsForAgent).toHaveBeenCalledWith('agent-contract-test');
+    expect(initialSession.close).toHaveBeenCalledTimes(1);
+  });
+
   it('passes memfs: true to resumeSession when config sets memfs true', async () => {
     const mockSession = {
       initialize: vi.fn(async () => undefined),
@@ -487,6 +552,196 @@ describe('SDK session contract', () => {
     expect(opts).not.toHaveProperty('memfs');
   });
 
+  it('passes sleeptime options to resumeSession when configured', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'ack' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      sleeptime: {
+        trigger: 'step-count',
+        behavior: 'reminder',
+        stepCount: 25,
+      },
+    });
+
+    await bot.sendToAgent('test');
+
+    const opts = vi.mocked(resumeSession).mock.calls[0][1];
+    expect(opts).toHaveProperty('sleeptime');
+    expect((opts as Record<string, unknown>).sleeptime).toEqual({
+      trigger: 'step-count',
+      behavior: 'reminder',
+      stepCount: 25,
+    });
+  });
+
+  it('omits sleeptime key from resumeSession options when config sleeptime is undefined', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'ack' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    await bot.sendToAgent('test');
+
+    const opts = vi.mocked(resumeSession).mock.calls[0][1];
+    expect(opts).not.toHaveProperty('sleeptime');
+  });
+
+  it('keeps canUseTool callbacks isolated for concurrent keyed sessions', async () => {
+    const store = new Store(undefined, 'LettaBot');
+    store.setAgent('agent-contract-test', 'https://api.letta.com');
+
+    const allowCallbackDispatch = deferred<void>();
+    const bothSendsStarted = deferred<void>();
+    const callbackResults: Array<{ sessionName: string; answer: string | undefined }> = [];
+    let createdSessions = 0;
+    let startedSends = 0;
+
+    vi.mocked(createSession).mockImplementation((_id, opts) => {
+      const sessionName = createdSessions++ === 0 ? 'chat-a' : 'chat-b';
+      return {
+        initialize: vi.fn(async () => undefined),
+        bootstrapState: vi.fn(async () => ({ hasPendingApproval: false })),
+        send: vi.fn(async (_message: unknown) => {
+          startedSends += 1;
+          if (startedSends === 2) {
+            bothSendsStarted.resolve();
+          }
+          await bothSendsStarted.promise;
+          await allowCallbackDispatch.promise;
+
+          const canUseTool = opts?.canUseTool;
+          if (!canUseTool) {
+            throw new Error('Expected mocked session options to include canUseTool');
+          }
+
+          const result = await canUseTool('AskUserQuestion', { sessionName });
+          const updatedInput = 'updatedInput' in result
+            ? result.updatedInput as Record<string, unknown> | undefined
+            : undefined;
+          callbackResults.push({
+            sessionName,
+            answer: typeof updatedInput?.answer === 'string'
+              ? updatedInput.answer
+              : undefined,
+          });
+        }),
+        stream: vi.fn(() =>
+          (async function* () {
+            yield { type: 'result', success: true };
+          })()
+        ),
+        close: vi.fn(() => undefined),
+        agentId: 'agent-contract-test',
+        conversationId: `${sessionName}-conversation`,
+      } as never;
+    });
+
+    const canUseToolA = vi.fn(async () => ({
+      behavior: 'allow' as const,
+      updatedInput: { answer: 'from-chat-a' },
+    }));
+    const canUseToolB = vi.fn(async () => ({
+      behavior: 'allow' as const,
+      updatedInput: { answer: 'from-chat-b' },
+    }));
+
+    const sessionManager = new SessionManager(
+      store,
+      {
+        workingDir: join(dataDir, 'working'),
+        allowedTools: [],
+        conversationMode: 'per-chat',
+      },
+      new Set<string>(),
+      new Map<string, string>(),
+    );
+
+    const runA = sessionManager.runSession('message-a', {
+      convKey: 'slack:C123',
+      canUseTool: canUseToolA,
+    });
+    const runB = sessionManager.runSession('message-b', {
+      convKey: 'discord:C456',
+      canUseTool: canUseToolB,
+    });
+
+    await bothSendsStarted.promise;
+    allowCallbackDispatch.resolve();
+    await Promise.all([runA, runB]);
+
+    expect(canUseToolA).toHaveBeenCalledTimes(1);
+    expect(canUseToolB).toHaveBeenCalledTimes(1);
+    expect(callbackResults).toEqual([
+      { sessionName: 'chat-a', answer: 'from-chat-a' },
+      { sessionName: 'chat-b', answer: 'from-chat-b' },
+    ]);
+  });
+
+  it('treats dedicated heartbeat sends as a keyed lock target', async () => {
+    vi.useFakeTimers();
+    try {
+      const bot = new LettaBot({
+        workingDir: join(dataDir, 'working'),
+        allowedTools: [],
+        heartbeatConversation: 'dedicated',
+      });
+      const botInternal = bot as any;
+
+      const acquiredFirst = await botInternal.acquireLock('heartbeat');
+      let secondResolved = false;
+      const secondAcquire = botInternal.acquireLock('heartbeat').then((value: boolean) => {
+        secondResolved = true;
+        return value;
+      });
+
+      await Promise.resolve();
+
+      expect(acquiredFirst).toBe(true);
+      expect(botInternal.processingKeys.has('heartbeat')).toBe(true);
+      expect(secondResolved).toBe(false);
+
+      botInternal.releaseLock('heartbeat', acquiredFirst);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(await secondAcquire).toBe(true);
+      botInternal.releaseLock('heartbeat', true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('restarts a keyed queue after non-shared lock release when backlog exists', async () => {
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
@@ -529,7 +784,7 @@ describe('SDK session contract', () => {
       agentId: 'agent-contract-test',
       conversationId: 'conv-new',
     };
-    vi.mocked(resumeSession).mockReturnValue(createdSession as never);
+    vi.mocked(createSession).mockReturnValue(createdSession as never);
 
     const activeSession = {
       close: vi.fn(() => undefined),
@@ -754,6 +1009,69 @@ describe('SDK session contract', () => {
     expect(sentTexts).toContain('after retry');
   });
 
+  it('uses agent-level recovery for default conversation alias on terminal approval conflict', async () => {
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    let runCall = 0;
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
+      session: { abort: vi.fn(async () => undefined) },
+      stream: async function* () {
+        if (runCall++ === 0) {
+          yield { type: 'result', success: false, error: 'error', conversationId: 'default' };
+          return;
+        }
+        yield { type: 'assistant', content: 'after default recovery' };
+        yield { type: 'result', success: true, result: 'after default recovery', conversationId: 'default' };
+      },
+    }));
+
+    vi.mocked(getLatestRunError).mockResolvedValueOnce({
+      message: 'CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.',
+      stopReason: 'error',
+      isApprovalError: true,
+    });
+    vi.mocked(recoverPendingApprovalsForAgent).mockResolvedValueOnce({
+      recovered: true,
+      details: 'Rejected 1 pending approval(s) and cancelled 1 run(s)',
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_payload: unknown) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    const msg = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    expect((bot as any).sessionManager.runSession).toHaveBeenCalledTimes(2);
+    expect(recoverOrphanedConversationApproval).not.toHaveBeenCalled();
+    expect(recoverPendingApprovalsForAgent).toHaveBeenCalledWith('agent-contract-test');
+    const sentTexts = adapter.sendMessage.mock.calls.map((call) => {
+      const payload = call[0] as { text?: string };
+      return payload.text;
+    });
+    expect(sentTexts).toContain('after default recovery');
+  });
+
   it('passes tags: [origin:lettabot] to createAgent when creating a new agent', async () => {
     delete process.env.LETTA_AGENT_ID;
 
@@ -778,6 +1096,11 @@ describe('SDK session contract', () => {
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
       allowedTools: [],
+      memfs: true,
+      sleeptime: {
+        trigger: 'compaction-event',
+        behavior: 'auto-launch',
+      },
     });
 
     await bot.sendToAgent('first message');
@@ -786,6 +1109,10 @@ describe('SDK session contract', () => {
     expect(vi.mocked(createAgent)).toHaveBeenCalledWith(
       expect.objectContaining({
         tags: ['origin:lettabot'],
+        sleeptime: {
+          trigger: 'compaction-event',
+          behavior: 'auto-launch',
+        },
       })
     );
   });
@@ -870,6 +1197,63 @@ describe('SDK session contract', () => {
     await bot.sendToAgent('second background trigger');
 
     expect(mockSession.close).toHaveBeenCalledTimes(2);
+  });
+
+  it('executes only targeted directives in sendToAgent when source adapter is unavailable', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async () => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield {
+            type: 'assistant',
+            content: '<actions><send-file path="data/outbound/report.txt" /><send-message channel="slack" chat="C123">Job done</send-message></actions>',
+          };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-background-directives',
+      conversationId: 'conversation-background-directives',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    const sendMessageMock = vi.fn(async () => ({ messageId: 'msg-1' }));
+    const sendFileMock = vi.fn(async () => ({ messageId: 'file-1' }));
+
+    bot.registerChannel({
+      id: 'slack',
+      name: 'Slack',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: sendMessageMock,
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      sendFile: sendFileMock,
+      getFormatterHints: vi.fn(() => ({ supportsReactions: true, supportsFiles: true })),
+    });
+
+    const response = await bot.sendToAgent('background trigger', {
+      type: 'feed',
+      outputMode: 'silent',
+      sourceChannel: 'gmail',
+      sourceChatId: 'account@example.com',
+    });
+
+    expect(response).toBe('');
+    expect(sendMessageMock).toHaveBeenCalledWith({
+      chatId: 'C123',
+      text: 'Job done',
+    });
+    expect(sendFileMock).not.toHaveBeenCalled();
   });
 
   it('does not leak stale stream events between consecutive sendToAgent calls', async () => {

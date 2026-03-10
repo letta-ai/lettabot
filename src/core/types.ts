@@ -113,6 +113,7 @@ export interface InboundMessage {
   isBatch?: boolean;                  // Is this a batched group message?
   batchedMessages?: InboundMessage[]; // Original individual messages (for batch formatting)
   isListeningMode?: boolean;          // Listening mode: agent processes for memory but response is suppressed
+  forcePerChat?: boolean;             // Force per-chat conversation routing (e.g., Discord thread-only mode)
   formatterHints?: FormatterHints;    // Channel capabilities for directive rendering
   extraContext?: Record<string, string>; // Channel-specific key/value metadata shown in Chat Context
 }
@@ -153,6 +154,9 @@ export interface SkillsConfig {
   additionalSkills?: string[];
 }
 
+import type { SleeptimeTrigger, SleeptimeBehavior, SleeptimeConfig } from '../config/types.js';
+export type { SleeptimeTrigger, SleeptimeBehavior, SleeptimeConfig };
+
 /**
  * Bot configuration
  */
@@ -179,6 +183,7 @@ export interface BotConfig {
 
   // Memory filesystem (context repository)
   memfs?: boolean; // true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
+  sleeptime?: SleeptimeConfig; // Configure SDK reflection reminders (/sleeptime equivalent)
 
   // Security
   redaction?: import('./redact.js').RedactionConfig;
@@ -218,6 +223,7 @@ export interface StreamMsg {
   toolCallId?: string;
   toolName?: string;
   uuid?: string;
+  runId?: string;
   isError?: boolean;
   result?: string;
   runIds?: string[];

@@ -3,6 +3,30 @@
 LettaBot ships with a few small CLIs that the agent can invoke via Bash, or you can run manually.
 They use the same config/credentials as the bot server.
 
+## lettabot config
+
+Manage your `lettabot.yaml` configuration.
+
+```bash
+lettabot config                   # Show current config summary + menu
+lettabot config tui               # Interactive core config editor
+lettabot config encode            # Encode config as base64 (for cloud deploy)
+lettabot config decode <base64>   # Decode base64 config back to YAML
+```
+
+### Interactive TUI editor
+
+`lettabot config tui` opens an interactive editor for the most common settings:
+
+- **Server auth** -- switch between API/Docker mode, set API key or base URL
+- **Agent identity** -- change agent name and ID
+- **Channels** -- enable/disable channels and run their setup wizards
+- **Features** -- toggle cron, heartbeat (with interval), and memfs
+
+The TUI loads your existing config, lets you edit fields interactively, shows a summary of changes, and saves back to the same file. Non-core fields (providers, attachments, secondary agents, etc.) are preserved through the round-trip.
+
+From the `lettabot config` menu, you can also choose "Open TUI editor" or "Edit config file" to open the raw YAML in your `$EDITOR`.
+
 ## lettabot-message
 
 Send a message to the most recent chat, or target a specific channel/chat.
@@ -11,7 +35,7 @@ Send a message to the most recent chat, or target a specific channel/chat.
 lettabot-message send --text "Hello from a background task"
 lettabot-message send --text "Hello" --channel slack --chat C123456
 lettabot-message send --file /tmp/report.pdf --text "Report attached" --channel discord --chat 123456789
-lettabot-message send --file /tmp/voice.ogg --voice    # Send as native voice note
+lettabot-message send --file /tmp/voice.ogg --voice    # Send as native voice note (see voice.md)
 ```
 
 ## lettabot-react

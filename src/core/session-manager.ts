@@ -10,7 +10,7 @@ import { createAgent, createSession, resumeSession, type Session, type SendMessa
 import type { BotConfig, StreamMsg } from './types.js';
 import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError } from './errors.js';
 import { Store } from './store.js';
-import { updateAgentName, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
+import { updateAgentName, recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { installSkillsToAgent, prependSkillDirsToPath } from '../skills/loader.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
@@ -42,18 +42,21 @@ export class SessionManager {
   private sessionCreationLocks: Map<string, { promise: Promise<Session>; generation: number }> = new Map();
   private sessionGenerations: Map<string, number> = new Map();
 
-  // Per-message tool callback. Updated before each send() so the Session
-  // options (which hold a stable wrapper) route to the current handler.
-  private currentCanUseTool: CanUseToolCallback | undefined;
+  // Per-key tool callbacks. Updated before each send() so the Session
+  // options (which hold a stable per-key wrapper) route to the current handler.
+  // Keyed by convKey so concurrent sessions on different keys don't clobber
+  // each other's callback (e.g. 'discord' and 'heartbeat' running in parallel).
+  private currentCanUseToolByKey = new Map<string, CanUseToolCallback | undefined>();
 
-  // Stable callback wrapper so the Session options never change, but we can
-  // swap out the per-message handler before each send().
-  private readonly sessionCanUseTool: CanUseToolCallback = async (toolName, toolInput) => {
-    if (this.currentCanUseTool) {
-      return this.currentCanUseTool(toolName, toolInput);
-    }
-    return { behavior: 'allow' as const };
-  };
+  // Returns a stable per-key wrapper so Session options never change, while
+  // still allowing the per-message handler to be swapped before each send().
+  private createSessionCanUseTool(key: string): CanUseToolCallback {
+    return async (toolName, toolInput) => {
+      const handler = this.currentCanUseToolByKey.get(key);
+      if (handler) return handler(toolName, toolInput);
+      return { behavior: 'allow' as const };
+    };
+  }
 
   constructor(
     store: Store,
@@ -165,6 +168,7 @@ export class SessionManager {
       tools: [createManageTodoTool(this.getTodoAgentKey())],
       // Memory filesystem (context repository): true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
       ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
+      ...(this.config.sleeptime ? { sleeptime: this.config.sleeptime } : {}),
       // In bypassPermissions mode, canUseTool is only called for interactive
       // tools (AskUserQuestion, ExitPlanMode). When no callback is provided
       // (background triggers), the SDK auto-denies interactive tools.
@@ -227,7 +231,7 @@ export class SessionManager {
     // changes made by other processes (e.g. after a restart or container deploy).
     this.store.refresh();
 
-    const opts = this.baseSessionOptions(this.sessionCanUseTool);
+    const opts = this.baseSessionOptions(this.createSessionCanUseTool(key));
     let session: Session;
     let sessionAgentId: string | undefined;
 
@@ -270,12 +274,16 @@ export class SessionManager {
       }
       session = resumeSession(convId, opts);
     } else if (this.store.agentId) {
-      // Agent exists but no conversation stored -- resume the default conversation
+      // Agent exists but no conversation stored for this key.
+      // 'shared' is the single shared conversation — resume it like the default.
+      // Channel-specific keys (per-channel/per-chat mode) need a fresh conversation.
       process.env.LETTA_AGENT_ID = this.store.agentId;
       installSkillsToAgent(this.store.agentId, this.config.skills);
       sessionAgentId = this.store.agentId;
-      prependSkillDirsToPath(sessionAgentId); // must be before resumeSession spawns subprocess
-      session = resumeSession(this.store.agentId, opts);
+      prependSkillDirsToPath(sessionAgentId); // must be before resumeSession/createSession spawns subprocess
+      session = key === 'shared'
+        ? resumeSession(this.store.agentId, opts)
+        : createSession(this.store.agentId, opts);
     } else {
       // Create new agent -- persist immediately so we don't orphan it on later failures
       log.info('Creating new agent');
@@ -284,6 +292,7 @@ export class SessionManager {
         memory: loadMemoryBlocks(this.config.agentName),
         tags: ['origin:lettabot'],
         ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
+        ...(this.config.sleeptime ? { sleeptime: this.config.sleeptime } : {}),
       });
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
       this.store.setAgent(newAgentId, currentBaseUrl);
@@ -342,9 +351,22 @@ export class SessionManager {
         );
         if (bootstrap.hasPendingApproval) {
           const convId = bootstrap.conversationId || session.conversationId;
-          log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
-          session.close();
-          if (convId) {
+          if (!isRecoverableConversationId(convId)) {
+            log.warn(
+              `Pending approval detected at session startup (key=${key}, conv=${convId}) ` +
+              'using agent-level recovery fallback.'
+            );
+            session.close();
+            const result = await recoverPendingApprovalsForAgent(this.store.agentId);
+            if (result.recovered) {
+              log.info(`Proactive agent-level recovery succeeded: ${result.details}`);
+            } else {
+              log.warn(`Proactive agent-level recovery did not resolve approvals: ${result.details}`);
+            }
+            return this._createSessionForKey(key, true, generation);
+          } else {
+            log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
+            session.close();
             const result = await recoverOrphanedConversationApproval(
               this.store.agentId,
               convId,
@@ -355,8 +377,8 @@ export class SessionManager {
             } else {
               log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
             }
+            return this._createSessionForKey(key, true, generation);
           }
-          return this._createSessionForKey(key, true, generation);
         }
       } catch (err) {
         // bootstrapState failure is non-fatal -- the reactive 409 handler in
@@ -371,10 +393,11 @@ export class SessionManager {
       return this.ensureSessionForKey(key, bootstrapRetried);
     }
 
-    // LRU eviction: in per-chat mode, limit concurrent sessions to avoid
-    // unbounded subprocess growth.
+    // LRU eviction: limit concurrent sessions to avoid unbounded subprocess
+    // growth. Applies in per-chat mode and when forcePerChat (e.g., Discord
+    // thread-only) creates per-thread keys in other modes.
     const maxSessions = this.config.maxSessions ?? 10;
-    if (this.config.conversationMode === 'per-chat' && this.sessions.size >= maxSessions) {
+    if (this.sessions.size >= maxSessions) {
       let oldestKey: string | null = null;
       let oldestTime = Infinity;
       for (const [k, ts] of this.sessionLastUsed) {
@@ -430,6 +453,7 @@ export class SessionManager {
         this.sessionLastUsed.delete(key);
       }
       this.lastResultRunFingerprints.delete(key);
+      this.currentCanUseToolByKey.delete(key);
     } else {
       const keys = new Set<string>([
         ...this.sessions.keys(),
@@ -448,6 +472,7 @@ export class SessionManager {
       this.sessionCreationLocks.clear();
       this.sessionLastUsed.clear();
       this.lastResultRunFingerprints.clear();
+      this.currentCanUseToolByKey.clear();
     }
   }
 
@@ -515,8 +540,8 @@ export class SessionManager {
   ): Promise<{ session: Session; stream: () => AsyncGenerator<StreamMsg> }> {
     const { retried = false, canUseTool, convKey = 'shared' } = options;
 
-    // Update the per-message callback before sending
-    this.currentCanUseTool = canUseTool;
+    // Update the per-key callback before sending
+    this.currentCanUseToolByKey.set(convKey, canUseTool);
 
     let session = await this.ensureSessionForKey(convKey);
 
@@ -532,13 +557,12 @@ export class SessionManager {
       await this.withSessionTimeout(session.send(message), `Session send (key=${convKey})`);
     } catch (error) {
       // 409 CONFLICT from orphaned approval
-      if (!retried && isApprovalConflictError(error) && this.store.agentId && convId) {
+      if (!retried && isApprovalConflictError(error) && this.store.agentId) {
         log.info('CONFLICT detected - attempting orphaned approval recovery...');
         this.invalidateSession(convKey);
-        const result = await recoverOrphanedConversationApproval(
-          this.store.agentId,
-          convId
-        );
+        const result = isRecoverableConversationId(convId)
+          ? await recoverOrphanedConversationApproval(this.store.agentId, convId)
+          : await recoverPendingApprovalsForAgent(this.store.agentId);
         if (result.recovered) {
           log.info(`Recovery succeeded (${result.details}), retrying...`);
           return this.runSession(message, { retried: true, canUseTool, convKey });

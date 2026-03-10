@@ -34,6 +34,16 @@ npm ci
 3. Go to Settings > API Keys
 4. Create a new API key and copy it
 
+### 3b. Connect your ChatGPT subscription (optional)
+
+If you want connected provider models from your ChatGPT/ChatGPT Plus subscription, run:
+
+```bash
+lettabot connect chatgpt
+```
+
+The command opens a browser-based flow for OAuth and then makes those handles available in `lettabot model` and onboarding.
+
 ### 4. Configure LettaBot
 
 **Option A: Interactive Setup (Recommended)**
@@ -105,7 +115,7 @@ Pull the latest changes and rebuild:
 npm run update
 ```
 
-This resets the lockfile, pulls from git, installs dependencies, and rebuilds. If you've modified source files locally, stash them first with `git stash`.
+This performs a fast-forward-only pull, installs dependencies, and rebuilds without resetting tracked files.
 
 ## Next Steps
 

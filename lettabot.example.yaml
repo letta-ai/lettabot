@@ -102,6 +102,10 @@ features:
   # sendFileMaxSize: 52428800       # Max file size in bytes for <send-file> (default: 50MB)
   # sendFileCleanup: false          # Allow <send-file cleanup="true"> to delete files after send (default: false)
   # memfs: true   # Enable memory filesystem (git-backed context repository). Syncs memory blocks to local files.
+  # sleeptime:                    # Background reflection (requires memfs: true)
+  #   trigger: step-count         # "off" | "step-count" | "compaction-event"
+  #   behavior: reminder          # "reminder" | "auto-launch"
+  #   stepCount: 10               # Steps between reflections (step-count trigger only)
   # allowedTools: [Bash, Read, Edit, Write, Glob, Grep, Task, web_search, conversation_search]  # Global default
   # disallowedTools: [EnterPlanMode, ExitPlanMode]  # Global default
   # display:

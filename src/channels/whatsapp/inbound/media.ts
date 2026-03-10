@@ -168,7 +168,7 @@ export async function collectAttachments(params: {
         // Send error message directly to user (matches Telegram/Slack/Discord/Signal behavior)
         try {
           await sock.sendMessage(chatId, {
-            text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages'
+            text: 'Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice'
           });
         } catch (sendError) {
           log.error('Failed to send transcription error message:', sendError);

@@ -105,12 +105,25 @@ async function fetchByokModels(apiKey?: string): Promise<ByokModel[]> {
   }
 }
 
+function addModelOption(
+  options: Array<{ value: string; label: string; hint: string }>,
+  seen: Set<string>,
+  option: { value: string; label: string; hint: string },
+): void {
+  if (seen.has(option.value)) {
+    return;
+  }
+  options.push(option);
+  seen.add(option.value);
+}
+
 /**
  * Build model selection options based on billing tier
  * Returns array ready for @clack/prompts select()
  * 
- * For free users: Show free models first, then BYOK models from API
- * For paid users: Show featured models first, then all models
+ * For free users: Show free static models first.
+ * For paid users: Show featured models first, then full static list.
+ * For all users: show connected provider models (OAuth/API key providers).
  * For Docker/custom servers: fetch models from server
  */
 export async function buildModelOptions(options?: {
@@ -128,51 +141,80 @@ export async function buildModelOptions(options?: {
   }
   
   const result: Array<{ value: string; label: string; hint: string }> = [];
+  const seenHandles = new Set<string>();
   
   if (isFreeTier) {
     // Free tier: Show free models first
     const freeModels = models.filter(m => m.free);
-    result.push(...freeModels.map(m => ({
-      value: m.handle,
-      label: m.label,
-      hint: `🆓 Free - ${m.description}`,
-    })));
-    
-    // Fetch BYOK models from API
-    const byokModels = await fetchByokModels(options?.apiKey);
-    if (byokModels.length > 0) {
-      result.push({
-        value: '__byok_header__',
-        label: '── Your Connected Providers ──',
-        hint: 'Models from your API keys',
+    freeModels.forEach(model => {
+      addModelOption(result, seenHandles, {
+        value: model.handle,
+        label: model.label,
+        hint: `🆓 Free - ${model.description}`,
       });
-      
-      result.push(...byokModels.map(m => ({
-        value: m.handle,
-        label: m.display_name || m.name,
-        hint: `🔑 ${m.provider_name}`,
-      })));
-    }
+    });
   } else {
     // Paid tier: Show featured models first
     const featured = models.filter(m => m.isFeatured);
     const nonFeatured = models.filter(m => !m.isFeatured);
     
-    result.push(...featured.map(m => ({
-      value: m.handle,
-      label: m.label,
-      hint: m.free ? `🆓 Free - ${m.description}` : `⭐ ${m.description}`,
-    })));
+    featured.forEach(model => {
+      addModelOption(result, seenHandles, {
+        value: model.handle,
+        label: model.label,
+        hint: model.free ? `🆓 Free - ${model.description}` : `⭐ ${model.description}`,
+      });
+    });
     
-    result.push(...nonFeatured.map(m => ({
-      value: m.handle,
-      label: m.label,
-      hint: m.description,
-    })));
+    nonFeatured.forEach(model => {
+      addModelOption(result, seenHandles, {
+        value: model.handle,
+        label: model.label,
+        hint: model.description,
+      });
+    });
+  }
+  
+  // Include connected provider models for both free and paid users.
+  const byokModels = await fetchByokModels(options?.apiKey);
+  if (byokModels.length > 0) {
+    // ChatGPT subscription models get their own section at the top.
+    const chatgptModels = byokModels.filter(m => m.provider_type === 'chatgpt_oauth');
+    const otherModels = byokModels.filter(m => m.provider_type !== 'chatgpt_oauth');
+    
+    if (chatgptModels.length > 0) {
+      addModelOption(result, seenHandles, {
+        value: '__chatgpt_header__',
+        label: '── ChatGPT Subscription ──',
+        hint: 'Included with your ChatGPT plan',
+      });
+      chatgptModels.forEach(model => {
+        addModelOption(result, seenHandles, {
+          value: model.handle,
+          label: model.display_name || model.name,
+          hint: 'ChatGPT',
+        });
+      });
+    }
+    
+    if (otherModels.length > 0) {
+      addModelOption(result, seenHandles, {
+        value: '__byok_header__',
+        label: '── Your API Keys ──',
+        hint: 'Models from your API keys',
+      });
+      otherModels.forEach(model => {
+        addModelOption(result, seenHandles, {
+          value: model.handle,
+          label: model.display_name || model.name,
+          hint: `🔑 ${model.provider_name}`,
+        });
+      });
+    }
   }
   
   // Add custom option
-  result.push({ 
+  addModelOption(result, seenHandles, { 
     value: '__custom__', 
     label: 'Other (specify handle)', 
     hint: 'e.g. anthropic/claude-sonnet-4-5-20250929' 
@@ -226,7 +268,7 @@ export async function handleModelSelection(
   if (p.isCancel(selection)) return null;
   
   // Skip header selections
-  if (selection === '__byok_header__') return null;
+  if (selection === '__byok_header__' || selection === '__chatgpt_header__') return null;
   
   // Handle custom model input
   if (selection === '__custom__') {

@@ -18,7 +18,7 @@ All requests require an API key, passed as either:
 - `Authorization: Bearer <key>`
 - `X-Api-Key: <key>`
 
-The API key is auto-generated on first run and saved to `lettabot-api.json`, or set via the `LETTABOT_API_KEY` environment variable. This is the same key used by the `/api/v1/chat` endpoint.
+The API key is auto-generated on first run and saved to `lettabot-api.json`, or set via the `LETTABOT_API_KEY` environment variable. This is the same key used by `/api/v1/chat` and `/api/v1/chat/async`.
 
 ## Quick Start
 
