@@ -1535,6 +1535,35 @@ export class LettaBot implements AgentSession {
             retryInfo = { attempt: rm.attempt, maxAttempts: rm.maxAttempts, reason: rm.reason };
             log.info(`Retrying (${rm.attempt}/${rm.maxAttempts}): ${rm.reason}`);
             sawNonAssistantSinceLastUuid = true;
+          } else if (streamMsg.type === 'compaction_start') {
+            log.info('Compaction started (trigger event received)');
+            sawNonAssistantSinceLastUuid = true;
+          } else if (streamMsg.type === 'compaction_summary') {
+            const sm = streamMsg as any;
+            const stats = sm.stats as { trigger?: string; contextTokensBefore?: number; contextTokensAfter?: number; contextWindow?: number; messagesCountBefore?: number; messagesCountAfter?: number } | undefined;
+            if (stats) {
+              const fmtTokens = (n?: number) => n != null ? `${Math.round(n / 1000)}K` : '?';
+              log.info(
+                `Compaction complete: ${fmtTokens(stats.contextTokensBefore)} -> ${fmtTokens(stats.contextTokensAfter)} tokens ` +
+                `(${stats.messagesCountBefore ?? '?'} -> ${stats.messagesCountAfter ?? '?'} messages, trigger=${stats.trigger ?? 'unknown'})`
+              );
+            } else {
+              log.info('Compaction complete (no stats available)');
+            }
+            sawNonAssistantSinceLastUuid = true;
+
+            // Optional channel display
+            if (this.config.display?.showCompaction && !suppressDelivery) {
+              const fmtTokens = (n?: number) => n != null ? `${Math.round(n / 1000)}K` : '?';
+              const displayText = stats
+                ? `(Context compacted: ${fmtTokens(stats.contextTokensBefore)} -> ${fmtTokens(stats.contextTokensAfter)} tokens)`
+                : '(Context compacted)';
+              try {
+                await adapter.sendMessage({ chatId: msg.chatId, text: displayText, threadId: msg.threadId });
+              } catch (err) {
+                log.warn('Failed to send compaction display:', err instanceof Error ? err.message : err);
+              }
+            }
           } else if (streamMsg.type !== 'assistant') {
             sawNonAssistantSinceLastUuid = true;
           }
@@ -2004,6 +2033,14 @@ export class LettaBot implements AgentSession {
                 stopReason: (msg as any).stopReason || 'error',
                 apiError: (msg as any).apiError,
               };
+            }
+            if (msg.type === 'compaction_summary') {
+              const stats = (msg as any).stats as { contextTokensBefore?: number; contextTokensAfter?: number; messagesCountBefore?: number; messagesCountAfter?: number; trigger?: string } | undefined;
+              const fmtTokens = (n?: number) => n != null ? `${Math.round(n / 1000)}K` : '?';
+              log.info(
+                `sendToAgent compaction: ${fmtTokens(stats?.contextTokensBefore)} -> ${fmtTokens(stats?.contextTokensAfter)} tokens` +
+                (stats?.trigger ? ` (trigger=${stats.trigger})` : '')
+              );
             }
             if (msg.type === 'assistant') {
               response += msg.content || '';

@@ -38,6 +38,8 @@ export interface DisplayConfig {
   showReasoning?: boolean;
   /** Truncate reasoning to N characters (default: 0 = no limit) */
   reasoningMaxChars?: number;
+  /** Show compaction events in channel output (default: false) */
+  showCompaction?: boolean;
 }
 
 export type SleeptimeTrigger = 'off' | 'step-count' | 'compaction-event';
