@@ -547,6 +547,14 @@ async function main() {
   const isMultiAgent = agents.length > 1;
   log.info(`${agents.length} agent(s) configured: ${agents.map(a => a.name).join(', ')}`);
   
+  // Validate agent names are unique (duplicate names cause silent overwrites in turnLogFiles and SSE routing)
+  const agentNames = agents.map(a => a.name);
+  const duplicateAgentName = agentNames.find((n, i) => agentNames.indexOf(n) !== i);
+  if (duplicateAgentName) {
+    log.error(`Multiple agents share the same name: "${duplicateAgentName}". Each agent must have a unique name.`);
+    process.exit(1);
+  }
+
   // Validate no two agents share the same turnLogFile (resolve paths to catch relative/absolute aliases)
   const turnLogFilePaths = agents
     .map(a => a.features?.logging?.turnLogFile)

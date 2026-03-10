@@ -62,13 +62,22 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
   // Track how many lines have already been broadcast per file for incremental SSE updates.
   const fileLineCounts = new Map<string, number>();
 
+  // Serialize broadcasts per file to prevent duplicate deliveries when file-change
+  // events fire concurrently (e.g. rapid successive writes or trim+append).
+  const broadcastQueues = new Map<string, Promise<void>>();
+
   async function broadcastNewTurns(agentName: string, filePath: string): Promise<void> {
     const clients = sseClientsByAgent.get(agentName);
     if (!clients || clients.size === 0) return;
     const allTurns = await readTurns(filePath);
     const sent = fileLineCounts.get(filePath) ?? 0;
+    // If the file was trimmed, sent > allTurns.length. Reset the counter but don't
+    // re-broadcast — clients already received everything up to the trim boundary.
+    if (allTurns.length <= sent) {
+      fileLineCounts.set(filePath, allTurns.length);
+      return;
+    }
     const newTurns = allTurns.slice(sent);
-    if (newTurns.length === 0) return;
     fileLineCounts.set(filePath, allTurns.length);
     const payload = `data: ${JSON.stringify({ type: 'append', turns: newTurns })}\n\n`;
     for (const res of clients) {
@@ -76,15 +85,34 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     }
   }
 
+  function enqueueBroadcast(agentName: string, filePath: string): void {
+    const prev = broadcastQueues.get(filePath) ?? Promise.resolve();
+    const next = prev.then(() => broadcastNewTurns(agentName, filePath)).catch(() => {});
+    broadcastQueues.set(filePath, next);
+  }
+
   // Watch each agent's turn log file and push updates to SSE clients.
   // Watching is started on first SSE connection and stopped when the last client disconnects.
+  // If the file doesn't exist yet (no turns written), watching is retried on each
+  // subsequent SSE connection.
   const watchers = new Map<string, fs.FSWatcher>();
 
   function ensureWatching(agentName: string, filePath: string): void {
     if (watchers.has(filePath)) return;
-    const watcher = fs.watch(filePath, { persistent: false }, () => {
-      broadcastNewTurns(agentName, filePath).catch(() => {});
-    });
+    let watcher: fs.FSWatcher;
+    try {
+      watcher = fs.watch(filePath, { persistent: false }, () => {
+        enqueueBroadcast(agentName, filePath);
+      });
+    } catch {
+      // File doesn't exist yet (no turns written). Schedule a single retry so that
+      // clients who connected before the first message still receive live updates.
+      setTimeout(() => {
+        const clients = sseClientsByAgent.get(agentName);
+        if (clients && clients.size > 0) ensureWatching(agentName, filePath);
+      }, 2000);
+      return;
+    }
     watcher.on('error', () => {
       watcher.close();
       watchers.delete(filePath);
@@ -96,6 +124,8 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     if (clients.size === 0 && watchers.has(filePath)) {
       watchers.get(filePath)!.close();
       watchers.delete(filePath);
+      fileLineCounts.delete(filePath);
+      broadcastQueues.delete(filePath);
     }
   }
 

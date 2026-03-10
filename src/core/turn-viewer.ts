@@ -25,9 +25,9 @@ export function getTurnViewerHtml(agentNames: string[]): string {
   const agentOptions = agentNames.map(n => `<option value="${escHtml(n)}">${escHtml(n)}</option>`).join('');
 
   return TEMPLATE
-    .replace('__AGENT_NAMES_JSON__', agentNamesJson)
-    .replace('__DEFAULT_AGENT__', escHtml(defaultAgent))
-    .replace('__LABEL_DISPLAY__', multiAgent ? 'none' : 'inline')
-    .replace('__SELECT_DISPLAY__', multiAgent ? 'inline-block' : 'none')
-    .replace('__AGENT_OPTIONS__', agentOptions);
+    .replaceAll('__AGENT_NAMES_JSON__', agentNamesJson)
+    .replaceAll('__DEFAULT_AGENT__', escHtml(defaultAgent))
+    .replaceAll('__LABEL_DISPLAY__', multiAgent ? 'none' : 'inline')
+    .replaceAll('__SELECT_DISPLAY__', multiAgent ? 'inline-block' : 'none')
+    .replaceAll('__AGENT_OPTIONS__', agentOptions);
 }

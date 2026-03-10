@@ -11,7 +11,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { extname, resolve, join, dirname } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
-import type { BotConfig, InboundMessage, TriggerContext, StreamMsg } from './types.js';
+import type { BotConfig, InboundMessage, TriggerContext, TriggerType, StreamMsg } from './types.js';
 import { formatApiErrorForUser } from './errors.js';
 import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
@@ -199,7 +199,7 @@ type TurnEvent =
 interface TurnRecord {
   ts: string;
   turnId: string;
-  trigger: string;
+  trigger: TriggerType;
   channel?: string;
   chatId?: string;
   userId?: string;
@@ -1950,7 +1950,7 @@ export class LettaBot implements AgentSession {
           events,
           output,
           durationMs: Math.round(performance.now() - t0),
-        });
+        }).catch(() => {});
       }
       if (this.config.reuseSession === false) {
         this.sessionManager.invalidateSession(convKey);
