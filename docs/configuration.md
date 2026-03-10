@@ -566,6 +566,48 @@ Only files inside this directory (and its subdirectories) can be sent. Paths tha
 |-------|------|---------|-------------|
 | `features.sendFileDir` | string | _(workingDir)_ | Directory that `<send-file>` paths must be inside |
 
+### Sleeptime (Background Reflection)
+
+Sleeptime lets the agent reflect on recent interactions in the background, updating its memory without being prompted. It requires [memory filesystem](#memory-filesystem-memfs) (`memfs: true`) to be enabled -- if memfs is off, sleeptime is silently ignored with a startup warning.
+
+```yaml
+features:
+  memfs: true
+  sleeptime:
+    trigger: step-count       # "off" | "step-count" | "compaction-event"
+    behavior: reminder        # "reminder" | "auto-launch"
+    stepCount: 10             # Steps between reflections (step-count trigger only)
+```
+
+**Triggers:**
+
+| Trigger | Description |
+|---------|-------------|
+| `off` | Disable sleeptime (explicit opt-out) |
+| `step-count` | Reflect every N steps (configured via `stepCount`) |
+| `compaction-event` | Reflect when the context window is compacted |
+
+**Behaviors:**
+
+| Behavior | Description |
+|----------|-------------|
+| `reminder` | Agent is reminded to reflect but can choose to skip |
+| `auto-launch` | Reflection is launched automatically |
+
+Via environment variables (only used when `features.sleeptime` is not set in YAML):
+
+```bash
+SLEEPTIME_TRIGGER=step-count
+SLEEPTIME_BEHAVIOR=reminder
+SLEEPTIME_STEP_COUNT=10
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `features.sleeptime.trigger` | `'off'` \| `'step-count'` \| `'compaction-event'` | _(none)_ | When to trigger background reflection |
+| `features.sleeptime.behavior` | `'reminder'` \| `'auto-launch'` | _(none)_ | How reflection is initiated |
+| `features.sleeptime.stepCount` | number | _(none)_ | Steps between reflections (only used with `step-count` trigger) |
+
 ### Cron Jobs
 
 ```yaml
@@ -992,6 +1034,9 @@ Reference:
 | `ALLOWED_TOOLS` | `features.allowedTools` (comma-separated list) |
 | `DISALLOWED_TOOLS` | `features.disallowedTools` (comma-separated list) |
 | `LETTABOT_WORKING_DIR` | Agent working directory (overridden by per-agent `workingDir`) |
+| `SLEEPTIME_TRIGGER` | `features.sleeptime.trigger` (off/step-count/compaction-event) |
+| `SLEEPTIME_BEHAVIOR` | `features.sleeptime.behavior` (reminder/auto-launch) |
+| `SLEEPTIME_STEP_COUNT` | `features.sleeptime.stepCount` |
 | `TTS_PROVIDER` | TTS backend: `elevenlabs` (default) or `openai` |
 | `ELEVENLABS_API_KEY` | API key for ElevenLabs TTS |
 | `ELEVENLABS_VOICE_ID` | ElevenLabs voice ID (default: `onwK4e9ZLuTAKqWW03F9`) |
