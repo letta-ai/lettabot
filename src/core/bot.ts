@@ -345,9 +345,44 @@ export class LettaBot implements AgentSession {
         continue;
       }
 
+      if (directive.type === 'send-message') {
+        // Targeted message delivery to a specific channel:chat.
+        try {
+          const targetAdapter = this.channels.get(directive.channel);
+          if (!targetAdapter) {
+            log.warn(`Directive send-message skipped: channel "${directive.channel}" not registered`);
+            continue;
+          }
+          await targetAdapter.sendMessage({ chatId: directive.chat, text: this.prefixResponse(directive.text) });
+          acted = true;
+          log.info(`Directive: sent message to ${directive.channel}:${directive.chat} (${directive.text.length} chars)`);
+        } catch (err) {
+          log.warn('Directive send-message failed:', err instanceof Error ? err.message : err);
+        }
+        continue;
+      }
+
       if (directive.type === 'send-file') {
-        if (typeof adapter.sendFile !== 'function') {
-          log.warn(`Directive send-file skipped: ${adapter.name} does not support sendFile`);
+        // Reject partial targeting: both channel and chat must be set together.
+        // Without this guard, a missing field silently falls back to the triggering chat.
+        if ((directive.channel && !directive.chat) || (!directive.channel && directive.chat)) {
+          log.warn(`Directive send-file skipped: cross-channel targeting requires both channel and chat (got channel=${directive.channel || 'missing'}, chat=${directive.chat || 'missing'})`);
+          continue;
+        }
+
+        // Resolve target adapter: use cross-channel targeting if both channel and chat are set,
+        // otherwise fall back to the adapter/chatId that triggered this response.
+        const targetAdapter = (directive.channel && directive.chat)
+          ? this.channels.get(directive.channel)
+          : adapter;
+        const targetChatId = (directive.channel && directive.chat) ? directive.chat : chatId;
+
+        if (!targetAdapter) {
+          log.warn(`Directive send-file skipped: channel "${directive.channel}" not registered`);
+          continue;
+        }
+        if (typeof targetAdapter.sendFile !== 'function') {
+          log.warn(`Directive send-file skipped: ${targetAdapter.name} does not support sendFile`);
           continue;
         }
 
@@ -383,15 +418,16 @@ export class LettaBot implements AgentSession {
         }
 
         try {
-          await adapter.sendFile({
-            chatId,
+          await targetAdapter.sendFile({
+            chatId: targetChatId,
             filePath: resolvedPath,
             caption: directive.caption,
             kind: directive.kind ?? inferFileKind(resolvedPath),
-            threadId,
+            threadId: (directive.channel && directive.chat) ? undefined : threadId,
           });
           acted = true;
-          log.info(`Directive: sent file ${resolvedPath}`);
+          const target = (directive.channel && directive.chat) ? ` to ${directive.channel}:${directive.chat}` : '';
+          log.info(`Directive: sent file ${resolvedPath}${target}`);
 
           // Optional cleanup: delete file after successful send.
           // Only honored when sendFileCleanup is enabled in config (defense-in-depth).
@@ -425,10 +461,23 @@ export class LettaBot implements AgentSession {
           .map(dir => join(dir, 'lettabot-tts'))
           .find(p => existsSync(p));
 
+        const ttsProvider = (process.env.TTS_PROVIDER || 'elevenlabs').toLowerCase();
+        const ttsVoice = ttsProvider === 'openai'
+          ? (process.env.OPENAI_TTS_VOICE || 'alloy')
+          : (process.env.ELEVENLABS_VOICE_ID || 'onwK4e9ZLuTAKqWW03F9');
+        const ttsModel = ttsProvider === 'openai'
+          ? (process.env.OPENAI_TTS_MODEL || 'tts-1')
+          : (process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2');
+
         if (!ttsPath) {
           log.warn('Directive voice skipped: lettabot-tts not found in skill dirs');
           continue;
         }
+
+        log.info(
+          `Directive voice: generating memo (provider=${ttsProvider}, model=${ttsModel}, voice=${ttsVoice}, textLen=${directive.text.length})`,
+        );
+        log.info(`Directive voice: helper=${ttsPath}`);
 
         try {
           const outputPath = await new Promise<string>((resolve, reject) => {
@@ -438,12 +487,36 @@ export class LettaBot implements AgentSession {
               timeout: 30_000,
             }, (err, stdout, stderr) => {
               if (err) {
-                reject(new Error(stderr?.trim() || err.message));
+                const execErr = new Error(stderr?.trim() || err.message) as Error & {
+                  code?: string | number | null;
+                  signal?: NodeJS.Signals;
+                  stdout?: string;
+                  stderr?: string;
+                };
+                execErr.code = err.code;
+                execErr.signal = err.signal;
+                execErr.stdout = stdout?.trim();
+                execErr.stderr = stderr?.trim();
+                reject(execErr);
               } else {
-                resolve(stdout.trim());
+                const output = stdout.trim();
+                if (!output) {
+                  reject(new Error('lettabot-tts returned an empty output path'));
+                  return;
+                }
+                if (stderr?.trim()) {
+                  log.warn('Directive voice: lettabot-tts stderr:', stderr.trim());
+                }
+                resolve(output.split('\n').at(-1)?.trim() || output);
               }
             });
           });
+
+          const outputStats = await stat(outputPath);
+          if (!outputStats.isFile()) {
+            throw new Error(`Generated TTS output is not a file: ${outputPath}`);
+          }
+          log.info(`Directive voice: generated file ${outputPath} (${outputStats.size} bytes)`);
 
           await adapter.sendFile({
             chatId,
@@ -457,7 +530,23 @@ export class LettaBot implements AgentSession {
           // Clean up generated file
           try { await unlink(outputPath); } catch {}
         } catch (err) {
-          log.warn('Directive voice failed:', err instanceof Error ? err.message : err);
+          const execErr = err as Error & {
+            code?: string | number | null;
+            signal?: NodeJS.Signals;
+            stdout?: string;
+            stderr?: string;
+          };
+          log.warn('Directive voice failed:', {
+            message: execErr?.message || String(err),
+            code: execErr?.code,
+            signal: execErr?.signal,
+            stdout: typeof execErr?.stdout === 'string' ? execErr.stdout.slice(0, 300) : undefined,
+            stderr: typeof execErr?.stderr === 'string' ? execErr.stderr.slice(0, 1200) : undefined,
+            provider: ttsProvider,
+            model: ttsModel,
+            voice: ttsVoice,
+            helper: ttsPath,
+          });
         }
       }
     }
@@ -1299,12 +1388,7 @@ export class LettaBot implements AgentSession {
           receivedAnyData = true;
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
-          const preview = JSON.stringify(streamMsg).slice(0, 300);
-          if (streamMsg.type === 'reasoning' || streamMsg.type === 'assistant' || streamMsg.type === 'tool_call' || streamMsg.type === 'tool_result') {
-            log.debug(`type=${streamMsg.type} ${preview}`);
-          } else {
-            log.info(`type=${streamMsg.type} ${preview}`);
-          }
+          log.trace(`type=${streamMsg.type} ${JSON.stringify(streamMsg).slice(0, 300)}`);
           
           // stream_event is a low-level streaming primitive (partial deltas), not a
           // semantic type change. Skip it for type-transition logic so it doesn't
@@ -1879,11 +1963,44 @@ export class LettaBot implements AgentSession {
             continue;
           }
 
+          // Parse and execute directives from the response.
+          // Targeted directives (send-message, cross-channel send-file) work in any context.
+          // Non-targeted directives work when source adapter context is available.
+          let executedDirectives = false;
+          if (response.trim()) {
+            const parsed = parseDirectives(response);
+            if (parsed.directives.length > 0) {
+              const sourceAdapter = context?.sourceChannel ? this.channels.get(context.sourceChannel) : undefined;
+              const sourceChatId = context?.sourceChatId ?? '';
+
+              // Without a valid source adapter, only explicitly targeted directives can run.
+              // Non-targeted directives (react, voice, untargeted send-file) need a source
+              // chat context and must be filtered out to avoid executing against a wrong channel.
+              const directives = sourceAdapter
+                ? parsed.directives
+                : parsed.directives.filter(d =>
+                    d.type === 'send-message' || (d.type === 'send-file' && d.channel && d.chat)
+                  );
+
+              if (directives.length > 0) {
+                // Targeted directives resolve their own adapter; the fallback here is only
+                // used by non-targeted directives (which are filtered out when no source).
+                const adapter = sourceAdapter ?? this.channels.values().next().value;
+                if (adapter) {
+                  executedDirectives = await this.executeDirectives(
+                    directives, adapter, sourceChatId,
+                  );
+                }
+              }
+              response = parsed.cleanText;
+            }
+          }
+
           if (isSilent && response.trim()) {
-            if (usedMessageCli) {
-              log.info(`Silent mode: agent used lettabot-message CLI, collected ${response.length} chars (not delivered)`);
+            if (usedMessageCli || executedDirectives) {
+              log.info(`Silent mode: agent delivered via ${[usedMessageCli && 'CLI', executedDirectives && 'directives'].filter(Boolean).join(' + ')}, remaining text (${response.length} chars) not delivered`);
             } else {
-              log.warn(`Silent mode: agent produced ${response.length} chars but did NOT use lettabot-message CLI — response discarded. If this keeps happening, the agent's model may not be following silent mode instructions.`);
+              log.warn(`Silent mode: agent produced ${response.length} chars but did NOT use lettabot-message CLI or directives — response discarded. If this keeps happening, the agent's model may not be following silent mode instructions.`);
             }
           }
           return response;

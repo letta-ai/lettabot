@@ -998,6 +998,63 @@ describe('SDK session contract', () => {
     expect(mockSession.close).toHaveBeenCalledTimes(2);
   });
 
+  it('executes only targeted directives in sendToAgent when source adapter is unavailable', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async () => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield {
+            type: 'assistant',
+            content: '<actions><send-file path="data/outbound/report.txt" /><send-message channel="slack" chat="C123">Job done</send-message></actions>',
+          };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-background-directives',
+      conversationId: 'conversation-background-directives',
+    };
+
+    vi.mocked(createSession).mockReturnValue(mockSession as never);
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    const sendMessageMock = vi.fn(async () => ({ messageId: 'msg-1' }));
+    const sendFileMock = vi.fn(async () => ({ messageId: 'file-1' }));
+
+    bot.registerChannel({
+      id: 'slack',
+      name: 'Slack',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: sendMessageMock,
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      sendFile: sendFileMock,
+      getFormatterHints: vi.fn(() => ({ supportsReactions: true, supportsFiles: true })),
+    });
+
+    const response = await bot.sendToAgent('background trigger', {
+      type: 'feed',
+      outputMode: 'silent',
+      sourceChannel: 'gmail',
+      sourceChatId: 'account@example.com',
+    });
+
+    expect(response).toBe('');
+    expect(sendMessageMock).toHaveBeenCalledWith({
+      chatId: 'C123',
+      text: 'Job done',
+    });
+    expect(sendFileMock).not.toHaveBeenCalled();
+  });
+
   it('does not leak stale stream events between consecutive sendToAgent calls', async () => {
     // Simulates the real SDK behavior prior to 0.1.8: the shared streamQueue
     // retains events that arrive after the result message. When the next

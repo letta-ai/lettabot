@@ -26,6 +26,27 @@ import { resolveDailyLimits, checkDailyLimit, type GroupModeConfig } from './gro
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Telegram');
+
+function getTelegramErrorReason(err: unknown): string {
+  if (err && typeof err === 'object') {
+    const maybeError = err as { description?: string; message?: string };
+    if (typeof maybeError.description === 'string' && maybeError.description.trim().length > 0) {
+      return maybeError.description;
+    }
+    if (typeof maybeError.message === 'string' && maybeError.message.trim().length > 0) {
+      return maybeError.message;
+    }
+  }
+  return String(err);
+}
+
+function shouldFallbackToAudio(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const description = (err as { description?: string }).description;
+  if (typeof description !== 'string') return false;
+  return description.includes('VOICE_MESSAGES_FORBIDDEN');
+}
+
 export interface TelegramConfig {
   token: string;
   dmPolicy?: DmPolicy;           // 'pairing' (default), 'allowlist', or 'open'
@@ -593,13 +614,21 @@ export class TelegramAdapter implements ChannelAdapter {
         const result = await this.bot.api.sendVoice(file.chatId, input, { caption });
         return { messageId: String(result.message_id) };
       } catch (err: any) {
-        // Fall back to sendAudio if voice messages are restricted (Telegram Premium privacy setting)
-        if (err?.description?.includes('VOICE_MESSAGES_FORBIDDEN')) {
-          log.warn('sendVoice forbidden, falling back to sendAudio');
+        const reason = getTelegramErrorReason(err);
+        // Only retry with sendAudio for deterministic voice-policy rejections.
+        // For network/timeout errors we rethrow to avoid possible duplicate sends.
+        if (!shouldFallbackToAudio(err)) {
+          throw err;
+        }
+        log.warn('sendVoice failed with VOICE_MESSAGES_FORBIDDEN, falling back to sendAudio:', reason);
+        try {
           const result = await this.bot.api.sendAudio(file.chatId, new InputFile(file.filePath), { caption });
           return { messageId: String(result.message_id) };
+        } catch (fallbackErr: any) {
+          const fallbackReason = getTelegramErrorReason(fallbackErr);
+          log.error('sendAudio fallback also failed:', fallbackReason);
+          throw fallbackErr;
         }
-        throw err;
       }
     }
 
