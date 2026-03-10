@@ -34,6 +34,10 @@ For local installs, either:
 - Create `~/.lettabot/config.yaml` for global config, or
 - Set `export LETTABOT_CONFIG=/path/to/your/config.yaml`
 
+### Interactive Editor
+
+Run `lettabot config tui` for an interactive editor that covers server auth, agent identity, channels, and features. See [CLI Tools](./cli-tools.md#lettabot-config) for details.
+
 ## Example Configuration
 
 ```yaml
