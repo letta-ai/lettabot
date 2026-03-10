@@ -1,4 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { BlueskyAdapter } from './bluesky.js';
 import { splitPostText } from './bluesky/utils.js';
 
@@ -296,5 +299,99 @@ describe('BlueskyAdapter', () => {
     expect((adapter as any).config.handle).toBe('env@bsky.social');
     expect((adapter as any).config.appPassword).toBe('env-pass');
     expect((adapter as any).config.groups?.['*']?.mode).toBe('open');
+  });
+
+  it('loadState does not override config wantedDids from persisted state', () => {
+    const tempDir = join(tmpdir(), `bluesky-test-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+
+    const statePath = join(tempDir, 'bluesky-jetstream.json');
+    writeFileSync(statePath, JSON.stringify({
+      version: 1,
+      agents: {
+        TestAgent: {
+          cursor: 123456,
+          wantedDids: ['did:plc:stale-from-state'],
+          wantedCollections: ['app.bsky.feed.like'],
+          auth: { did: 'did:plc:auth', handle: 'test.bsky.social' },
+        },
+      },
+    }));
+
+    const adapter = makeAdapter({
+      wantedDids: ['did:plc:from-config'],
+      wantedCollections: ['app.bsky.feed.post'],
+    });
+    // Point adapter at our temp state file and load it
+    (adapter as any).statePath = statePath;
+    (adapter as any).loadState();
+
+    // Config values must remain authoritative -- state must not overwrite them
+    expect((adapter as any).config.wantedDids).toEqual(['did:plc:from-config']);
+    expect((adapter as any).config.wantedCollections).toEqual(['app.bsky.feed.post']);
+    // Cursor and auth should still be restored from state
+    expect((adapter as any).lastCursor).toBe(123456);
+    expect((adapter as any).sessionDid).toBe('did:plc:auth');
+
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('flushState does not persist wantedDids or wantedCollections', () => {
+    const tempDir = join(tmpdir(), `bluesky-test-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+
+    const statePath = join(tempDir, 'bluesky-jetstream.json');
+    const adapter = makeAdapter({
+      wantedDids: ['did:plc:configured'],
+      wantedCollections: ['app.bsky.feed.post'],
+    });
+    (adapter as any).statePath = statePath;
+    (adapter as any).lastCursor = 999;
+    (adapter as any).sessionDid = 'did:plc:me';
+    (adapter as any).stateDirty = true;
+
+    (adapter as any).flushState();
+
+    const state = JSON.parse(readFileSync(statePath, 'utf-8'));
+    const entry = state.agents.TestAgent;
+    expect(entry.cursor).toBe(999);
+    expect(entry).not.toHaveProperty('wantedDids');
+    expect(entry).not.toHaveProperty('wantedCollections');
+
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('pauseRuntime clears pending reconnect timer', () => {
+    vi.useFakeTimers();
+    try {
+      const adapter = makeAdapter();
+      (adapter as any).running = true;
+
+      // Simulate a scheduled reconnect
+      const timerCallback = vi.fn();
+      (adapter as any).reconnectTimer = setTimeout(timerCallback, 60000);
+
+      (adapter as any).runtimeDisabled = true;
+      (adapter as any).pauseRuntime();
+
+      expect((adapter as any).reconnectTimer).toBeNull();
+      // Verify the timer was actually cleared (callback should not fire)
+      vi.advanceTimersByTime(60000);
+      expect(timerCallback).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('connect() refuses to proceed when runtimeDisabled is true', () => {
+    const adapter = makeAdapter({ wantedDids: ['did:plc:target'] });
+    (adapter as any).running = true;
+    (adapter as any).runtimeDisabled = true;
+    (adapter as any).ws = null;
+
+    // connect() should bail out before creating a WebSocket
+    (adapter as any).connect();
+
+    expect((adapter as any).ws).toBeNull();
   });
 });
