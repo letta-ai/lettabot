@@ -1722,6 +1722,12 @@ export class LettaBot implements AgentSession {
           let lastMsgType: string | null = null;
           let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown>; isApprovalError?: boolean } | undefined;
           for await (const msg of stream()) {
+            // Flush reasoning on any type transition away from reasoning
+            if (this.turnLogger && lastMsgType === 'reasoning' && msg.type !== 'reasoning' && reasoningAcc.trim()) {
+              turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
+              reasoningAcc = '';
+            }
+
             if (msg.type === 'tool_call') {
               this.sessionManager.syncTodoToolCall(msg);
               if (isSilent && msg.toolName === 'Bash') {
@@ -1729,10 +1735,6 @@ export class LettaBot implements AgentSession {
                 if (cmd.includes('lettabot-message send')) usedMessageCli = true;
               }
               if (this.turnLogger) {
-                if (reasoningAcc.trim()) {
-                  turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
-                  reasoningAcc = '';
-                }
                 turnEvents.push({
                   type: 'tool_call',
                   id: msg.toolCallId || '',
@@ -1742,10 +1744,6 @@ export class LettaBot implements AgentSession {
               }
             }
             if (msg.type === 'tool_result' && this.turnLogger) {
-              if (reasoningAcc.trim()) {
-                turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
-                reasoningAcc = '';
-              }
               const resultContent = (msg as any).content ?? '';
               turnEvents.push({
                 type: 'tool_result',
@@ -1754,12 +1752,8 @@ export class LettaBot implements AgentSession {
                 isError: !!msg.isError,
               });
             }
-            if (msg.type === 'reasoning') {
-              if (lastMsgType !== 'reasoning' && this.turnLogger && reasoningAcc.trim()) {
-                turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
-                reasoningAcc = '';
-              }
-              if (this.turnLogger) reasoningAcc += msg.content || '';
+            if (msg.type === 'reasoning' && this.turnLogger) {
+              reasoningAcc += msg.content || '';
             }
             lastMsgType = msg.type;
             if (msg.type === 'error') {
@@ -1892,19 +1886,16 @@ export class LettaBot implements AgentSession {
 
       try {
         for await (const msg of stream()) {
-          // Accumulate turn events for logging
+          // Flush reasoning on any type transition away from reasoning
+          if (this.turnLogger && lastMsgType === 'reasoning' && msg.type !== 'reasoning' && reasoningAcc.trim()) {
+            turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
+            reasoningAcc = '';
+          }
+
           if (this.turnLogger) {
             if (msg.type === 'reasoning') {
-              if (lastMsgType !== 'reasoning' && reasoningAcc.trim()) {
-                turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
-                reasoningAcc = '';
-              }
               reasoningAcc += msg.content || '';
             } else if (msg.type === 'tool_call') {
-              if (reasoningAcc.trim()) {
-                turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
-                reasoningAcc = '';
-              }
               turnEvents.push({
                 type: 'tool_call',
                 id: msg.toolCallId || '',
@@ -1912,10 +1903,6 @@ export class LettaBot implements AgentSession {
                 args: (msg as any).toolInput ?? (msg as any).rawArguments ?? null,
               });
             } else if (msg.type === 'tool_result') {
-              if (reasoningAcc.trim()) {
-                turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
-                reasoningAcc = '';
-              }
               const resultContent = (msg as any).content ?? '';
               turnEvents.push({
                 type: 'tool_result',
