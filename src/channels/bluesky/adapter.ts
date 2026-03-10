@@ -269,6 +269,7 @@ export class BlueskyAdapter implements ChannelAdapter {
 
   private connect(): void {
     if (!this.running) return;
+    if (this.runtimeDisabled) return;
     if (this.ws) return; // Already connected — prevent double-connections
     if (!this.hasJetstreamTargets()) {
       log.warn('Jetstream disabled (no wantedDids or list-expanded DIDs).');
@@ -1095,6 +1096,10 @@ export class BlueskyAdapter implements ChannelAdapter {
   }
 
   private pauseRuntime(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
       try {
         this.ws.close();
@@ -1474,12 +1479,9 @@ export class BlueskyAdapter implements ChannelAdapter {
       if (entry?.cursor !== undefined) {
         this.lastCursor = entry.cursor;
       }
-      if (entry?.wantedDids && entry.wantedDids.length > 0) {
-        this.config.wantedDids = entry.wantedDids;
-      }
-      if (entry?.wantedCollections && entry.wantedCollections.length > 0) {
-        this.config.wantedCollections = entry.wantedCollections;
-      }
+      // wantedDids and wantedCollections are NOT restored from state -- config is
+      // authoritative. State previously persisted these, but restoring them would
+      // silently override user edits to lettabot.yaml made while the bot was down.
       // JWTs are not persisted; session DID and handle are non-secret and safe to store
       if (entry?.auth?.did) {
         this.sessionDid = entry.auth.did;
@@ -1536,8 +1538,6 @@ export class BlueskyAdapter implements ChannelAdapter {
 
       agents[this.config.agentName] = {
         cursor: this.lastCursor,
-        wantedDids: this.getWantedDids(),
-        wantedCollections: normalizeList(this.config.wantedCollections),
         auth,
         notificationsCursor: this.notificationsCursor,
       };
