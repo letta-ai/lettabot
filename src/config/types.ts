@@ -716,11 +716,11 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     ? sleeptimeStepCountParsed
     : undefined;
 
-  if (!features.sleeptime && (sleeptimeTrigger || sleeptimeBehavior || sleeptimeStepCount !== undefined)) {
+  if (!features.sleeptime && (sleeptimeTrigger || sleeptimeBehavior || sleeptimeStepCount)) {
     features.sleeptime = {
       ...(sleeptimeTrigger ? { trigger: sleeptimeTrigger } : {}),
       ...(sleeptimeBehavior ? { behavior: sleeptimeBehavior } : {}),
-      ...(sleeptimeStepCount !== undefined ? { stepCount: sleeptimeStepCount } : {}),
+      ...(sleeptimeStepCount ? { stepCount: sleeptimeStepCount } : {}),
     };
   }
 

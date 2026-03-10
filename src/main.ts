@@ -304,6 +304,7 @@ async function main() {
     // self-hosted Letta servers that don't have the git endpoint.
     const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : false);
     const configuredSleeptime = agentConfig.features?.sleeptime;
+    // Treat missing trigger as active (conservative): only `trigger: 'off'` explicitly disables.
     const sleeptimeRequiresMemfs = !!configuredSleeptime && configuredSleeptime.trigger !== 'off';
     const effectiveSleeptime = !resolvedMemfs && sleeptimeRequiresMemfs
       ? undefined

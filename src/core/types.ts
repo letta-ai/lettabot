@@ -131,14 +131,8 @@ export interface SkillsConfig {
   additionalSkills?: string[];
 }
 
-export type SleeptimeTrigger = 'off' | 'step-count' | 'compaction-event';
-export type SleeptimeBehavior = 'reminder' | 'auto-launch';
-
-export interface SleeptimeConfig {
-  trigger?: SleeptimeTrigger;
-  behavior?: SleeptimeBehavior;
-  stepCount?: number;
-}
+import type { SleeptimeTrigger, SleeptimeBehavior, SleeptimeConfig } from '../config/types.js';
+export type { SleeptimeTrigger, SleeptimeBehavior, SleeptimeConfig };
 
 /**
  * Bot configuration
