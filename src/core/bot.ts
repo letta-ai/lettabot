@@ -996,6 +996,7 @@ export class LettaBot implements AgentSession {
     lap('format message');
 
     // Turn accumulator for JSONL logging
+    const turnId = crypto.randomUUID();
     const turnEvents: TurnEvent[] = [];
     let reasoningAcc = '';
 
@@ -1704,6 +1705,7 @@ export class LettaBot implements AgentSession {
     const t0 = performance.now();
 
     // Turn accumulator for JSONL logging
+    const turnId = crypto.randomUUID();
     const turnEvents: TurnEvent[] = [];
     let reasoningAcc = '';
 
@@ -1740,6 +1742,10 @@ export class LettaBot implements AgentSession {
               }
             }
             if (msg.type === 'tool_result' && this.turnLogger) {
+              if (reasoningAcc.trim()) {
+                turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
+                reasoningAcc = '';
+              }
               const resultContent = (msg as any).content ?? '';
               turnEvents.push({
                 type: 'tool_result',
