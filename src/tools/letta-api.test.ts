@@ -6,6 +6,8 @@ const mockConversationsMessagesCreate = vi.fn();
 const mockRunsRetrieve = vi.fn();
 const mockRunsList = vi.fn();
 const mockAgentsMessagesCancel = vi.fn();
+const mockAgentsRetrieve = vi.fn();
+const mockAgentsMessagesList = vi.fn();
 
 vi.mock('@letta-ai/letta-client', () => {
   return {
@@ -20,12 +22,59 @@ vi.mock('@letta-ai/letta-client', () => {
         retrieve: mockRunsRetrieve,
         list: mockRunsList,
       };
-      agents = { messages: { cancel: mockAgentsMessagesCancel } };
+      agents = {
+        retrieve: mockAgentsRetrieve,
+        messages: {
+          cancel: mockAgentsMessagesCancel,
+          list: mockAgentsMessagesList,
+        },
+      };
     },
   };
 });
 
-import { getLatestRunError, recoverOrphanedConversationApproval, isRecoverableConversationId } from './letta-api.js';
+describe('recoverPendingApprovalsForAgent', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAgentsRetrieve.mockResolvedValue({ pending_approval: null });
+    mockAgentsMessagesList.mockReturnValue(mockPageIterator([]));
+    mockAgentsMessagesCancel.mockResolvedValue(undefined);
+  });
+
+  it('cancels approval-blocked runs when pending approval payload is unavailable', async () => {
+    // First runs.list call: getPendingApprovals run scan (no tool calls resolved)
+    mockRunsList
+      .mockReturnValueOnce(mockPageIterator([
+        { id: 'run-stuck', status: 'created', stop_reason: 'requires_approval' },
+      ]))
+      // Second runs.list call: listAgentApprovalRunIds fallback
+      .mockReturnValueOnce(mockPageIterator([
+        { id: 'run-stuck', status: 'created', stop_reason: 'requires_approval' },
+      ]));
+
+    const result = await recoverPendingApprovalsForAgent('agent-1');
+
+    expect(result.recovered).toBe(true);
+    expect(result.details).toContain('Cancelled 1 approval-blocked run(s)');
+    expect(mockAgentsMessagesCancel).toHaveBeenCalledWith('agent-1', {
+      run_ids: ['run-stuck'],
+    });
+  });
+
+  it('returns false when no pending approvals and no approval-blocked runs are found', async () => {
+    mockRunsList
+      .mockReturnValueOnce(mockPageIterator([]))
+      .mockReturnValueOnce(mockPageIterator([]));
+
+    const result = await recoverPendingApprovalsForAgent('agent-1');
+
+    expect(result.recovered).toBe(false);
+    expect(result.details).toBe('No pending approvals found on agent');
+    expect(mockAgentsMessagesCancel).not.toHaveBeenCalled();
+  });
+});
+
+import { getLatestRunError, recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent } from './letta-api.js';
 
 describe('isRecoverableConversationId', () => {
   it('returns false for aliases and empty values', () => {
@@ -54,6 +103,8 @@ describe('recoverOrphanedConversationApproval', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRunsList.mockReturnValue(mockPageIterator([]));
+    mockAgentsRetrieve.mockResolvedValue({ pending_approval: null });
+    mockAgentsMessagesList.mockReturnValue(mockPageIterator([]));
     vi.useFakeTimers();
   });
 
