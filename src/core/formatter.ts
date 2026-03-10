@@ -236,7 +236,9 @@ function buildMetadataLines(msg: InboundMessage, options: EnvelopeOptions): stri
 function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): string[] {
   const lines: string[] = [];
 
-  if (msg.isGroup) {
+  const messageType = msg.messageType ?? (msg.isGroup ? 'group' : 'dm');
+
+  if (messageType === 'group') {
     lines.push(`- **Type**: Group chat`);
     if (options.includeGroup !== false && msg.groupName?.trim()) {
       if (msg.channel === 'slack' || msg.channel === 'discord') {
@@ -256,6 +258,8 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
     } else {
       lines.push(`- **Hint**: See Response Directives below for \`<no-reply/>\``);
     }
+  } else if (messageType === 'public') {
+    lines.push(`- **Type**: Public post`);
   } else {
     lines.push(`- **Type**: Direct message`);
   }
@@ -277,6 +281,13 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
   if (attachmentLines.length > 0) {
     lines.push(`- **Attachments**:`);
     lines.push(...attachmentLines);
+  }
+
+  // Channel-specific display context (e.g. Bluesky operation/URI metadata)
+  if (msg.extraContext) {
+    for (const [key, value] of Object.entries(msg.extraContext)) {
+      lines.push(`- **${key}**: ${value}`);
+    }
   }
 
   return lines;
@@ -309,7 +320,8 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
   const lines: string[] = [];
   const supportsReactions = msg.formatterHints?.supportsReactions ?? false;
   const supportsFiles = msg.formatterHints?.supportsFiles ?? false;
-  const isGroup = !!msg.isGroup;
+  const messageType = msg.messageType ?? (msg.isGroup ? 'group' : 'dm');
+  const isGroup = messageType === 'group';
   const isListeningMode = msg.isListeningMode ?? false;
 
   // Listening mode: minimal directives only
@@ -317,6 +329,7 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
     lines.push(`- \`<no-reply/>\` — acknowledge without replying (recommended)`);
     if (supportsReactions) {
       lines.push(`- \`<actions><react emoji="eyes" /></actions>\` — react to show you saw this`);
+      lines.push(`- Emoji names: eyes, thumbsup, heart, fire, tada, clap — or unicode`);
     }
     return lines;
   }
@@ -382,7 +395,7 @@ export function formatMessageEnvelope(
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const sections: string[] = [];
 
-  // Session context section (for first message in a chat session)
+  // Session context section (agent/server info, shown first)
   if (sessionContext) {
     const sessionLines = buildSessionContext(sessionContext);
     if (sessionLines.length > 0) {
@@ -400,9 +413,19 @@ export function formatMessageEnvelope(
     sections.push(`## Chat Context\n${contextLines.join('\n')}`);
   }
 
-  // Channel-aware response directives
-  const directiveLines = buildResponseDirectives(msg);
-  sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
+  // Channel-specific action hints (Bluesky: replaces standard directives)
+  if (msg.formatterHints?.actionsSection && msg.formatterHints.actionsSection.length > 0) {
+    sections.push(`## Channel Actions\n${msg.formatterHints.actionsSection.join('\n')}`);
+  }
+
+  // Response directives (skip if channel provides its own actionsSection)
+  const hasCustomActions = (msg.formatterHints?.actionsSection?.length ?? 0) > 0;
+  if (!hasCustomActions && !msg.formatterHints?.skipDirectives) {
+    const directiveLines = buildResponseDirectives(msg);
+    sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
+  }
+
+
   // Build the full system-reminder block
   const reminderContent = sections.join('\n\n');
   const reminder = `${SYSTEM_REMINDER_OPEN}\n${reminderContent}\n${SYSTEM_REMINDER_CLOSE}`;
@@ -448,7 +471,7 @@ export function formatGroupBatchEnvelope(
   headerParts.push(`${messages.length} message${messages.length === 1 ? '' : 's'}`);
   let header = `[${headerParts.join(' - ')}]`;
   if (isListeningMode) {
-    header += '\n[OBSERVATION ONLY - Update memories. Do not reply unless addressed.]';
+    header += '\n[OBSERVATION ONLY — Update memories, do not send text replies]';
   }
 
   // Chat log lines

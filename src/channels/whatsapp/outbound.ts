@@ -6,13 +6,29 @@
  */
 
 import type { OutboundMessage, OutboundFile } from "../../core/types.js";
-import type { WAMessage } from '@whiskeysockets/baileys';
+import type { WAMessage, WAUrlInfo } from '@whiskeysockets/baileys';
 import { isLid } from "./utils.js";
 import { basename } from "node:path";
 
 import { createLogger } from '../../logger.js';
 
 const log = createLogger('WhatsApp');
+
+/**
+ * URL detection regex - matches https:// URLs.
+ * This is the same pattern Baileys uses internally for link preview detection.
+ * @see https://stackoverflow.com/questions/3809401/what-is-a-good-regular-expression-to-match-a-url
+ */
+const URL_REGEX = /https:\/\/(?![^:@\/\s]+:[^:@\/\s]+@)[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(:\d+)?(\/[^\s]*)?/g;
+
+/**
+ * Extract the first URL from text.
+ * Used to enable link previews in WhatsApp messages.
+ */
+function extractUrl(text: string): string | null {
+  const matches = text.match(URL_REGEX);
+  return matches?.[0] ?? null;
+}
 /**
  * LID (Linked Identifier) mapping for message sending.
  * Maps LID addresses to real JIDs.
@@ -121,8 +137,26 @@ export async function sendWhatsAppMessage(
       // Ignore presence errors
     }
 
+    // Build message content with link preview support
+    // Baileys will auto-generate link previews, but we need to ensure
+    // matchedText is set even if preview fetch fails (network timeout, etc.)
+    // This ensures URLs are always clickable/tappable in WhatsApp.
+    const url = extractUrl(msg.text);
+    const messageContent: { text: string; linkPreview?: WAUrlInfo } = { text: msg.text };
+
+    if (url) {
+      // Provide minimal linkPreview with matched-text to ensure URL is clickable.
+      // Baileys will try to fetch full preview data (title, description, thumbnail),
+      // but if that fails, the URL will still be tappable because matched-text is set.
+      messageContent.linkPreview = {
+        'canonical-url': url,
+        'matched-text': url,
+        title: '',  // Will be filled by Baileys if preview fetch succeeds
+      };
+    }
+
     // Send message
-    const result = await sock.sendMessage(targetJid, { text: msg.text });
+    const result = await sock.sendMessage(targetJid, messageContent);
     const messageId = result?.key?.id || "";
     const message = result?.message;
 

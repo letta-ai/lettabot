@@ -231,13 +231,21 @@ export function formatReasoningDisplay(
     return { text: `**Thinking**\n_${truncated}_` };
   }
   if (channelId === 'telegram' || channelId === 'telegram-mtproto') {
-    // Telegram: use HTML blockquote to bypass telegramify-markdown spacing
+    // Telegram: use HTML blockquote to bypass telegramify-markdown spacing.
+    // Convert basic markdown inline formatting to HTML tags so bold/italic
+    // render correctly instead of showing raw ** and * characters.
     const escaped = truncated
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
+    const html = escaped
+      // Only convert likely markdown delimiters:
+      // - ignore escaped asterisks (\*)
+      // - ignore in-word/math operators (e.g., 2*3*4, 2 * 3 * 4)
+      .replace(/(?<![\\\w])\*\*(?=\S)([\s\S]*?\S)\*\*(?!\w)/g, '<b>$1</b>')
+      .replace(/(?<![\\\w])\*(?=\S)([^*\n]*?\S)\*(?!\w)/g, '<i>$1</i>');
     return {
-      text: `<blockquote expandable><b>Thinking</b>\n${escaped}</blockquote>`,
+      text: `<blockquote expandable><b>Thinking</b>\n${html}</blockquote>`,
       parseMode: 'HTML',
     };
   }

@@ -420,6 +420,47 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.channels.discord?.listeningGroups?.length) {
     env.DISCORD_LISTENING_GROUPS = config.channels.discord.listeningGroups.join(',');
   }
+  if (config.channels.bluesky?.enabled) {
+    if (config.channels.bluesky.wantedDids?.length) {
+      env.BLUESKY_WANTED_DIDS = config.channels.bluesky.wantedDids.join(',');
+    }
+    if (config.channels.bluesky.wantedCollections?.length) {
+      env.BLUESKY_WANTED_COLLECTIONS = config.channels.bluesky.wantedCollections.join(',');
+    }
+    if (config.channels.bluesky.jetstreamUrl) {
+      env.BLUESKY_JETSTREAM_URL = config.channels.bluesky.jetstreamUrl;
+    }
+    if (config.channels.bluesky.cursor !== undefined) {
+      env.BLUESKY_CURSOR = String(config.channels.bluesky.cursor);
+    }
+    if (config.channels.bluesky.handle) {
+      env.BLUESKY_HANDLE = config.channels.bluesky.handle;
+    }
+    if (config.channels.bluesky.appPassword) {
+      env.BLUESKY_APP_PASSWORD = config.channels.bluesky.appPassword;
+    }
+    if (config.channels.bluesky.serviceUrl) {
+      env.BLUESKY_SERVICE_URL = config.channels.bluesky.serviceUrl;
+    }
+    if (config.channels.bluesky.appViewUrl) {
+      env.BLUESKY_APPVIEW_URL = config.channels.bluesky.appViewUrl;
+    }
+    if (config.channels.bluesky.notifications?.enabled) {
+      env.BLUESKY_NOTIFICATIONS_ENABLED = 'true';
+      if (config.channels.bluesky.notifications.intervalSec !== undefined) {
+        env.BLUESKY_NOTIFICATIONS_INTERVAL_SEC = String(config.channels.bluesky.notifications.intervalSec);
+      }
+      if (config.channels.bluesky.notifications.limit !== undefined) {
+        env.BLUESKY_NOTIFICATIONS_LIMIT = String(config.channels.bluesky.notifications.limit);
+      }
+      if (config.channels.bluesky.notifications.priority !== undefined) {
+        env.BLUESKY_NOTIFICATIONS_PRIORITY = config.channels.bluesky.notifications.priority ? 'true' : 'false';
+      }
+      if (config.channels.bluesky.notifications.reasons?.length) {
+        env.BLUESKY_NOTIFICATIONS_REASONS = config.channels.bluesky.notifications.reasons.join(',');
+      }
+    }
+  }
 
   // Features
   if (config.features?.cron) {
@@ -429,6 +470,17 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
     env.HEARTBEAT_INTERVAL_MIN = String(config.features.heartbeat.intervalMin || 30);
     if (config.features.heartbeat.skipRecentUserMin !== undefined) {
       env.HEARTBEAT_SKIP_RECENT_USER_MIN = String(config.features.heartbeat.skipRecentUserMin);
+    }
+  }
+  if (config.features?.sleeptime) {
+    if (config.features.sleeptime.trigger) {
+      env.SLEEPTIME_TRIGGER = config.features.sleeptime.trigger;
+    }
+    if (config.features.sleeptime.behavior) {
+      env.SLEEPTIME_BEHAVIOR = config.features.sleeptime.behavior;
+    }
+    if (config.features.sleeptime.stepCount !== undefined) {
+      env.SLEEPTIME_STEP_COUNT = String(config.features.sleeptime.stepCount);
     }
   }
   if (config.features?.inlineImages === false) {
@@ -527,6 +579,66 @@ export function applyConfigToEnv(config: LettaBotConfig): void {
   }
 }
 
+async function listProviders(apiKey: string): Promise<Array<{ id: string; name: string }>> {
+  const listResponse = await fetch(`${LETTA_API_URL}/v1/providers`, {
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+  });
+
+  if (!listResponse.ok) {
+    throw new Error(`Failed to list providers: ${listResponse.status} ${listResponse.statusText}`);
+  }
+
+  return listResponse.json() as Promise<Array<{ id: string; name: string }>>;
+}
+
+/**
+ * Create or update a BYOK provider on Letta API.
+ * Returns whether the provider was created or updated.
+ */
+export async function upsertProvider(
+  apiKey: string,
+  provider: ProviderConfig,
+  knownProviders?: Array<{ id: string; name: string }>,
+): Promise<'created' | 'updated'> {
+  const existingProviders = knownProviders ?? await listProviders(apiKey);
+  const existing = existingProviders.find((p) => p.name === provider.name);
+
+  if (existing) {
+    const response = await fetch(`${LETTA_API_URL}/v1/providers/${existing.id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ api_key: provider.apiKey }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to update provider ${provider.name}: ${response.status} ${response.statusText}`);
+    }
+    return 'updated';
+  }
+
+  const response = await fetch(`${LETTA_API_URL}/v1/providers`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      name: provider.name,
+      provider_type: provider.type,
+      api_key: provider.apiKey,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to create provider ${provider.name}: ${response.status} ${response.statusText}`);
+  }
+  return 'created';
+}
+
 /**
  * Create BYOK providers on Letta API
  */
@@ -540,52 +652,15 @@ export async function syncProviders(config: Partial<LettaBotConfig> & Pick<Letta
   }
   
   const apiKey = config.server.apiKey;
-  const baseUrl = LETTA_API_URL;
   
-  // List existing providers
-  const listResponse = await fetch(`${baseUrl}/v1/providers`, {
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-  });
-  
-  const existingProviders = listResponse.ok 
-    ? await listResponse.json() as Array<{ id: string; name: string }>
-    : [];
+  // List existing providers once, then pass to each upsert call.
+  const existingProviders = await listProviders(apiKey).catch(() => [] as Array<{ id: string; name: string }>);
   
   // Create or update each provider
   for (const provider of config.providers) {
-    const existing = existingProviders.find(p => p.name === provider.name);
-    
     try {
-      if (existing) {
-        // Update existing
-        await fetch(`${baseUrl}/v1/providers/${existing.id}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({ api_key: provider.apiKey }),
-        });
-        log.info(`Updated provider: ${provider.name}`);
-      } else {
-        // Create new
-        await fetch(`${baseUrl}/v1/providers`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            name: provider.name,
-            provider_type: provider.type,
-            api_key: provider.apiKey,
-          }),
-        });
-        log.info(`Created provider: ${provider.name}`);
-      }
+      const action = await upsertProvider(apiKey, provider, existingProviders);
+      log.info(`${action === 'updated' ? 'Updated' : 'Created'} provider: ${provider.name}`);
     } catch (err) {
       log.error(`Failed to sync provider ${provider.name}:`, err);
     }

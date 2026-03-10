@@ -57,7 +57,11 @@ export class MockChannelAdapter implements ChannelAdapter {
   }
 
   getFormatterHints() {
-    return { supportsReactions: false, supportsFiles: false };
+    return {
+      supportsReactions: false,
+      supportsFiles: false,
+      formatHint: 'Plain text only',
+    };
   }
   
   /**

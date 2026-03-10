@@ -40,6 +40,15 @@ export interface DisplayConfig {
   reasoningMaxChars?: number;
 }
 
+export type SleeptimeTrigger = 'off' | 'step-count' | 'compaction-event';
+export type SleeptimeBehavior = 'reminder' | 'auto-launch';
+
+export interface SleeptimeConfig {
+  trigger?: SleeptimeTrigger;
+  behavior?: SleeptimeBehavior;
+  stepCount?: number;
+}
+
 /**
  * Configuration for a single agent in multi-agent mode.
  * Each agent has its own name, channels, and features.
@@ -63,6 +72,7 @@ export interface AgentConfig {
     whatsapp?: WhatsAppConfig;
     signal?: SignalConfig;
     discord?: DiscordConfig;
+    bluesky?: BlueskyConfig;
   };
   /** Conversation routing */
   conversations?: {
@@ -84,6 +94,7 @@ export interface AgentConfig {
       target?: string;       // Delivery target ("telegram:123", "slack:C123", etc.)
     };
     memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
+    sleeptime?: SleeptimeConfig; // Configure SDK reflection reminders (/sleeptime equivalent)
     maxToolCalls?: number;
     sendFileDir?: string;    // Restrict <send-file> directive to this directory (default: data/outbound)
     sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
@@ -155,6 +166,7 @@ export interface LettaBotConfig {
     whatsapp?: WhatsAppConfig;
     signal?: SignalConfig;
     discord?: DiscordConfig;
+    bluesky?: BlueskyConfig;
   };
 
   // Conversation routing
@@ -179,6 +191,7 @@ export interface LettaBotConfig {
     };
     inlineImages?: boolean;   // Send images directly to the LLM (default: true). Set false to only send file paths.
     memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
+    sleeptime?: SleeptimeConfig; // Configure SDK reflection reminders (/sleeptime equivalent)
     maxToolCalls?: number;  // Abort if agent calls this many tools in one turn (default: 100)
     sendFileDir?: string;   // Restrict <send-file> directive to this directory (default: data/outbound)
     sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
@@ -289,6 +302,10 @@ export interface GroupConfig {
   dailyLimit?: number;
   /** Maximum bot triggers per user per day in this group. Omit for unlimited. */
   dailyUserLimit?: number;
+  /** Discord only: require messages to be in a thread before the bot responds. */
+  threadMode?: 'any' | 'thread-only';
+  /** Discord only: when true, @mentions in parent channels auto-create a thread. */
+  autoCreateThreadOnMention?: boolean;
   /**
    * @deprecated Use mode: "mention-only" (true) or "open" (false).
    */
@@ -380,6 +397,31 @@ export interface DiscordConfig {
   instantGroups?: string[];       // Guild/server IDs or channel IDs that bypass batching
   listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
   groups?: Record<string, GroupConfig>;  // Per-guild/channel settings, "*" for defaults
+  ignoreBotReactions?: boolean;   // Ignore all bot reactions (default: true). Set false for multi-bot setups.
+}
+
+export interface BlueskyConfig {
+  enabled: boolean;
+  jetstreamUrl?: string;
+  wantedDids?: string[];         // DID(s) to follow (e.g., did:plc:...)
+  wantedCollections?: string[];  // Optional collection filters (e.g., app.bsky.feed.post)
+  cursor?: number;               // Jetstream cursor (microseconds)
+  handle?: string;               // Bluesky handle (for posting)
+  appPassword?: string;          // App password (for posting)
+  serviceUrl?: string;           // ATProto service URL (default: https://bsky.social)
+  appViewUrl?: string;           // AppView URL for list/notification APIs
+  groups?: Record<string, GroupConfig>; // Use "*" for defaults, DID for overrides
+  notifications?: BlueskyNotificationsConfig;
+  lists?: Record<string, GroupConfig>;  // List URI -> mode
+}
+
+export interface BlueskyNotificationsConfig {
+  enabled?: boolean;        // Poll notifications API (requires auth)
+  intervalSec?: number;     // Poll interval (default: 60s)
+  limit?: number;           // Max notifications per request (default: 50)
+  priority?: boolean;       // Priority only
+  reasons?: string[];       // Filter reasons (e.g., ['mention','reply'])
+  backfill?: boolean;       // Process unread notifications on startup (default: false)
 }
 
 /**
@@ -573,6 +615,16 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       normalizeLegacyGroupFields(discord, `${sourcePath}.discord`);
       normalized.discord = discord;
     }
+    if (channels.bluesky && channels.bluesky.enabled !== false) {
+      const bluesky = { ...channels.bluesky, enabled: channels.bluesky.enabled ?? true };
+      const wantsDids = Array.isArray(bluesky.wantedDids) && bluesky.wantedDids.length > 0;
+      const canReply = !!(bluesky.handle && bluesky.appPassword);
+      const hasLists = !!(bluesky.lists && Object.keys(bluesky.lists).length > 0);
+      const wantsNotifications = !!bluesky.notifications?.enabled;
+      if (wantsDids || canReply || hasLists || wantsNotifications) {
+        normalized.bluesky = bluesky;
+      }
+    }
 
     // Warn when a channel block exists but was dropped due to missing credentials
     const channelCredentials: Array<[string, unknown, boolean]> = [
@@ -668,6 +720,32 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       allowedUsers: parseList(process.env.DISCORD_ALLOWED_USERS),
     };
   }
+  if (!channels.bluesky && process.env.BLUESKY_WANTED_DIDS) {
+    channels.bluesky = {
+      enabled: true,
+      wantedDids: parseList(process.env.BLUESKY_WANTED_DIDS),
+      wantedCollections: parseList(process.env.BLUESKY_WANTED_COLLECTIONS),
+      jetstreamUrl: process.env.BLUESKY_JETSTREAM_URL,
+      cursor: process.env.BLUESKY_CURSOR ? parseInt(process.env.BLUESKY_CURSOR, 10) : undefined,
+      handle: process.env.BLUESKY_HANDLE,
+      appPassword: process.env.BLUESKY_APP_PASSWORD,
+      serviceUrl: process.env.BLUESKY_SERVICE_URL,
+      appViewUrl: process.env.BLUESKY_APPVIEW_URL,
+      notifications: process.env.BLUESKY_NOTIFICATIONS_ENABLED === 'true'
+        ? {
+            enabled: true,
+            intervalSec: process.env.BLUESKY_NOTIFICATIONS_INTERVAL_SEC
+              ? parseInt(process.env.BLUESKY_NOTIFICATIONS_INTERVAL_SEC, 10)
+              : undefined,
+            limit: process.env.BLUESKY_NOTIFICATIONS_LIMIT
+              ? parseInt(process.env.BLUESKY_NOTIFICATIONS_LIMIT, 10)
+              : undefined,
+            priority: process.env.BLUESKY_NOTIFICATIONS_PRIORITY === 'true',
+            reasons: parseList(process.env.BLUESKY_NOTIFICATIONS_REASONS),
+          }
+        : undefined,
+    };
+  }
 
   // Field-level env var fallback for features (heartbeat, cron).
   // Unlike channels (all-or-nothing), features are independent toggles so we
@@ -690,6 +768,33 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       enabled: true,
       ...(Number.isFinite(intervalMin) ? { intervalMin } : {}),
       ...(Number.isFinite(skipRecentUserMin) ? { skipRecentUserMin } : {}),
+    };
+  }
+
+  const sleeptimeTriggerRaw = process.env.SLEEPTIME_TRIGGER;
+  const sleeptimeBehaviorRaw = process.env.SLEEPTIME_BEHAVIOR;
+  const sleeptimeStepCountRaw = process.env.SLEEPTIME_STEP_COUNT;
+
+  const sleeptimeTrigger = sleeptimeTriggerRaw === 'off'
+    || sleeptimeTriggerRaw === 'step-count'
+    || sleeptimeTriggerRaw === 'compaction-event'
+    ? sleeptimeTriggerRaw
+    : undefined;
+  const sleeptimeBehavior = sleeptimeBehaviorRaw === 'reminder'
+    || sleeptimeBehaviorRaw === 'auto-launch'
+    ? sleeptimeBehaviorRaw
+    : undefined;
+  const sleeptimeStepCountParsed = sleeptimeStepCountRaw ? parseInt(sleeptimeStepCountRaw, 10) : undefined;
+  const sleeptimeStepCount = Number.isFinite(sleeptimeStepCountParsed)
+    && (sleeptimeStepCountParsed as number) > 0
+    ? sleeptimeStepCountParsed
+    : undefined;
+
+  if (!features.sleeptime && (sleeptimeTrigger || sleeptimeBehavior || sleeptimeStepCount)) {
+    features.sleeptime = {
+      ...(sleeptimeTrigger ? { trigger: sleeptimeTrigger } : {}),
+      ...(sleeptimeBehavior ? { behavior: sleeptimeBehavior } : {}),
+      ...(sleeptimeStepCount ? { stepCount: sleeptimeStepCount } : {}),
     };
   }
 

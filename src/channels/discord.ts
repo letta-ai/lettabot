@@ -34,6 +34,7 @@ export interface DiscordConfig {
   attachmentsMaxBytes?: number;
   groups?: Record<string, GroupModeConfig>;  // Per-guild/channel settings
   agentName?: string;       // For scoping daily limit counters in multi-agent mode
+  ignoreBotReactions?: boolean;   // Ignore all bot reactions (default: true). Set false for multi-bot setups.
 }
 
 export function shouldProcessDiscordBotMessage(params: {
@@ -50,6 +51,59 @@ export function shouldProcessDiscordBotMessage(params: {
   return resolveReceiveBotMessages(params.groups, params.keys);
 }
 
+export type DiscordThreadMode = 'any' | 'thread-only';
+
+export function buildDiscordGroupKeys(params: {
+  chatId: string;
+  serverId?: string | null;
+  parentChatId?: string | null;
+}): string[] {
+  const keys: string[] = [];
+  const add = (value?: string | null) => {
+    if (!value) return;
+    if (keys.includes(value)) return;
+    keys.push(value);
+  };
+
+  add(params.chatId);
+  add(params.parentChatId);
+  add(params.serverId);
+  return keys;
+}
+
+export function resolveDiscordThreadMode(
+  groups: Record<string, GroupModeConfig> | undefined,
+  keys: string[],
+  fallback: DiscordThreadMode = 'any',
+): DiscordThreadMode {
+  if (groups) {
+    for (const key of keys) {
+      const mode = groups[key]?.threadMode;
+      if (mode === 'any' || mode === 'thread-only') return mode;
+    }
+    const wildcard = groups['*']?.threadMode;
+    if (wildcard === 'any' || wildcard === 'thread-only') return wildcard;
+  }
+  return fallback;
+}
+
+export function resolveDiscordAutoCreateThreadOnMention(
+  groups: Record<string, GroupModeConfig> | undefined,
+  keys: string[],
+): boolean {
+  if (groups) {
+    for (const key of keys) {
+      if (groups[key]?.autoCreateThreadOnMention !== undefined) {
+        return !!groups[key].autoCreateThreadOnMention;
+      }
+    }
+    if (groups['*']?.autoCreateThreadOnMention !== undefined) {
+      return !!groups['*'].autoCreateThreadOnMention;
+    }
+  }
+  return false;
+}
+
 export class DiscordAdapter implements ChannelAdapter {
   readonly id = 'discord' as const;
   readonly name = 'Discord';
@@ -61,7 +115,7 @@ export class DiscordAdapter implements ChannelAdapter {
   private attachmentsMaxBytes?: number;
 
   onMessage?: (msg: InboundMessage) => Promise<void>;
-  onCommand?: (command: string, chatId?: string, args?: string) => Promise<string | null>;
+  onCommand?: (command: string, chatId?: string, args?: string, forcePerChat?: boolean) => Promise<string | null>;
 
   constructor(config: DiscordConfig) {
     this.config = {
@@ -74,6 +128,27 @@ export class DiscordAdapter implements ChannelAdapter {
 
   private async checkAccess(userId: string): Promise<'allowed' | 'blocked' | 'pairing'> {
     return checkDmAccess('discord', userId, this.config.dmPolicy, this.config.allowedUsers);
+  }
+
+  private async createThreadForMention(
+    message: import('discord.js').Message,
+    seedText: string,
+  ): Promise<{ id: string; name?: string } | null> {
+    const normalized = seedText.replace(/<@!?\d+>/g, '').trim();
+    const firstLine = normalized.split('\n')[0]?.trim();
+    const baseName = firstLine || `${message.author.username} question`;
+    const threadName = baseName.slice(0, 100);
+
+    try {
+      const thread = await message.startThread({
+        name: threadName,
+        reason: 'lettabot thread-only mention trigger',
+      });
+      return { id: thread.id, name: thread.name };
+    } catch (error) {
+      log.warn('Failed to create thread for mention:', error instanceof Error ? error.message : error);
+      return null;
+    }
   }
 
   /**
@@ -145,9 +220,16 @@ Ask the bot owner to approve with:
       const isFromBot = !!message.author?.bot;
       const isGroup = !!message.guildId;
       const chatId = message.channel.id;
-      const keys = [chatId];
-      if (message.guildId) keys.push(message.guildId);
+      const channelWithThread = message.channel as { isThread?: () => boolean; parentId?: string | null };
+      const isThreadMessage = typeof channelWithThread.isThread === 'function' && channelWithThread.isThread();
+      const parentChannelId = isThreadMessage ? channelWithThread.parentId ?? undefined : undefined;
+      const keys = buildDiscordGroupKeys({
+        chatId,
+        parentChatId: parentChannelId,
+        serverId: message.guildId,
+      });
       const selfUserId = this.client?.user?.id;
+      const wasMentioned = isGroup && !!this.client?.user && message.mentions.has(this.client.user);
 
       if (!shouldProcessDiscordBotMessage({
         isFromBot,
@@ -231,15 +313,64 @@ Ask the bot owner to approve with:
         const parts = content.slice(1).split(/\s+/);
         const command = parts[0]?.toLowerCase();
         const cmdArgs = parts.slice(1).join(' ') || undefined;
-        if (command === 'help' || command === 'start') {
-          await message.channel.send(HELP_TEXT);
-          return;
-        }
-        if (this.onCommand) {
-          if (command === 'status' || command === 'reset' || command === 'heartbeat' || command === 'cancel' || command === 'model') {
-            const result = await this.onCommand(command, message.channel.id, cmdArgs);
+        const isHelpCommand = command === 'help' || command === 'start';
+        const isManagedCommand =
+          command === 'status' ||
+          command === 'reset' ||
+          command === 'heartbeat' ||
+          command === 'cancel' ||
+          command === 'model' ||
+          command === 'setconv';
+
+        // Unknown commands (or managed commands without onCommand) fall through to agent processing.
+        if (isHelpCommand || (isManagedCommand && this.onCommand)) {
+          let commandChatId = message.channel.id;
+          let commandSendTarget: { send: (content: string) => Promise<unknown> } | null =
+            message.channel.isTextBased() && 'send' in message.channel
+              ? (message.channel as { send: (content: string) => Promise<unknown> })
+              : null;
+
+          let commandForcePerChat = false;
+          if (isGroup && this.config.groups) {
+            const threadMode = resolveDiscordThreadMode(this.config.groups, keys);
+            commandForcePerChat = threadMode === 'thread-only';
+            if (commandForcePerChat && !isThreadMessage) {
+              const shouldCreateThread =
+                wasMentioned && resolveDiscordAutoCreateThreadOnMention(this.config.groups, keys);
+              if (!shouldCreateThread) {
+                return;
+              }
+
+              // Keep command behavior aligned with normal message gating in thread-only mode.
+              const createdThread = await this.createThreadForMention(message, content);
+              if (!createdThread) {
+                return;
+              }
+
+              if (!this.client) {
+                return;
+              }
+              const threadChannel = await this.client.channels.fetch(createdThread.id);
+              if (!threadChannel || !threadChannel.isTextBased() || !('send' in threadChannel)) {
+                return;
+              }
+
+              commandChatId = createdThread.id;
+              commandSendTarget = threadChannel as { send: (content: string) => Promise<unknown> };
+            }
+          }
+
+          if (isHelpCommand) {
+            if (!commandSendTarget) return;
+            await commandSendTarget.send(HELP_TEXT);
+            return;
+          }
+
+          if (this.onCommand && isManagedCommand) {
+            const result = await this.onCommand(command, commandChatId, cmdArgs, commandForcePerChat || undefined);
             if (result) {
-              await message.channel.send(result);
+              if (!commandSendTarget) return;
+              await commandSendTarget.send(result);
             }
             return;
           }
@@ -247,18 +378,15 @@ Ask the bot owner to approve with:
       }
 
       if (this.onMessage) {
-        const isGroup = !!message.guildId;
         const groupName = isGroup && 'name' in message.channel ? message.channel.name : undefined;
         const displayName = message.member?.displayName || message.author.globalName || message.author.username;
-        const wasMentioned = isGroup && !!this.client?.user && message.mentions.has(this.client.user);
         let isListeningMode = false;
+        let effectiveChatId = message.channel.id;
+        let effectiveGroupName = groupName;
+        let isThreadOnly = false;
 
         // Group gating: config-based allowlist + mode
         if (isGroup && this.config.groups) {
-          const chatId = message.channel.id;
-          const serverId = message.guildId;
-          const keys = [chatId];
-          if (serverId) keys.push(serverId);
           if (!isGroupAllowed(this.config.groups, keys)) {
             log.info(`Group ${chatId} not in allowlist, ignoring`);
             return;
@@ -277,7 +405,8 @@ Ask the bot owner to approve with:
           }
           isListeningMode = mode === 'listen' && !wasMentioned;
 
-          // Daily rate limit check (after all other gating so we only count real triggers)
+          // Daily rate limit check before side-effectful actions (like thread creation)
+          // so over-limit mentions don't create empty threads.
           const limits = resolveDailyLimits(this.config.groups, keys);
           const counterScope = limits.matchedKey ?? chatId;
           const counterKey = `${this.config.agentName ?? ''}:discord:${counterScope}`;
@@ -286,11 +415,28 @@ Ask the bot owner to approve with:
             log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
             return;
           }
+
+          const threadMode = resolveDiscordThreadMode(this.config.groups, keys);
+          isThreadOnly = threadMode === 'thread-only';
+          if (isThreadOnly && !isThreadMessage) {
+            const shouldCreateThread =
+              wasMentioned && resolveDiscordAutoCreateThreadOnMention(this.config.groups, keys);
+            if (!shouldCreateThread) {
+              return; // Thread-only mode drops non-thread messages unless auto-create is enabled on @mention
+            }
+
+            const createdThread = await this.createThreadForMention(message, content);
+            if (!createdThread) {
+              return;
+            }
+            effectiveChatId = createdThread.id;
+            effectiveGroupName = createdThread.name || effectiveGroupName;
+          }
         }
 
         await this.onMessage({
           channel: 'discord',
-          chatId: message.channel.id,
+          chatId: effectiveChatId,
           userId,
           userName: displayName,
           userHandle: message.author.username,
@@ -298,10 +444,11 @@ Ask the bot owner to approve with:
           text: content || '',
           timestamp: message.createdAt,
           isGroup,
-          groupName,
+          groupName: effectiveGroupName,
           serverId: message.guildId || undefined,
           wasMentioned,
           isListeningMode,
+          forcePerChat: isThreadOnly || undefined,
           attachments,
           formatterHints: this.getFormatterHints(),
         });
@@ -434,7 +581,11 @@ Ask the bot owner to approve with:
     user: import('discord.js').User | import('discord.js').PartialUser,
     action: InboundReaction['action']
   ): Promise<void> {
-    if ('bot' in user && user.bot) return;
+    // By default ignore all bot reactions; when ignoreBotReactions is false,
+    // only ignore self-reactions (allows multi-bot setups)
+    const ignoreBots = this.config.ignoreBotReactions ?? true;
+    if (ignoreBots && 'bot' in user && user.bot) return;
+    if (!ignoreBots && user.id === this.client?.user?.id) return;
 
     try {
       if (reaction.partial) {
@@ -451,9 +602,56 @@ Ask the bot owner to approve with:
     const channelId = message.channel?.id;
     if (!channelId) return;
 
-    const access = await this.checkAccess(user.id);
-    if (access !== 'allowed') {
-      return;
+    const isGroup = !!message.guildId;
+    const channelWithThread = message.channel as { isThread?: () => boolean; parentId?: string | null };
+    const isThreadMessage = typeof channelWithThread.isThread === 'function' && channelWithThread.isThread();
+    const parentChannelId = isThreadMessage ? channelWithThread.parentId ?? undefined : undefined;
+    const keys = buildDiscordGroupKeys({
+      chatId: channelId,
+      parentChatId: parentChannelId,
+      serverId: message.guildId,
+    });
+
+    // DM policy should only gate DMs, not guild reactions.
+    if (!isGroup) {
+      const access = await this.checkAccess(user.id);
+      if (access !== 'allowed') {
+        return;
+      }
+    }
+
+    let isListeningMode = false;
+    let reactionForcePerChat = false;
+    if (isGroup && this.config.groups) {
+      if (!isGroupAllowed(this.config.groups, keys)) {
+        log.info(`Reaction group ${channelId} not in allowlist, ignoring`);
+        return;
+      }
+
+      if (!isGroupUserAllowed(this.config.groups, keys, user.id)) {
+        return;
+      }
+
+      const mode = resolveGroupMode(this.config.groups, keys, 'open');
+      if (mode === 'disabled' || mode === 'mention-only') {
+        return;
+      }
+      isListeningMode = mode === 'listen';
+
+      const threadMode = resolveDiscordThreadMode(this.config.groups, keys);
+      if (threadMode === 'thread-only' && !isThreadMessage) {
+        return;
+      }
+      reactionForcePerChat = threadMode === 'thread-only';
+
+      const limits = resolveDailyLimits(this.config.groups, keys);
+      const counterScope = limits.matchedKey ?? channelId;
+      const counterKey = `${this.config.agentName ?? ''}:discord:${counterScope}`;
+      const limitResult = checkDailyLimit(counterKey, user.id, limits);
+      if (!limitResult.allowed) {
+        log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
+        return;
+      }
     }
 
     const emoji = reaction.emoji.id
@@ -461,7 +659,6 @@ Ask the bot owner to approve with:
       : (reaction.emoji.name || reaction.emoji.toString());
     if (!emoji) return;
 
-    const isGroup = !!message.guildId;
     const groupName = isGroup && 'name' in message.channel
       ? message.channel.name || undefined
       : undefined;
@@ -483,6 +680,8 @@ Ask the bot owner to approve with:
       isGroup,
       groupName,
       serverId: message.guildId || undefined,
+      isListeningMode,
+      forcePerChat: reactionForcePerChat || undefined,
       reaction: {
         emoji,
         messageId: message.id,

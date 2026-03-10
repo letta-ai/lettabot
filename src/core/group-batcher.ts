@@ -93,6 +93,7 @@ export class GroupBatcher {
       wasMentioned: messages.some((m) => m.wasMentioned),
       // Preserve listening-mode intent only if every message in the batch is non-mentioned listen mode.
       isListeningMode: messages.every((m) => m.isListeningMode === true) ? true : undefined,
+      forcePerChat: last.forcePerChat,
       isBatch: true,
       batchedMessages: messages,
       formatterHints: last.formatterHints,

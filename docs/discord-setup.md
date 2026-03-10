@@ -186,6 +186,37 @@ channels:
 
 This is the recommended approach when you want to restrict the bot to specific channels.
 
+### Thread-only mode (Discord)
+
+If you want the bot to reply only inside threads, set `threadMode: thread-only` on a channel (for example `#ezra`).
+
+You can also set `autoCreateThreadOnMention: true` so a top-level @mention creates a thread and the bot replies there.
+
+```yaml
+channels:
+  discord:
+    token: "your-bot-token"
+    groups:
+      "EZRA_CHANNEL_ID":
+        mode: open
+        threadMode: thread-only
+        autoCreateThreadOnMention: true
+```
+
+Behavior summary:
+
+- Messages already inside threads are processed normally.
+- Top-level messages are ignored in `thread-only` mode.
+- Top-level @mentions create a thread and are answered in that thread when `autoCreateThreadOnMention` is enabled.
+- Thread messages inherit parent channel config. If `EZRA_CHANNEL_ID` is configured, replies in its child threads use that same config.
+- Each thread gets its own isolated conversation (message history), overriding `shared` and `per-channel` conversation modes. This prevents crosstalk between threads. Agent memory (blocks) is still shared.
+
+Required Discord permissions for auto-create:
+
+- `Send Messages`
+- `Create Public Threads` (or relevant thread creation permission for your channel type)
+- `Send Messages in Threads`
+
 ### Per-group user filtering
 
 Use `allowedUsers` within a group entry to restrict which Discord users can trigger the bot. Messages from other users are silently dropped before reaching the agent.

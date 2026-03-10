@@ -57,3 +57,13 @@ jobs:
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
           LETTA_E2E_AGENT_ID: ${{ secrets.LETTA_E2E_AGENT_ID }}
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        # Ensures Dockerfile build path stays healthy on main and PRs.
+        run: docker build --tag lettabot:test .

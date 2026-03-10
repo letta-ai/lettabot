@@ -26,6 +26,27 @@ import { resolveDailyLimits, checkDailyLimit, type GroupModeConfig } from './gro
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Telegram');
+
+function getTelegramErrorReason(err: unknown): string {
+  if (err && typeof err === 'object') {
+    const maybeError = err as { description?: string; message?: string };
+    if (typeof maybeError.description === 'string' && maybeError.description.trim().length > 0) {
+      return maybeError.description;
+    }
+    if (typeof maybeError.message === 'string' && maybeError.message.trim().length > 0) {
+      return maybeError.message;
+    }
+  }
+  return String(err);
+}
+
+function shouldFallbackToAudio(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const description = (err as { description?: string }).description;
+  if (typeof description !== 'string') return false;
+  return description.includes('VOICE_MESSAGES_FORBIDDEN');
+}
+
 export interface TelegramConfig {
   token: string;
   dmPolicy?: DmPolicy;           // 'pairing' (default), 'allowlist', or 'open'
@@ -265,6 +286,15 @@ export class TelegramAdapter implements ChannelAdapter {
         const args = ctx.match?.trim() || undefined;
         const result = await this.onCommand('model', String(ctx.chat.id), args);
         await ctx.reply(result || 'No model info available');
+      }
+    });
+
+    // Handle /setconv <id>
+    this.bot.command('setconv', async (ctx) => {
+      if (this.onCommand) {
+        const args = ctx.match?.trim() || undefined;
+        const result = await this.onCommand('setconv', String(ctx.chat.id), args);
+        await ctx.reply(result || 'Failed to set conversation');
       }
     });
     
@@ -584,13 +614,21 @@ export class TelegramAdapter implements ChannelAdapter {
         const result = await this.bot.api.sendVoice(file.chatId, input, { caption });
         return { messageId: String(result.message_id) };
       } catch (err: any) {
-        // Fall back to sendAudio if voice messages are restricted (Telegram Premium privacy setting)
-        if (err?.description?.includes('VOICE_MESSAGES_FORBIDDEN')) {
-          log.warn('sendVoice forbidden, falling back to sendAudio');
+        const reason = getTelegramErrorReason(err);
+        // Only retry with sendAudio for deterministic voice-policy rejections.
+        // For network/timeout errors we rethrow to avoid possible duplicate sends.
+        if (!shouldFallbackToAudio(err)) {
+          throw err;
+        }
+        log.warn('sendVoice failed with VOICE_MESSAGES_FORBIDDEN, falling back to sendAudio:', reason);
+        try {
           const result = await this.bot.api.sendAudio(file.chatId, new InputFile(file.filePath), { caption });
           return { messageId: String(result.message_id) };
+        } catch (fallbackErr: any) {
+          const fallbackReason = getTelegramErrorReason(fallbackErr);
+          log.error('sendAudio fallback also failed:', fallbackReason);
+          throw fallbackErr;
         }
-        throw err;
       }
     }
 
@@ -617,7 +655,7 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   async addReaction(chatId: string, messageId: string, emoji: string): Promise<void> {
-    const resolved = resolveEmoji(emoji);
+    const resolved = resolveTelegramEmoji(emoji);
     if (!TELEGRAM_REACTION_SET.has(resolved)) {
       throw new Error(`Unsupported Telegram reaction emoji: ${resolved}`);
     }
@@ -808,6 +846,13 @@ function extractTelegramReaction(reaction?: {
     return `custom:${reaction.custom_emoji_id}`;
   }
   return null;
+}
+
+function resolveTelegramEmoji(input: string): string {
+  const resolved = resolveEmoji(input);
+  // Strip variation selectors (U+FE0E / U+FE0F). Telegram's reaction API
+  // expects bare emoji without them (e.g. ❤ not ❤️).
+  return resolved.replace(/[\uFE0E\uFE0F]/g, '');
 }
 
 const TELEGRAM_REACTION_EMOJIS = [

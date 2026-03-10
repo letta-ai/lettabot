@@ -6,7 +6,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as p from '@clack/prompts';
-import { saveConfig, syncProviders, isApiServerMode } from './config/index.js';
+import { saveConfig, syncProviders, upsertProvider, isApiServerMode } from './config/index.js';
 import type { AgentConfig, LettaBotConfig } from './config/types.js';
 import { isLettaApiUrl } from './utils/server.js';
 import { parseCsvList, parseOptionalInt } from './utils/parse.js';
@@ -114,6 +114,9 @@ async function saveConfigFromEnv(config: any, configPath: string, existingConfig
   
   // Resolve API server config from existing config (server.api is canonical, top-level api is fallback)
   const existingApiConfig = existingConfig?.server?.api ?? existingConfig?.api;
+  const projectedAgent = buildProjectedAgentConfig(
+    toProjectionInputFromNonInteractiveConfig(config),
+  );
   
   const lettabotConfig: Partial<LettaBotConfig> & Pick<LettaBotConfig, 'server'> = {
     server: {
@@ -122,80 +125,7 @@ async function saveConfigFromEnv(config: any, configPath: string, existingConfig
       apiKey: config.apiKey,
       ...(existingApiConfig ? { api: existingApiConfig } : {}),
     },
-    agents: [{
-      name: config.agentName,
-      ...(config.agentId ? { id: config.agentId } : {}),
-      channels: {
-        ...(config.telegram.enabled ? {
-          telegram: {
-            enabled: true,
-            token: config.telegram.botToken,
-            dmPolicy: config.telegram.dmPolicy,
-            allowedUsers: config.telegram.allowedUsers,
-            groupDebounceSec: config.telegram.groupDebounceSec,
-            groupPollIntervalMin: config.telegram.groupPollIntervalMin,
-            instantGroups: config.telegram.instantGroups,
-            listeningGroups: config.telegram.listeningGroups,
-          }
-        } : {}),
-        ...(config.slack.enabled ? {
-          slack: {
-            enabled: true,
-            botToken: config.slack.botToken,
-            appToken: config.slack.appToken,
-            allowedUsers: config.slack.allowedUsers,
-            groupDebounceSec: config.slack.groupDebounceSec,
-            groupPollIntervalMin: config.slack.groupPollIntervalMin,
-            instantGroups: config.slack.instantGroups,
-            listeningGroups: config.slack.listeningGroups,
-          }
-        } : {}),
-        ...(config.discord.enabled ? {
-          discord: {
-            enabled: true,
-            token: config.discord.botToken,
-            dmPolicy: config.discord.dmPolicy,
-            allowedUsers: config.discord.allowedUsers,
-            groupDebounceSec: config.discord.groupDebounceSec,
-            groupPollIntervalMin: config.discord.groupPollIntervalMin,
-            instantGroups: config.discord.instantGroups,
-            listeningGroups: config.discord.listeningGroups,
-          }
-        } : {}),
-        ...(config.whatsapp.enabled ? {
-          whatsapp: {
-            enabled: true,
-            selfChat: config.whatsapp.selfChat,
-            dmPolicy: config.whatsapp.dmPolicy,
-            allowedUsers: config.whatsapp.allowedUsers,
-            groupDebounceSec: config.whatsapp.groupDebounceSec,
-            groupPollIntervalMin: config.whatsapp.groupPollIntervalMin,
-            instantGroups: config.whatsapp.instantGroups,
-            listeningGroups: config.whatsapp.listeningGroups,
-          }
-        } : {}),
-        ...(config.signal.enabled ? {
-          signal: {
-            enabled: true,
-            phone: config.signal.phoneNumber,
-            selfChat: config.signal.selfChat,
-            dmPolicy: config.signal.dmPolicy,
-            allowedUsers: config.signal.allowedUsers,
-            groupDebounceSec: config.signal.groupDebounceSec,
-            groupPollIntervalMin: config.signal.groupPollIntervalMin,
-            instantGroups: config.signal.instantGroups,
-            listeningGroups: config.signal.listeningGroups,
-          }
-        } : {}),
-      },
-      features: {
-        cron: false,
-        heartbeat: {
-          enabled: false,
-          intervalMin: 60,
-        },
-      },
-    }],
+    agents: [projectedAgent],
     // Preserve unmanaged top-level fields from existing config
     ...(existingConfig?.attachments ? { attachments: existingConfig.attachments } : {}),
   };
@@ -288,6 +218,418 @@ interface OnboardConfig {
 
   // Transcription (voice messages)
   transcription: { enabled: boolean; provider?: 'openai' | 'mistral'; apiKey?: string; model?: string };
+}
+
+type NonInteractiveProjectionSource = {
+  agentName: string;
+  agentId?: string;
+  telegram: {
+    enabled: boolean;
+    botToken?: string;
+    dmPolicy?: 'pairing' | 'allowlist' | 'open';
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+  slack: {
+    enabled: boolean;
+    appToken?: string;
+    botToken?: string;
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+  discord: {
+    enabled: boolean;
+    botToken?: string;
+    dmPolicy?: 'pairing' | 'allowlist' | 'open';
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+  whatsapp: {
+    enabled: boolean;
+    selfChat?: boolean;
+    dmPolicy?: 'pairing' | 'allowlist' | 'open';
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+  signal: {
+    enabled: boolean;
+    phoneNumber?: string;
+    selfChat?: boolean;
+    dmPolicy?: 'pairing' | 'allowlist' | 'open';
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+};
+
+export type AgentProjectionInput = {
+  name: string;
+  id?: string;
+  telegram: {
+    enabled: boolean;
+    token?: string;
+    dmPolicy?: 'pairing' | 'allowlist' | 'open';
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+  slack: {
+    enabled: boolean;
+    appToken?: string;
+    botToken?: string;
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+  discord: {
+    enabled: boolean;
+    token?: string;
+    dmPolicy?: 'pairing' | 'allowlist' | 'open';
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+  whatsapp: {
+    enabled: boolean;
+    selfChat?: boolean;
+    dmPolicy?: 'pairing' | 'allowlist' | 'open';
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+  signal: {
+    enabled: boolean;
+    phone?: string;
+    selfChat?: boolean;
+    dmPolicy?: 'pairing' | 'allowlist' | 'open';
+    allowedUsers?: string[];
+    groupDebounceSec?: number;
+    groupPollIntervalMin?: number;
+    instantGroups?: string[];
+    listeningGroups?: string[];
+  };
+  cronEnabled: boolean;
+  heartbeat: { enabled: boolean; intervalMin?: number };
+  google: { enabled: boolean; accounts: Array<{ account: string; services: string[] }> };
+};
+
+export function toProjectionInputFromNonInteractiveConfig(config: NonInteractiveProjectionSource): AgentProjectionInput {
+  return {
+    name: config.agentName,
+    id: config.agentId,
+    telegram: {
+      enabled: config.telegram.enabled,
+      token: config.telegram.botToken,
+      dmPolicy: config.telegram.dmPolicy,
+      allowedUsers: config.telegram.allowedUsers,
+      groupDebounceSec: config.telegram.groupDebounceSec,
+      groupPollIntervalMin: config.telegram.groupPollIntervalMin,
+      instantGroups: config.telegram.instantGroups,
+      listeningGroups: config.telegram.listeningGroups,
+    },
+    slack: {
+      enabled: config.slack.enabled,
+      appToken: config.slack.appToken,
+      botToken: config.slack.botToken,
+      allowedUsers: config.slack.allowedUsers,
+      groupDebounceSec: config.slack.groupDebounceSec,
+      groupPollIntervalMin: config.slack.groupPollIntervalMin,
+      instantGroups: config.slack.instantGroups,
+      listeningGroups: config.slack.listeningGroups,
+    },
+    discord: {
+      enabled: config.discord.enabled,
+      token: config.discord.botToken,
+      dmPolicy: config.discord.dmPolicy,
+      allowedUsers: config.discord.allowedUsers,
+      groupDebounceSec: config.discord.groupDebounceSec,
+      groupPollIntervalMin: config.discord.groupPollIntervalMin,
+      instantGroups: config.discord.instantGroups,
+      listeningGroups: config.discord.listeningGroups,
+    },
+    whatsapp: {
+      enabled: config.whatsapp.enabled,
+      selfChat: config.whatsapp.selfChat,
+      dmPolicy: config.whatsapp.dmPolicy,
+      allowedUsers: config.whatsapp.allowedUsers,
+      groupDebounceSec: config.whatsapp.groupDebounceSec,
+      groupPollIntervalMin: config.whatsapp.groupPollIntervalMin,
+      instantGroups: config.whatsapp.instantGroups,
+      listeningGroups: config.whatsapp.listeningGroups,
+    },
+    signal: {
+      enabled: config.signal.enabled,
+      phone: config.signal.phoneNumber,
+      selfChat: config.signal.selfChat,
+      dmPolicy: config.signal.dmPolicy,
+      allowedUsers: config.signal.allowedUsers,
+      groupDebounceSec: config.signal.groupDebounceSec,
+      groupPollIntervalMin: config.signal.groupPollIntervalMin,
+      instantGroups: config.signal.instantGroups,
+      listeningGroups: config.signal.listeningGroups,
+    },
+    cronEnabled: false,
+    heartbeat: { enabled: false, intervalMin: 60 },
+    google: { enabled: false, accounts: [] },
+  };
+}
+
+export function toProjectionInputFromOnboardConfig(config: OnboardConfig): AgentProjectionInput {
+  return {
+    name: config.agentName || 'LettaBot',
+    id: config.agentId,
+    telegram: {
+      enabled: config.telegram.enabled,
+      token: config.telegram.token,
+      dmPolicy: config.telegram.dmPolicy,
+      allowedUsers: config.telegram.allowedUsers,
+      groupDebounceSec: config.telegram.groupDebounceSec,
+      groupPollIntervalMin: config.telegram.groupPollIntervalMin,
+      instantGroups: config.telegram.instantGroups,
+      listeningGroups: config.telegram.listeningGroups,
+    },
+    slack: {
+      enabled: config.slack.enabled,
+      appToken: config.slack.appToken,
+      botToken: config.slack.botToken,
+      allowedUsers: config.slack.allowedUsers,
+      groupDebounceSec: config.slack.groupDebounceSec,
+      groupPollIntervalMin: config.slack.groupPollIntervalMin,
+      instantGroups: config.slack.instantGroups,
+      listeningGroups: config.slack.listeningGroups,
+    },
+    discord: {
+      enabled: config.discord.enabled,
+      token: config.discord.token,
+      dmPolicy: config.discord.dmPolicy,
+      allowedUsers: config.discord.allowedUsers,
+      groupDebounceSec: config.discord.groupDebounceSec,
+      groupPollIntervalMin: config.discord.groupPollIntervalMin,
+      instantGroups: config.discord.instantGroups,
+      listeningGroups: config.discord.listeningGroups,
+    },
+    whatsapp: {
+      enabled: config.whatsapp.enabled,
+      selfChat: config.whatsapp.selfChat,
+      dmPolicy: config.whatsapp.dmPolicy,
+      allowedUsers: config.whatsapp.allowedUsers,
+      groupDebounceSec: config.whatsapp.groupDebounceSec,
+      groupPollIntervalMin: config.whatsapp.groupPollIntervalMin,
+      instantGroups: config.whatsapp.instantGroups,
+      listeningGroups: config.whatsapp.listeningGroups,
+    },
+    signal: {
+      enabled: config.signal.enabled,
+      phone: config.signal.phone,
+      selfChat: config.signal.selfChat,
+      dmPolicy: config.signal.dmPolicy,
+      allowedUsers: config.signal.allowedUsers,
+      groupDebounceSec: config.signal.groupDebounceSec,
+      groupPollIntervalMin: config.signal.groupPollIntervalMin,
+      instantGroups: config.signal.instantGroups,
+      listeningGroups: config.signal.listeningGroups,
+    },
+    cronEnabled: config.cron,
+    heartbeat: {
+      enabled: config.heartbeat.enabled,
+      intervalMin: config.heartbeat.interval ? parseInt(config.heartbeat.interval, 10) : undefined,
+    },
+    google: config.google,
+  };
+}
+
+export function buildProjectedAgentConfig(input: AgentProjectionInput): AgentConfig {
+  return {
+    name: input.name,
+    ...(input.id ? { id: input.id } : {}),
+    channels: {
+      ...(input.telegram.enabled ? {
+        telegram: {
+          enabled: true,
+          token: input.telegram.token,
+          dmPolicy: input.telegram.dmPolicy,
+          allowedUsers: input.telegram.allowedUsers,
+          groupDebounceSec: input.telegram.groupDebounceSec,
+          groupPollIntervalMin: input.telegram.groupPollIntervalMin,
+          instantGroups: input.telegram.instantGroups,
+          listeningGroups: input.telegram.listeningGroups,
+        }
+      } : {}),
+      ...(input.slack.enabled ? {
+        slack: {
+          enabled: true,
+          appToken: input.slack.appToken,
+          botToken: input.slack.botToken,
+          allowedUsers: input.slack.allowedUsers,
+          groupDebounceSec: input.slack.groupDebounceSec,
+          groupPollIntervalMin: input.slack.groupPollIntervalMin,
+          instantGroups: input.slack.instantGroups,
+          listeningGroups: input.slack.listeningGroups,
+        }
+      } : {}),
+      ...(input.discord.enabled ? {
+        discord: {
+          enabled: true,
+          token: input.discord.token,
+          dmPolicy: input.discord.dmPolicy,
+          allowedUsers: input.discord.allowedUsers,
+          groupDebounceSec: input.discord.groupDebounceSec,
+          groupPollIntervalMin: input.discord.groupPollIntervalMin,
+          instantGroups: input.discord.instantGroups,
+          listeningGroups: input.discord.listeningGroups,
+        }
+      } : {}),
+      ...(input.whatsapp.enabled ? {
+        whatsapp: {
+          enabled: true,
+          selfChat: input.whatsapp.selfChat,
+          dmPolicy: input.whatsapp.dmPolicy,
+          allowedUsers: input.whatsapp.allowedUsers,
+          groupDebounceSec: input.whatsapp.groupDebounceSec,
+          groupPollIntervalMin: input.whatsapp.groupPollIntervalMin,
+          instantGroups: input.whatsapp.instantGroups,
+          listeningGroups: input.whatsapp.listeningGroups,
+        }
+      } : {}),
+      ...(input.signal.enabled ? {
+        signal: {
+          enabled: true,
+          phone: input.signal.phone,
+          selfChat: input.signal.selfChat,
+          dmPolicy: input.signal.dmPolicy,
+          allowedUsers: input.signal.allowedUsers,
+          groupDebounceSec: input.signal.groupDebounceSec,
+          groupPollIntervalMin: input.signal.groupPollIntervalMin,
+          instantGroups: input.signal.instantGroups,
+          listeningGroups: input.signal.listeningGroups,
+        }
+      } : {}),
+    },
+    features: {
+      cron: input.cronEnabled,
+      heartbeat: {
+        enabled: input.heartbeat.enabled,
+        intervalMin: input.heartbeat.intervalMin,
+      },
+    },
+    ...(input.google.enabled ? {
+      integrations: {
+        google: {
+          enabled: true,
+          accounts: input.google.accounts,
+        },
+      },
+      ...((() => {
+        const gmailAccounts = input.google.accounts
+          .filter(a => a.services?.includes('gmail'))
+          .map(a => a.account);
+        return gmailAccounts.length > 0 ? {
+          polling: { gmail: { accounts: gmailAccounts } },
+        } : {};
+      })()),
+    } : {}),
+  };
+}
+
+export function applyOnboardEnvProjection(config: OnboardConfig, env: Record<string, string>): void {
+  if (config.agentName) env.AGENT_NAME = config.agentName;
+
+  if (config.telegram.enabled && config.telegram.token) {
+    env.TELEGRAM_BOT_TOKEN = config.telegram.token;
+    if (config.telegram.dmPolicy) env.TELEGRAM_DM_POLICY = config.telegram.dmPolicy;
+    if (config.telegram.allowedUsers?.length) env.TELEGRAM_ALLOWED_USERS = config.telegram.allowedUsers.join(',');
+    else delete env.TELEGRAM_ALLOWED_USERS;
+  } else {
+    delete env.TELEGRAM_BOT_TOKEN;
+    delete env.TELEGRAM_DM_POLICY;
+    delete env.TELEGRAM_ALLOWED_USERS;
+  }
+
+  if (config.slack.enabled) {
+    if (config.slack.appToken) env.SLACK_APP_TOKEN = config.slack.appToken;
+    if (config.slack.botToken) env.SLACK_BOT_TOKEN = config.slack.botToken;
+    if (config.slack.allowedUsers?.length) env.SLACK_ALLOWED_USERS = config.slack.allowedUsers.join(',');
+    else delete env.SLACK_ALLOWED_USERS;
+  } else {
+    delete env.SLACK_APP_TOKEN;
+    delete env.SLACK_BOT_TOKEN;
+    delete env.SLACK_ALLOWED_USERS;
+  }
+
+  if (config.discord.enabled && config.discord.token) {
+    env.DISCORD_BOT_TOKEN = config.discord.token;
+    if (config.discord.dmPolicy) env.DISCORD_DM_POLICY = config.discord.dmPolicy;
+    if (config.discord.allowedUsers?.length) env.DISCORD_ALLOWED_USERS = config.discord.allowedUsers.join(',');
+    else delete env.DISCORD_ALLOWED_USERS;
+  } else {
+    delete env.DISCORD_BOT_TOKEN;
+    delete env.DISCORD_DM_POLICY;
+    delete env.DISCORD_ALLOWED_USERS;
+  }
+
+  if (config.whatsapp.enabled) {
+    env.WHATSAPP_ENABLED = 'true';
+    if (config.whatsapp.selfChat) env.WHATSAPP_SELF_CHAT_MODE = 'true';
+    else delete env.WHATSAPP_SELF_CHAT_MODE;
+    if (config.whatsapp.dmPolicy) env.WHATSAPP_DM_POLICY = config.whatsapp.dmPolicy;
+    if (config.whatsapp.allowedUsers?.length) env.WHATSAPP_ALLOWED_USERS = config.whatsapp.allowedUsers.join(',');
+    else delete env.WHATSAPP_ALLOWED_USERS;
+  } else {
+    delete env.WHATSAPP_ENABLED;
+    delete env.WHATSAPP_SELF_CHAT_MODE;
+    delete env.WHATSAPP_DM_POLICY;
+    delete env.WHATSAPP_ALLOWED_USERS;
+  }
+
+  if (config.signal.enabled && config.signal.phone) {
+    env.SIGNAL_PHONE_NUMBER = config.signal.phone;
+    if (config.signal.selfChat === false) env.SIGNAL_SELF_CHAT_MODE = 'false';
+    else delete env.SIGNAL_SELF_CHAT_MODE;
+    if (config.signal.dmPolicy) env.SIGNAL_DM_POLICY = config.signal.dmPolicy;
+    if (config.signal.allowedUsers?.length) env.SIGNAL_ALLOWED_USERS = config.signal.allowedUsers.join(',');
+    else delete env.SIGNAL_ALLOWED_USERS;
+  } else {
+    delete env.SIGNAL_PHONE_NUMBER;
+    delete env.SIGNAL_SELF_CHAT_MODE;
+    delete env.SIGNAL_DM_POLICY;
+    delete env.SIGNAL_ALLOWED_USERS;
+  }
+
+  if (config.heartbeat.enabled && config.heartbeat.interval) {
+    env.HEARTBEAT_INTERVAL_MIN = config.heartbeat.interval;
+  } else {
+    delete env.HEARTBEAT_INTERVAL_MIN;
+  }
+
+  if (config.cron) env.CRON_ENABLED = 'true';
+  else delete env.CRON_ENABLED;
+
+  if (config.transcription.enabled && config.transcription.apiKey) {
+    if (config.transcription.provider === 'mistral') env.MISTRAL_API_KEY = config.transcription.apiKey;
+    else env.OPENAI_API_KEY = config.transcription.apiKey;
+  }
 }
 
 const isPlaceholder = (val?: string) => !val || /^(your_|sk-\.\.\.|placeholder|example)/i.test(val);
@@ -632,76 +974,40 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
     if (p.isCancel(providerKey)) { p.cancel('Setup cancelled'); process.exit(0); }
     
     if (providerKey) {
-      // Create or update provider via Letta API
       const spinner = p.spinner();
       spinner.start(`Connecting ${provider.displayName}...`);
       
       try {
-        // First check if provider already exists
-        const listResponse = await fetch('https://api.letta.com/v1/providers', {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-        });
-        
-        let existingProvider: { id: string; name: string } | undefined;
-        if (listResponse.ok) {
-          const providers = await listResponse.json() as Array<{ id: string; name: string }>;
-          existingProvider = providers.find(p => p.name === provider.name);
+        if (!apiKey) {
+          spinner.stop('Missing Letta API key');
+          continue;
         }
-        
-        let response: Response;
-        if (existingProvider) {
-          // Update existing provider
-          response = await fetch(`https://api.letta.com/v1/providers/${existingProvider.id}`, {
-            method: 'PATCH',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({
-              api_key: providerKey,
-            }),
-          });
-        } else {
-          // Create new provider
-          response = await fetch('https://api.letta.com/v1/providers', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({
-              name: provider.name,
-              provider_type: provider.providerType,
-              api_key: providerKey,
-            }),
-          });
-        }
-        
-        if (response.ok) {
-          spinner.stop(`Connected ${provider.displayName}`);
-          providersById.set(provider.id, { id: provider.id, name: provider.name, apiKey: providerKey });
 
-          // If OpenAI was just connected, offer to enable voice transcription
-          if (provider.id === 'openai') {
-            const enableTranscription = await p.confirm({
-              message: 'Enable voice message transcription with this OpenAI key? (uses Whisper)',
-              initialValue: true,
-            });
-            if (!p.isCancel(enableTranscription) && enableTranscription) {
-              config.transcription.enabled = true;
-              config.transcription.provider = 'openai';
-              config.transcription.apiKey = providerKey;
-            }
+        await upsertProvider(apiKey, {
+          id: provider.id,
+          name: provider.name,
+          type: provider.providerType,
+          apiKey: providerKey,
+        });
+
+        spinner.stop(`Connected ${provider.displayName}`);
+        providersById.set(provider.id, { id: provider.id, name: provider.name, apiKey: providerKey });
+
+        // If OpenAI was just connected, offer to enable voice transcription
+        if (provider.id === 'openai') {
+          const enableTranscription = await p.confirm({
+            message: 'Enable voice message transcription with this OpenAI key? (uses Whisper)',
+            initialValue: true,
+          });
+          if (!p.isCancel(enableTranscription) && enableTranscription) {
+            config.transcription.enabled = true;
+            config.transcription.provider = 'openai';
+            config.transcription.apiKey = providerKey;
           }
-        } else {
-          const error = await response.text();
-          spinner.stop(`Failed to connect ${provider.displayName}: ${error}`);
         }
       } catch (err) {
-        spinner.stop(`Failed to connect ${provider.displayName}`);
+        const detail = err instanceof Error ? `: ${err.message}` : '';
+        spinner.stop(`Failed to connect ${provider.displayName}${detail}`);
       }
     }
   }
@@ -1403,7 +1709,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     // Validate required fields
     if (!config.apiKey && isLettaApiUrl(config.baseUrl)) {
       console.error('❌ Error: LETTA_API_KEY is required');
-      console.error('   Get your API key from: https://app.letta.com/settings');
+      console.error('   Get your API key from: https://app.letta.com/projects/default-project/api-keys');
       console.error('   Then run: export LETTA_API_KEY="letta_..."');
       console.error('');
       console.error('   Or use a Docker server:');
@@ -1623,105 +1929,8 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     }
   }
   
-  // Apply config to env
-  if (config.agentName) env.AGENT_NAME = config.agentName;
-  
-  if (config.telegram.enabled && config.telegram.token) {
-    env.TELEGRAM_BOT_TOKEN = config.telegram.token;
-    if (config.telegram.dmPolicy) env.TELEGRAM_DM_POLICY = config.telegram.dmPolicy;
-    if (config.telegram.allowedUsers?.length) {
-      env.TELEGRAM_ALLOWED_USERS = config.telegram.allowedUsers.join(',');
-    } else {
-      delete env.TELEGRAM_ALLOWED_USERS;
-    }
-  } else {
-    delete env.TELEGRAM_BOT_TOKEN;
-    delete env.TELEGRAM_DM_POLICY;
-    delete env.TELEGRAM_ALLOWED_USERS;
-  }
-  
-  if (config.slack.enabled) {
-    if (config.slack.appToken) env.SLACK_APP_TOKEN = config.slack.appToken;
-    if (config.slack.botToken) env.SLACK_BOT_TOKEN = config.slack.botToken;
-    if (config.slack.allowedUsers?.length) {
-      env.SLACK_ALLOWED_USERS = config.slack.allowedUsers.join(',');
-    } else {
-      delete env.SLACK_ALLOWED_USERS;
-    }
-  } else {
-    delete env.SLACK_APP_TOKEN;
-    delete env.SLACK_BOT_TOKEN;
-    delete env.SLACK_ALLOWED_USERS;
-  }
-
-  if (config.discord.enabled && config.discord.token) {
-    env.DISCORD_BOT_TOKEN = config.discord.token;
-    if (config.discord.dmPolicy) env.DISCORD_DM_POLICY = config.discord.dmPolicy;
-    if (config.discord.allowedUsers?.length) {
-      env.DISCORD_ALLOWED_USERS = config.discord.allowedUsers.join(',');
-    } else {
-      delete env.DISCORD_ALLOWED_USERS;
-    }
-  } else {
-    delete env.DISCORD_BOT_TOKEN;
-    delete env.DISCORD_DM_POLICY;
-    delete env.DISCORD_ALLOWED_USERS;
-  }
-  
-  if (config.whatsapp.enabled) {
-    env.WHATSAPP_ENABLED = 'true';
-    if (config.whatsapp.selfChat) env.WHATSAPP_SELF_CHAT_MODE = 'true';
-    else delete env.WHATSAPP_SELF_CHAT_MODE;
-    if (config.whatsapp.dmPolicy) env.WHATSAPP_DM_POLICY = config.whatsapp.dmPolicy;
-    if (config.whatsapp.allowedUsers?.length) {
-      env.WHATSAPP_ALLOWED_USERS = config.whatsapp.allowedUsers.join(',');
-    } else {
-      delete env.WHATSAPP_ALLOWED_USERS;
-    }
-  } else {
-    delete env.WHATSAPP_ENABLED;
-    delete env.WHATSAPP_SELF_CHAT_MODE;
-    delete env.WHATSAPP_DM_POLICY;
-    delete env.WHATSAPP_ALLOWED_USERS;
-  }
-  
-  if (config.signal.enabled && config.signal.phone) {
-    env.SIGNAL_PHONE_NUMBER = config.signal.phone;
-    // Signal selfChat defaults to true, so only set env if explicitly false (dedicated number)
-    if (config.signal.selfChat === false) env.SIGNAL_SELF_CHAT_MODE = 'false';
-    else delete env.SIGNAL_SELF_CHAT_MODE;
-    if (config.signal.dmPolicy) env.SIGNAL_DM_POLICY = config.signal.dmPolicy;
-    if (config.signal.allowedUsers?.length) {
-      env.SIGNAL_ALLOWED_USERS = config.signal.allowedUsers.join(',');
-    } else {
-      delete env.SIGNAL_ALLOWED_USERS;
-    }
-  } else {
-    delete env.SIGNAL_PHONE_NUMBER;
-    delete env.SIGNAL_SELF_CHAT_MODE;
-    delete env.SIGNAL_DM_POLICY;
-    delete env.SIGNAL_ALLOWED_USERS;
-  }
-  
-  if (config.heartbeat.enabled && config.heartbeat.interval) {
-    env.HEARTBEAT_INTERVAL_MIN = config.heartbeat.interval;
-  } else {
-    delete env.HEARTBEAT_INTERVAL_MIN;
-  }
-  
-  if (config.cron) {
-    env.CRON_ENABLED = 'true';
-  } else {
-    delete env.CRON_ENABLED;
-  }
-
-  if (config.transcription.enabled && config.transcription.apiKey) {
-    if (config.transcription.provider === 'mistral') {
-      env.MISTRAL_API_KEY = config.transcription.apiKey;
-    } else {
-      env.OPENAI_API_KEY = config.transcription.apiKey;
-    }
-  }
+  // Apply config to env (used by post-onboarding setup and summaries)
+  applyOnboardEnvProjection(config, env);
 
   // Helper to format access control status
   const formatAccess = (policy?: string, allowedUsers?: string[]) => {
@@ -1757,96 +1966,9 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   p.note(summary, 'Configuration Summary');
   
   // Build per-agent config (multi-agent format)
-  const agentConfig: AgentConfig = {
-    name: config.agentName || 'LettaBot',
-    ...(config.agentId ? { id: config.agentId } : {}),
-    channels: {
-      ...(config.telegram.enabled ? {
-        telegram: {
-          enabled: true,
-          token: config.telegram.token,
-          dmPolicy: config.telegram.dmPolicy,
-          allowedUsers: config.telegram.allowedUsers,
-          groupDebounceSec: config.telegram.groupDebounceSec,
-          groupPollIntervalMin: config.telegram.groupPollIntervalMin,
-          instantGroups: config.telegram.instantGroups,
-          listeningGroups: config.telegram.listeningGroups,
-        }
-      } : {}),
-      ...(config.slack.enabled ? {
-        slack: {
-          enabled: true,
-          appToken: config.slack.appToken,
-          botToken: config.slack.botToken,
-          allowedUsers: config.slack.allowedUsers,
-          groupDebounceSec: config.slack.groupDebounceSec,
-          groupPollIntervalMin: config.slack.groupPollIntervalMin,
-          instantGroups: config.slack.instantGroups,
-          listeningGroups: config.slack.listeningGroups,
-        }
-      } : {}),
-      ...(config.discord.enabled ? {
-        discord: {
-          enabled: true,
-          token: config.discord.token,
-          dmPolicy: config.discord.dmPolicy,
-          allowedUsers: config.discord.allowedUsers,
-          groupDebounceSec: config.discord.groupDebounceSec,
-          groupPollIntervalMin: config.discord.groupPollIntervalMin,
-          instantGroups: config.discord.instantGroups,
-          listeningGroups: config.discord.listeningGroups,
-        }
-      } : {}),
-      ...(config.whatsapp.enabled ? {
-        whatsapp: {
-          enabled: true,
-          selfChat: config.whatsapp.selfChat,
-          dmPolicy: config.whatsapp.dmPolicy,
-          allowedUsers: config.whatsapp.allowedUsers,
-          groupDebounceSec: config.whatsapp.groupDebounceSec,
-          groupPollIntervalMin: config.whatsapp.groupPollIntervalMin,
-          instantGroups: config.whatsapp.instantGroups,
-          listeningGroups: config.whatsapp.listeningGroups,
-        }
-      } : {}),
-      ...(config.signal.enabled ? {
-        signal: {
-          enabled: true,
-          phone: config.signal.phone,
-          selfChat: config.signal.selfChat,
-          dmPolicy: config.signal.dmPolicy,
-          allowedUsers: config.signal.allowedUsers,
-          groupDebounceSec: config.signal.groupDebounceSec,
-          groupPollIntervalMin: config.signal.groupPollIntervalMin,
-          instantGroups: config.signal.instantGroups,
-          listeningGroups: config.signal.listeningGroups,
-        }
-      } : {}),
-    },
-    features: {
-      cron: config.cron,
-      heartbeat: {
-        enabled: config.heartbeat.enabled,
-        intervalMin: config.heartbeat.interval ? parseInt(config.heartbeat.interval) : undefined,
-      },
-    },
-    ...(config.google.enabled ? {
-      integrations: {
-        google: {
-          enabled: true,
-          accounts: config.google.accounts,
-        },
-      },
-      ...((() => {
-        const gmailAccounts = config.google.accounts
-          .filter(a => a.services?.includes('gmail'))
-          .map(a => a.account);
-        return gmailAccounts.length > 0 ? {
-          polling: { gmail: { accounts: gmailAccounts } },
-        } : {};
-      })()),
-    } : {}),
-  };
+  const agentConfig: AgentConfig = buildProjectedAgentConfig(
+    toProjectionInputFromOnboardConfig(config),
+  );
 
   // Convert to YAML config (multi-agent format)
   // Resolve API server config from existing config (server.api is canonical, top-level api is fallback)

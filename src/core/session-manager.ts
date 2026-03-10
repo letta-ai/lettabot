@@ -10,7 +10,7 @@ import { createAgent, createSession, resumeSession, type Session, type SendMessa
 import type { BotConfig, StreamMsg } from './types.js';
 import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError } from './errors.js';
 import { Store } from './store.js';
-import { updateAgentName, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
+import { updateAgentName, recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { installSkillsToAgent, prependSkillDirsToPath } from '../skills/loader.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
@@ -19,6 +19,13 @@ import { syncTodosFromTool } from '../todo/store.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Session');
+
+function toConcreteConversationId(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === 'default') return null;
+  return trimmed;
+}
 
 export class SessionManager {
   private readonly store: Store;
@@ -161,6 +168,7 @@ export class SessionManager {
       tools: [createManageTodoTool(this.getTodoAgentKey())],
       // Memory filesystem (context repository): true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
       ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
+      ...(this.config.sleeptime ? { sleeptime: this.config.sleeptime } : {}),
       // In bypassPermissions mode, canUseTool is only called for interactive
       // tools (AskUserQuestion, ExitPlanMode). When no callback is provided
       // (background triggers), the SDK auto-denies interactive tools.
@@ -229,11 +237,22 @@ export class SessionManager {
 
     // In disabled mode, always resume the agent's built-in default conversation.
     // Skip store lookup entirely -- no conversation ID is persisted.
-    const convId = key === 'default'
+    const rawConvId = key === 'default'
       ? null
       : key === 'shared'
         ? this.store.conversationId
         : this.store.getConversationId(key);
+    const convId = toConcreteConversationId(rawConvId);
+
+    // Cleanup legacy persisted alias values from older versions.
+    if (rawConvId === 'default') {
+      if (key === 'shared') {
+        this.store.conversationId = null;
+      } else {
+        this.store.clearConversation(key);
+      }
+      log.info(`Cleared legacy default conversation alias (key=${key})`);
+    }
 
     // Propagate per-agent cron store path to CLI subprocesses (lettabot-schedule)
     if (this.config.cronStorePath) {
@@ -255,12 +274,16 @@ export class SessionManager {
       }
       session = resumeSession(convId, opts);
     } else if (this.store.agentId) {
-      // Agent exists but no conversation stored -- resume the default conversation
+      // Agent exists but no conversation stored for this key.
+      // 'shared' is the single shared conversation — resume it like the default.
+      // Channel-specific keys (per-channel/per-chat mode) need a fresh conversation.
       process.env.LETTA_AGENT_ID = this.store.agentId;
       installSkillsToAgent(this.store.agentId, this.config.skills);
       sessionAgentId = this.store.agentId;
-      prependSkillDirsToPath(sessionAgentId); // must be before resumeSession spawns subprocess
-      session = resumeSession(this.store.agentId, opts);
+      prependSkillDirsToPath(sessionAgentId); // must be before resumeSession/createSession spawns subprocess
+      session = key === 'shared'
+        ? resumeSession(this.store.agentId, opts)
+        : createSession(this.store.agentId, opts);
     } else {
       // Create new agent -- persist immediately so we don't orphan it on later failures
       log.info('Creating new agent');
@@ -269,6 +292,7 @@ export class SessionManager {
         memory: loadMemoryBlocks(this.config.agentName),
         tags: ['origin:lettabot'],
         ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
+        ...(this.config.sleeptime ? { sleeptime: this.config.sleeptime } : {}),
       });
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
       this.store.setAgent(newAgentId, currentBaseUrl);
@@ -327,9 +351,22 @@ export class SessionManager {
         );
         if (bootstrap.hasPendingApproval) {
           const convId = bootstrap.conversationId || session.conversationId;
-          log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
-          session.close();
-          if (convId) {
+          if (!isRecoverableConversationId(convId)) {
+            log.warn(
+              `Pending approval detected at session startup (key=${key}, conv=${convId}) ` +
+              'using agent-level recovery fallback.'
+            );
+            session.close();
+            const result = await recoverPendingApprovalsForAgent(this.store.agentId);
+            if (result.recovered) {
+              log.info(`Proactive agent-level recovery succeeded: ${result.details}`);
+            } else {
+              log.warn(`Proactive agent-level recovery did not resolve approvals: ${result.details}`);
+            }
+            return this._createSessionForKey(key, true, generation);
+          } else {
+            log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
+            session.close();
             const result = await recoverOrphanedConversationApproval(
               this.store.agentId,
               convId,
@@ -340,8 +377,8 @@ export class SessionManager {
             } else {
               log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
             }
+            return this._createSessionForKey(key, true, generation);
           }
-          return this._createSessionForKey(key, true, generation);
         }
       } catch (err) {
         // bootstrapState failure is non-fatal -- the reactive 409 handler in
@@ -356,10 +393,11 @@ export class SessionManager {
       return this.ensureSessionForKey(key, bootstrapRetried);
     }
 
-    // LRU eviction: in per-chat mode, limit concurrent sessions to avoid
-    // unbounded subprocess growth.
+    // LRU eviction: limit concurrent sessions to avoid unbounded subprocess
+    // growth. Applies in per-chat mode and when forcePerChat (e.g., Discord
+    // thread-only) creates per-thread keys in other modes.
     const maxSessions = this.config.maxSessions ?? 10;
-    if (this.config.conversationMode === 'per-chat' && this.sessions.size >= maxSessions) {
+    if (this.sessions.size >= maxSessions) {
       let oldestKey: string | null = null;
       let oldestTime = Infinity;
       for (const [k, ts] of this.sessionLastUsed) {
@@ -508,22 +546,23 @@ export class SessionManager {
     let session = await this.ensureSessionForKey(convKey);
 
     // Resolve the conversation ID for this key (for error recovery)
-    const convId = convKey === 'shared'
-      ? this.store.conversationId
-      : this.store.getConversationId(convKey);
+    const convId = toConcreteConversationId(
+      convKey === 'shared'
+        ? this.store.conversationId
+        : this.store.getConversationId(convKey)
+    );
 
     // Send message with fallback chain
     try {
       await this.withSessionTimeout(session.send(message), `Session send (key=${convKey})`);
     } catch (error) {
       // 409 CONFLICT from orphaned approval
-      if (!retried && isApprovalConflictError(error) && this.store.agentId && convId) {
+      if (!retried && isApprovalConflictError(error) && this.store.agentId) {
         log.info('CONFLICT detected - attempting orphaned approval recovery...');
         this.invalidateSession(convKey);
-        const result = await recoverOrphanedConversationApproval(
-          this.store.agentId,
-          convId
-        );
+        const result = isRecoverableConversationId(convId)
+          ? await recoverOrphanedConversationApproval(this.store.agentId, convId)
+          : await recoverPendingApprovalsForAgent(this.store.agentId);
         if (result.recovered) {
           log.info(`Recovery succeeded (${result.details}), retrying...`);
           return this.runSession(message, { retried: true, canUseTool, convKey });
