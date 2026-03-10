@@ -174,6 +174,50 @@ describe('DiscordAdapter command gating', () => {
     await adapter.stop();
   });
 
+  it('does not fetch voice attachment audio for groups outside allowlist', async () => {
+    const adapter = new DiscordAdapter({
+      token: 'token',
+      groups: {
+        'channel-2': { mode: 'open' },
+      },
+    });
+    const onMessage = vi.fn().mockResolvedValue(undefined);
+    adapter.onMessage = onMessage;
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    await adapter.start();
+    const client = discordMock.getLatestClient();
+    expect(client).toBeTruthy();
+
+    const message = makeMessage({
+      content: '',
+      isThread: false,
+      channelId: 'channel-1',
+    });
+    message.attachments = {
+      find: () => ({
+        contentType: 'audio/ogg',
+        name: 'voice.ogg',
+        url: 'https://cdn.example.com/voice.ogg',
+      }),
+      values: () => [{
+        id: 'att-audio-1',
+        contentType: 'audio/ogg',
+        name: 'voice.ogg',
+        size: 321,
+        url: 'https://cdn.example.com/voice.ogg',
+      }],
+    };
+
+    await client!.emit('messageCreate', message);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(message.reply).not.toHaveBeenCalled();
+    await adapter.stop();
+  });
+
   it('blocks managed slash commands for groups outside allowlist', async () => {
     const adapter = new DiscordAdapter({
       token: 'token',

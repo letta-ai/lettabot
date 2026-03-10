@@ -244,36 +244,6 @@ Ask the bot owner to approve with:
       let content = (message.content || '').trim();
       const userId = message.author?.id;
       if (!userId) return;
-      
-      // Handle audio attachments
-      const audioAttachment = message.attachments.find(a => a.contentType?.startsWith('audio/'));
-      if (audioAttachment?.url) {
-        try {
-          const { isTranscriptionConfigured } = await import('../transcription/index.js');
-          if (!isTranscriptionConfigured()) {
-            await message.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice');
-          } else {
-            // Download audio
-            const response = await fetch(audioAttachment.url);
-            const buffer = Buffer.from(await response.arrayBuffer());
-            
-            const { transcribeAudio } = await import('../transcription/index.js');
-            const ext = audioAttachment.contentType?.split('/')[1] || 'mp3';
-            const result = await transcribeAudio(buffer, audioAttachment.name || `audio.${ext}`);
-            
-            if (result.success && result.text) {
-              log.info(`Transcribed audio: "${result.text.slice(0, 50)}..."`);
-              content = (content ? content + '\n' : '') + `[Voice message]: ${result.text}`;
-            } else {
-              log.error(`Transcription failed: ${result.error}`);
-              content = (content ? content + '\n' : '') + `[Voice message - transcription failed: ${result.error}]`;
-            }
-          }
-        } catch (error) {
-          log.error('Error transcribing audio:', error);
-          content = (content ? content + '\n' : '') + `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`;
-        }
-      }
 
       // Bypass pairing for guild (group) messages
       if (!message.guildId) {
@@ -446,6 +416,34 @@ Ask the bot owner to approve with:
             }
             effectiveChatId = createdThread.id;
             effectiveGroupName = createdThread.name || effectiveGroupName;
+          }
+        }
+
+        const audioAttachment = message.attachments.find((a) => a.contentType?.startsWith('audio/'));
+        if (audioAttachment?.url) {
+          try {
+            const { isTranscriptionConfigured } = await import('../transcription/index.js');
+            if (!isTranscriptionConfigured()) {
+              await message.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice');
+            } else {
+              const response = await fetch(audioAttachment.url);
+              const buffer = Buffer.from(await response.arrayBuffer());
+
+              const { transcribeAudio } = await import('../transcription/index.js');
+              const ext = audioAttachment.contentType?.split('/')[1] || 'mp3';
+              const result = await transcribeAudio(buffer, audioAttachment.name || `audio.${ext}`);
+
+              if (result.success && result.text) {
+                log.info(`Transcribed audio: "${result.text.slice(0, 50)}..."`);
+                content = (content ? content + '\n' : '') + `[Voice message]: ${result.text}`;
+              } else {
+                log.error(`Transcription failed: ${result.error}`);
+                content = (content ? content + '\n' : '') + `[Voice message - transcription failed: ${result.error}]`;
+              }
+            }
+          } catch (error) {
+            log.error('Error transcribing audio:', error);
+            content = (content ? content + '\n' : '') + `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`;
           }
         }
 
