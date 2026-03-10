@@ -310,6 +310,12 @@ Ask the bot owner to approve with:
       if (!content && attachments.length === 0) return;
 
       if (content.startsWith('/')) {
+        let commandChatId = message.channel.id;
+        let commandSendTarget: { send: (content: string) => Promise<unknown> } | null =
+          message.channel.isTextBased() && 'send' in message.channel
+            ? (message.channel as { send: (content: string) => Promise<unknown> })
+            : null;
+
         if (isGroup && this.config.groups) {
           const threadMode = resolveDiscordThreadMode(this.config.groups, keys);
           if (threadMode === 'thread-only' && !isThreadMessage) {
@@ -320,12 +326,21 @@ Ask the bot owner to approve with:
             }
 
             // Keep command behavior aligned with normal message gating in thread-only mode.
-            // If a mention-triggered thread is created, drop the parent-channel command.
             const createdThread = await this.createThreadForMention(message, content);
             if (!createdThread) {
               return;
             }
-            return;
+
+            if (!this.client) {
+              return;
+            }
+            const threadChannel = await this.client.channels.fetch(createdThread.id);
+            if (!threadChannel || !threadChannel.isTextBased() || !('send' in threadChannel)) {
+              return;
+            }
+
+            commandChatId = createdThread.id;
+            commandSendTarget = threadChannel as { send: (content: string) => Promise<unknown> };
           }
         }
 
@@ -333,14 +348,16 @@ Ask the bot owner to approve with:
         const command = parts[0]?.toLowerCase();
         const cmdArgs = parts.slice(1).join(' ') || undefined;
         if (command === 'help' || command === 'start') {
-          await message.channel.send(HELP_TEXT);
+          if (!commandSendTarget) return;
+          await commandSendTarget.send(HELP_TEXT);
           return;
         }
         if (this.onCommand) {
           if (command === 'status' || command === 'reset' || command === 'heartbeat' || command === 'cancel' || command === 'model' || command === 'setconv') {
-            const result = await this.onCommand(command, message.channel.id, cmdArgs);
+            const result = await this.onCommand(command, commandChatId, cmdArgs);
             if (result) {
-              await message.channel.send(result);
+              if (!commandSendTarget) return;
+              await commandSendTarget.send(result);
             }
             return;
           }

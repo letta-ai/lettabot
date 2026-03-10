@@ -189,4 +189,42 @@ describe('DiscordAdapter command gating', () => {
     expect(message.channel.send).toHaveBeenCalledWith('ok');
     await adapter.stop();
   });
+
+  it('redirects mentioned top-level commands into an auto-created thread', async () => {
+    const adapter = new DiscordAdapter({
+      token: 'token',
+      groups: {
+        'channel-1': { mode: 'open', threadMode: 'thread-only', autoCreateThreadOnMention: true },
+      },
+    });
+    const onCommand = vi.fn().mockResolvedValue('ok');
+    adapter.onCommand = onCommand;
+
+    await adapter.start();
+    const client = discordMock.getLatestClient();
+    expect(client).toBeTruthy();
+
+    const threadSend = vi.fn().mockResolvedValue({ id: 'thread-msg-1' });
+    (client!.channels.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'thread-created',
+      isTextBased: () => true,
+      send: threadSend,
+    });
+
+    const message = makeMessage({
+      content: '/status',
+      isThread: false,
+      channelId: 'channel-1',
+    });
+    message.mentions = { has: () => true };
+
+    await client!.emit('messageCreate', message);
+
+    expect(message.startThread).toHaveBeenCalledTimes(1);
+    expect(onCommand).toHaveBeenCalledTimes(1);
+    expect(onCommand).toHaveBeenCalledWith('status', 'thread-created', undefined);
+    expect(threadSend).toHaveBeenCalledWith('ok');
+    expect(message.channel.send).not.toHaveBeenCalled();
+    await adapter.stop();
+  });
 });
