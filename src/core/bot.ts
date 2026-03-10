@@ -1413,8 +1413,13 @@ export class LettaBot implements AgentSession {
           // prematurely flush reasoning buffers or finalize assistant messages.
           const isSemanticType = streamMsg.type !== 'stream_event';
 
-          // Finalize on type change (avoid double-handling when result provides full response)
-          if (isSemanticType && lastMsgType && lastMsgType !== streamMsg.type && response.trim() && streamMsg.type !== 'result') {
+          // Finalize on type change (avoid double-handling when result provides full response).
+          // Don't flush assistant text when transitioning to tool_call or tool_result --
+          // mid-turn assistant content (e.g. model scratch notes between tool calls)
+          // would leak to the user. Let it accumulate and deliver after the turn ends.
+          const isToolTransition = streamMsg.type === 'tool_call' || streamMsg.type === 'tool_result';
+          if (isSemanticType && lastMsgType && lastMsgType !== streamMsg.type && response.trim()
+              && streamMsg.type !== 'result' && !isToolTransition) {
             await finalizeMessage();
           }
 
@@ -1438,6 +1443,15 @@ export class LettaBot implements AgentSession {
 
           // Log meaningful events with structured summaries
           if (streamMsg.type === 'tool_call') {
+            // Discard any unsent assistant text accumulated before this tool call.
+            // Mid-turn assistant content (model scratch notes) must not leak to the
+            // user. The real response will follow after the tool loop completes.
+            if (response.trim()) {
+              log.info(`Discarding pre-tool assistant text (${response.trim().length} chars)`);
+              response = '';
+              streamedAssistantText = '';
+              messageId = null;
+            }
             this.sessionManager.syncTodoToolCall(streamMsg);
             const tcName = streamMsg.toolName || 'unknown';
             const tcId = streamMsg.toolCallId?.slice(0, 12) || '?';
