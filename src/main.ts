@@ -547,10 +547,11 @@ async function main() {
   const isMultiAgent = agents.length > 1;
   log.info(`${agents.length} agent(s) configured: ${agents.map(a => a.name).join(', ')}`);
   
-  // Validate no two agents share the same turnLogFile
+  // Validate no two agents share the same turnLogFile (resolve paths to catch relative/absolute aliases)
   const turnLogFilePaths = agents
     .map(a => a.features?.logging?.turnLogFile)
-    .filter((p): p is string => !!p);
+    .filter((p): p is string => !!p)
+    .map(p => resolve(p));
   const duplicateTurnLog = turnLogFilePaths.find((p, i) => turnLogFilePaths.indexOf(p) !== i);
   if (duplicateTurnLog) {
     log.error(`Multiple agents share the same turnLogFile: "${duplicateTurnLog}". Each agent must use a unique log file path.`);

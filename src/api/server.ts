@@ -5,6 +5,7 @@
 
 import * as http from 'http';
 import * as fs from 'fs';
+import * as crypto from 'node:crypto';
 import { validateApiKey } from './auth.js';
 import type { SendMessageRequest, SendMessageResponse, SendFileResponse, ChatRequest, ChatResponse, AsyncChatResponse, PairingListResponse, PairingApproveRequest, PairingApproveResponse } from './types.js';
 import { listPairingRequests, approvePairingCode } from '../pairing/store.js';
@@ -56,10 +57,18 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
   // SSE clients keyed by agent name — scoped to this server instance
   const sseClientsByAgent = new Map<string, Set<http.ServerResponse>>();
 
-  function broadcastTurns(agentName: string, filePath: string): void {
+  // Track how many lines have already been broadcast per file for incremental SSE updates.
+  const fileLineCounts = new Map<string, number>();
+
+  function broadcastNewTurns(agentName: string, filePath: string): void {
     const clients = sseClientsByAgent.get(agentName);
     if (!clients || clients.size === 0) return;
-    const payload = `data: ${JSON.stringify(readTurns(filePath))}\n\n`;
+    const allTurns = readTurns(filePath);
+    const sent = fileLineCounts.get(filePath) ?? 0;
+    const newTurns = allTurns.slice(sent);
+    if (newTurns.length === 0) return;
+    fileLineCounts.set(filePath, allTurns.length);
+    const payload = `data: ${JSON.stringify({ type: 'append', turns: newTurns })}\n\n`;
     for (const res of clients) {
       try { res.write(payload); } catch { clients.delete(res); }
     }
@@ -67,20 +76,24 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
 
   // Watch each agent's turn log file and push updates to SSE clients.
   // Watching is started on first SSE connection and stopped when the last client disconnects.
-  const watchedFiles = new Set<string>();
+  const watchers = new Map<string, fs.FSWatcher>();
 
   function ensureWatching(agentName: string, filePath: string): void {
-    if (watchedFiles.has(filePath)) return;
-    watchedFiles.add(filePath);
-    fs.watchFile(filePath, { interval: 500, persistent: false }, () => {
-      broadcastTurns(agentName, filePath);
+    if (watchers.has(filePath)) return;
+    const watcher = fs.watch(filePath, { persistent: false }, () => {
+      broadcastNewTurns(agentName, filePath);
     });
+    watcher.on('error', () => {
+      watcher.close();
+      watchers.delete(filePath);
+    });
+    watchers.set(filePath, watcher);
   }
 
   function maybeUnwatch(filePath: string, clients: Set<http.ServerResponse>): void {
-    if (clients.size === 0 && watchedFiles.has(filePath)) {
-      fs.unwatchFile(filePath);
-      watchedFiles.delete(filePath);
+    if (clients.size === 0 && watchers.has(filePath)) {
+      watchers.get(filePath)!.close();
+      watchers.delete(filePath);
     }
   }
 
@@ -110,10 +123,23 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
       return;
     }
 
-    // Turn viewer routes (no auth — dev tool, localhost only)
+    // Turn viewer routes
     if (options.turnLogFiles && req.method === 'GET') {
       const agentNames = Object.keys(options.turnLogFiles);
       const parsedUrl = new URL(req.url ?? '/', `http://localhost`);
+
+      // Authenticate turn viewer routes; /turns (the HTML page) is exempt so the
+      // browser can load it and present a login prompt. Data/stream endpoints validate
+      // via X-Api-Key/Authorization header OR a ?key= query parameter (needed for
+      // EventSource which cannot set custom headers).
+      const validateTurnAuth = (): boolean => {
+        if (validateApiKey(req.headers, options.apiKey)) return true;
+        const qKey = parsedUrl.searchParams.get('key') || '';
+        if (!qKey) return false;
+        const a = Buffer.from(qKey);
+        const b = Buffer.from(options.apiKey);
+        return a.length === b.length && crypto.timingSafeEqual(a, b);
+      };
 
       if (parsedUrl.pathname === '/turns') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -121,6 +147,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         return;
       }
       if (parsedUrl.pathname === '/turns/data') {
+        if (!validateTurnAuth()) { sendError(res, 401, 'Unauthorized'); return; }
         const agentName = parsedUrl.searchParams.get('agent') || agentNames[0];
         const filePath = options.turnLogFiles[agentName];
         if (!filePath) { res.writeHead(404); res.end('Unknown agent'); return; }
@@ -129,6 +156,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         return;
       }
       if (parsedUrl.pathname === '/turns/stream') {
+        if (!validateTurnAuth()) { sendError(res, 401, 'Unauthorized'); return; }
         const agentName = parsedUrl.searchParams.get('agent') || agentNames[0];
         const filePath = options.turnLogFiles[agentName];
         if (!filePath) { res.writeHead(404); res.end('Unknown agent'); return; }
@@ -138,7 +166,9 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           'Connection': 'keep-alive',
           'X-Accel-Buffering': 'no',
         });
-        res.write(`data: ${JSON.stringify(readTurns(filePath))}\n\n`);
+        const allTurns = readTurns(filePath);
+        fileLineCounts.set(filePath, allTurns.length);
+        res.write(`data: ${JSON.stringify({ type: 'init', turns: allTurns })}\n\n`);
         const clients = sseClientsByAgent.get(agentName)!;
         clients.add(res);
         ensureWatching(agentName, filePath);

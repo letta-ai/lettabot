@@ -6,7 +6,7 @@
 
 export function getTurnViewerHtml(agentNames: string[]): string {
   const defaultAgent = agentNames[0] ?? '';
-  const agentNamesJson = JSON.stringify(agentNames);
+  const agentNamesJson = JSON.stringify(agentNames).replace(/<\/script>/gi, '<\\/script>');
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -103,9 +103,28 @@ tr:hover td{background:var(--surface2);cursor:pointer}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+.auth-overlay{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;align-items:center;justify-content:center}
+.auth-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px 24px;width:340px}
+.auth-box h2{font-size:16px;font-weight:600;margin-bottom:18px;color:var(--text)}
+.auth-box label{display:block;font-size:12px;color:var(--text3);margin-bottom:6px}
+.auth-box input{width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:monospace;outline:none}
+.auth-box input:focus{border-color:var(--accent)}
+.auth-box button{margin-top:12px;width:100%;padding:9px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer}
+.auth-box button:hover{opacity:.9}
+.auth-err{color:#f87171;font-size:12px;margin-top:8px;display:none}
 </style>
 </head>
 <body>
+<div class="auth-overlay" id="authOverlay">
+  <div class="auth-box">
+    <h2>Turn Viewer</h2>
+    <label for="apiKeyInput">API Key</label>
+    <input type="password" id="apiKeyInput" placeholder="Paste your API key" autocomplete="off"
+      onkeydown="if(event.key==='Enter')document.getElementById('authSubmit').click()">
+    <button id="authSubmit">Connect</button>
+    <div class="auth-err" id="authErr">Invalid API key</div>
+  </div>
+</div>
 
 <div class="header">
   <h1>Turn Viewer</h1>
@@ -197,6 +216,7 @@ var activeTrigger = 'all';
 var activeChannel = 'all';
 var searchQuery = '';
 var openTurnTs = null;
+var apiKey = sessionStorage.getItem('tv_key') || '';
 
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -424,7 +444,10 @@ var currentEs = null;
 
 function connect() {
   if (currentEs) { currentEs.close(); currentEs = null; }
-  var url = '/turns/stream' + (activeAgent ? '?agent='+encodeURIComponent(activeAgent) : '');
+  var params = new URLSearchParams();
+  if (activeAgent) params.set('agent', activeAgent);
+  params.set('key', apiKey);
+  var url = '/turns/stream?' + params.toString();
   var es = new EventSource(url);
   currentEs = es;
   es.onopen = function() {
@@ -432,25 +455,64 @@ function connect() {
     dot.title = 'Live \u2014 auto-updating';
   };
   es.onmessage = function(e) {
-    try { setTurns(JSON.parse(e.data)); } catch(ex) {}
+    try {
+      var msg = JSON.parse(e.data);
+      if (msg.type === 'init') { setTurns(msg.turns); }
+      else if (msg.type === 'append' && msg.turns && msg.turns.length > 0) {
+        allTurns = allTurns.concat(msg.turns);
+        render();
+      }
+    } catch(ex) {}
   };
   es.onerror = function() {
     if (es !== currentEs) return; // stale, ignore
     dot.className = 'status-dot stale';
     dot.title = 'Disconnected \u2014 reconnecting\u2026';
     es.close();
+    currentEs = null;
     setTimeout(connect, 3000);
   };
 }
 
 function switchAgent() {
-  var url = '/turns/data' + (activeAgent ? '?agent='+encodeURIComponent(activeAgent) : '');
-  fetch(url).then(function(r){ return r.json(); }).then(setTurns).catch(function(){});
+  var params = new URLSearchParams();
+  if (activeAgent) params.set('agent', activeAgent);
+  var url = '/turns/data?' + params.toString();
+  fetch(url, { headers: { 'X-Api-Key': apiKey } })
+    .then(function(r) {
+      if (r.status === 401) { showAuth(); throw new Error('Unauthorized'); }
+      return r.json();
+    })
+    .then(setTurns)
+    .catch(function(){});
   connect();
 }
 
-// Initial load
-switchAgent();
+function showAuth() {
+  document.getElementById('authOverlay').style.display = 'flex';
+}
+
+function hideAuth() {
+  document.getElementById('authOverlay').style.display = 'none';
+}
+
+document.getElementById('authSubmit').addEventListener('click', function() {
+  var k = document.getElementById('apiKeyInput').value.trim();
+  if (!k) return;
+  apiKey = k;
+  sessionStorage.setItem('tv_key', k);
+  document.getElementById('authErr').style.display = 'none';
+  hideAuth();
+  switchAgent();
+});
+
+// Initial load — show login if no key stored, otherwise load directly
+if (apiKey) {
+  hideAuth();
+  switchAgent();
+} else {
+  showAuth();
+}
 })();
 </script>
 </body>
