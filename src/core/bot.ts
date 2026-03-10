@@ -1374,16 +1374,33 @@ export class LettaBot implements AgentSession {
               continue;
             }
           } else if (expectedForegroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(expectedForegroundRunId)) {
-            // Strict no-rebind policy: once foreground is selected, never switch.
-            sawCompetingRunEvent = true;
-            filteredRunEventCount++;
-            if (streamMsg.type === 'result') {
-              ignoredNonForegroundResultCount++;
-              log.warn(`Ignoring non-foreground result event (seq=${seq}, key=${convKey}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId}, source=${expectedForegroundRunSource || 'unknown'})`);
+            // After a tool call the Letta server may assign a new run ID for
+            // the continuation. Rebind on assistant events -- background Task
+            // agents run in separate sessions and don't produce assistant
+            // events in the foreground stream. Other event types (reasoning,
+            // tool_call, result) from different runs are still filtered to
+            // prevent background Task output leaking into user display (#482).
+            if (streamMsg.type === 'assistant') {
+              const newRunId = eventRunIds[0];
+              log.info(`Rebinding foreground run: ${expectedForegroundRunId} -> ${newRunId} (seq=${seq}, key=${convKey}, type=${streamMsg.type})`);
+              expectedForegroundRunId = newRunId;
+              expectedForegroundRunSource = 'assistant';
+              // Flush any buffered display events for the new run.
+              if (bufferedDisplayEvents.length > 0) {
+                await flushBufferedDisplayEventsForRun(newRunId);
+              }
+              // Fall through to normal processing
             } else {
-              log.trace(`Skipping non-foreground stream event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
+              sawCompetingRunEvent = true;
+              filteredRunEventCount++;
+              if (streamMsg.type === 'result') {
+                ignoredNonForegroundResultCount++;
+                log.warn(`Ignoring non-foreground result event (seq=${seq}, key=${convKey}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
+              } else {
+                log.trace(`Skipping non-foreground stream event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
+              }
+              continue;
             }
-            continue;
           }
 
           receivedAnyData = true;

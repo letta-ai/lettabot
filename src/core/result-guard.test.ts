@@ -159,7 +159,7 @@ describe('result divergence guard', () => {
     expect(lastSent).toMatch(/\(.*\)/); // Parenthesized system message
   });
 
-  it('ignores non-foreground result events and waits for the foreground result', async () => {
+  it('rebinds foreground run on post-tool-call assistant events with new run ID (#527)', async () => {
     const bot = new LettaBot({
       workingDir: workDir,
       allowedTools: [],
@@ -179,14 +179,15 @@ describe('result divergence guard', () => {
       sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
     };
 
+    // Server assigns run-2 after tool call -- both runs are part of the same turn
     (bot as any).sessionManager.runSession = vi.fn(async () => ({
       session: { abort: vi.fn(async () => {}) },
       stream: async function* () {
-        yield { type: 'assistant', content: 'main ', runId: 'run-main' };
-        yield { type: 'assistant', content: 'background', runId: 'run-bg' };
-        yield { type: 'result', success: true, result: 'background final', runIds: ['run-bg'] };
-        yield { type: 'assistant', content: 'reply', runId: 'run-main' };
-        yield { type: 'result', success: true, result: 'main reply', runIds: ['run-main'] };
+        yield { type: 'assistant', content: 'Before tool. ', runId: 'run-1' };
+        yield { type: 'tool_call', toolCallId: 'tc-1', toolName: 'Bash', toolInput: { command: 'echo ok' }, runId: 'run-1' };
+        yield { type: 'tool_result', content: 'ok', isError: false, runId: 'run-1' };
+        yield { type: 'assistant', content: 'After tool.', runId: 'run-2' };
+        yield { type: 'result', success: true, result: 'Before tool. After tool.', runIds: ['run-2'] };
       },
     }));
 
@@ -194,14 +195,15 @@ describe('result divergence guard', () => {
       channel: 'discord',
       chatId: 'chat-1',
       userId: 'user-1',
-      text: 'hello',
+      text: 'run a command',
       timestamp: new Date(),
     };
 
     await (bot as any).processMessage(msg, adapter);
 
     const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
-    expect(sentTexts).toEqual(['main reply']);
+    // Pre-tool and post-tool text are separate messages (finalized on type change)
+    expect(sentTexts).toEqual(['Before tool. ', 'After tool.']);
   });
 
   it('buffers pre-foreground run-scoped display events and drops non-foreground buffers', async () => {
