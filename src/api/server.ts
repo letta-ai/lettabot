@@ -5,6 +5,7 @@
 
 import * as http from 'http';
 import * as fs from 'fs';
+import { readFile } from 'node:fs/promises';
 import * as crypto from 'node:crypto';
 import { validateApiKey } from './auth.js';
 import type { SendMessageRequest, SendMessageResponse, SendFileResponse, ChatRequest, ChatResponse, AsyncChatResponse, PairingListResponse, PairingApproveRequest, PairingApproveResponse } from './types.js';
@@ -38,9 +39,10 @@ interface ServerOptions {
 
 // ── Turn viewer helpers ───────────────────────────────────────────────────
 
-function readTurns(filePath: string): unknown[] {
+async function readTurns(filePath: string): Promise<unknown[]> {
   try {
-    return fs.readFileSync(filePath, 'utf8')
+    const content = await readFile(filePath, 'utf8');
+    return content
       .split('\n')
       .filter(l => l.trim())
       .map(l => { try { return JSON.parse(l); } catch { return null; } })
@@ -60,10 +62,10 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
   // Track how many lines have already been broadcast per file for incremental SSE updates.
   const fileLineCounts = new Map<string, number>();
 
-  function broadcastNewTurns(agentName: string, filePath: string): void {
+  async function broadcastNewTurns(agentName: string, filePath: string): Promise<void> {
     const clients = sseClientsByAgent.get(agentName);
     if (!clients || clients.size === 0) return;
-    const allTurns = readTurns(filePath);
+    const allTurns = await readTurns(filePath);
     const sent = fileLineCounts.get(filePath) ?? 0;
     const newTurns = allTurns.slice(sent);
     if (newTurns.length === 0) return;
@@ -81,7 +83,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
   function ensureWatching(agentName: string, filePath: string): void {
     if (watchers.has(filePath)) return;
     const watcher = fs.watch(filePath, { persistent: false }, () => {
-      broadcastNewTurns(agentName, filePath);
+      broadcastNewTurns(agentName, filePath).catch(() => {});
     });
     watcher.on('error', () => {
       watcher.close();
@@ -152,7 +154,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         const filePath = options.turnLogFiles[agentName];
         if (!filePath) { res.writeHead(404); res.end('Unknown agent'); return; }
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify(readTurns(filePath)));
+        res.end(JSON.stringify(await readTurns(filePath)));
         return;
       }
       if (parsedUrl.pathname === '/turns/stream') {
@@ -166,7 +168,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           'Connection': 'keep-alive',
           'X-Accel-Buffering': 'no',
         });
-        const allTurns = readTurns(filePath);
+        const allTurns = await readTurns(filePath);
         fileLineCounts.set(filePath, allTurns.length);
         res.write(`data: ${JSON.stringify({ type: 'init', turns: allTurns })}\n\n`);
         const clients = sseClientsByAgent.get(agentName)!;

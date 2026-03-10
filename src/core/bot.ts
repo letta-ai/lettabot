@@ -5,8 +5,8 @@
  */
 
 import { imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
-import { mkdirSync, existsSync, appendFileSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
+import { mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { access, unlink, realpath, stat, constants, appendFile, readFile, writeFile, rename } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { extname, resolve, join, dirname } from 'node:path';
@@ -303,28 +303,28 @@ class TurnLogger {
     }
   }
 
-  write(record: TurnRecord): void {
+  async write(record: TurnRecord): Promise<void> {
     if (!this.ready) return;
     try {
-      appendFileSync(this.filePath, JSON.stringify(record) + '\n');
+      await appendFile(this.filePath, JSON.stringify(record) + '\n');
       this.lineCount++;
       if (this.lineCount > this.maxTurns) {
-        this.trim();
+        await this.trim();
       }
     } catch (err) {
       log.warn(`TurnLogger: failed to write turn record:`, err instanceof Error ? err.message : err);
     }
   }
 
-  private trim(): void {
+  private async trim(): Promise<void> {
     try {
-      const content = readFileSync(this.filePath, 'utf8');
+      const content = await readFile(this.filePath, 'utf8');
       const lines = content.split('\n').filter(l => l.trim());
       // Remove oldest entries (from the top), keep the most recent maxTurns
       const trimmed = lines.slice(lines.length - this.maxTurns).join('\n') + '\n';
       const tmp = this.filePath + '.tmp';
-      writeFileSync(tmp, trimmed);
-      renameSync(tmp, this.filePath);
+      await writeFile(tmp, trimmed);
+      await rename(tmp, this.filePath);
       this.lineCount = this.maxTurns;
     } catch (err) {
       log.warn(`TurnLogger: failed to trim turn log:`, err instanceof Error ? err.message : err);
@@ -1069,6 +1069,7 @@ export class LettaBot implements AgentSession {
     // Turn accumulator for JSONL logging
     const turnId = randomUUID();
     const acc = new TurnAccumulator();
+    let turnWritten = false;
 
     // Build AskUserQuestion-aware canUseTool callback with channel context.
     // In bypassPermissions mode, this callback is only invoked for interactive
@@ -1571,7 +1572,7 @@ export class LettaBot implements AgentSession {
       // Write turn JSONL record
       if (this.turnLogger) {
         const { events, output } = acc.finalize();
-        this.turnLogger.write({
+        await this.turnLogger.write({
           ts: new Date().toISOString(),
           turnId,
           trigger: 'user_message',
@@ -1583,6 +1584,7 @@ export class LettaBot implements AgentSession {
           output,
           durationMs: Math.round(performance.now() - t0),
         });
+        turnWritten = true;
       }
 
       // If cancelled, clean up partial state and return early
@@ -1684,6 +1686,22 @@ export class LettaBot implements AgentSession {
         log.error('Failed to send error message to channel:', sendError);
       }
     } finally {
+      // Write partial turn on error/cancel paths (if not already written on success path)
+      if (this.turnLogger && !turnWritten) {
+        const { events, output } = acc.finalize();
+        await this.turnLogger.write({
+          ts: new Date().toISOString(),
+          turnId,
+          trigger: 'user_message',
+          channel: msg.channel,
+          chatId: msg.chatId,
+          userId: msg.userId,
+          input: formattedText,
+          events,
+          output,
+          durationMs: Math.round(performance.now() - t0),
+        }).catch(() => {});
+      }
       const finalConvKey = this.resolveConversationKey(msg.channel, msg.chatId);
       // When session reuse is disabled, invalidate after every message to
       // eliminate any possibility of stream state bleed between sequential
@@ -1752,6 +1770,7 @@ export class LettaBot implements AgentSession {
     // Turn accumulator for JSONL logging
     const turnId = randomUUID();
     const acc = new TurnAccumulator();
+    let turnWritten = false;
 
     try {
       let retried = false;
@@ -1850,7 +1869,7 @@ export class LettaBot implements AgentSession {
           // Write turn JSONL record
           if (this.turnLogger) {
             const { events, output } = acc.finalize();
-            this.turnLogger.write({
+            await this.turnLogger.write({
               ts: new Date().toISOString(),
               turnId,
               trigger: context?.type || 'heartbeat',
@@ -1859,6 +1878,7 @@ export class LettaBot implements AgentSession {
               output,
               durationMs: Math.round(performance.now() - t0),
             });
+            turnWritten = true;
           }
 
           return response;
@@ -1870,6 +1890,19 @@ export class LettaBot implements AgentSession {
 
       }
     } finally {
+      // Write partial turn on error paths (if not already written on success path)
+      if (this.turnLogger && !turnWritten) {
+        const { events, output } = acc.finalize();
+        await this.turnLogger.write({
+          ts: new Date().toISOString(),
+          turnId,
+          trigger: context?.type || 'heartbeat',
+          input: text,
+          events,
+          output,
+          durationMs: Math.round(performance.now() - t0),
+        }).catch(() => {});
+      }
       if (this.config.reuseSession === false) {
         this.sessionManager.invalidateSession(convKey);
       }
@@ -1909,7 +1942,7 @@ export class LettaBot implements AgentSession {
       // Write JSONL record after stream ends (success or error)
       if (this.turnLogger) {
         const { events, output } = acc.finalize();
-        this.turnLogger.write({
+        await this.turnLogger.write({
           ts: new Date().toISOString(),
           turnId,
           trigger: context?.type || 'webhook',
