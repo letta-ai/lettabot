@@ -118,7 +118,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       // listen — read-only, use CLI to act
       actionsSection = [
         'This channel is read-only; your text response will NOT be posted.',
-        'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`).',
+        'Use the Bluesky skill to reply/like/post (CLI: `lettabot-bluesky`, equivalent to `lettabot bluesky ...`).',
         'Reply: `lettabot-bluesky post --reply-to <uri> --text "..."`',
         'Like: `lettabot-bluesky like <uri>`',
         'Posts over 300 chars require `--threaded` to create a reply thread.',
@@ -399,6 +399,11 @@ export class BlueskyAdapter implements ChannelAdapter {
     if (typeof payload.time_us === 'number') {
       this.lastCursor = payload.time_us;
       this.stateDirty = true;
+    }
+
+    // Skip our own posts to prevent self-reply loops
+    if (payload.did && payload.did === this.sessionDid) {
+      return;
     }
 
     if (payload.did && payload.identity?.handle) {
@@ -1218,6 +1223,9 @@ export class BlueskyAdapter implements ChannelAdapter {
     isRead?: boolean;
   }): Promise<void> {
     const authorDid = notification.author?.did || 'unknown';
+    // Skip our own notifications to prevent self-reply loops
+    if (authorDid === this.sessionDid) return;
+
     let authorHandle = notification.author?.handle;
     if (authorDid && authorHandle) {
       this.handleByDid.set(authorDid, authorHandle);
