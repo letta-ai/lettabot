@@ -1912,6 +1912,10 @@ export class LettaBot implements AgentSession {
                 args: (msg as any).toolInput ?? (msg as any).rawArguments ?? null,
               });
             } else if (msg.type === 'tool_result') {
+              if (reasoningAcc.trim()) {
+                turnEvents.push({ type: 'reasoning', content: reasoningAcc.trim() });
+                reasoningAcc = '';
+              }
               const resultContent = (msg as any).content ?? '';
               turnEvents.push({
                 type: 'tool_result',
