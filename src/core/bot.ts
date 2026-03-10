@@ -8,6 +8,7 @@ import { imageFromFile, imageFromURL, type Session, type MessageContentItem, typ
 import { mkdirSync, existsSync, appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { extname, resolve, join, dirname } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext, StreamMsg } from './types.js';
@@ -996,7 +997,7 @@ export class LettaBot implements AgentSession {
     lap('format message');
 
     // Turn accumulator for JSONL logging
-    const turnId = crypto.randomUUID();
+    const turnId = randomUUID();
     const turnEvents: TurnEvent[] = [];
     let reasoningAcc = '';
 
@@ -1705,7 +1706,7 @@ export class LettaBot implements AgentSession {
     const t0 = performance.now();
 
     // Turn accumulator for JSONL logging
-    const turnId = crypto.randomUUID();
+    const turnId = randomUUID();
     const turnEvents: TurnEvent[] = [];
     let reasoningAcc = '';
 
@@ -1873,7 +1874,7 @@ export class LettaBot implements AgentSession {
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
     const t0 = performance.now();
-    const turnId = crypto.randomUUID();
+    const turnId = randomUUID();
 
     // Turn accumulator for JSONL logging
     const turnEvents: TurnEvent[] = [];

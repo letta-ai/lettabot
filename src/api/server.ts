@@ -65,13 +65,28 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     }
   }
 
-  // Watch each agent's turn log file and push updates to SSE clients
+  // Watch each agent's turn log file and push updates to SSE clients.
+  // Watching is started on first SSE connection and stopped when the last client disconnects.
+  const watchedFiles = new Set<string>();
+
+  function ensureWatching(agentName: string, filePath: string): void {
+    if (watchedFiles.has(filePath)) return;
+    watchedFiles.add(filePath);
+    fs.watchFile(filePath, { interval: 500, persistent: false }, () => {
+      broadcastTurns(agentName, filePath);
+    });
+  }
+
+  function maybeUnwatch(filePath: string, clients: Set<http.ServerResponse>): void {
+    if (clients.size === 0 && watchedFiles.has(filePath)) {
+      fs.unwatchFile(filePath);
+      watchedFiles.delete(filePath);
+    }
+  }
+
   if (options.turnLogFiles) {
-    for (const [agentName, filePath] of Object.entries(options.turnLogFiles)) {
+    for (const agentName of Object.keys(options.turnLogFiles)) {
       sseClientsByAgent.set(agentName, new Set());
-      fs.watchFile(filePath, { interval: 500, persistent: false }, () => {
-        broadcastTurns(agentName, filePath);
-      });
     }
   }
   const server = http.createServer(async (req, res) => {
@@ -126,7 +141,11 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         res.write(`data: ${JSON.stringify(readTurns(filePath))}\n\n`);
         const clients = sseClientsByAgent.get(agentName)!;
         clients.add(res);
-        req.on('close', () => clients.delete(res));
+        ensureWatching(agentName, filePath);
+        req.on('close', () => {
+          clients.delete(res);
+          maybeUnwatch(filePath, clients);
+        });
         return;
       }
     }
