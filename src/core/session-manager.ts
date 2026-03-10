@@ -10,7 +10,7 @@ import { createAgent, createSession, resumeSession, type Session, type SendMessa
 import type { BotConfig, StreamMsg } from './types.js';
 import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError } from './errors.js';
 import { Store } from './store.js';
-import { updateAgentName, recoverOrphanedConversationApproval, isRecoverableConversationId } from '../tools/letta-api.js';
+import { updateAgentName, recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { installSkillsToAgent, prependSkillDirsToPath } from '../skills/loader.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
@@ -334,8 +334,16 @@ export class SessionManager {
           if (!isRecoverableConversationId(convId)) {
             log.warn(
               `Pending approval detected at session startup (key=${key}, conv=${convId}) ` +
-              'but conversation is not recoverable; skipping proactive recovery.'
+              'using agent-level recovery fallback.'
             );
+            session.close();
+            const result = await recoverPendingApprovalsForAgent(this.store.agentId);
+            if (result.recovered) {
+              log.info(`Proactive agent-level recovery succeeded: ${result.details}`);
+            } else {
+              log.warn(`Proactive agent-level recovery did not resolve approvals: ${result.details}`);
+            }
+            return this._createSessionForKey(key, true, generation);
           } else {
             log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
             session.close();
@@ -526,13 +534,12 @@ export class SessionManager {
       await this.withSessionTimeout(session.send(message), `Session send (key=${convKey})`);
     } catch (error) {
       // 409 CONFLICT from orphaned approval
-      if (!retried && isApprovalConflictError(error) && this.store.agentId && isRecoverableConversationId(convId)) {
+      if (!retried && isApprovalConflictError(error) && this.store.agentId) {
         log.info('CONFLICT detected - attempting orphaned approval recovery...');
         this.invalidateSession(convKey);
-        const result = await recoverOrphanedConversationApproval(
-          this.store.agentId,
-          convId
-        );
+        const result = isRecoverableConversationId(convId)
+          ? await recoverOrphanedConversationApproval(this.store.agentId, convId)
+          : await recoverPendingApprovalsForAgent(this.store.agentId);
         if (result.recovered) {
           log.info(`Recovery succeeded (${result.details}), retrying...`);
           return this.runSession(message, { retried: true, canUseTool, convKey });

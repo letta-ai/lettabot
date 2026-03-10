@@ -36,6 +36,54 @@ export async function testConnection(): Promise<boolean> {
 }
 
 /**
+ * Recover stuck approvals at the agent level without requiring a concrete
+ * conversation ID. This is the fallback for default/alias conversations.
+ */
+export async function recoverPendingApprovalsForAgent(
+  agentId: string,
+  reason = 'Session was interrupted - retrying request'
+): Promise<{ recovered: boolean; details: string }> {
+  try {
+    const pending = await getPendingApprovals(agentId);
+    if (pending.length === 0) {
+      return { recovered: false, details: 'No pending approvals found on agent' };
+    }
+
+    let rejectedCount = 0;
+    for (const approval of pending) {
+      const ok = await rejectApproval(agentId, {
+        toolCallId: approval.toolCallId,
+        reason,
+      });
+      if (ok) rejectedCount += 1;
+    }
+
+    const runIds = [...new Set(
+      pending
+        .map(a => a.runId)
+        .filter((id): id is string => !!id && id !== 'unknown')
+    )];
+    if (runIds.length > 0) {
+      await cancelRuns(agentId, runIds);
+    }
+
+    if (rejectedCount === 0) {
+      return { recovered: false, details: 'Failed to reject pending approvals' };
+    }
+
+    return {
+      recovered: true,
+      details: `Rejected ${rejectedCount} pending approval(s)${runIds.length > 0 ? ` and cancelled ${runIds.length} run(s)` : ''}`,
+    };
+  } catch (e) {
+    return {
+      recovered: false,
+      details: `Agent-level approval recovery failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
  * Returns true when a conversation id refers to a concrete conversation record
  * that can be queried for messages/runs.
  */

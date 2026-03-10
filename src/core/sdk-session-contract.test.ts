@@ -17,6 +17,7 @@ vi.mock('../tools/letta-api.js', () => ({
   rejectApproval: vi.fn(),
   cancelRuns: vi.fn(),
   recoverOrphanedConversationApproval: vi.fn(),
+  recoverPendingApprovalsForAgent: vi.fn(),
   isRecoverableConversationId: vi.fn((conversationId?: string | null) => (
     typeof conversationId === 'string' && conversationId.length > 0
       && conversationId !== 'default'
@@ -41,7 +42,7 @@ vi.mock('./system-prompt.js', () => ({
 }));
 
 import { createAgent, createSession, resumeSession } from '@letta-ai/letta-code-sdk';
-import { getLatestRunError, recoverOrphanedConversationApproval } from '../tools/letta-api.js';
+import { getLatestRunError, recoverOrphanedConversationApproval, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { LettaBot } from './bot.js';
 import { SessionManager } from './session-manager.js';
 import { Store } from './store.js';
@@ -76,6 +77,10 @@ describe('SDK session contract', () => {
     delete process.env.LETTA_SESSION_TIMEOUT_MS;
 
     vi.clearAllMocks();
+    vi.mocked(recoverPendingApprovalsForAgent).mockResolvedValue({
+      recovered: false,
+      details: 'No pending approvals found on agent',
+    });
   });
 
   afterEach(() => {
@@ -407,10 +412,24 @@ describe('SDK session contract', () => {
     expect(vi.mocked(resumeSession)).not.toHaveBeenCalled();
   });
 
-  it('skips proactive approval recovery when bootstrap conversation id is default alias', async () => {
-    const mockSession = {
+  it('uses agent-level proactive recovery when bootstrap conversation id is default alias', async () => {
+    const initialSession = {
       initialize: vi.fn(async () => undefined),
       bootstrapState: vi.fn(async () => ({ hasPendingApproval: true, conversationId: 'default' })),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'default',
+    };
+
+    const recoveredSession = {
+      initialize: vi.fn(async () => undefined),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: false, conversationId: 'default' })),
       send: vi.fn(async (_message: unknown) => undefined),
       stream: vi.fn(() =>
         (async function* () {
@@ -423,7 +442,14 @@ describe('SDK session contract', () => {
       conversationId: 'default',
     };
 
-    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+    vi.mocked(recoverPendingApprovalsForAgent).mockResolvedValueOnce({
+      recovered: true,
+      details: 'Rejected 1 pending approval(s) and cancelled 1 run(s)',
+    });
+
+    vi.mocked(resumeSession)
+      .mockReturnValueOnce(initialSession as never)
+      .mockReturnValueOnce(recoveredSession as never);
 
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
@@ -433,9 +459,10 @@ describe('SDK session contract', () => {
     const response = await bot.sendToAgent('hello');
 
     expect(response).toBe('ok');
-    expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(2);
     expect(recoverOrphanedConversationApproval).not.toHaveBeenCalled();
-    expect(mockSession.close).not.toHaveBeenCalled();
+    expect(recoverPendingApprovalsForAgent).toHaveBeenCalledWith('agent-contract-test');
+    expect(initialSession.close).toHaveBeenCalledTimes(1);
   });
 
   it('passes memfs: true to resumeSession when config sets memfs true', async () => {
@@ -916,18 +943,34 @@ describe('SDK session contract', () => {
     expect(sentTexts).toContain('after retry');
   });
 
-  it('does not run orphaned approval recovery for default conversation alias on terminal error', async () => {
+  it('uses agent-level recovery for default conversation alias on terminal approval conflict', async () => {
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
       allowedTools: [],
     });
 
+    let runCall = 0;
     (bot as any).sessionManager.runSession = vi.fn(async () => ({
       session: { abort: vi.fn(async () => undefined) },
       stream: async function* () {
-        yield { type: 'result', success: false, error: 'error', conversationId: 'default' };
+        if (runCall++ === 0) {
+          yield { type: 'result', success: false, error: 'error', conversationId: 'default' };
+          return;
+        }
+        yield { type: 'assistant', content: 'after default recovery' };
+        yield { type: 'result', success: true, result: 'after default recovery', conversationId: 'default' };
       },
     }));
+
+    vi.mocked(getLatestRunError).mockResolvedValueOnce({
+      message: 'CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.',
+      stopReason: 'error',
+      isApprovalError: true,
+    });
+    vi.mocked(recoverPendingApprovalsForAgent).mockResolvedValueOnce({
+      recovered: true,
+      details: 'Rejected 1 pending approval(s) and cancelled 1 run(s)',
+    });
 
     const adapter = {
       id: 'mock',
@@ -953,13 +996,14 @@ describe('SDK session contract', () => {
 
     await (bot as any).processMessage(msg, adapter);
 
-    expect((bot as any).sessionManager.runSession).toHaveBeenCalledTimes(1);
+    expect((bot as any).sessionManager.runSession).toHaveBeenCalledTimes(2);
     expect(recoverOrphanedConversationApproval).not.toHaveBeenCalled();
+    expect(recoverPendingApprovalsForAgent).toHaveBeenCalledWith('agent-contract-test');
     const sentTexts = adapter.sendMessage.mock.calls.map((call) => {
       const payload = call[0] as { text?: string };
       return payload.text;
     });
-    expect(sentTexts.some((text) => typeof text === 'string' && text.includes('Agent run failed'))).toBe(true);
+    expect(sentTexts).toContain('after default recovery');
   });
 
   it('passes tags: [origin:lettabot] to createAgent when creating a new agent', async () => {
