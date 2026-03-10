@@ -20,6 +20,7 @@ import { basename } from 'node:path';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Discord');
+const DISCORD_ATTACHMENT_DOWNLOAD_TIMEOUT_MS = 15000;
 // Dynamic import to avoid requiring Discord deps if not used
 let Client: typeof import('discord.js').Client;
 let GatewayIntentBits: typeof import('discord.js').GatewayIntentBits;
@@ -306,9 +307,6 @@ Ask the bot owner to approve with:
         }
       }
 
-      const attachments = await this.collectAttachments(message.attachments, message.channel.id);
-      if (!content && attachments.length === 0) return;
-
       if (content.startsWith('/')) {
         const parts = content.slice(1).split(/\s+/);
         const command = parts[0]?.toLowerCase();
@@ -324,6 +322,23 @@ Ask the bot owner to approve with:
 
         // Unknown commands (or managed commands without onCommand) fall through to agent processing.
         if (isHelpCommand || (isManagedCommand && this.onCommand)) {
+          if (isGroup && this.config.groups && !isHelpCommand) {
+            if (!isGroupAllowed(this.config.groups, keys)) {
+              log.info(`Group ${chatId} not in allowlist, ignoring command`);
+              return;
+            }
+            if (!isGroupUserAllowed(this.config.groups, keys, userId)) {
+              return;
+            }
+            const mode = resolveGroupMode(this.config.groups, keys, 'open');
+            if (mode === 'disabled') {
+              return;
+            }
+            if (mode === 'mention-only' && !wasMentioned) {
+              return;
+            }
+          }
+
           let commandChatId = message.channel.id;
           let commandSendTarget: { send: (content: string) => Promise<unknown> } | null =
             message.channel.isTextBased() && 'send' in message.channel
@@ -433,6 +448,9 @@ Ask the bot owner to approve with:
             effectiveGroupName = createdThread.name || effectiveGroupName;
           }
         }
+
+        const attachments = await this.collectAttachments(message.attachments, message.channel.id);
+        if (!content && attachments.length === 0) return;
 
         await this.onMessage({
           channel: 'discord',
@@ -720,7 +738,9 @@ Ask the bot owner to approve with:
         }
         const target = buildAttachmentPath(this.attachmentsDir, 'discord', channelId, name);
         try {
-          await downloadToFile(attachment.url, target);
+          await downloadToFile(attachment.url, target, {
+            timeoutMs: DISCORD_ATTACHMENT_DOWNLOAD_TIMEOUT_MS,
+          });
           entry.localPath = target;
           log.info(`Attachment saved to ${target}`);
         } catch (err) {

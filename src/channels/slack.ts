@@ -512,7 +512,9 @@ async function maybeDownloadSlackFile(
   }
   const target = buildAttachmentPath(attachmentsDir, 'slack', channelId, name);
   try {
-    await downloadToFile(url, target, { Authorization: `Bearer ${token}` });
+    await downloadToFile(url, target, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     attachment.localPath = target;
     log.info(`Attachment saved to ${target}`);
   } catch (err) {
