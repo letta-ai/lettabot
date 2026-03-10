@@ -25,21 +25,7 @@ vi.mock('@letta-ai/letta-client', () => {
   };
 });
 
-import { getLatestRunError, recoverOrphanedConversationApproval, isRecoverableConversationId } from './letta-api.js';
-
-describe('isRecoverableConversationId', () => {
-  it('returns false for aliases and empty values', () => {
-    expect(isRecoverableConversationId(undefined)).toBe(false);
-    expect(isRecoverableConversationId(null)).toBe(false);
-    expect(isRecoverableConversationId('')).toBe(false);
-    expect(isRecoverableConversationId('default')).toBe(false);
-    expect(isRecoverableConversationId('shared')).toBe(false);
-  });
-
-  it('returns true for materialized conversation ids', () => {
-    expect(isRecoverableConversationId('conv-123')).toBe(true);
-  });
-});
+import { getLatestRunError, recoverOrphanedConversationApproval } from './letta-api.js';
 
 // Helper to create a mock async iterable from an array (Letta client returns paginated iterators)
 function mockPageIterator<T>(items: T[]) {
@@ -68,14 +54,6 @@ describe('recoverOrphanedConversationApproval', () => {
 
     expect(result.recovered).toBe(false);
     expect(result.details).toBe('No messages in conversation');
-  });
-
-  it('skips non-recoverable conversation ids like default', async () => {
-    const result = await recoverOrphanedConversationApproval('agent-1', 'default');
-
-    expect(result.recovered).toBe(false);
-    expect(result.details).toContain('Conversation is not recoverable: default');
-    expect(mockConversationsMessagesList).not.toHaveBeenCalled();
   });
 
   it('returns false when no unresolved approval requests', async () => {

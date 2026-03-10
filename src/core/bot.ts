@@ -15,7 +15,7 @@ import { formatApiErrorForUser } from './errors.js';
 import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
-import { getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel, isRecoverableConversationId } from '../tools/letta-api.js';
+import { getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel } from '../tools/letta-api.js';
 import { getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
@@ -742,7 +742,7 @@ export class LettaBot implements AgentSession {
       );
       
       if (pendingApprovals.length === 0) {
-        if (isRecoverableConversationId(this.store.conversationId)) {
+        if (this.store.conversationId) {
           const convResult = await recoverOrphanedConversationApproval(
             this.store.agentId!,
             this.store.conversationId
@@ -1525,15 +1525,9 @@ export class LettaBot implements AgentSession {
             const retryConvIdFromStore = (retryConvKey === 'shared'
               ? this.store.conversationId
               : this.store.getConversationId(retryConvKey)) ?? undefined;
-            const retryConvIdRaw = (typeof streamMsg.conversationId === 'string' && streamMsg.conversationId.length > 0)
+            const retryConvId = (typeof streamMsg.conversationId === 'string' && streamMsg.conversationId.length > 0)
               ? streamMsg.conversationId
               : retryConvIdFromStore;
-            const retryConvId = isRecoverableConversationId(retryConvIdRaw)
-              ? retryConvIdRaw
-              : undefined;
-            if (!retryConvId && retryConvIdRaw) {
-              log.info(`Skipping approval recovery for non-recoverable conversation id: ${retryConvIdRaw}`);
-            }
             const initialRetryDecision = this.buildResultRetryDecision(
               streamMsg,
               resultText,
@@ -1619,8 +1613,6 @@ export class LettaBot implements AgentSession {
                   log.info('Retrying once after terminal error (no orphaned approvals detected)...');
                   return this.processMessage(msg, adapter, true);
                 }
-              } else if (!retried && retryDecision.shouldRetryForErrorResult && !retryConvId) {
-                log.warn('Skipping terminal-error retry because no recoverable conversation id is available.');
               }
             }
 

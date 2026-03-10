@@ -35,19 +35,6 @@ export async function testConnection(): Promise<boolean> {
   }
 }
 
-/**
- * Returns true when a conversation id refers to a concrete conversation record
- * that can be queried for messages/runs.
- */
-export function isRecoverableConversationId(conversationId?: string | null): conversationId is string {
-  if (typeof conversationId !== 'string') return false;
-  const value = conversationId.trim();
-  if (!value) return false;
-  // SDK/API aliases are not materialized conversation IDs.
-  if (value === 'default' || value === 'shared') return false;
-  return true;
-}
-
 // Re-export types that callers use
 export type LettaTool = Awaited<ReturnType<Letta['tools']['upsert']>>;
 
@@ -686,13 +673,6 @@ export async function recoverOrphanedConversationApproval(
   deepScan = false
 ): Promise<{ recovered: boolean; details: string }> {
   try {
-    if (!isRecoverableConversationId(conversationId)) {
-      return {
-        recovered: false,
-        details: `Conversation is not recoverable: ${conversationId || '(empty)'}`,
-      };
-    }
-
     const client = getClient();
     
     // List recent messages from the conversation to find orphaned approvals.
