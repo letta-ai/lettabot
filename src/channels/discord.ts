@@ -310,50 +310,61 @@ Ask the bot owner to approve with:
       if (!content && attachments.length === 0) return;
 
       if (content.startsWith('/')) {
-        let commandChatId = message.channel.id;
-        let commandSendTarget: { send: (content: string) => Promise<unknown> } | null =
-          message.channel.isTextBased() && 'send' in message.channel
-            ? (message.channel as { send: (content: string) => Promise<unknown> })
-            : null;
-
-        if (isGroup && this.config.groups) {
-          const threadMode = resolveDiscordThreadMode(this.config.groups, keys);
-          if (threadMode === 'thread-only' && !isThreadMessage) {
-            const shouldCreateThread =
-              wasMentioned && resolveDiscordAutoCreateThreadOnMention(this.config.groups, keys);
-            if (!shouldCreateThread) {
-              return;
-            }
-
-            // Keep command behavior aligned with normal message gating in thread-only mode.
-            const createdThread = await this.createThreadForMention(message, content);
-            if (!createdThread) {
-              return;
-            }
-
-            if (!this.client) {
-              return;
-            }
-            const threadChannel = await this.client.channels.fetch(createdThread.id);
-            if (!threadChannel || !threadChannel.isTextBased() || !('send' in threadChannel)) {
-              return;
-            }
-
-            commandChatId = createdThread.id;
-            commandSendTarget = threadChannel as { send: (content: string) => Promise<unknown> };
-          }
-        }
-
         const parts = content.slice(1).split(/\s+/);
         const command = parts[0]?.toLowerCase();
         const cmdArgs = parts.slice(1).join(' ') || undefined;
-        if (command === 'help' || command === 'start') {
-          if (!commandSendTarget) return;
-          await commandSendTarget.send(HELP_TEXT);
-          return;
-        }
-        if (this.onCommand) {
-          if (command === 'status' || command === 'reset' || command === 'heartbeat' || command === 'cancel' || command === 'model' || command === 'setconv') {
+        const isHelpCommand = command === 'help' || command === 'start';
+        const isManagedCommand =
+          command === 'status' ||
+          command === 'reset' ||
+          command === 'heartbeat' ||
+          command === 'cancel' ||
+          command === 'model' ||
+          command === 'setconv';
+
+        // Unknown commands (or managed commands without onCommand) fall through to agent processing.
+        if (isHelpCommand || (isManagedCommand && this.onCommand)) {
+          let commandChatId = message.channel.id;
+          let commandSendTarget: { send: (content: string) => Promise<unknown> } | null =
+            message.channel.isTextBased() && 'send' in message.channel
+              ? (message.channel as { send: (content: string) => Promise<unknown> })
+              : null;
+
+          if (isGroup && this.config.groups) {
+            const threadMode = resolveDiscordThreadMode(this.config.groups, keys);
+            if (threadMode === 'thread-only' && !isThreadMessage) {
+              const shouldCreateThread =
+                wasMentioned && resolveDiscordAutoCreateThreadOnMention(this.config.groups, keys);
+              if (!shouldCreateThread) {
+                return;
+              }
+
+              // Keep command behavior aligned with normal message gating in thread-only mode.
+              const createdThread = await this.createThreadForMention(message, content);
+              if (!createdThread) {
+                return;
+              }
+
+              if (!this.client) {
+                return;
+              }
+              const threadChannel = await this.client.channels.fetch(createdThread.id);
+              if (!threadChannel || !threadChannel.isTextBased() || !('send' in threadChannel)) {
+                return;
+              }
+
+              commandChatId = createdThread.id;
+              commandSendTarget = threadChannel as { send: (content: string) => Promise<unknown> };
+            }
+          }
+
+          if (isHelpCommand) {
+            if (!commandSendTarget) return;
+            await commandSendTarget.send(HELP_TEXT);
+            return;
+          }
+
+          if (this.onCommand && isManagedCommand) {
             const result = await this.onCommand(command, commandChatId, cmdArgs);
             if (result) {
               if (!commandSendTarget) return;

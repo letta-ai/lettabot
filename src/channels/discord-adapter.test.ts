@@ -227,4 +227,36 @@ describe('DiscordAdapter command gating', () => {
     expect(message.channel.send).not.toHaveBeenCalled();
     await adapter.stop();
   });
+
+  it('creates one thread when unknown slash commands fall through to agent handling', async () => {
+    const adapter = new DiscordAdapter({
+      token: 'token',
+      groups: {
+        'channel-1': { mode: 'open', threadMode: 'thread-only', autoCreateThreadOnMention: true },
+      },
+    });
+    const onMessage = vi.fn().mockResolvedValue(undefined);
+    adapter.onMessage = onMessage;
+
+    await adapter.start();
+    const client = discordMock.getLatestClient();
+    expect(client).toBeTruthy();
+
+    const message = makeMessage({
+      content: '/unknown',
+      isThread: false,
+      channelId: 'channel-1',
+    });
+    message.mentions = { has: () => true };
+
+    await client!.emit('messageCreate', message);
+
+    expect(message.startThread).toHaveBeenCalledTimes(1);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      chatId: 'thread-created',
+      text: '/unknown',
+    }));
+    await adapter.stop();
+  });
 });
