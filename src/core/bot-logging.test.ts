@@ -82,18 +82,9 @@ describe('stream logging levels', () => {
     const infoMessages = loggerSpies.info.mock.calls.map(([message]) => String(message));
     const traceMessages = loggerSpies.trace.mock.calls.map(([message]) => String(message));
 
-    expect(debugMessages.some((m) => m.includes('Buffering run-scoped pre-foreground display event'))).toBe(false);
-    expect(debugMessages.some((m) => m.includes('Deferring run-scoped pre-foreground event'))).toBe(false);
-    expect(debugMessages.some((m) => m.includes('Skipping non-foreground stream event'))).toBe(false);
-
-    expect(infoMessages.some((m) => m.includes('type=tool_call'))).toBe(false);
-    expect(infoMessages.some((m) => m.includes('type=tool_result'))).toBe(false);
-
-    expect(traceMessages.some((m) => m.includes('Buffering run-scoped pre-foreground display event'))).toBe(true);
-    expect(traceMessages.some((m) => m.includes('Skipping non-foreground stream event'))).toBe(true);
-    expect(traceMessages.some((m) => m.includes('type=tool_call'))).toBe(true);
-    expect(traceMessages.some((m) => m.includes('type=tool_result'))).toBe(true);
-
+    // Run ID filtering now handled by DisplayPipeline; verify summary log is emitted at info level
     expect(infoMessages.some((m) => m.includes('Filtered') && m.includes('non-foreground event(s)'))).toBe(true);
+    // Foreground run locking is logged at info level
+    expect(infoMessages.some((m) => m.includes('Foreground run locked'))).toBe(true);
   });
 });
