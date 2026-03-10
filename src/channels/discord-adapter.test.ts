@@ -93,7 +93,7 @@ function makeMessage(params: {
   };
   member: { displayName: string };
   mentions: { has: () => boolean };
-  attachments: { find: () => undefined; values: () => unknown[] };
+  attachments: { find: (_predicate?: unknown) => unknown | undefined; values: () => unknown[] };
   createdAt: Date;
   reply: ReturnType<typeof vi.fn>;
   startThread: ReturnType<typeof vi.fn>;
@@ -120,7 +120,7 @@ function makeMessage(params: {
     member: { displayName: 'Alice' },
     mentions: { has: () => false },
     attachments: {
-      find: () => undefined,
+      find: (_predicate?: unknown) => undefined,
       values: () => [],
     },
     createdAt: new Date(),
