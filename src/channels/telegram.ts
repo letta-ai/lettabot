@@ -26,6 +26,16 @@ import { resolveDailyLimits, checkDailyLimit, type GroupModeConfig } from './gro
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Telegram');
+const KNOWN_TELEGRAM_COMMANDS = new Set([
+  'status',
+  'model',
+  'heartbeat',
+  'reset',
+  'cancel',
+  'setconv',
+  'help',
+  'start',
+]);
 
 function getTelegramErrorReason(err: unknown): string {
   if (err && typeof err === 'object') {
@@ -244,6 +254,9 @@ export class TelegramAdapter implements ChannelAdapter {
         "*LettaBot* - AI assistant with persistent memory\n\n" +
         "*Commands:*\n" +
         "/status - Show current status\n" +
+        "/model - Show current model and recommendations\n" +
+        "/reset - Reset conversation\n" +
+        "/cancel - Cancel active run\n" +
         "/help - Show this message\n\n" +
         "Just send me a message to get started!",
         { parse_mode: 'Markdown' }
@@ -254,7 +267,15 @@ export class TelegramAdapter implements ChannelAdapter {
     this.bot.command('status', async (ctx) => {
       if (this.onCommand) {
         const result = await this.onCommand('status', String(ctx.chat.id));
-        await ctx.reply(result || 'No status available');
+        const replyToMessageId =
+          'message' in ctx && ctx.message
+            ? String(ctx.message.message_id)
+            : undefined;
+        await this.sendMessage({
+          chatId: String(ctx.chat.id),
+          text: result || 'No status available',
+          replyToMessageId,
+        });
       }
     });
     
@@ -269,14 +290,32 @@ export class TelegramAdapter implements ChannelAdapter {
     this.bot.command('reset', async (ctx) => {
       if (this.onCommand) {
         const result = await this.onCommand('reset', String(ctx.chat.id));
-        await ctx.reply(result || 'Reset complete');
+        const replyToMessageId =
+          'message' in ctx && ctx.message
+            ? String(ctx.message.message_id)
+            : undefined;
+        await this.sendMessage({
+          chatId: String(ctx.chat.id),
+          text: result || 'Reset complete',
+          replyToMessageId,
+        });
       }
     });
 
     this.bot.command('cancel', async (ctx) => {
       if (this.onCommand) {
         const result = await this.onCommand('cancel', String(ctx.chat.id));
-        if (result) await ctx.reply(result);
+        if (result) {
+          const replyToMessageId =
+            'message' in ctx && ctx.message
+              ? String(ctx.message.message_id)
+              : undefined;
+          await this.sendMessage({
+            chatId: String(ctx.chat.id),
+            text: result,
+            replyToMessageId,
+          });
+        }
       }
     });
 
@@ -285,7 +324,15 @@ export class TelegramAdapter implements ChannelAdapter {
       if (this.onCommand) {
         const args = ctx.match?.trim() || undefined;
         const result = await this.onCommand('model', String(ctx.chat.id), args);
-        await ctx.reply(result || 'No model info available');
+        const replyToMessageId =
+          'message' in ctx && ctx.message
+            ? String(ctx.message.message_id)
+            : undefined;
+        await this.sendMessage({
+          chatId: String(ctx.chat.id),
+          text: result || 'No model info available',
+          replyToMessageId,
+        });
       }
     });
 
@@ -294,7 +341,15 @@ export class TelegramAdapter implements ChannelAdapter {
       if (this.onCommand) {
         const args = ctx.match?.trim() || undefined;
         const result = await this.onCommand('setconv', String(ctx.chat.id), args);
-        await ctx.reply(result || 'Failed to set conversation');
+        const replyToMessageId =
+          'message' in ctx && ctx.message
+            ? String(ctx.message.message_id)
+            : undefined;
+        await this.sendMessage({
+          chatId: String(ctx.chat.id),
+          text: result || 'Failed to set conversation',
+          replyToMessageId,
+        });
       }
     });
     
@@ -305,7 +360,18 @@ export class TelegramAdapter implements ChannelAdapter {
       const text = ctx.message.text;
 
       if (!userId) return;
-      if (text.startsWith('/')) return;  // Skip other commands
+      if (text.startsWith('/')) {
+        const commandToken = text.slice(1).trim().split(/\s+/)[0] || '';
+        const commandName = commandToken.toLowerCase().split('@')[0];
+        if (!KNOWN_TELEGRAM_COMMANDS.has(commandName)) {
+          await this.sendMessage({
+            chatId: String(chatId),
+            text: `Unknown command: /${commandName || '(empty)'}\nTry /help.`,
+            replyToMessageId: String(ctx.message.message_id),
+          });
+        }
+        return;
+      }
 
       // Group gating (runs AFTER pairing middleware)
       const gating = this.applyGroupGating(ctx);

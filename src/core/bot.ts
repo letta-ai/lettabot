@@ -672,12 +672,27 @@ export class LettaBot implements AgentSession {
     switch (command) {
       case 'status': {
         const info = this.store.getInfo();
+        const memfsState = this.config.memfs === true
+          ? 'on'
+          : this.config.memfs === false
+            ? 'off'
+            : 'unknown';
+        const serverUrl = info.baseUrl || process.env.LETTA_BASE_URL || 'https://api.letta.com';
+        const conversationId = info.conversationId || '(none)';
+        const conversationKeys = info.conversations
+          ? Object.keys(info.conversations).sort()
+          : [];
+        const channels = Array.from(this.channels.keys());
         const lines = [
           `*Status*`,
           `Agent ID: \`${info.agentId || '(none)'}\``,
+          `Conversation ID: \`${conversationId}\``,
+          `Conversation keys: ${conversationKeys.length > 0 ? conversationKeys.join(', ') : '(none)'}`,
+          `Memfs: ${memfsState}`,
+          `Server: ${serverUrl}`,
           `Created: ${info.createdAt || 'N/A'}`,
           `Last used: ${info.lastUsedAt || 'N/A'}`,
-          `Channels: ${Array.from(this.channels.keys()).join(', ')}`,
+          `Channels: ${channels.length > 0 ? channels.join(', ') : '(none)'}`,
         ];
         return lines.join('\n');
       }
