@@ -446,6 +446,7 @@ async function main() {
       intervalMinutes: heartbeatConfig?.intervalMin ?? 240,
       skipRecentUserMinutes: heartbeatConfig?.skipRecentUserMin ?? globalConfig.heartbeatSkipRecentUserMin,
       agentKey: agentConfig.name,
+      memfs: resolvedMemfs,
       prompt: heartbeatConfig?.prompt || process.env.HEARTBEAT_PROMPT,
       promptFile: heartbeatConfig?.promptFile,
       workingDir: resolvedWorkingDir,
