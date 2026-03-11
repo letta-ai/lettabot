@@ -1525,6 +1525,10 @@ export class LettaBot implements AgentSession {
               const runId = eventRunIds[0];
               if (runId && (streamMsg.type === 'reasoning' || streamMsg.type === 'tool_call')) {
                 bufferRunScopedDisplayEvent(runId, streamMsg);
+                // Feed to turn accumulator before skipping display pipeline.
+                // Reasoning/tool_call arrive before the first assistant event that
+                // locks the foreground runId, so they would otherwise be missed.
+                if (this.turnLogger) acc.feed(streamMsg);
                 filteredRunEventCount++;
                 log.trace(`Buffering run-scoped pre-foreground display event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runId=${runId})`);
                 continue;
