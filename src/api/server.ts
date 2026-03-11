@@ -46,6 +46,7 @@ interface ServerOptions {
   turnLogFiles?: Record<string, string>; // agentName -> filePath; enables GET /turns viewer
   stores?: Map<string, Store>; // Agent stores for management endpoints
   agentChannels?: Map<string, string[]>; // Channel IDs per agent name
+  agentConversationModes?: Map<string, string>; // agentName -> conversationMode (shared|per-channel|per-chat|disabled)
   sessionInvalidators?: Map<string, (key?: string) => void>; // Invalidate live sessions after store writes
 }
 
@@ -712,7 +713,13 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           return;
         }
 
-        const key = request.key || 'shared';
+        const mode = options.agentConversationModes?.get(agentName);
+        const isPerKey = mode === 'per-channel' || mode === 'per-chat';
+        const key = request.key || (isPerKey ? null : 'shared');
+        if (!key) {
+          sendError(res, 400, `Agent "${agentName}" uses ${mode} conversation mode — a key is required (e.g. "discord", "heartbeat")`);
+          return;
+        }
         if (key === 'shared') {
           store.conversationId = request.conversationId;
         } else {
