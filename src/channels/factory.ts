@@ -55,7 +55,7 @@ const SHARED_CHANNEL_BUILDERS: SharedChannelBuilder[] = [
   {
     isEnabled: (agentConfig) => !!agentConfig.channels.whatsapp?.enabled,
     build: (agentConfig, options) => {
-      const whatsappRaw = agentConfig.channels.whatsapp! as Record<string, unknown>;
+      const whatsappRaw = agentConfig.channels.whatsapp! as unknown as Record<string, unknown>;
       if (whatsappRaw.streaming) {
         log.warn('WhatsApp does not support streaming (message edits not available). Streaming setting will be ignored for WhatsApp.');
       }
