@@ -997,7 +997,7 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
         if (provider.id === 'openai') {
           const enableTranscription = await p.confirm({
             message: 'Enable voice message transcription with this OpenAI key? (uses Whisper)',
-            initialValue: true,
+            initialValue: false,
           });
           if (!p.isCancel(enableTranscription) && enableTranscription) {
             config.transcription.enabled = true;
@@ -1191,7 +1191,7 @@ async function stepTranscription(config: OnboardConfig, forcePrompt?: boolean): 
 
   const setupTranscription = await p.confirm({
     message: 'Enable voice message transcription?',
-    initialValue: config.transcription.enabled,
+    initialValue: false,
   });
   if (p.isCancel(setupTranscription)) { p.cancel('Setup cancelled'); process.exit(0); }
   config.transcription.enabled = setupTranscription;
