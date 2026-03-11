@@ -5,9 +5,10 @@ LettaBot can ingest Bluesky events using the Jetstream WebSocket feed. This chan
 ## Overview
 
 - Jetstream provides a firehose of ATProto commit events.
-- You filter by DID(s) and optionally by collection.
-- Events are delivered to the agent in listening mode by default (read-only).
-- If enabled, the bot can auto-reply to posts using the ATProto XRPC API.
+- `wantedDids`/`lists` control which authors are ingested.
+- `groups` mode controls per-author behavior (`open`, `listen`, `mention-only`, `disabled`).
+- Posting credentials (`handle` + `appPassword`) control whether replies can actually be posted.
+- Events are listening-only by default (`listen`).
 
 ## Configuration (lettabot.yaml)
 
@@ -15,7 +16,7 @@ LettaBot can ingest Bluesky events using the Jetstream WebSocket feed. This chan
 channels:
   bluesky:
     enabled: true
-    # autoReply: true  # Enable auto-replies (default: false / read-only)
+    # groups controls auto-reply policy; default fallback is listen (read-only)
     wantedDids: ["did:plc:..."]
     # lists:
     #   "at://did:plc:.../app.bsky.graph.list/xyz": { mode: listen }
@@ -85,9 +86,30 @@ channels:
 
 If you supply posting credentials (`handle` + `appPassword`) and do not explicitly disable notifications, polling is enabled with defaults (60s, reasons: mention/reply/quote). Notifications polling works even if `wantedDids` is empty.
 
+If you omit `notifications.reasons`, it defaults to `mention`, `reply`, and `quote` (not all reason types).
+
 Notification reasons include (non-exhaustive): `like`, `repost`, `follow`, `mention`, `reply`, `quote`, `starterpack-joined`, `verified`, `unverified`, `like-via-repost`, `repost-via-repost`, `subscribed-post`.
 
 Only `mention`, `reply`, and `quote` are considered "actionable" for reply behavior (based on your `groups` mode). Other reasons are always listening-only.
+
+Author filtering note:
+- Notifications are fetched from your account's notifications feed, then filtered by DID mode.
+- `groups` still applies here; any DID with mode `disabled` is dropped before delivery to the agent.
+- There is no separate `notifications.allowedUsers` setting.
+
+Filter notifications to specific users (DIDs):
+
+```yaml
+channels:
+  bluesky:
+    notifications:
+      enabled: true
+      reasons: ["mention", "reply", "quote"]
+    groups:
+      "*": { mode: disabled }
+      "did:plc:alice": { mode: open }
+      "did:plc:bob": { mode: listen }
+```
 
 ## Runtime Kill Switch (per agent)
 
@@ -133,6 +155,10 @@ Mode mapping:
 Default behavior:
 - If `"*"` is set, it is used as the default for any DID without an explicit override.
 - If `"*"` is not set, default is `listen`.
+
+Scope:
+- DID mode is applied to both Jetstream events and notifications events.
+- `"*"` is optional; it only defines the fallback mode for unmatched DIDs.
 
 ## Lists
 
