@@ -895,8 +895,9 @@ export async function recoverOrphanedConversationApproval(
               streaming: false,
             });
           } catch (batchError) {
+            const batchErrMsg = batchError instanceof Error ? batchError.message : String(batchError);
             log.warn(`Failed to submit approval denial batch for run ${runId} (${approvals.length} tool call(s)):`, batchError);
-            details.push(`Failed to deny ${approvals.length} approval(s) from run ${runId}`);
+            details.push(`Failed to deny ${approvals.length} approval(s) from run ${runId}: ${batchErrMsg}`);
             continue;
           }
           

@@ -8,7 +8,7 @@
 
 import { createAgent, createSession, resumeSession, type Session, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
 import type { BotConfig, StreamMsg } from './types.js';
-import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError } from './errors.js';
+import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError, isInvalidToolCallIdsError } from './errors.js';
 import { Store } from './store.js';
 import { updateAgentName, recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { installSkillsToAgent, prependSkillDirsToPath } from '../skills/loader.js';
@@ -376,6 +376,17 @@ export class SessionManager {
               log.info(`Proactive approval recovery succeeded: ${result.details}`);
             } else {
               log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
+              // If the conversation is irrecoverably stuck (mismatched tool call IDs),
+              // clear it so the retry creates a fresh conversation instead of hitting
+              // the same stuck state again.
+              if (isInvalidToolCallIdsError(result.details)) {
+                log.warn(`Clearing stuck conversation (key=${key}) due to invalid tool call IDs mismatch`);
+                if (key !== 'shared') {
+                  this.store.clearConversation(key);
+                } else {
+                  this.store.conversationId = null;
+                }
+              }
             }
             return this._createSessionForKey(key, true, generation);
           }
@@ -565,6 +576,17 @@ export class SessionManager {
           : await recoverPendingApprovalsForAgent(this.store.agentId);
         if (result.recovered) {
           log.info(`Recovery succeeded (${result.details}), retrying...`);
+          return this.runSession(message, { retried: true, canUseTool, convKey });
+        }
+        // If the conversation is irrecoverably stuck (mismatched tool call IDs),
+        // clear it so the retry creates a fresh conversation instead of re-throwing.
+        if (isInvalidToolCallIdsError(result.details)) {
+          log.warn(`Clearing stuck conversation (key=${convKey}) due to invalid tool call IDs mismatch, retrying with fresh conversation`);
+          if (convKey !== 'shared') {
+            this.store.clearConversation(convKey);
+          } else {
+            this.store.conversationId = null;
+          }
           return this.runSession(message, { retried: true, canUseTool, convKey });
         }
         log.error(`Orphaned approval recovery failed: ${result.details}`);
