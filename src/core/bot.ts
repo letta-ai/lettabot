@@ -224,6 +224,7 @@ interface TurnRecord {
   events: TurnEvent[];
   output: string;
   durationMs?: number;
+  error?: string;
 }
 
 const DEFAULT_MAX_TURNS = 1000;
@@ -1321,6 +1322,7 @@ export class LettaBot implements AgentSession {
     const turnId = randomUUID();
     const acc = new TurnAccumulator();
     let turnWritten = false;
+    let turnError: string | undefined;
 
     // Run session
     let session: Session | null = null;
@@ -2084,6 +2086,7 @@ export class LettaBot implements AgentSession {
       await this.deliverNoVisibleResponseIfNeeded(msg, adapter, sentAnyMessage, receivedAnyData, msgTypeCounts);
       
     } catch (error) {
+      turnError = error instanceof Error ? error.message : String(error);
       log.error('Error processing message:', error);
       try {
         await adapter.sendMessage({
@@ -2109,6 +2112,7 @@ export class LettaBot implements AgentSession {
           events,
           output,
           durationMs: Math.round(performance.now() - t0),
+          ...(turnError !== undefined && { error: turnError }),
         }).catch(() => {});
       }
       const finalConvKey = this.resolveConversationKey(msg.channel, msg.chatId, msg.forcePerChat);
@@ -2180,6 +2184,7 @@ export class LettaBot implements AgentSession {
     const turnId = randomUUID();
     const acc = new TurnAccumulator();
     let turnWritten = false;
+    let turnError: string | undefined;
 
     try {
       let retried = false;
@@ -2335,6 +2340,7 @@ export class LettaBot implements AgentSession {
         } catch (error) {
           // Invalidate on stream errors so next call gets a fresh subprocess
           this.sessionManager.invalidateSession(convKey);
+          turnError = error instanceof Error ? error.message : String(error);
           throw error;
         }
 
@@ -2351,6 +2357,7 @@ export class LettaBot implements AgentSession {
           events,
           output,
           durationMs: Math.round(performance.now() - t0),
+          ...(turnError !== undefined && { error: turnError }),
         }).catch(() => {});
       }
       if (this.config.reuseSession === false) {
@@ -2375,6 +2382,7 @@ export class LettaBot implements AgentSession {
 
     // Turn accumulator for JSONL logging
     const acc = new TurnAccumulator();
+    let turnError: string | undefined;
 
     try {
       const { stream } = await this.sessionManager.runSession(text, { convKey });
@@ -2386,6 +2394,7 @@ export class LettaBot implements AgentSession {
         }
       } catch (error) {
         this.sessionManager.invalidateSession(convKey);
+        turnError = error instanceof Error ? error.message : String(error);
         throw error;
       }
     } finally {
@@ -2400,6 +2409,7 @@ export class LettaBot implements AgentSession {
           events,
           output,
           durationMs: Math.round(performance.now() - t0),
+          ...(turnError !== undefined && { error: turnError }),
         }).catch(() => {});
       }
       if (this.config.reuseSession === false) {
