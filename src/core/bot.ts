@@ -1603,6 +1603,11 @@ export class LettaBot implements AgentSession {
               break;
             }
           }
+
+          if (abortedWithMessage) {
+            log.info(`Stopping stream consumption after explicit abort (seq=${seq}, key=${convKey})`);
+            break;
+          }
         }
       } finally {
         clearInterval(typingInterval);

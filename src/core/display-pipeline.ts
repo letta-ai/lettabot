@@ -256,7 +256,10 @@ export async function* createDisplayPipeline(
         filteredCount++;
         continue;
       } else {
-        // Other pre-foreground events (error, retry, etc.) — pass through
+        // Other pre-foreground run-scoped events (error, retry, etc.) are
+        // filtered until a foreground run is selected.
+        filteredCount++;
+        continue;
       }
     } else if (foregroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(foregroundRunId)) {
       // Event from a different run. Rebind on assistant events only

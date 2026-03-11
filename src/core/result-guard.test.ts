@@ -154,6 +154,61 @@ describe('result divergence guard', () => {
     expect(sentTexts.some(text => text.includes('repeated CLI command failures'))).toBe(true);
   });
 
+  it('stops consuming stream and avoids retry after explicit tool-loop abort', async () => {
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+      maxToolCalls: 1,
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    const runSession = vi.fn();
+    runSession.mockResolvedValueOnce({
+      session: { abort: vi.fn(async () => {}) },
+      stream: async function* () {
+        yield { type: 'tool_call', toolCallId: 'tc-1', toolName: 'Bash', toolInput: { command: 'echo hi' } };
+        // These trailing events should be ignored because the run was already aborted.
+        yield { type: 'assistant', content: 'late assistant text' };
+        yield { type: 'result', success: false, error: 'error', stopReason: 'cancelled', result: '' };
+      },
+    });
+    runSession.mockResolvedValueOnce({
+      session: { abort: vi.fn(async () => {}) },
+      stream: async function* () {
+        yield { type: 'assistant', content: 'retried response' };
+        yield { type: 'result', success: true, result: 'retried response' };
+      },
+    });
+    (bot as any).sessionManager.runSession = runSession;
+
+    const msg: InboundMessage = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    expect(runSession).toHaveBeenCalledTimes(1);
+    const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
+    expect(sentTexts).toEqual(['(Agent got stuck in a tool loop and was stopped. Try sending your message again.)']);
+  });
+
   it('does not deliver reasoning text from error results as the response', async () => {
     const bot = new LettaBot({
       workingDir: workDir,
