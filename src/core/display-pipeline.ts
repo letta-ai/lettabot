@@ -256,8 +256,11 @@ export async function* createDisplayPipeline(
         filteredCount++;
         continue;
       } else {
-        // Other pre-foreground run-scoped events (error, retry, etc.) are
-        // filtered until a foreground run is selected.
+        // Other pre-foreground run-scoped events (error, tool_result, etc.)
+        // are filtered to match the old behavior where ALL pre-foreground
+        // events with run IDs are skipped. Passing error events through
+        // would set lastErrorDetail in the consumer and spuriously trigger
+        // approval recovery.
         filteredCount++;
         continue;
       }

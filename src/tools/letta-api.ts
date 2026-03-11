@@ -542,6 +542,12 @@ export async function rejectApproval(
       log.warn(`Approval already resolved for tool call ${approval.toolCallId}`);
       return true;
     }
+    // Re-throw rate limit errors so callers can bail out early instead of
+    // hammering the API in a tight loop.
+    if (err?.status === 429) {
+      log.error('Failed to reject approval:', e);
+      throw e;
+    }
     log.error('Failed to reject approval:', e);
     return false;
   }
