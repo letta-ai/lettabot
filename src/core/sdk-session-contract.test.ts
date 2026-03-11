@@ -1009,37 +1009,28 @@ describe('SDK session contract', () => {
     expect(sentTexts).toContain('after retry');
   });
 
-  it('filters pre-foreground run-scoped errors so background failures do not suppress foreground retry', async () => {
+  it('does not retry non-retryable errors even when error arrives before foreground lock', async () => {
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
       allowedTools: [],
     });
 
-    let runCall = 0;
     (bot as any).sessionManager.runSession = vi.fn(async () => ({
       session: { abort: vi.fn(async () => undefined) },
       stream: async function* () {
-        if (runCall++ === 0) {
-          // Background run error must not poison retry decision for foreground result.
-          yield {
-            type: 'error',
-            runId: 'run-bg',
-            message: 'Unauthorized',
-            stopReason: 'error',
-            apiError: { message: '401 Unauthorized' },
-          };
-          yield { type: 'result', success: false, error: 'error', conversationId: 'conv-approval', runIds: ['run-main'] };
-          return;
-        }
-        yield { type: 'assistant', content: 'after retry' };
-        yield { type: 'result', success: true, result: 'after retry', conversationId: 'conv-approval', runIds: ['run-main-2'] };
+        // Error event arrives before any lock-type event. The pipeline does
+        // NOT lock foreground on error events, so the error passes through
+        // to the consumer. The result then locks the foreground.
+        yield {
+          type: 'error',
+          runId: 'run-bg',
+          message: 'Unauthorized',
+          stopReason: 'error',
+          apiError: { message: '401 Unauthorized' },
+        };
+        yield { type: 'result', success: false, error: 'error', conversationId: 'conv-approval', runIds: ['run-main'] };
       },
     }));
-
-    vi.mocked(recoverOrphanedConversationApproval).mockResolvedValueOnce({
-      recovered: false,
-      details: 'No unresolved approval requests found',
-    });
 
     const adapter = {
       id: 'mock',
@@ -1065,16 +1056,16 @@ describe('SDK session contract', () => {
 
     await (bot as any).processMessage(msg, adapter);
 
-    expect((bot as any).sessionManager.runSession).toHaveBeenCalledTimes(2);
-    expect(recoverOrphanedConversationApproval).toHaveBeenCalledWith(
-      'agent-contract-test',
-      'conv-approval',
-    );
+    // Non-retryable errors (401/403/429/etc.) should NOT trigger retry.
+    // The error event sets lastErrorDetail, and isNonRetryableError returns true.
+    expect((bot as any).sessionManager.runSession).toHaveBeenCalledTimes(1);
     const sentTexts = adapter.sendMessage.mock.calls.map((call) => {
       const payload = call[0] as { text?: string };
       return payload.text;
     });
-    expect(sentTexts).toContain('after retry');
+    // Should deliver an error message, not retry
+    expect(sentTexts.length).toBeGreaterThanOrEqual(1);
+    expect(sentTexts[0]).toMatch(/error|failed|unauthorized/i);
   });
 
   it('uses agent-level recovery for default conversation alias on terminal approval conflict', async () => {

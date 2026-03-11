@@ -3,7 +3,7 @@
  * high-level display events for channel delivery.
  *
  * Encapsulates:
- *  - Run ID filtering (foreground tracking, buffering, rebinding)
+ *  - Run ID filtering (foreground tracking, rebinding)
  *  - Reasoning chunk accumulation (flushed on type transitions)
  *  - stream_event skipping
  *  - Type transition tracking
@@ -154,16 +154,7 @@ export async function* createDisplayPipeline(
 
   // ── Foreground run tracking ──
   let foregroundRunId: string | null = null;
-  let foregroundSource: 'assistant' | 'result' | null = null;
-
-  // Buffered events received before we know which run is foreground.
-  // Once we lock the foreground run, matching events are flushed and
-  // non-matching events are dropped.
-  type BufferedEvent =
-    | { kind: 'reasoning'; runId: string; content: string }
-    | { kind: 'tool_call'; runId: string; msg: StreamMsg };
-  const buffered: BufferedEvent[] = [];
-  let bufferedFlushed = false;
+  let foregroundSource: string | null = null;
 
   // ── Reasoning accumulation ──
   let reasoningBuffer = '';
@@ -180,41 +171,11 @@ export async function* createDisplayPipeline(
   let filteredCount = 0;
 
   // ── Helpers ──
-  function* flushBuffered(): Generator<DisplayEvent> {
-    // Flush ALL buffered events regardless of run ID.
-    // Pre-foreground events are always from the current session's turn --
-    // background Tasks use separate sessions and don't leak events here.
-    // The server often assigns different run IDs for the tool-calling
-    // phase vs the continuation (response) phase of the same turn.
-    for (const evt of buffered) {
-      if (evt.kind === 'reasoning') {
-        yield { type: 'reasoning', content: evt.content };
-      } else {
-        const raw = evt.msg;
-        yield {
-          type: 'tool_call',
-          name: raw.toolName || 'unknown',
-          args: (raw.toolInput && typeof raw.toolInput === 'object' ? raw.toolInput : {}) as Record<string, unknown>,
-          id: raw.toolCallId || '',
-          raw,
-        };
-      }
-    }
-    buffered.length = 0;
-    bufferedFlushed = true;
-  }
-
   function* flushReasoning(): Generator<DisplayEvent> {
     if (reasoningBuffer.trim()) {
       yield { type: 'reasoning', content: reasoningBuffer };
       reasoningBuffer = '';
     }
-  }
-
-  function* flushAssistantTextOnTypeChange(): Generator<DisplayEvent> {
-    // Nothing to do here — text events are emitted inline as deltas.
-    // But we do need to track that text finalized so the consumer can
-    // handle multi-turn responses (uuid change).
   }
 
   // ── Main loop ──
@@ -228,42 +189,22 @@ export async function* createDisplayPipeline(
     log.trace(`raw: type=${msg.type} runIds=${eventRunIds.join(',') || 'none'} fg=${foregroundRunId || 'unlocked'}`);
 
     // ── Run ID filtering ──
-    if (foregroundRunId === null && eventRunIds.length > 0) {
-      // Lock to foreground on the first assistant or result event.
-      if (msg.type === 'assistant' || msg.type === 'result') {
-        foregroundRunId = eventRunIds[0];
-        foregroundSource = msg.type === 'assistant' ? 'assistant' : 'result';
-        log.info(`Foreground run locked: ${foregroundRunId} (source=${foregroundSource})`);
-        if (!bufferedFlushed && buffered.length > 0) {
-          yield* flushBuffered();
-        }
-      } else if (msg.type === 'reasoning' || msg.type === 'tool_call') {
-        // Buffer pre-foreground display events
-        const runId = eventRunIds[0];
-        if (runId && msg.type === 'reasoning') {
-          const chunk = typeof msg.content === 'string' ? msg.content : '';
-          if (chunk) {
-            const last = buffered[buffered.length - 1];
-            if (last && last.kind === 'reasoning' && last.runId === runId) {
-              last.content += chunk;
-            } else {
-              buffered.push({ kind: 'reasoning', runId, content: chunk });
-            }
-          }
-        } else if (runId && msg.type === 'tool_call') {
-          buffered.push({ kind: 'tool_call', runId, msg });
-        }
-        filteredCount++;
-        continue;
-      } else {
-        // Other pre-foreground run-scoped events (error, tool_result, etc.)
-        // are filtered to match the old behavior where ALL pre-foreground
-        // events with run IDs are skipped. Passing error events through
-        // would set lastErrorDetail in the consumer and spuriously trigger
-        // approval recovery.
-        filteredCount++;
-        continue;
-      }
+    // Lock types: events that prove this run is the foreground turn.
+    // Error/retry are excluded -- they're transient signals that could come
+    // from a failed run before the real foreground run starts.
+    const isLockType = msg.type === 'reasoning' || msg.type === 'tool_call'
+      || msg.type === 'tool_result' || msg.type === 'assistant' || msg.type === 'result';
+
+    if (foregroundRunId === null && eventRunIds.length > 0 && isLockType) {
+      // Lock foreground on the first substantive event with a run ID.
+      // Background Tasks use separate sessions and cannot produce events in
+      // this stream, so the first run-scoped event is always from the current
+      // turn's run. This eliminates buffering delay -- reasoning and tool calls
+      // display immediately instead of waiting for the first assistant event.
+      foregroundRunId = eventRunIds[0];
+      foregroundSource = msg.type;
+      log.info(`Foreground run locked: ${foregroundRunId} (source=${foregroundSource})`);
+      // Fall through to type transitions and dispatch for immediate processing.
     } else if (foregroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(foregroundRunId)) {
       // Event from a different run. Rebind on assistant events only
       // (background Tasks don't produce assistant events in the foreground stream).
@@ -272,10 +213,6 @@ export async function* createDisplayPipeline(
         log.info(`Foreground run rebind: ${foregroundRunId} -> ${newRunId}`);
         foregroundRunId = newRunId;
         foregroundSource = 'assistant';
-        // Flush any buffered events for the new run
-        if (buffered.length > 0) {
-          yield* flushBuffered();
-        }
       } else {
         filteredCount++;
         continue;
