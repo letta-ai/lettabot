@@ -24,6 +24,7 @@ import {
   serverModeLabel,
   wasLoadedFromFleetConfig,
 } from './config/index.js';
+import { resolveSessionMemfs } from './config/memfs.js';
 import { getCronDataDir, getDataDir, getWorkingDir, hasRailwayVolume, resolveWorkingDirPath } from './utils/paths.js';
 import { parseCsvList, parseNonNegativeNumber } from './utils/parse.js';
 import { createLogger, setLogLevel } from './logger.js';
@@ -299,21 +300,23 @@ async function main() {
   for (const agentConfig of agents) {
     log.info(`Configuring agent: ${agentConfig.name}`);
     
-    // Resolve memfs: YAML config takes precedence, then env var, then default false.
-    // Default false prevents the SDK from auto-enabling memfs, which crashes on
-    // self-hosted Letta servers that don't have the git endpoint.
-    const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : false);
+    const resolvedMemfsResult = resolveSessionMemfs({
+      configuredMemfs: agentConfig.features?.memfs,
+      envMemfs: process.env.LETTABOT_MEMFS,
+      serverMode: yamlConfig.server.mode,
+    });
+    const resolvedMemfs = resolvedMemfsResult.value;
     const configuredSleeptime = agentConfig.features?.sleeptime;
     // Treat missing trigger as active (conservative): only `trigger: 'off'` explicitly disables.
     const sleeptimeRequiresMemfs = !!configuredSleeptime && configuredSleeptime.trigger !== 'off';
-    const effectiveSleeptime = !resolvedMemfs && sleeptimeRequiresMemfs
+    const effectiveSleeptime = resolvedMemfs === false && sleeptimeRequiresMemfs
       ? undefined
       : configuredSleeptime;
 
-    if (!resolvedMemfs && sleeptimeRequiresMemfs) {
+    if (resolvedMemfs === false && sleeptimeRequiresMemfs) {
       log.warn(
         `Agent ${agentConfig.name}: sleeptime is configured but memfs is disabled; ` +
-        `sleeptime will be ignored. Enable features.memfs (or LETTABOT_MEMFS=true) to use sleeptime.`
+        `sleeptime will be ignored. Enable features.memfs (or set LETTABOT_MEMFS=true) to use sleeptime.`
       );
     }
 
@@ -359,8 +362,14 @@ async function main() {
     
     // Log memfs config (from either YAML or env var)
     if (resolvedMemfs !== undefined) {
-      const source = agentConfig.features?.memfs !== undefined ? '' : ' (from LETTABOT_MEMFS env)';
+      const source = resolvedMemfsResult.source === 'config'
+        ? ''
+        : resolvedMemfsResult.source === 'env'
+          ? ' (from LETTABOT_MEMFS env)'
+          : ' (default for docker/selfhosted mode)';
       log.info(`Agent ${agentConfig.name}: memfs ${resolvedMemfs ? 'enabled' : 'disabled'}${source}`);
+    } else {
+      log.info(`Agent ${agentConfig.name}: memfs unchanged (not explicitly configured)`);
     }
 
     // Apply explicit agent ID from config (before store verification)

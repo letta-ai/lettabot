@@ -23,6 +23,7 @@
     "test": "vitest",
     "test:run": "vitest run --exclude 'e2e/**'",
     "lint:console": "bash scripts/no-console.sh",
+    "repro:context-window-reset": "tsx scripts/repro-context-window-reset.ts",
     "test:e2e": "vitest run e2e/",
     "skills": "tsx src/cli.ts skills",
     "skills:list": "tsx src/cli.ts skills list",

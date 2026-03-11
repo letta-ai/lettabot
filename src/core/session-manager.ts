@@ -20,6 +20,23 @@ import { createLogger } from '../logger.js';
 
 const log = createLogger('Session');
 
+function formatMemfsStartupOption(memfs: boolean | undefined): string {
+  if (memfs === true) return 'enabled (--memfs)';
+  if (memfs === false) return 'disabled (--no-memfs)';
+  return 'unchanged (omitted)';
+}
+
+function formatSleeptimeStartupOption(
+  sleeptime: BotConfig['sleeptime'],
+): string {
+  if (!sleeptime) return 'none';
+  const parts: string[] = [];
+  if (sleeptime.trigger) parts.push(`trigger=${sleeptime.trigger}`);
+  if (sleeptime.behavior) parts.push(`behavior=${sleeptime.behavior}`);
+  if (sleeptime.stepCount !== undefined) parts.push(`stepCount=${sleeptime.stepCount}`);
+  return parts.length > 0 ? parts.join(', ') : 'configured';
+}
+
 function toConcreteConversationId(value: string | null | undefined): string | null {
   if (!value) return null;
   const trimmed = value.trim();
@@ -313,6 +330,11 @@ export class SessionManager {
     }
 
     // Initialize eagerly so the subprocess is ready before the first send()
+    log.info(
+      `Session startup options (key=${key}): ` +
+      `memfs=${formatMemfsStartupOption(this.config.memfs)}, ` +
+      `sleeptime=${formatSleeptimeStartupOption(this.config.sleeptime)}`,
+    );
     log.info(`Initializing session subprocess (key=${key})...`);
     try {
       await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
