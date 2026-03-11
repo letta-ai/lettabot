@@ -1398,8 +1398,8 @@ export class LettaBot implements AgentSession {
     let turnCostUsd: number | undefined;
     let turnUsage: MessageHookContext['usage'] | undefined;
     let reasoningStepIndex = 0;
-    // Turn accumulator for JSONL logging
-    const acc = new TurnAccumulator();
+    // Turn accumulator for JSONL logging (initialized after pre-hook so input reflects hook-modified message)
+    let acc: TurnAccumulator | null = null;
     let turnWritten = false;
 
     // Run session
@@ -1437,6 +1437,7 @@ export class LettaBot implements AgentSession {
       }
       const finalMessageToSend = preHookResult.message ?? messageToSend;
       hookMessage = finalMessageToSend;
+      acc = new TurnAccumulator();
 
       const run = await this.sessionManager.runSession(finalMessageToSend, { retried, canUseTool, convKey });
       lap('session send');
@@ -1680,7 +1681,7 @@ export class LettaBot implements AgentSession {
           // prematurely flush reasoning buffers or finalize assistant messages.
           const isSemanticType = streamMsg.type !== 'stream_event';
 
-          if (this.turnLogger) acc.feed(streamMsg);
+          if (this.turnLogger) acc?.feed(streamMsg);
 
           // Finalize on type change (avoid double-handling when result provides full response)
           if (isSemanticType && lastMsgType && lastMsgType !== streamMsg.type && response.trim() && streamMsg.type !== 'result') {
@@ -2126,7 +2127,7 @@ export class LettaBot implements AgentSession {
       lap('stream complete');
 
       // Write turn JSONL record
-      if (this.turnLogger) {
+      if (this.turnLogger && acc) {
         const { events, output } = acc.finalize();
         await this.turnLogger.write({
           ts: new Date().toISOString(),
@@ -2135,7 +2136,7 @@ export class LettaBot implements AgentSession {
           channel: msg.channel,
           chatId: msg.chatId,
           userId: msg.userId,
-          input: formattedText,
+          input: typeof hookMessage === 'string' ? hookMessage : formattedText,
           events,
           output,
           durationMs: Math.round(performance.now() - t0),
@@ -2310,7 +2311,7 @@ export class LettaBot implements AgentSession {
         }).catch(() => {});
       }
       // Write partial turn on error/cancel paths (if not already written on success path)
-      if (this.turnLogger && !turnWritten) {
+      if (this.turnLogger && acc && !turnWritten) {
         const { events, output } = acc.finalize();
         await this.turnLogger.write({
           ts: new Date().toISOString(),
@@ -2319,7 +2320,7 @@ export class LettaBot implements AgentSession {
           channel: msg.channel,
           chatId: msg.chatId,
           userId: msg.userId,
-          input: formattedText,
+          input: typeof hookMessage === 'string' ? hookMessage : formattedText,
           events,
           output,
           durationMs: Math.round(performance.now() - t0),
@@ -2419,8 +2420,6 @@ export class LettaBot implements AgentSession {
       });
       return override ?? currentResponse;
     };
-    // Turn accumulator for JSONL logging
-    const acc = new TurnAccumulator();
     let turnWritten = false;
 
     const preResult = await this.runPreMessageHook({
@@ -2434,6 +2433,8 @@ export class LettaBot implements AgentSession {
       return '';
     }
     if (preResult.message) hookMessage = preResult.message;
+    // Turn accumulator for JSONL logging (initialized after pre-hook so input reflects hook-modified message)
+    const acc = new TurnAccumulator();
 
     try {
       let retried = false;
@@ -2626,7 +2627,7 @@ export class LettaBot implements AgentSession {
               ts: new Date().toISOString(),
               turnId,
               trigger: context?.type || 'heartbeat',
-              input: text,
+              input: typeof hookMessage === 'string' ? hookMessage : text,
               events,
               output,
               durationMs: Math.round(performance.now() - t0),
@@ -2654,7 +2655,7 @@ export class LettaBot implements AgentSession {
           ts: new Date().toISOString(),
           turnId,
           trigger: context?.type || 'heartbeat',
-          input: text,
+          input: typeof hookMessage === 'string' ? hookMessage : text,
           events,
           output,
           durationMs: Math.round(performance.now() - t0),
@@ -2680,9 +2681,6 @@ export class LettaBot implements AgentSession {
     const acquired = await this.acquireLock(convKey);
     const t0 = performance.now();
     const turnId = randomUUID();
-
-    // Turn accumulator for JSONL logging
-    const acc = new TurnAccumulator();
 
     let hookMessage: SendMessage = text;
     const hookContextBase: Omit<MessageHookContext, 'stage' | 'message'> = {
@@ -2724,6 +2722,8 @@ export class LettaBot implements AgentSession {
       return;
     }
     if (preResult.message) hookMessage = preResult.message;
+    // Turn accumulator for JSONL logging (initialized after pre-hook so input reflects hook-modified message)
+    const acc = new TurnAccumulator();
 
     try {
       const { stream } = await this.sessionManager.runSession(hookMessage, { convKey });
@@ -2812,7 +2812,7 @@ export class LettaBot implements AgentSession {
           ts: new Date().toISOString(),
           turnId,
           trigger: context?.type || 'webhook',
-          input: text,
+          input: typeof hookMessage === 'string' ? hookMessage : text,
           events,
           output,
           durationMs: Math.round(performance.now() - t0),
