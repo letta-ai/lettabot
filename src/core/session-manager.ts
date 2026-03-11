@@ -376,16 +376,15 @@ export class SessionManager {
               log.info(`Proactive approval recovery succeeded: ${result.details}`);
             } else {
               log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
-              // If the conversation is irrecoverably stuck (mismatched tool call IDs),
-              // clear it so the retry creates a fresh conversation instead of hitting
-              // the same stuck state again.
-              if (isInvalidToolCallIdsError(result.details)) {
-                log.warn(`Clearing stuck conversation (key=${key}) due to invalid tool call IDs mismatch`);
-                if (key !== 'shared') {
-                  this.store.clearConversation(key);
-                } else {
-                  this.store.conversationId = null;
-                }
+            }
+            // Even on partial recovery, if any denial failed with mismatched IDs the
+            // conversation may still be stuck. Clear it so the retry creates a fresh one.
+            if (isInvalidToolCallIdsError(result.details)) {
+              log.warn(`Clearing stuck conversation (key=${key}) due to invalid tool call IDs mismatch`);
+              if (key !== 'shared') {
+                this.store.clearConversation(key);
+              } else {
+                this.store.conversationId = null;
               }
             }
             return this._createSessionForKey(key, true, generation);
@@ -574,12 +573,8 @@ export class SessionManager {
         const result = isRecoverableConversationId(convId)
           ? await recoverOrphanedConversationApproval(this.store.agentId, convId)
           : await recoverPendingApprovalsForAgent(this.store.agentId);
-        if (result.recovered) {
-          log.info(`Recovery succeeded (${result.details}), retrying...`);
-          return this.runSession(message, { retried: true, canUseTool, convKey });
-        }
-        // If the conversation is irrecoverably stuck (mismatched tool call IDs),
-        // clear it so the retry creates a fresh conversation instead of re-throwing.
+        // Even on partial recovery, if any denial failed with mismatched IDs the
+        // conversation may still be stuck. Clear it so the retry creates a fresh one.
         if (isInvalidToolCallIdsError(result.details)) {
           log.warn(`Clearing stuck conversation (key=${convKey}) due to invalid tool call IDs mismatch, retrying with fresh conversation`);
           if (convKey !== 'shared') {
@@ -587,6 +582,10 @@ export class SessionManager {
           } else {
             this.store.conversationId = null;
           }
+          return this.runSession(message, { retried: true, canUseTool, convKey });
+        }
+        if (result.recovered) {
+          log.info(`Recovery succeeded (${result.details}), retrying...`);
           return this.runSession(message, { retried: true, canUseTool, convKey });
         }
         log.error(`Orphaned approval recovery failed: ${result.details}`);
