@@ -191,10 +191,7 @@ export async function* createDisplayPipeline(
     // ── Run ID filtering ──
     // Lock types: substantive events that prove this run is the foreground turn.
     // Error/retry are excluded -- they're transient signals that could come
-    // from a failed run before the real foreground starts. They pass through
-    // to the consumer without locking. This is safe because background Tasks
-    // use separate sessions and cannot produce events here; any pre-foreground
-    // error is from the same turn's failed attempt, not a different agent.
+    // from a failed run before the real foreground starts.
     const isLockType = msg.type === 'reasoning' || msg.type === 'tool_call'
       || msg.type === 'tool_result' || msg.type === 'assistant' || msg.type === 'result';
 
@@ -208,6 +205,12 @@ export async function* createDisplayPipeline(
       foregroundSource = msg.type;
       log.info(`Foreground run locked: ${foregroundRunId} (source=${foregroundSource})`);
       // Fall through to type transitions and dispatch for immediate processing.
+    } else if (foregroundRunId === null && eventRunIds.length > 0 && !isLockType) {
+      // Pre-foreground error/retry events are filtered. If passed through,
+      // they set lastErrorDetail in the consumer and can spuriously trigger
+      // approval recovery or suppress legitimate retries.
+      filteredCount++;
+      continue;
     } else if (foregroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(foregroundRunId)) {
       // Event from a different run. Rebind on assistant events only
       // (background Tasks don't produce assistant events in the foreground stream).

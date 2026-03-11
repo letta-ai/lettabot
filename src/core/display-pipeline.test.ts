@@ -47,16 +47,16 @@ describe('createDisplayPipeline', () => {
     expect(events[2].type).toBe('complete');
   });
 
-  it('does not lock foreground on error events', async () => {
+  it('filters pre-foreground error events to prevent false retry triggers', async () => {
     const events = await collect([
-      { type: 'error', runId: 'run-bg', message: 'Unauthorized', stopReason: 'error' },
+      { type: 'error', runId: 'run-bg', message: 'conflict waiting for approval', stopReason: 'error' },
       { type: 'result', success: false, error: 'error', runIds: ['run-main'] },
     ]);
 
-    // Error passes through without locking, result locks to run-main
+    // Pre-foreground error is filtered (not yielded). Only the result passes through.
     const errorEvt = events.find(e => e.type === 'error');
     const completeEvt = events.find(e => e.type === 'complete');
-    expect(errorEvt).toBeDefined();
+    expect(errorEvt).toBeUndefined();
     expect(completeEvt).toBeDefined();
     if (completeEvt?.type === 'complete') {
       expect(completeEvt.runIds).toContain('run-main');

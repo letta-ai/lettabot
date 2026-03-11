@@ -1287,9 +1287,9 @@ export class LettaBot implements AgentSession {
                 await finalizeMessage();
               }
               lastEventType = 'reasoning';
-              log.info(`Reasoning: ${event.content.trim().slice(0, 100)}`);
               sawNonAssistantSinceLastUuid = true;
               if (this.config.display?.showReasoning && !suppressDelivery && event.content.trim()) {
+                log.info(`Reasoning: ${event.content.trim().slice(0, 100)}`);
                 try {
                   const reasoning = formatReasoningDisplay(event.content, adapter.id, this.config.display?.reasoningMaxChars);
                   await adapter.sendMessage({
