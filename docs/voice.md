@@ -187,7 +187,28 @@ All environment variables can be overridden by the equivalent YAML config fields
 
 1. Check that a TTS provider is configured -- either in `lettabot.yaml` under `tts` or via `ELEVENLABS_API_KEY` / `OPENAI_API_KEY`
 2. Check that `jq` and `curl` are installed (required by the `lettabot-tts` script)
-3. Check logs for TTS API errors (HTTP status codes, rate limits)
+3. Check logs for voice pipeline events:
+   - `[Bot] Directive voice: generating memo (...)`
+   - `[Bot] Directive voice: generated file ...`
+   - `[Bot] Directive voice failed: ...`
+   - `[Telegram] sendVoice failed, falling back to sendAudio: ...`
+4. Check logs for TTS API errors (HTTP status codes, rate limits)
+
+### Docker checklist for voice
+
+For container images, ensure these binaries are available:
+
+- `bash` (required by `lettabot-tts` shebang)
+- `curl` and `jq` (required for TTS API calls)
+- `ffmpeg` (recommended for full inbound voice transcription compatibility)
+- `ca-certificates` (required for HTTPS API calls)
+
+Quick runtime validation from inside the container:
+
+```bash
+which bash curl jq ffmpeg
+lettabot-tts "TTS health check"
+```
 
 ### Telegram voice privacy
 

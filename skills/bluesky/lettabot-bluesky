@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Skill-local shim so `lettabot-bluesky` is available to agent subprocesses
+# whenever the Bluesky skill is installed.
+
+set -euo pipefail
+
+# Prefer project-local entrypoints so development worktrees run their current code.
+if [[ -f "./dist/cli.js" ]]; then
+  exec node "./dist/cli.js" bluesky "$@"
+fi
+
+if [[ -f "./src/cli.ts" ]] && command -v npx >/dev/null 2>&1; then
+  exec npx tsx "./src/cli.ts" bluesky "$@"
+fi
+
+# Fallback to an installed base CLI.
+if command -v lettabot >/dev/null 2>&1; then
+  exec lettabot bluesky "$@"
+fi
+
+echo "Error: unable to resolve a Bluesky CLI entrypoint." >&2
+echo "Expected one of: ./dist/cli.js, ./src/cli.ts (via npx tsx), or lettabot on PATH." >&2
+exit 1

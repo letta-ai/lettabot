@@ -41,6 +41,10 @@ function getChannelDetails(id: ChannelId, channelConfig: any): string | undefine
     case 'whatsapp':
     case 'signal':
       return channelConfig.selfChat !== false ? 'self-chat mode' : 'dedicated number';
+    case 'bluesky':
+      return channelConfig.wantedDids?.length
+        ? `${channelConfig.wantedDids.length} DID(s)`
+        : 'Jetstream feed';
     default:
       return undefined;
   }

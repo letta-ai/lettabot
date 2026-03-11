@@ -21,6 +21,31 @@ function getClient(): Letta {
   });
 }
 
+async function listAgentApprovalRunIds(agentId: string, limit = 10): Promise<string[]> {
+  try {
+    const client = getClient();
+    const runsPage = await client.runs.list({
+      agent_id: agentId,
+      stop_reason: 'requires_approval',
+      limit,
+    });
+
+    const runIds: string[] = [];
+    for await (const run of runsPage) {
+      if (run.stop_reason !== 'requires_approval') continue;
+      const id = (run as { id?: unknown }).id;
+      if (typeof id === 'string' && id.length > 0) {
+        runIds.push(id);
+      }
+      if (runIds.length >= limit) break;
+    }
+    return runIds;
+  } catch (e) {
+    log.warn('Failed to list approval-blocked runs:', e instanceof Error ? e.message : e);
+    return [];
+  }
+}
+
 /**
  * Test connection to Letta server (silent, no error logging)
  */
@@ -33,6 +58,83 @@ export async function testConnection(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Recover stuck approvals at the agent level without requiring a concrete
+ * conversation ID. This is the fallback for default/alias conversations.
+ */
+export async function recoverPendingApprovalsForAgent(
+  agentId: string,
+  reason = 'Session was interrupted - retrying request'
+): Promise<{ recovered: boolean; details: string }> {
+  try {
+    const pending = await getPendingApprovals(agentId);
+    if (pending.length === 0) {
+      // Some servers report approval conflicts while omitting pending_approval
+      // details/tool_call IDs. In that case, cancel approval-blocked runs directly.
+      const approvalRunIds = await listAgentApprovalRunIds(agentId);
+      if (approvalRunIds.length === 0) {
+        return { recovered: false, details: 'No pending approvals found on agent' };
+      }
+      const cancelled = await cancelRuns(agentId, approvalRunIds);
+      if (!cancelled) {
+        return {
+          recovered: false,
+          details: `Found ${approvalRunIds.length} approval-blocked run(s) but failed to cancel`,
+        };
+      }
+      return {
+        recovered: true,
+        details: `Cancelled ${approvalRunIds.length} approval-blocked run(s) without tool-call details`,
+      };
+    }
+
+    let rejectedCount = 0;
+    for (const approval of pending) {
+      const ok = await rejectApproval(agentId, {
+        toolCallId: approval.toolCallId,
+        reason,
+      });
+      if (ok) rejectedCount += 1;
+    }
+
+    const runIds = [...new Set(
+      pending
+        .map(a => a.runId)
+        .filter((id): id is string => !!id && id !== 'unknown')
+    )];
+    if (runIds.length > 0) {
+      await cancelRuns(agentId, runIds);
+    }
+
+    if (rejectedCount === 0) {
+      return { recovered: false, details: 'Failed to reject pending approvals' };
+    }
+
+    return {
+      recovered: true,
+      details: `Rejected ${rejectedCount} pending approval(s)${runIds.length > 0 ? ` and cancelled ${runIds.length} run(s)` : ''}`,
+    };
+  } catch (e) {
+    return {
+      recovered: false,
+      details: `Agent-level approval recovery failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * Returns true when a conversation id refers to a concrete conversation record
+ * that can be queried for messages/runs.
+ */
+export function isRecoverableConversationId(conversationId?: string | null): conversationId is string {
+  if (typeof conversationId !== 'string') return false;
+  const value = conversationId.trim();
+  if (!value) return false;
+  // SDK/API aliases are not materialized conversation IDs.
+  if (value === 'default' || value === 'shared') return false;
+  return true;
 }
 
 // Re-export types that callers use
@@ -274,48 +376,51 @@ export async function getPendingApprovals(
       if ('pending_approval' in agentState) {
         const pending = agentState.pending_approval;
         if (!pending) {
-          log.info('No pending approvals on agent');
-          return [];
-        }
-        log.info(`Found pending approval: ${pending.id}, run_id=${pending.run_id}`);
-        
-        // Extract tool calls - handle both Array<ToolCall> and ToolCallDelta formats
-        const rawToolCalls = pending.tool_calls;
-        const toolCallsList: Array<{ tool_call_id: string; name: string }> = [];
-        
-        if (Array.isArray(rawToolCalls)) {
-          for (const tc of rawToolCalls) {
-            if (tc && 'tool_call_id' in tc && tc.tool_call_id) {
+          log.info('No pending approvals on agent; falling back to run scan');
+        } else {
+          log.info(`Found pending approval: ${pending.id}, run_id=${pending.run_id}`);
+
+          // Extract tool calls - handle both Array<ToolCall> and ToolCallDelta formats
+          const rawToolCalls = pending.tool_calls;
+          const toolCallsList: Array<{ tool_call_id: string; name: string }> = [];
+
+          if (Array.isArray(rawToolCalls)) {
+            for (const tc of rawToolCalls) {
+              if (tc && 'tool_call_id' in tc && tc.tool_call_id) {
+                toolCallsList.push({ tool_call_id: tc.tool_call_id, name: tc.name || 'unknown' });
+              }
+            }
+          } else if (rawToolCalls && typeof rawToolCalls === 'object' && 'tool_call_id' in rawToolCalls && rawToolCalls.tool_call_id) {
+            // ToolCallDelta case
+            toolCallsList.push({ tool_call_id: rawToolCalls.tool_call_id, name: rawToolCalls.name || 'unknown' });
+          }
+
+          // Fallback to deprecated singular tool_call field
+          if (toolCallsList.length === 0 && pending.tool_call) {
+            const tc = pending.tool_call;
+            if ('tool_call_id' in tc && tc.tool_call_id) {
               toolCallsList.push({ tool_call_id: tc.tool_call_id, name: tc.name || 'unknown' });
             }
           }
-        } else if (rawToolCalls && typeof rawToolCalls === 'object' && 'tool_call_id' in rawToolCalls && rawToolCalls.tool_call_id) {
-          // ToolCallDelta case
-          toolCallsList.push({ tool_call_id: rawToolCalls.tool_call_id, name: rawToolCalls.name || 'unknown' });
-        }
-        
-        // Fallback to deprecated singular tool_call field
-        if (toolCallsList.length === 0 && pending.tool_call) {
-          const tc = pending.tool_call;
-          if ('tool_call_id' in tc && tc.tool_call_id) {
-            toolCallsList.push({ tool_call_id: tc.tool_call_id, name: tc.name || 'unknown' });
+
+          const seen = new Set<string>();
+          const approvals: PendingApproval[] = [];
+          for (const tc of toolCallsList) {
+            if (seen.has(tc.tool_call_id)) continue;
+            seen.add(tc.tool_call_id);
+            approvals.push({
+              runId: pending.run_id || 'unknown',
+              toolCallId: tc.tool_call_id,
+              toolName: tc.name || 'unknown',
+              messageId: pending.id,
+            });
           }
+          if (approvals.length > 0) {
+            log.info(`Extracted ${approvals.length} pending approval(s): ${approvals.map(a => a.toolName).join(', ')}`);
+            return approvals;
+          }
+          log.warn('Agent pending_approval had no tool_call_ids; falling back to run scan');
         }
-        
-        const seen = new Set<string>();
-        const approvals: PendingApproval[] = [];
-        for (const tc of toolCallsList) {
-          if (seen.has(tc.tool_call_id)) continue;
-          seen.add(tc.tool_call_id);
-          approvals.push({
-            runId: pending.run_id || 'unknown',
-            toolCallId: tc.tool_call_id,
-            toolName: tc.name || 'unknown',
-            messageId: pending.id,
-          });
-        }
-        log.info(`Extracted ${approvals.length} pending approval(s): ${approvals.map(a => a.toolName).join(', ')}`);
-        return approvals;
       }
     } catch (e) {
       log.warn('Failed to retrieve agent pending_approval, falling back to run scan:', e);
@@ -673,6 +778,13 @@ export async function recoverOrphanedConversationApproval(
   deepScan = false
 ): Promise<{ recovered: boolean; details: string }> {
   try {
+    if (!isRecoverableConversationId(conversationId)) {
+      return {
+        recovered: false,
+        details: `Conversation is not recoverable: ${conversationId || '(empty)'}`,
+      };
+    }
+
     const client = getClient();
     
     // List recent messages from the conversation to find orphaned approvals.

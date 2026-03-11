@@ -94,10 +94,11 @@ describe('COMMANDS', () => {
     expect(COMMANDS).toContain('help');
     expect(COMMANDS).toContain('start');
     expect(COMMANDS).toContain('model');
+    expect(COMMANDS).toContain('setconv');
   });
 
-  it('has exactly 6 commands', () => {
-    expect(COMMANDS).toHaveLength(7);
+  it('has exactly 8 commands', () => {
+    expect(COMMANDS).toHaveLength(8);
   });
 });
 

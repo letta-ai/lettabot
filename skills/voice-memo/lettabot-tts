@@ -27,6 +27,20 @@ OUTBOUND_DIR="${LETTABOT_WORKING_DIR:-$(pwd)}/data/outbound"
 
 PROVIDER="${TTS_PROVIDER:-elevenlabs}"
 
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Error: Required command '$1' is not installed or not on PATH" >&2
+    exit 1
+  fi
+}
+
+preflight() {
+  require_cmd curl
+  require_cmd jq
+}
+
+preflight
+
 # Ensure output directory exists
 mkdir -p "$OUTBOUND_DIR"
 
@@ -52,7 +66,7 @@ tts_elevenlabs() {
   local model_id="${ELEVENLABS_MODEL_ID:-eleven_multilingual_v2}"
 
   local http_code
-  http_code=$(curl -s -w "%{http_code}" -o "$OUTPUT" \
+  http_code=$(curl -sS -w "%{http_code}" -o "$OUTPUT" \
     "https://api.elevenlabs.io/v1/text-to-speech/${voice_id}" \
     -H "xi-api-key: ${ELEVENLABS_API_KEY}" \
     -H "Content-Type: application/json" \
@@ -67,10 +81,18 @@ tts_elevenlabs() {
     )")
 
   if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-    echo "Error: ElevenLabs API returned HTTP $http_code" >&2
-    if file "$OUTPUT" | grep -q "text\|JSON\|ASCII"; then
-      cat "$OUTPUT" >&2
+    echo "Error: ElevenLabs API returned HTTP $http_code (model=$model_id voice_id=$voice_id)" >&2
+    if [ -s "$OUTPUT" ]; then
+      echo "Error response preview:" >&2
+      head -c 2000 "$OUTPUT" >&2 || true
+      echo >&2
     fi
+    rm -f "$OUTPUT"
+    exit 1
+  fi
+
+  if [ ! -s "$OUTPUT" ]; then
+    echo "Error: ElevenLabs TTS response was empty" >&2
     rm -f "$OUTPUT"
     exit 1
   fi
@@ -89,7 +111,7 @@ tts_openai() {
   local model="${OPENAI_TTS_MODEL:-tts-1}"
 
   local http_code
-  http_code=$(curl -s -w "%{http_code}" -o "$OUTPUT" \
+  http_code=$(curl -sS -w "%{http_code}" -o "$OUTPUT" \
     "https://api.openai.com/v1/audio/speech" \
     -H "Authorization: Bearer ${OPENAI_API_KEY}" \
     -H "Content-Type: application/json" \
@@ -106,10 +128,18 @@ tts_openai() {
     )")
 
   if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-    echo "Error: OpenAI TTS API returned HTTP $http_code" >&2
-    if file "$OUTPUT" | grep -q "text\|JSON\|ASCII"; then
-      cat "$OUTPUT" >&2
+    echo "Error: OpenAI TTS API returned HTTP $http_code (model=$model voice=$voice)" >&2
+    if [ -s "$OUTPUT" ]; then
+      echo "Error response preview:" >&2
+      head -c 2000 "$OUTPUT" >&2 || true
+      echo >&2
     fi
+    rm -f "$OUTPUT"
+    exit 1
+  fi
+
+  if [ ! -s "$OUTPUT" ]; then
+    echo "Error: OpenAI TTS response was empty" >&2
     rm -f "$OUTPUT"
     exit 1
   fi

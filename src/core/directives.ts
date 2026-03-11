@@ -28,6 +28,15 @@ export interface SendFileDirective {
   caption?: string;
   kind?: 'image' | 'file' | 'audio';
   cleanup?: boolean;
+  channel?: string;
+  chat?: string;
+}
+
+export interface SendMessageDirective {
+  type: 'send-message';
+  text: string;
+  channel: string;
+  chat: string;
 }
 
 export interface VoiceDirective {
@@ -36,7 +45,7 @@ export interface VoiceDirective {
 }
 
 // Union type — extend with more directive types later
-export type Directive = ReactDirective | SendFileDirective | VoiceDirective;
+export type Directive = ReactDirective | SendFileDirective | SendMessageDirective | VoiceDirective;
 
 export interface ParseResult {
   cleanText: string;
@@ -52,9 +61,16 @@ const ACTIONS_BLOCK_REGEX = /^\s*<actions>([\s\S]*?)<\/actions>/;
 /**
  * Match supported directive tags inside the actions block in source order.
  * - Self-closing: <react ... />, <send-file ... />
- * - Content-bearing: <voice>...</voice>
+ * - Content-bearing: <voice>...</voice>, <send-message ...>...</send-message>
+ *
+ * Groups:
+ *   1: self-closing tag name (react|send-file)
+ *   2: self-closing attribute string
+ *   3: <voice> text content
+ *   4: <send-message> attribute string
+ *   5: <send-message> text content
  */
-const DIRECTIVE_TOKEN_REGEX = /<(react|send-file)\b([^>]*)\/>|<voice>([\s\S]*?)<\/voice>/g;
+const DIRECTIVE_TOKEN_REGEX = /<(react|send-file)\b([^>]*)\/>|<voice>([\s\S]*?)<\/voice>|<send-message\b([^>]*)>([\s\S]*?)<\/send-message>/g;
 
 /**
  * Parse a single attribute string like: emoji="eyes" message="123"
@@ -76,18 +92,27 @@ function parseAttributes(attrString: string): Record<string, string> {
 function parseChildDirectives(block: string): Directive[] {
   const directives: Directive[] = [];
   let match;
-  const normalizedBlock = block.replace(/\\(['"])/g, '$1');
+  const normalizedBlock = block.replace(/\\(['""])/g, '$1');
 
   // Reset regex state (global flag)
   DIRECTIVE_TOKEN_REGEX.lastIndex = 0;
 
   while ((match = DIRECTIVE_TOKEN_REGEX.exec(normalizedBlock)) !== null) {
-    const [, tagName, attrString, voiceText] = match;
+    const [, tagName, attrString, voiceText, sendMsgAttrs, sendMsgText] = match;
 
     if (voiceText !== undefined) {
       const text = voiceText.trim();
       if (text) {
         directives.push({ type: 'voice', text });
+      }
+      continue;
+    }
+
+    if (sendMsgText !== undefined) {
+      const text = sendMsgText.trim();
+      const attrs = parseAttributes(sendMsgAttrs || '');
+      if (text && attrs.channel && attrs.chat) {
+        directives.push({ type: 'send-message', text, channel: attrs.channel, chat: attrs.chat });
       }
       continue;
     }
@@ -119,6 +144,8 @@ function parseChildDirectives(block: string): Directive[] {
         ...(caption ? { caption } : {}),
         ...(kind ? { kind } : {}),
         ...(cleanup ? { cleanup } : {}),
+        ...(attrs.channel ? { channel: attrs.channel } : {}),
+        ...(attrs.chat ? { chat: attrs.chat } : {}),
       });
     }
   }

@@ -41,15 +41,33 @@ Adds an emoji reaction to a message.
   - Unicode emoji: direct characters like `👍`
 - `message` (optional) -- Target message ID. Defaults to the message that triggered the response.
 
+### `<send-message>`
+
+Sends a text message to a specific channel and chat. Unlike normal response text (which goes to the triggering chat), this directive lets the agent proactively send messages to any connected chat -- useful for async job notifications, multi-tenant workflows, or cross-channel delivery.
+
+```xml
+<send-message channel="whatsapp" chat="5511999999999">Your transcription is ready!</send-message>
+<send-message channel="telegram" chat="123456">Job #42 completed successfully.</send-message>
+```
+
+**Attributes:**
+- `channel` (required) -- Target channel ID (`telegram`, `slack`, `discord`, `whatsapp`, `signal`)
+- `chat` (required) -- Target chat/conversation ID on that channel
+
+**Text content** between the opening and closing tags is the message body. Empty messages are ignored.
+
+Works from any context including heartbeats and cron jobs (silent mode). The agent must know the target channel and chat ID -- these are visible in the formatter envelope of inbound messages (e.g. `[WhatsApp:5511999999999 ...]`).
+
 ### `<send-file>`
 
-Sends a file or image to the same channel/chat as the triggering message.
+Sends a file or image. By default, sends to the same channel/chat as the triggering message. With optional `channel` and `chat` attributes, can target a different chat (cross-channel file delivery).
 
 ```xml
 <send-file path="/tmp/report.pdf" caption="Report attached" />
 <send-file path="/tmp/photo.png" kind="image" caption="Look!" />
 <send-file path="/tmp/voice.ogg" kind="audio" cleanup="true" />
 <send-file path="/tmp/temp-export.csv" cleanup="true" />
+<send-file path="/tmp/result.txt" channel="whatsapp" chat="5511999999999" caption="Here's your file" />
 ```
 
 **Attributes:**
@@ -57,6 +75,8 @@ Sends a file or image to the same channel/chat as the triggering message.
 - `caption` / `text` (optional) -- Caption text for the file
 - `kind` (optional) -- `image`, `file`, or `audio` (defaults to auto-detect based on extension). Audio files (.ogg, .opus, .mp3, .m4a, .wav, .aac, .flac) are auto-detected as `audio`.
 - `cleanup` (optional) -- `true` to delete the file after sending (default: false)
+- `channel` (optional) -- Target channel ID for cross-channel delivery
+- `chat` (optional) -- Target chat ID for cross-channel delivery (both `channel` and `chat` must be set)
 
 **Security:**
 - File paths are restricted to the configured `sendFileDir` directory (defaults to `data/outbound/` under the agent's working directory). Paths outside this directory are blocked and logged.
@@ -146,7 +166,7 @@ During streaming, the bot holds back display while the response could still be a
 
 The parser (`src/core/directives.ts`) is designed to be extensible. Adding a new directive type involves:
 
-1. Add the tag name to `CHILD_DIRECTIVE_REGEX` (e.g. `<(react|send-file)`)
+1. Add the tag name to `DIRECTIVE_TOKEN_REGEX` (self-closing) or its content-bearing alternation
 2. Add a new interface to the `Directive` union type
 3. Add a parsing case in `parseChildDirectives()`
 4. Add an execution case in `executeDirectives()` in `bot.ts`

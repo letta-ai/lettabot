@@ -6,11 +6,12 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import { validateApiKey } from './auth.js';
-import type { SendMessageRequest, SendMessageResponse, SendFileResponse, ChatRequest, ChatResponse, AsyncChatResponse, PairingListResponse, PairingApproveRequest, PairingApproveResponse } from './types.js';
+import type { SendMessageResponse, ChatRequest, ChatResponse, AsyncChatResponse, PairingListResponse, PairingApproveRequest, PairingApproveResponse } from './types.js';
 import { listPairingRequests, approvePairingCode } from '../pairing/store.js';
 import { parseMultipart } from './multipart.js';
 import type { AgentRouter } from '../core/interfaces.js';
 import type { ChannelId } from '../core/types.js';
+import type { Store } from '../core/store.js';
 import {
   generateCompletionId, extractLastUserMessage, buildCompletion,
   buildChunk, buildToolCallChunk, formatSSE, SSE_DONE,
@@ -25,12 +26,23 @@ const VALID_CHANNELS: ChannelId[] = ['telegram', 'slack', 'discord', 'whatsapp',
 const MAX_BODY_SIZE = 10 * 1024; // 10KB
 const MAX_TEXT_LENGTH = 10000; // 10k chars
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const WEBHOOK_CONTEXT = { type: 'webhook' as const, outputMode: 'silent' as const };
+const PORTAL_HTML = fs.readFileSync(new URL('./portal.html', import.meta.url), 'utf-8');
+
+type ResolvedChatRequest = {
+  message: string;
+  agentName: string | undefined;
+  resolvedName: string;
+};
 
 interface ServerOptions {
   port: number;
   apiKey: string;
   host?: string; // Bind address (default: 127.0.0.1 for security)
   corsOrigin?: string; // CORS origin (default: same-origin only)
+  stores?: Map<string, Store>; // Agent stores for management endpoints
+  agentChannels?: Map<string, string[]>; // Channel IDs per agent name
+  sessionInvalidators?: Map<string, (key?: string) => void>; // Invalidate live sessions after store writes
 }
 
 /**
@@ -134,49 +146,11 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     // Route: POST /api/v1/chat (send a message to the agent, get response)
     if (req.url === '/api/v1/chat' && req.method === 'POST') {
       try {
-        if (!validateApiKey(req.headers, options.apiKey)) {
-          sendError(res, 401, 'Unauthorized');
+        const resolved = await parseWebhookChatRequest(req, res, options.apiKey, deliverer);
+        if (!resolved) {
           return;
         }
-
-        const contentType = req.headers['content-type'] || '';
-        if (!contentType.includes('application/json')) {
-          sendError(res, 400, 'Content-Type must be application/json');
-          return;
-        }
-
-        const body = await readBody(req, MAX_BODY_SIZE);
-        let chatReq: ChatRequest;
-        try {
-          chatReq = JSON.parse(body);
-        } catch {
-          sendError(res, 400, 'Invalid JSON body');
-          return;
-        }
-
-        if (!chatReq.message || typeof chatReq.message !== 'string') {
-          sendError(res, 400, 'Missing required field: message');
-          return;
-        }
-
-        if (chatReq.message.length > MAX_TEXT_LENGTH) {
-          sendError(res, 400, `Message too long (max ${MAX_TEXT_LENGTH} chars)`);
-          return;
-        }
-
-        // Resolve agent name (defaults to first agent)
-        const agentName = chatReq.agent;
-        const agentNames = deliverer.getAgentNames();
-        const resolvedName = agentName || agentNames[0];
-
-        if (agentName && !agentNames.includes(agentName)) {
-          sendError(res, 404, `Agent not found: ${agentName}. Available: ${agentNames.join(', ')}`);
-          return;
-        }
-
-        log.info(`Chat request for agent "${resolvedName}": ${chatReq.message.slice(0, 100)}...`);
-
-        const context = { type: 'webhook' as const, outputMode: 'silent' as const };
+        log.info(`Chat request for agent "${resolved.resolvedName}": ${resolved.message.slice(0, 100)}...`);
         const wantsStream = (req.headers.accept || '').includes('text/event-stream');
 
         if (wantsStream) {
@@ -191,7 +165,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           req.on('close', () => { clientDisconnected = true; });
 
           try {
-            for await (const msg of deliverer.streamToAgent(agentName, chatReq.message, context)) {
+            for await (const msg of deliverer.streamToAgent(resolved.agentName, resolved.message, WEBHOOK_CONTEXT)) {
               if (clientDisconnected) break;
               res.write(`data: ${JSON.stringify(msg)}\n\n`);
               if (msg.type === 'result') break;
@@ -204,12 +178,12 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           res.end();
         } else {
           // Sync: wait for full response
-          const response = await deliverer.sendToAgent(agentName, chatReq.message, context);
+          const response = await deliverer.sendToAgent(resolved.agentName, resolved.message, WEBHOOK_CONTEXT);
 
           const chatRes: ChatResponse = {
             success: true,
             response,
-            agentName: resolvedName,
+            agentName: resolved.resolvedName,
           };
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(chatRes));
@@ -229,60 +203,24 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     // Route: POST /api/v1/chat/async (fire-and-forget: returns 202, processes in background)
     if (req.url === '/api/v1/chat/async' && req.method === 'POST') {
       try {
-        if (!validateApiKey(req.headers, options.apiKey)) {
-          sendError(res, 401, 'Unauthorized');
+        const resolved = await parseWebhookChatRequest(req, res, options.apiKey, deliverer);
+        if (!resolved) {
           return;
         }
-
-        const contentType = req.headers['content-type'] || '';
-        if (!contentType.includes('application/json')) {
-          sendError(res, 400, 'Content-Type must be application/json');
-          return;
-        }
-
-        const body = await readBody(req, MAX_BODY_SIZE);
-        let chatReq: ChatRequest;
-        try {
-          chatReq = JSON.parse(body);
-        } catch {
-          sendError(res, 400, 'Invalid JSON body');
-          return;
-        }
-
-        if (!chatReq.message || typeof chatReq.message !== 'string') {
-          sendError(res, 400, 'Missing required field: message');
-          return;
-        }
-
-        if (chatReq.message.length > MAX_TEXT_LENGTH) {
-          sendError(res, 400, `Message too long (max ${MAX_TEXT_LENGTH} chars)`);
-          return;
-        }
-
-        const agentName = chatReq.agent;
-        const agentNames = deliverer.getAgentNames();
-        const resolvedName = agentName || agentNames[0];
-
-        if (agentName && !agentNames.includes(agentName)) {
-          sendError(res, 404, `Agent not found: ${agentName}. Available: ${agentNames.join(', ')}`);
-          return;
-        }
-
-        log.info(`Async chat request for agent "${resolvedName}": ${chatReq.message.slice(0, 100)}...`);
+        log.info(`Async chat request for agent "${resolved.resolvedName}": ${resolved.message.slice(0, 100)}...`);
 
         // Return 202 immediately
         const asyncRes: AsyncChatResponse = {
           success: true,
           status: 'queued',
-          agentName: resolvedName,
+          agentName: resolved.resolvedName,
         };
         res.writeHead(202, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(asyncRes));
 
         // Process in background (detached promise)
-        const context = { type: 'webhook' as const, outputMode: 'silent' as const };
-        deliverer.sendToAgent(agentName, chatReq.message, context).catch((error: any) => {
-          log.error(`Async chat background error for agent "${resolvedName}":`, error);
+        deliverer.sendToAgent(resolved.agentName, resolved.message, WEBHOOK_CONTEXT).catch((error: any) => {
+          log.error(`Async chat background error for agent "${resolved.resolvedName}":`, error);
         });
       } catch (error: any) {
         log.error('Async chat error:', error);
@@ -555,10 +493,154 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
       return;
     }
 
+    // Route: GET /api/v1/status - Agent status (conversation IDs, channels)
+    if (req.url === '/api/v1/status' && req.method === 'GET') {
+      try {
+        if (!validateApiKey(req.headers, options.apiKey)) {
+          sendError(res, 401, 'Unauthorized');
+          return;
+        }
+        const agents: Record<string, any> = {};
+        if (options.stores) {
+          for (const [name, store] of options.stores) {
+            const info = store.getInfo();
+            agents[name] = {
+              agentId: info.agentId,
+              conversationId: info.conversationId || null,
+              conversations: info.conversations || {},
+              channels: options.agentChannels?.get(name) || [],
+              baseUrl: info.baseUrl,
+              createdAt: info.createdAt,
+              lastUsedAt: info.lastUsedAt,
+            };
+          }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ agents }));
+      } catch (error: any) {
+        log.error('Status error:', error);
+        sendError(res, 500, error.message || 'Internal server error');
+      }
+      return;
+    }
+
+    // Route: POST /api/v1/conversation - Set conversation ID
+    if (req.url === '/api/v1/conversation' && req.method === 'POST') {
+      try {
+        if (!validateApiKey(req.headers, options.apiKey)) {
+          sendError(res, 401, 'Unauthorized');
+          return;
+        }
+        if (!options.stores || options.stores.size === 0) {
+          sendError(res, 500, 'No stores configured');
+          return;
+        }
+
+        const body = await readBody(req, MAX_BODY_SIZE);
+        let request: { conversationId?: string; agent?: string; key?: string };
+        try {
+          request = JSON.parse(body);
+        } catch {
+          sendError(res, 400, 'Invalid JSON body');
+          return;
+        }
+
+        if (!request.conversationId || typeof request.conversationId !== 'string') {
+          sendError(res, 400, 'Missing required field: conversationId');
+          return;
+        }
+
+        // Resolve agent name (default to first store)
+        const agentName = request.agent || options.stores.keys().next().value!;
+        const store = options.stores.get(agentName);
+        if (!store) {
+          sendError(res, 404, `Agent not found: ${agentName}`);
+          return;
+        }
+
+        const key = request.key || 'shared';
+        if (key === 'shared') {
+          store.conversationId = request.conversationId;
+        } else {
+          store.setConversationId(key, request.conversationId);
+        }
+
+        // Invalidate the live session so the next message uses the new conversation
+        const invalidate = options.sessionInvalidators?.get(agentName);
+        if (invalidate) {
+          invalidate(key === 'shared' ? undefined : key);
+        }
+
+        log.info(`API set conversation: agent=${agentName} key=${key} conv=${request.conversationId}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, agent: agentName, key, conversationId: request.conversationId }));
+      } catch (error: any) {
+        log.error('Set conversation error:', error);
+        sendError(res, 500, error.message || 'Internal server error');
+      }
+      return;
+    }
+
+    // Route: GET /api/v1/conversations - List conversations from Letta API
+    if (req.url?.startsWith('/api/v1/conversations') && req.method === 'GET') {
+      try {
+        if (!validateApiKey(req.headers, options.apiKey)) {
+          sendError(res, 401, 'Unauthorized');
+          return;
+        }
+        if (!options.stores || options.stores.size === 0) {
+          sendError(res, 500, 'No stores configured');
+          return;
+        }
+
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const agentName = url.searchParams.get('agent') || options.stores.keys().next().value!;
+        const store = options.stores.get(agentName);
+        if (!store) {
+          sendError(res, 404, `Agent not found: ${agentName}`);
+          return;
+        }
+
+        const agentId = store.getInfo().agentId;
+        if (!agentId) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ conversations: [] }));
+          return;
+        }
+
+        const { Letta } = await import('@letta-ai/letta-client');
+        const client = new Letta({
+          apiKey: process.env.LETTA_API_KEY || '',
+          baseURL: process.env.LETTA_BASE_URL || 'https://api.letta.com',
+        });
+        const convos = await client.conversations.list({
+          agent_id: agentId,
+          limit: 50,
+          order: 'desc',
+          order_by: 'last_run_completion',
+        });
+
+        const conversations = convos.map(c => ({
+          id: c.id,
+          createdAt: c.created_at,
+          updatedAt: c.updated_at,
+          summary: c.summary || null,
+          messageCount: c.in_context_message_ids?.length || 0,
+        }));
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ conversations }));
+      } catch (error: any) {
+        log.error('List conversations error:', error);
+        sendError(res, 500, error.message || 'Internal server error');
+      }
+      return;
+    }
+
     // Route: GET /portal - Admin portal for pairing approvals
     if ((req.url === '/portal' || req.url === '/portal/') && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(portalHtml);
+      res.end(PORTAL_HTML);
       return;
     }
 
@@ -604,35 +686,83 @@ function readBody(req: http.IncomingMessage, maxSize: number): Promise<string> {
   });
 }
 
-/**
- * Validate send message request
- */
-function validateRequest(request: SendMessageRequest): { message: string; field?: string } | null {
-  if (!request.channel) {
-    return { message: 'Missing required field: channel', field: 'channel' };
+function ensureAuthorized(req: http.IncomingMessage, res: http.ServerResponse, apiKey: string): boolean {
+  if (validateApiKey(req.headers, apiKey)) {
+    return true;
+  }
+  sendError(res, 401, 'Unauthorized');
+  return false;
+}
+
+function ensureJsonContentType(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('application/json')) {
+    return true;
+  }
+  sendError(res, 400, 'Content-Type must be application/json');
+  return false;
+}
+
+async function parseJsonBody<T>(req: http.IncomingMessage, res: http.ServerResponse): Promise<T | null> {
+  const body = await readBody(req, MAX_BODY_SIZE);
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    sendError(res, 400, 'Invalid JSON body');
+    return null;
+  }
+}
+
+function resolveAgentNameOrError(
+  deliverer: AgentRouter,
+  requestedAgentName: string | undefined,
+  res: http.ServerResponse,
+): { agentName: string | undefined; resolvedName: string } | null {
+  const agentNames = deliverer.getAgentNames();
+  const resolvedName = requestedAgentName || agentNames[0];
+  if (requestedAgentName && !agentNames.includes(requestedAgentName)) {
+    sendError(res, 404, `Agent not found: ${requestedAgentName}. Available: ${agentNames.join(', ')}`);
+    return null;
+  }
+  return { agentName: requestedAgentName, resolvedName };
+}
+
+async function parseWebhookChatRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  apiKey: string,
+  deliverer: AgentRouter,
+): Promise<ResolvedChatRequest | null> {
+  if (!ensureAuthorized(req, res, apiKey)) {
+    return null;
+  }
+  if (!ensureJsonContentType(req, res)) {
+    return null;
   }
 
-  if (!request.chatId) {
-    return { message: 'Missing required field: chatId', field: 'chatId' };
+  const chatReq = await parseJsonBody<ChatRequest>(req, res);
+  if (!chatReq) {
+    return null;
+  }
+  if (!chatReq.message || typeof chatReq.message !== 'string') {
+    sendError(res, 400, 'Missing required field: message');
+    return null;
+  }
+  if (chatReq.message.length > MAX_TEXT_LENGTH) {
+    sendError(res, 400, `Message too long (max ${MAX_TEXT_LENGTH} chars)`);
+    return null;
   }
 
-  if (!request.text) {
-    return { message: 'Missing required field: text', field: 'text' };
+  const agent = resolveAgentNameOrError(deliverer, chatReq.agent, res);
+  if (!agent) {
+    return null;
   }
 
-  if (!VALID_CHANNELS.includes(request.channel as ChannelId)) {
-    return { message: `Invalid channel: ${request.channel}`, field: 'channel' };
-  }
-
-  if (typeof request.text !== 'string') {
-    return { message: 'Field "text" must be a string', field: 'text' };
-  }
-
-  if (request.text.length > MAX_TEXT_LENGTH) {
-    return { message: `Text too long (max ${MAX_TEXT_LENGTH} chars)`, field: 'text' };
-  }
-
-  return null;
+  return {
+    message: chatReq.message,
+    agentName: agent.agentName,
+    resolvedName: agent.resolvedName,
+  };
 }
 
 /**
@@ -647,172 +777,3 @@ function sendError(res: http.ServerResponse, status: number, message: string, fi
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(response));
 }
-
-/**
- * Admin portal HTML - self-contained page for pairing approvals
- */
-const portalHtml = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LettaBot Portal</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0a0a; color: #e0e0e0; min-height: 100vh; }
-  .container { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
-  h1 { font-size: 18px; font-weight: 600; margin-bottom: 24px; color: #fff; }
-  h1 span { color: #666; font-weight: 400; }
-
-  /* Auth */
-  .auth { background: #141414; border: 1px solid #222; border-radius: 8px; padding: 24px; margin-bottom: 24px; }
-  .auth label { display: block; font-size: 13px; color: #888; margin-bottom: 8px; }
-  .auth input { width: 100%; padding: 10px 12px; background: #0a0a0a; border: 1px solid #333; border-radius: 6px; color: #fff; font-size: 14px; font-family: monospace; }
-  .auth input:focus { outline: none; border-color: #555; }
-  .auth button { margin-top: 12px; padding: 8px 20px; background: #fff; color: #000; border: none; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
-  .auth button:hover { background: #ddd; }
-
-  /* Tabs */
-  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
-  .tab { padding: 6px 14px; background: #141414; border: 1px solid #222; border-radius: 6px; font-size: 13px; cursor: pointer; color: #888; }
-  .tab:hover { color: #ccc; border-color: #333; }
-  .tab.active { background: #1a1a1a; color: #fff; border-color: #444; }
-  .tab .count { background: #333; color: #aaa; font-size: 11px; padding: 1px 6px; border-radius: 10px; margin-left: 6px; }
-  .tab.active .count { background: #fff; color: #000; }
-
-  /* Table */
-  .requests { background: #141414; border: 1px solid #222; border-radius: 8px; overflow: hidden; }
-  .request { display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid #1a1a1a; gap: 16px; }
-  .request:last-child { border-bottom: none; }
-  .code { font-family: monospace; font-size: 15px; font-weight: 600; color: #fff; min-width: 90px; }
-  .meta { flex: 1; }
-  .meta .name { font-size: 13px; color: #ccc; }
-  .meta .time { font-size: 12px; color: #555; margin-top: 2px; }
-  .approve-btn { padding: 6px 16px; background: #1a7f37; color: #fff; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; white-space: nowrap; }
-  .approve-btn:hover { background: #238636; }
-  .approve-btn:disabled { background: #333; color: #666; cursor: default; }
-
-  /* Empty */
-  .empty { padding: 40px 16px; text-align: center; color: #555; font-size: 14px; }
-
-  /* Toast */
-  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); padding: 10px 20px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
-  .toast.show { opacity: 1; }
-  .toast.ok { background: #1a7f37; color: #fff; }
-  .toast.err { background: #d1242f; color: #fff; }
-
-  /* Status bar */
-  .status { font-size: 12px; color: #444; text-align: center; margin-top: 16px; }
-
-  .hidden { display: none; }
-</style>
-</head>
-<body>
-<div class="container">
-  <h1>LettaBot <span>Portal</span></h1>
-
-  <div class="auth" id="auth">
-    <label for="key">API Key</label>
-    <input type="password" id="key" placeholder="Paste your LETTABOT_API_KEY" autocomplete="off" onkeydown="if(event.key==='Enter')login()">
-    <button onclick="login()">Connect</button>
-  </div>
-
-  <div id="app" class="hidden">
-    <div class="tabs" id="tabs"></div>
-    <div class="requests" id="list"></div>
-    <div class="status" id="status"></div>
-  </div>
-</div>
-<div class="toast" id="toast"></div>
-
-<script>
-const CHANNELS = ['telegram', 'discord', 'slack'];
-let apiKey = sessionStorage.getItem('lbkey') || '';
-let activeChannel = 'telegram';
-let data = {};
-let refreshTimer;
-
-function login() {
-  apiKey = document.getElementById('key').value.trim();
-  if (!apiKey) return;
-  sessionStorage.setItem('lbkey', apiKey);
-  init();
-}
-
-async function init() {
-  document.getElementById('auth').classList.add('hidden');
-  document.getElementById('app').classList.remove('hidden');
-  await refresh();
-  refreshTimer = setInterval(refresh, 10000);
-}
-
-async function apiFetch(path, opts = {}) {
-  const res = await fetch(path, { ...opts, headers: { 'X-Api-Key': apiKey, 'Content-Type': 'application/json', ...opts.headers } });
-  if (res.status === 401) { sessionStorage.removeItem('lbkey'); apiKey = ''; document.getElementById('auth').classList.remove('hidden'); document.getElementById('app').classList.add('hidden'); clearInterval(refreshTimer); toast('Invalid API key', true); throw new Error('Unauthorized'); }
-  return res;
-}
-
-async function refresh() {
-  for (const ch of CHANNELS) {
-    try {
-      const res = await apiFetch('/api/v1/pairing/' + ch);
-      const json = await res.json();
-      data[ch] = json.requests || [];
-    } catch (e) { if (e.message === 'Unauthorized') return; data[ch] = []; }
-  }
-  renderTabs();
-  renderList();
-  document.getElementById('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
-}
-
-function renderTabs() {
-  const el = document.getElementById('tabs');
-  el.innerHTML = CHANNELS.map(ch => {
-    const n = (data[ch] || []).length;
-    const cls = ch === activeChannel ? 'tab active' : 'tab';
-    const count = n > 0 ? '<span class="count">' + n + '</span>' : '';
-    return '<div class="' + cls + '" onclick="switchTab(\\'' + ch + '\\')">' + ch.charAt(0).toUpperCase() + ch.slice(1) + count + '</div>';
-  }).join('');
-}
-
-function renderList() {
-  const el = document.getElementById('list');
-  const items = data[activeChannel] || [];
-  if (items.length === 0) { el.innerHTML = '<div class="empty">No pending pairing requests</div>'; return; }
-  el.innerHTML = items.map(r => {
-    const name = r.meta?.username ? '@' + r.meta.username : r.meta?.firstName || 'User ' + r.id;
-    const ago = timeAgo(r.createdAt);
-    return '<div class="request"><div class="code">' + esc(r.code) + '</div><div class="meta"><div class="name">' + esc(name) + '</div><div class="time">' + ago + '</div></div><button class="approve-btn" onclick="approve(\\'' + activeChannel + '\\',\\'' + r.code + '\\', this)">Approve</button></div>';
-  }).join('');
-}
-
-function switchTab(ch) { activeChannel = ch; renderTabs(); renderList(); }
-
-async function approve(channel, code, btn) {
-  btn.disabled = true; btn.textContent = '...';
-  try {
-    const res = await apiFetch('/api/v1/pairing/' + channel + '/approve', { method: 'POST', body: JSON.stringify({ code }) });
-    const json = await res.json();
-    if (json.success) { toast('Approved'); await refresh(); }
-    else { toast(json.error || 'Failed', true); btn.disabled = false; btn.textContent = 'Approve'; }
-  } catch (e) { toast('Error: ' + e.message, true); btn.disabled = false; btn.textContent = 'Approve'; }
-}
-
-function toast(msg, err) {
-  const el = document.getElementById('toast');
-  el.textContent = msg; el.className = 'toast show ' + (err ? 'err' : 'ok');
-  setTimeout(() => el.className = 'toast', 2500);
-}
-
-function timeAgo(iso) {
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return s + 's ago'; if (s < 3600) return Math.floor(s/60) + 'm ago';
-  return Math.floor(s/3600) + 'h ago';
-}
-
-function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-
-if (apiKey) init();
-</script>
-</body>
-</html>`;

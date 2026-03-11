@@ -5,9 +5,8 @@
  * Chat continues seamlessly between Telegram, Slack, and WhatsApp.
  */
 
-import { existsSync, mkdirSync, readFileSync, promises as fs } from 'node:fs';
+import { existsSync, mkdirSync, promises as fs } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
 
 // API server imports
 import { createApiServer } from './api/server.js';
@@ -25,11 +24,10 @@ import {
   serverModeLabel,
   wasLoadedFromFleetConfig,
 } from './config/index.js';
-import { isLettaApiUrl } from './utils/server.js';
 import { getCronDataDir, getDataDir, getWorkingDir, hasRailwayVolume, resolveWorkingDirPath } from './utils/paths.js';
 import { parseCsvList, parseNonNegativeNumber } from './utils/parse.js';
-import { sleep } from './utils/time.js';
 import { createLogger, setLogLevel } from './logger.js';
+import { loadStoredAgentId, refreshTokensIfNeeded, withDiscoveryLock } from './startup/bootstrap.js';
 
 const log = createLogger('Config');
 
@@ -58,121 +56,16 @@ if (process.env.DEBUG === '1' && !process.env.DEBUG_SDK) {
 // Sync BYOK providers on startup (async, don't block)
 syncProviders(yamlConfig).catch(err => log.error('Failed to sync providers:', err));
 
-// Load agent ID from store and set as env var (SDK needs this)
-// Load agent ID from store file, or use LETTA_AGENT_ID env var as fallback
 const STORE_PATH = resolve(getDataDir(), 'lettabot-agent.json');
 const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
-
-if (existsSync(STORE_PATH)) {
-  try {
-    const raw = JSON.parse(readFileSync(STORE_PATH, 'utf-8'));
-    
-    // V2 format: get first agent's ID
-    if (raw.version === 2 && raw.agents) {
-      const firstAgent = Object.values(raw.agents)[0] as any;
-      if (firstAgent?.agentId) {
-        process.env.LETTA_AGENT_ID = firstAgent.agentId;
-      }
-      // Check server mismatch on first agent
-      if (firstAgent?.agentId && firstAgent?.baseUrl) {
-        const storedUrl = firstAgent.baseUrl.replace(/\/$/, '');
-        const currentUrl = currentBaseUrl.replace(/\/$/, '');
-        
-        if (storedUrl !== currentUrl) {
-          log.warn(`⚠️  Server mismatch detected!`);
-          log.warn(`   Stored agent was created on: ${storedUrl}`);
-          log.warn(`   Current server: ${currentUrl}`);
-          log.warn(`   The agent ${firstAgent.agentId} may not exist on this server.`);
-          log.warn(`   Run 'lettabot onboard' to select or create an agent for this server.`);
-        }
-      }
-    } else if (raw.agentId) {
-      // V1 format (legacy)
-      process.env.LETTA_AGENT_ID = raw.agentId;
-      // Check server mismatch
-      if (raw.agentId && raw.baseUrl) {
-        const storedUrl = raw.baseUrl.replace(/\/$/, '');
-        const currentUrl = currentBaseUrl.replace(/\/$/, '');
-        
-        if (storedUrl !== currentUrl) {
-          log.warn(`⚠️  Server mismatch detected!`);
-          log.warn(`   Stored agent was created on: ${storedUrl}`);
-          log.warn(`   Current server: ${currentUrl}`);
-          log.warn(`   The agent ${raw.agentId} may not exist on this server.`);
-          log.warn(`   Run 'lettabot onboard' to select or create an agent for this server.`);
-        }
-      }
-    }
-  } catch {}
-}
-// Allow LETTA_AGENT_ID env var to override (useful for local server testing)
-// This is already set if passed on command line
-
-// OAuth token refresh - check and refresh before loading SDK
-import { loadTokens, saveTokens, isTokenExpired, hasRefreshToken, getDeviceName } from './auth/tokens.js';
-import { refreshAccessToken } from './auth/oauth.js';
-
-async function refreshTokensIfNeeded(): Promise<void> {
-  // If env var is set, that takes precedence (no refresh needed)
-  if (process.env.LETTA_API_KEY) {
-    return;
-  }
-  
-  // OAuth tokens only work with Letta API - skip if using custom server
-  if (!isLettaApiUrl(process.env.LETTA_BASE_URL)) {
-    return;
-  }
-  
-  const tokens = loadTokens();
-  if (!tokens?.accessToken) {
-    return; // No stored tokens
-  }
-  
-  // Set access token to env var
-  process.env.LETTA_API_KEY = tokens.accessToken;
-  
-  // Check if token needs refresh
-  if (isTokenExpired(tokens) && hasRefreshToken(tokens)) {
-    try {
-      log.info('Refreshing access token...');
-      const newTokens = await refreshAccessToken(
-        tokens.refreshToken!,
-        tokens.deviceId,
-        getDeviceName(),
-      );
-      
-      // Update stored tokens
-      const now = Date.now();
-      saveTokens({
-        accessToken: newTokens.access_token,
-        refreshToken: newTokens.refresh_token ?? tokens.refreshToken,
-        tokenExpiresAt: now + newTokens.expires_in * 1000,
-        deviceId: tokens.deviceId,
-        deviceName: tokens.deviceName,
-      });
-      
-      // Update env var with new token
-      process.env.LETTA_API_KEY = newTokens.access_token;
-      log.info('Token refreshed successfully');
-    } catch (err) {
-      log.error('Failed to refresh token:', err instanceof Error ? err.message : err);
-      log.error('You may need to re-authenticate with `lettabot onboard`');
-    }
-  }
-}
-
-// Run token refresh before importing SDK (which reads LETTA_API_KEY)
+loadStoredAgentId(STORE_PATH, currentBaseUrl);
 await refreshTokensIfNeeded();
 
 import { normalizeAgents } from './config/types.js';
 import { LettaGateway } from './core/gateway.js';
 import { LettaBot } from './core/bot.js';
-import { TelegramAdapter } from './channels/telegram.js';
-import { TelegramMTProtoAdapter } from './channels/telegram-mtproto.js';
-import { SlackAdapter } from './channels/slack.js';
-import { WhatsAppAdapter } from './channels/whatsapp/index.js';
-import { SignalAdapter } from './channels/signal.js';
-import { DiscordAdapter } from './channels/discord.js';
+import type { Store } from './core/store.js';
+import { createChannelsForAgent } from './channels/factory.js';
 import { GroupBatcher } from './core/group-batcher.js';
 import { printStartupBanner } from './core/banner.js';
 import { collectGroupBatchingConfig } from './core/group-batching-config.js';
@@ -216,56 +109,6 @@ function parseHeartbeatTarget(raw?: string): { channel: string; chatId: string }
 const DEFAULT_ATTACHMENTS_MAX_MB = 20;
 const DEFAULT_ATTACHMENTS_MAX_AGE_DAYS = 14;
 const ATTACHMENTS_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const DISCOVERY_LOCK_TIMEOUT_MS = 15_000;
-const DISCOVERY_LOCK_STALE_MS = 60_000;
-const DISCOVERY_LOCK_RETRY_MS = 100;
-
-function getDiscoveryLockPath(agentName: string): string {
-  const safe = agentName
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '') || 'agent';
-  return `${STORE_PATH}.${safe}.discover.lock`;
-}
-
-async function withDiscoveryLock<T>(agentName: string, fn: () => Promise<T>): Promise<T> {
-  const lockPath = getDiscoveryLockPath(agentName);
-  const start = Date.now();
-
-  while (true) {
-    try {
-      const handle = await fs.open(lockPath, 'wx');
-      try {
-        await handle.writeFile(`${process.pid}\n`, { encoding: 'utf-8' });
-        return await fn();
-      } finally {
-        await handle.close().catch(() => {});
-        await fs.rm(lockPath, { force: true }).catch(() => {});
-      }
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code !== 'EEXIST') {
-        throw error;
-      }
-
-      try {
-        const stats = await fs.stat(lockPath);
-        if (Date.now() - stats.mtimeMs > DISCOVERY_LOCK_STALE_MS) {
-          await fs.rm(lockPath, { force: true });
-          continue;
-        }
-      } catch {
-        // Best-effort stale lock cleanup.
-      }
-
-      if (Date.now() - start >= DISCOVERY_LOCK_TIMEOUT_MS) {
-        throw new Error(`Timed out waiting for startup discovery lock: ${lockPath}`);
-      }
-      await sleep(DISCOVERY_LOCK_RETRY_MS);
-    }
-  }
-}
 
 function resolveAttachmentsMaxBytes(): number {
   const rawBytes = Number(process.env.ATTACHMENTS_MAX_BYTES);
@@ -342,138 +185,6 @@ async function pruneAttachmentsDir(baseDir: string, maxAgeDays: number): Promise
 }
 
 /**
- * Create channel adapters for an agent from its config
- */
-function createChannelsForAgent(
-  agentConfig: import('./config/types.js').AgentConfig,
-  attachmentsDir: string,
-  attachmentsMaxBytes: number,
-): import('./channels/types.js').ChannelAdapter[] {
-  const adapters: import('./channels/types.js').ChannelAdapter[] = [];
-
-  // Mutual exclusion: cannot use both Telegram Bot API and MTProto simultaneously
-  const hasTelegramBot = !!agentConfig.channels.telegram?.token;
-  const hasTelegramMtproto = !!(agentConfig.channels['telegram-mtproto'] as any)?.apiId;
-
-  if (hasTelegramBot && hasTelegramMtproto) {
-    log.error(`Agent "${agentConfig.name}" has both telegram and telegram-mtproto configured.`);
-    log.error('  The Bot API adapter and MTProto adapter cannot run together.');
-    log.error('Choose one: telegram (bot token) or telegram-mtproto (user account).');
-    process.exit(1);
-  }
-
-  if (hasTelegramBot) {
-    adapters.push(new TelegramAdapter({
-      token: agentConfig.channels.telegram!.token!,
-      dmPolicy: agentConfig.channels.telegram!.dmPolicy || 'pairing',
-      allowedUsers: agentConfig.channels.telegram!.allowedUsers && agentConfig.channels.telegram!.allowedUsers.length > 0
-        ? agentConfig.channels.telegram!.allowedUsers.map(u => typeof u === 'string' ? parseInt(u, 10) : u)
-        : undefined,
-      streaming: agentConfig.channels.telegram!.streaming,
-      attachmentsDir,
-      attachmentsMaxBytes,
-      groups: agentConfig.channels.telegram!.groups,
-      mentionPatterns: agentConfig.channels.telegram!.mentionPatterns,
-      agentName: agentConfig.name,
-    }));
-  }
-
-  if (hasTelegramMtproto) {
-    const mtprotoConfig = agentConfig.channels['telegram-mtproto'] as any;
-    adapters.push(new TelegramMTProtoAdapter({
-      apiId: mtprotoConfig.apiId,
-      apiHash: mtprotoConfig.apiHash,
-      phoneNumber: mtprotoConfig.phoneNumber,
-      databaseDirectory: mtprotoConfig.databaseDirectory || './data/telegram-mtproto',
-      dmPolicy: mtprotoConfig.dmPolicy || 'pairing',
-      allowedUsers: mtprotoConfig.allowedUsers && mtprotoConfig.allowedUsers.length > 0
-        ? mtprotoConfig.allowedUsers.map((u: string | number) => typeof u === 'string' ? parseInt(u, 10) : u)
-        : undefined,
-      groupPolicy: mtprotoConfig.groupPolicy || 'both',
-      adminChatId: mtprotoConfig.adminChatId,
-    }));
-  }
-
-  if (agentConfig.channels.slack?.botToken && agentConfig.channels.slack?.appToken) {
-    adapters.push(new SlackAdapter({
-      botToken: agentConfig.channels.slack.botToken,
-      appToken: agentConfig.channels.slack.appToken,
-      dmPolicy: agentConfig.channels.slack.dmPolicy || 'pairing',
-      allowedUsers: agentConfig.channels.slack.allowedUsers && agentConfig.channels.slack.allowedUsers.length > 0
-        ? agentConfig.channels.slack.allowedUsers
-        : undefined,
-      streaming: agentConfig.channels.slack.streaming,
-      attachmentsDir,
-      attachmentsMaxBytes,
-      groups: agentConfig.channels.slack.groups,
-      agentName: agentConfig.name,
-    }));
-  }
-
-  if (agentConfig.channels.whatsapp?.enabled) {
-    const selfChatMode = agentConfig.channels.whatsapp.selfChat ?? true;
-    if (!selfChatMode) {
-      log.warn('WARNING: selfChatMode is OFF - bot will respond to ALL incoming messages!');
-      log.warn('Only use this if this is a dedicated bot number, not your personal WhatsApp.');
-    }
-    adapters.push(new WhatsAppAdapter({
-      sessionPath: agentConfig.channels.whatsapp.sessionPath || process.env.WHATSAPP_SESSION_PATH || './data/whatsapp-session',
-      dmPolicy: agentConfig.channels.whatsapp.dmPolicy || 'pairing',
-      allowedUsers: agentConfig.channels.whatsapp.allowedUsers && agentConfig.channels.whatsapp.allowedUsers.length > 0
-        ? agentConfig.channels.whatsapp.allowedUsers
-        : undefined,
-      selfChatMode,
-      attachmentsDir,
-      attachmentsMaxBytes,
-      groups: agentConfig.channels.whatsapp.groups,
-      mentionPatterns: agentConfig.channels.whatsapp.mentionPatterns,
-      agentName: agentConfig.name,
-    }));
-  }
-
-  if (agentConfig.channels.signal?.phone) {
-    const selfChatMode = agentConfig.channels.signal.selfChat ?? true;
-    if (!selfChatMode) {
-      log.warn('WARNING: selfChatMode is OFF - bot will respond to ALL incoming messages!');
-      log.warn('Only use this if this is a dedicated bot number, not your personal Signal.');
-    }
-    adapters.push(new SignalAdapter({
-      phoneNumber: agentConfig.channels.signal.phone,
-      cliPath: agentConfig.channels.signal.cliPath || process.env.SIGNAL_CLI_PATH || 'signal-cli',
-      httpHost: agentConfig.channels.signal.httpHost || process.env.SIGNAL_HTTP_HOST || '127.0.0.1',
-      httpPort: agentConfig.channels.signal.httpPort || parseInt(process.env.SIGNAL_HTTP_PORT || '8090', 10),
-      dmPolicy: agentConfig.channels.signal.dmPolicy || 'pairing',
-      allowedUsers: agentConfig.channels.signal.allowedUsers && agentConfig.channels.signal.allowedUsers.length > 0
-        ? agentConfig.channels.signal.allowedUsers
-        : undefined,
-      selfChatMode,
-      attachmentsDir,
-      attachmentsMaxBytes,
-      groups: agentConfig.channels.signal.groups,
-      mentionPatterns: agentConfig.channels.signal.mentionPatterns,
-      agentName: agentConfig.name,
-    }));
-  }
-
-  if (agentConfig.channels.discord?.token) {
-    adapters.push(new DiscordAdapter({
-      token: agentConfig.channels.discord.token,
-      dmPolicy: agentConfig.channels.discord.dmPolicy || 'pairing',
-      allowedUsers: agentConfig.channels.discord.allowedUsers && agentConfig.channels.discord.allowedUsers.length > 0
-        ? agentConfig.channels.discord.allowedUsers
-        : undefined,
-      streaming: agentConfig.channels.discord.streaming,
-      attachmentsDir,
-      attachmentsMaxBytes,
-      groups: agentConfig.channels.discord.groups,
-      agentName: agentConfig.name,
-    }));
-  }
-
-  return adapters;
-}
-
-/**
  * Create and configure a group batcher for an agent
  */
 function createGroupBatcher(
@@ -526,7 +237,7 @@ const hooksDir = dirname(configPath);
 // Validate LETTA_API_KEY is set for API mode (docker mode doesn't require it)
 if (!isDockerServerMode(yamlConfig.server.mode) && !process.env.LETTA_API_KEY) {
   log.error('LETTA_API_KEY is required for Letta API.');
-  log.error('  Get your API key from https://app.letta.com and set it as an environment variable.');
+  log.error('  Get your API key from https://app.letta.com/projects/default-project/api-keys and set it as an environment variable.');
   log.error('Or use docker mode: run "lettabot onboard" and select "Enter Docker server URL".');
   process.exit(1);
 }
@@ -570,6 +281,9 @@ async function main() {
   }
   
   const gateway = new LettaGateway();
+  const agentStores = new Map<string, Store>();
+  const sessionInvalidators = new Map<string, (key?: string) => void>();
+  const agentChannelMap = new Map<string, string[]>();
   const voiceMemoEnabled = isVoiceMemoConfigured();
   const services: { 
     cronServices: CronService[], 
@@ -590,6 +304,19 @@ async function main() {
     // Default false prevents the SDK from auto-enabling memfs, which crashes on
     // self-hosted Letta servers that don't have the git endpoint.
     const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : false);
+    const configuredSleeptime = agentConfig.features?.sleeptime;
+    // Treat missing trigger as active (conservative): only `trigger: 'off'` explicitly disables.
+    const sleeptimeRequiresMemfs = !!configuredSleeptime && configuredSleeptime.trigger !== 'off';
+    const effectiveSleeptime = !resolvedMemfs && sleeptimeRequiresMemfs
+      ? undefined
+      : configuredSleeptime;
+
+    if (!resolvedMemfs && sleeptimeRequiresMemfs) {
+      log.warn(
+        `Agent ${agentConfig.name}: sleeptime is configured but memfs is disabled; ` +
+        `sleeptime will be ignored. Enable features.memfs (or LETTABOT_MEMFS=true) to use sleeptime.`
+      );
+    }
 
     // Create LettaBot for this agent
     const resolvedWorkingDir = agentConfig.workingDir
@@ -614,6 +341,7 @@ async function main() {
       sendFileMaxSize: agentConfig.features?.sendFileMaxSize,
       sendFileCleanup: agentConfig.features?.sendFileCleanup,
       memfs: resolvedMemfs,
+      sleeptime: effectiveSleeptime,
       display: agentConfig.features?.display,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
@@ -627,6 +355,7 @@ async function main() {
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
         googleEnabled: !!agentConfig.integrations?.google?.enabled || !!agentConfig.polling?.gmail?.enabled,
+        blueskyEnabled: !!agentConfig.channels?.bluesky?.enabled,
         ttsEnabled: voiceMemoEnabled,
       },
     });
@@ -659,7 +388,7 @@ async function main() {
     // Fleet configs rely on pre-created agents from lettactl apply.
     if (!initialStatus.agentId && (isContainerDeploy || wasLoadedFromFleetConfig())) {
       try {
-        await withDiscoveryLock(agentConfig.name, async () => {
+        await withDiscoveryLock(STORE_PATH, agentConfig.name, async () => {
           // Re-read status after lock acquisition in case another instance already set it.
           initialStatus = bot.getStatus();
           if (initialStatus.agentId) return;
@@ -778,6 +507,9 @@ async function main() {
     }
     
     gateway.addAgent(agentConfig.name, bot);
+    agentStores.set(agentConfig.name, bot.store);
+    sessionInvalidators.set(agentConfig.name, (key) => bot.invalidateSession(key));
+    agentChannelMap.set(agentConfig.name, adapters.map(a => a.id));
   }
   
   // Start all agents
@@ -796,6 +528,9 @@ async function main() {
     apiKey: apiKey,
     host: apiHost,
     corsOrigin: apiCorsOrigin,
+    stores: agentStores,
+    agentChannels: agentChannelMap,
+    sessionInvalidators,
   });
   
   // Startup banner

@@ -141,7 +141,15 @@ export interface ToolResultHookContext {
 // Original Types
 // =============================================================================
 
-export type ChannelId = 'telegram' | 'telegram-mtproto' | 'slack' | 'whatsapp' | 'signal' | 'discord' | 'mock';
+export type ChannelId = 'telegram' | 'telegram-mtproto' | 'slack' | 'whatsapp' | 'signal' | 'discord' | 'bluesky' | 'mock';
+
+/**
+ * Message type indicating the context of the message.
+ * - 'dm': Direct message (private 1:1 conversation)
+ * - 'group': Group chat (multiple participants)
+ * - 'public': Public post (e.g., Bluesky feed, visible to anyone)
+ */
+export type MessageType = 'dm' | 'group' | 'public';
 
 export interface InboundAttachment {
   id?: string;
@@ -160,6 +168,26 @@ export interface InboundReaction {
 }
 
 /**
+ * Formatter hints provided by channel adapters
+ */
+export interface FormatterHints {
+  /** Custom format hint (overrides default channel format) */
+  formatHint?: string;
+
+  /** Whether this channel supports emoji reactions */
+  supportsReactions?: boolean;
+
+  /** Whether this channel supports file/image sending */
+  supportsFiles?: boolean;
+
+  /** Custom action hints replacing the standard Response Directives section */
+  actionsSection?: string[];
+
+  /** Whether to skip the standard Response Directives section entirely */
+  skipDirectives?: boolean;
+}
+
+/**
  * Inbound message from any channel
  */
 export interface InboundMessage {
@@ -172,7 +200,8 @@ export interface InboundMessage {
   text: string;
   timestamp: Date;
   threadId?: string;      // Slack thread_ts
-  isGroup?: boolean;      // Is this from a group chat?
+  messageType?: MessageType; // 'dm', 'group', or 'public' (defaults to 'dm')
+  isGroup?: boolean;      // True if group chat (convenience alias for messageType === 'group')
   groupName?: string;     // Group/channel name if applicable
   serverId?: string;      // Server/guild ID (Discord only)
   wasMentioned?: boolean; // Was bot explicitly mentioned? (groups only)
@@ -182,16 +211,9 @@ export interface InboundMessage {
   isBatch?: boolean;                  // Is this a batched group message?
   batchedMessages?: InboundMessage[]; // Original individual messages (for batch formatting)
   isListeningMode?: boolean;          // Listening mode: agent processes for memory but response is suppressed
+  forcePerChat?: boolean;             // Force per-chat conversation routing (e.g., Discord thread-only mode)
   formatterHints?: FormatterHints;    // Channel capabilities for directive rendering
-}
-
-/**
- * Channel capability hints for per-message directive rendering
- */
-export interface FormatterHints {
-  supportsReactions?: boolean;
-  supportsFiles?: boolean;
-  formatHint?: string;
+  extraContext?: Record<string, string>; // Channel-specific key/value metadata shown in Chat Context
 }
 
 /**
@@ -225,9 +247,13 @@ export interface OutboundFile {
 export interface SkillsConfig {
   cronEnabled?: boolean;
   googleEnabled?: boolean;
+  blueskyEnabled?: boolean;
   ttsEnabled?: boolean;
   additionalSkills?: string[];
 }
+
+import type { SleeptimeTrigger, SleeptimeBehavior, SleeptimeConfig } from '../config/types.js';
+export type { SleeptimeTrigger, SleeptimeBehavior, SleeptimeConfig };
 
 /**
  * Bot configuration
@@ -257,6 +283,7 @@ export interface BotConfig {
 
   // Memory filesystem (context repository)
   memfs?: boolean; // true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
+  sleeptime?: SleeptimeConfig; // Configure SDK reflection reminders (/sleeptime equivalent)
 
   // Security
   redaction?: import('./redact.js').RedactionConfig;
@@ -296,6 +323,7 @@ export interface StreamMsg {
   toolCallId?: string;
   toolName?: string;
   uuid?: string;
+  runId?: string;
   isError?: boolean;
   result?: string;
   runIds?: string[];
