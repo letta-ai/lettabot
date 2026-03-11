@@ -125,7 +125,7 @@ export interface OutboundMessage {
   chatId: string;
   text: string;
   replyToMessageId?: string;
-  threadId?: string;  // Slack thread_ts
+  threadId?: string;  // Thread ID (Slack thread_ts / Discord thread channel)
   /** When set, tells the adapter which parse mode to use (e.g., 'MarkdownV2',
    *  'HTML') and to skip its default markdown conversion. Adapters that don't
    *  support the specified mode ignore this and fall back to default. */

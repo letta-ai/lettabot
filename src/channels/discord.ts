@@ -318,7 +318,7 @@ Ask the bot owner to approve with:
           let commandForcePerChat = false;
           if (isGroup && this.config.groups) {
             const threadMode = resolveDiscordThreadMode(this.config.groups, keys);
-            commandForcePerChat = threadMode === 'thread-only';
+            commandForcePerChat = threadMode === 'thread-only' || isThreadMessage;
             if (commandForcePerChat && !isThreadMessage) {
               const shouldCreateThread =
                 wasMentioned && resolveDiscordAutoCreateThreadOnMention(this.config.groups, keys);
@@ -464,7 +464,8 @@ Ask the bot owner to approve with:
           serverId: message.guildId || undefined,
           wasMentioned,
           isListeningMode,
-          forcePerChat: isThreadOnly || undefined,
+          threadId: isThreadMessage ? effectiveChatId : undefined,
+          forcePerChat: (isThreadOnly || isThreadMessage) || undefined,
           attachments,
           formatterHints: this.getFormatterHints(),
         });
@@ -499,9 +500,10 @@ Ask the bot owner to approve with:
 
   async sendMessage(msg: OutboundMessage): Promise<{ messageId: string }> {
     if (!this.client) throw new Error('Discord not started');
-    const channel = await this.client.channels.fetch(msg.chatId);
+    const targetChannelId = msg.threadId || msg.chatId;
+    const channel = await this.client.channels.fetch(targetChannelId);
     if (!channel || !channel.isTextBased() || !('send' in channel)) {
-      throw new Error(`Discord channel not found or not text-based: ${msg.chatId}`);
+      throw new Error(`Discord channel not found or not text-based: ${targetChannelId}`);
     }
 
     const sendable = channel as { send: (content: string) => Promise<{ id: string }> };
@@ -516,9 +518,10 @@ Ask the bot owner to approve with:
 
   async sendFile(file: OutboundFile): Promise<{ messageId: string }> {
     if (!this.client) throw new Error('Discord not started');
-    const channel = await this.client.channels.fetch(file.chatId);
+    const targetChannelId = file.threadId || file.chatId;
+    const channel = await this.client.channels.fetch(targetChannelId);
     if (!channel || !channel.isTextBased() || !('send' in channel)) {
-      throw new Error(`Discord channel not found or not text-based: ${file.chatId}`);
+      throw new Error(`Discord channel not found or not text-based: ${targetChannelId}`);
     }
 
     const payload = {
@@ -697,7 +700,7 @@ Ask the bot owner to approve with:
       groupName,
       serverId: message.guildId || undefined,
       isListeningMode,
-      forcePerChat: reactionForcePerChat || undefined,
+      forcePerChat: (reactionForcePerChat || isThreadMessage) || undefined,
       reaction: {
         emoji,
         messageId: message.id,
