@@ -64,6 +64,10 @@ export function isAgentMissingFromInitError(error: unknown): boolean {
  * When this happens, the conversation is permanently stuck -- the pending
  * approval can never be resolved because the server expects different IDs.
  * The conversation must be cleared and recreated.
+ *
+ * TEMP(letta-code-sdk): remove once the SDK emits stable typed approval
+ * terminalization (for example, approval_conflict_terminal) so callers do not
+ * need to parse detail strings.
  */
 export function isInvalidToolCallIdsError(details: string): boolean {
   return details.toLowerCase().includes('invalid tool call id');

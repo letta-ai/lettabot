@@ -4,6 +4,7 @@ import {
   isAgentMissingFromInitError,
   isApprovalConflictError,
   isConversationMissingError,
+  isInvalidToolCallIdsError,
 } from './errors.js';
 
 describe('isApprovalConflictError', () => {
@@ -39,6 +40,20 @@ describe('isAgentMissingFromInitError', () => {
   it('does not match generic init failures', () => {
     expect(isAgentMissingFromInitError(new Error('no init message received from subprocess'))).toBe(false);
     expect(isAgentMissingFromInitError({ status: 404 })).toBe(false);
+  });
+});
+
+describe('isInvalidToolCallIdsError', () => {
+  it('matches invalid tool call IDs details case-insensitively', () => {
+    expect(isInvalidToolCallIdsError(
+      "Failed to deny 1 approval(s) from run run-1: Invalid tool call IDs. Expected '['call_a']', but received '['call_b']'"
+    )).toBe(true);
+    expect(isInvalidToolCallIdsError('invalid tool call id mismatch')).toBe(true);
+  });
+
+  it('returns false for unrelated details', () => {
+    expect(isInvalidToolCallIdsError('No unresolved approval requests found')).toBe(false);
+    expect(isInvalidToolCallIdsError('Failed to check run run-1')).toBe(false);
   });
 });
 

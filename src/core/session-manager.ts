@@ -401,6 +401,8 @@ export class SessionManager {
             }
             // Even on partial recovery, if any denial failed with mismatched IDs the
             // conversation may still be stuck. Clear it so the retry creates a fresh one.
+            // TEMP(letta-code-sdk): remove this detail-string fallback once the SDK
+            // exposes typed terminal approval conflicts with built-in recovery policy.
             if (isInvalidToolCallIdsError(result.details)) {
               log.warn(`Clearing stuck conversation (key=${key}) due to invalid tool call IDs mismatch`);
               if (key !== 'shared') {
@@ -597,6 +599,8 @@ export class SessionManager {
           : await recoverPendingApprovalsForAgent(this.store.agentId);
         // Even on partial recovery, if any denial failed with mismatched IDs the
         // conversation may still be stuck. Clear it so the retry creates a fresh one.
+        // TEMP(letta-code-sdk): remove this detail-string fallback once the SDK
+        // exposes typed terminal approval conflicts with built-in recovery policy.
         if (isInvalidToolCallIdsError(result.details)) {
           log.warn(`Clearing stuck conversation (key=${convKey}) due to invalid tool call IDs mismatch, retrying with fresh conversation`);
           if (convKey !== 'shared') {

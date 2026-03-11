@@ -495,6 +495,67 @@ describe('SDK session contract', () => {
     expect(initialSession.close).toHaveBeenCalledTimes(1);
   });
 
+  it('clears stuck shared conversation during proactive recovery when details include invalid tool call IDs', async () => {
+    const initialSession = {
+      initialize: vi.fn(async () => undefined),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: true, conversationId: 'conv-stuck' })),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-stuck',
+    };
+
+    const recoveredSession = {
+      initialize: vi.fn(async () => undefined),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: false, conversationId: 'conv-fresh' })),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'proactive recovered' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-fresh',
+    };
+
+    vi.mocked(recoverOrphanedConversationApproval).mockResolvedValueOnce({
+      recovered: true,
+      details: "Denied 1 approval(s) from failed run run-ok; Failed to deny 1 approval(s) from run run-stuck: Invalid tool call IDs. Expected '['call_a']', but received '['call_b']'",
+    });
+
+    vi.mocked(resumeSession)
+      .mockReturnValueOnce(initialSession as never)
+      .mockReturnValueOnce(recoveredSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+    bot.setAgentId('agent-contract-test');
+    const botInternal = bot as unknown as { store: { conversationId: string | null } };
+    botInternal.store.conversationId = 'conv-stuck';
+
+    const response = await bot.sendToAgent('hello');
+
+    expect(response).toBe('proactive recovered');
+    expect(recoverOrphanedConversationApproval).toHaveBeenCalledWith(
+      'agent-contract-test',
+      'conv-stuck',
+      true
+    );
+    expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(resumeSession).mock.calls[0][0]).toBe('conv-stuck');
+    expect(vi.mocked(resumeSession).mock.calls[1][0]).toBe('agent-contract-test');
+    expect(initialSession.close).toHaveBeenCalledTimes(1);
+  });
+
   it('passes memfs: true to resumeSession when config sets memfs true', async () => {
     const mockSession = {
       initialize: vi.fn(async () => undefined),
@@ -1100,6 +1161,69 @@ describe('SDK session contract', () => {
       return payload.text;
     });
     expect(sentTexts).toContain('after default recovery');
+  });
+
+  it('clears stuck shared conversation during reactive conflict recovery when details include invalid tool call IDs', async () => {
+    const conflictError = new Error(
+      'CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.'
+    );
+
+    const stuckSession = {
+      initialize: vi.fn(async () => undefined),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: false, conversationId: 'conv-stuck' })),
+      send: vi.fn(async () => {
+        throw conflictError;
+      }),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-stuck',
+    };
+
+    const recoveredSession = {
+      initialize: vi.fn(async () => undefined),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: false, conversationId: 'conv-fresh' })),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'reactive recovered' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-fresh',
+    };
+
+    vi.mocked(recoverOrphanedConversationApproval).mockResolvedValueOnce({
+      recovered: true,
+      details: "Denied 1 approval(s) from failed run run-ok; Failed to deny 1 approval(s) from run run-stuck: Invalid tool call IDs. Expected '['call_a']', but received '['call_b']'",
+    });
+
+    vi.mocked(resumeSession)
+      .mockReturnValueOnce(stuckSession as never)
+      .mockReturnValueOnce(recoveredSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+    bot.setAgentId('agent-contract-test');
+    const botInternal = bot as unknown as { store: { conversationId: string | null } };
+    botInternal.store.conversationId = 'conv-stuck';
+
+    const response = await bot.sendToAgent('hello');
+
+    expect(response).toBe('reactive recovered');
+    expect(recoverOrphanedConversationApproval).toHaveBeenCalledWith('agent-contract-test', 'conv-stuck');
+    expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(resumeSession).mock.calls[0][0]).toBe('conv-stuck');
+    expect(vi.mocked(resumeSession).mock.calls[1][0]).toBe('agent-contract-test');
+    expect(stuckSession.close).toHaveBeenCalledTimes(1);
   });
 
   it('passes tags: [origin:lettabot] to createAgent when creating a new agent', async () => {
