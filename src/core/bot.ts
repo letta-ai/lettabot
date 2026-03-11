@@ -1641,6 +1641,10 @@ export class LettaBot implements AgentSession {
                   `(resultLen=${resultText.length}, streamLen=${streamedAssistantText.length}). ` +
                   `Preferring streamed content to avoid n-1 desync.`
                 );
+                // Fall back to result text if nothing was delivered yet
+                if (!sentAnyMessage && response.trim().length === 0) {
+                  response = resultText;
+                }
               } else if (streamedTextTrimmed.length === 0 && streamMsg.success !== false && !streamMsg.error) {
                 // Fallback for models/providers that only populate result text.
                 // Skip on error results -- the result field may contain reasoning
