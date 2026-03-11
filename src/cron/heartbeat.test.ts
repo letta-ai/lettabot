@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, mkdirSync, unlinkSync, rmSync } from 'node:fs';
+import { writeFileSync, mkdirSync, unlinkSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { execSync } from 'node:child_process';
@@ -7,6 +7,9 @@ import { HeartbeatService, type HeartbeatConfig } from './heartbeat.js';
 import { buildCustomHeartbeatPrompt, SILENT_MODE_PREFIX } from '../core/prompts.js';
 import type { AgentSession } from '../core/interfaces.js';
 import { addTodo } from '../todo/store.js';
+import { getCronLogPath } from '../utils/paths.js';
+
+const HEARTBEAT_LOG_PATH = getCronLogPath();
 
 // ── buildCustomHeartbeatPrompt ──────────────────────────────────────────
 
@@ -277,14 +280,20 @@ describe('HeartbeatService prompt resolution', () => {
 
 describe('HeartbeatService memfs health check', () => {
   let tmpDir: string;
-  let memDir: string;
+  let memDir: string | undefined;
   let originalDataDir: string | undefined;
+  let originalHome: string | undefined;
+  let testHome: string;
 
   beforeEach(() => {
     tmpDir = resolve(tmpdir(), `heartbeat-memfs-test-${Date.now()}`);
+    testHome = resolve(tmpDir, 'fake-home');
     mkdirSync(tmpDir, { recursive: true });
+    mkdirSync(testHome, { recursive: true });
     originalDataDir = process.env.DATA_DIR;
+    originalHome = process.env.HOME;
     process.env.DATA_DIR = tmpDir;
+    process.env.HOME = testHome;
   });
 
   afterEach(() => {
@@ -293,13 +302,16 @@ describe('HeartbeatService memfs health check', () => {
     } else {
       process.env.DATA_DIR = originalDataDir;
     }
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
-    if (memDir) {
-      try { rmSync(memDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
     }
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    memDir = undefined;
   });
 
-  it('logs a warning when memfs directory has untracked files', async () => {
+  it('emits heartbeat_memfs_dirty when memfs directory has untracked files', async () => {
     // Set up a real git repo to act as the memory directory
     const agentId = 'agent-memfs-test-' + Date.now();
     memDir = resolve(homedir(), '.letta', 'agents', agentId, 'memory');
@@ -323,12 +335,14 @@ describe('HeartbeatService memfs health check', () => {
     // Access private method for direct testing
     const checkMemfsHealth = (service as any).checkMemfsHealth.bind(service);
 
-    // Mock the logger to capture warnings
-    const { createLogger } = await import('../logger.js');
-    const logSpy = vi.spyOn(createLogger('Heartbeat').pino, 'warn');
-
-    // Just verify it doesn't throw -- the warning goes to pino which is hard to intercept in unit tests
     expect(() => checkMemfsHealth()).not.toThrow();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+
+    const logContents = existsSync(HEARTBEAT_LOG_PATH)
+      ? readFileSync(HEARTBEAT_LOG_PATH, 'utf-8')
+      : '';
+    expect(logContents).toContain('heartbeat_memfs_dirty');
+    expect(logContents).toContain(agentId);
   });
 
   it('skips memfs check when memfs is disabled', async () => {
