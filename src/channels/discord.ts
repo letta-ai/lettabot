@@ -20,6 +20,7 @@ import { basename } from 'node:path';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Discord');
+const DISCORD_ATTACHMENT_DOWNLOAD_TIMEOUT_MS = 15000;
 // Dynamic import to avoid requiring Discord deps if not used
 let Client: typeof import('discord.js').Client;
 let GatewayIntentBits: typeof import('discord.js').GatewayIntentBits;
@@ -243,36 +244,6 @@ Ask the bot owner to approve with:
       let content = (message.content || '').trim();
       const userId = message.author?.id;
       if (!userId) return;
-      
-      // Handle audio attachments
-      const audioAttachment = message.attachments.find(a => a.contentType?.startsWith('audio/'));
-      if (audioAttachment?.url) {
-        try {
-          const { isTranscriptionConfigured } = await import('../transcription/index.js');
-          if (!isTranscriptionConfigured()) {
-            await message.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice');
-          } else {
-            // Download audio
-            const response = await fetch(audioAttachment.url);
-            const buffer = Buffer.from(await response.arrayBuffer());
-            
-            const { transcribeAudio } = await import('../transcription/index.js');
-            const ext = audioAttachment.contentType?.split('/')[1] || 'mp3';
-            const result = await transcribeAudio(buffer, audioAttachment.name || `audio.${ext}`);
-            
-            if (result.success && result.text) {
-              log.info(`Transcribed audio: "${result.text.slice(0, 50)}..."`);
-              content = (content ? content + '\n' : '') + `[Voice message]: ${result.text}`;
-            } else {
-              log.error(`Transcription failed: ${result.error}`);
-              content = (content ? content + '\n' : '') + `[Voice message - transcription failed: ${result.error}]`;
-            }
-          }
-        } catch (error) {
-          log.error('Error transcribing audio:', error);
-          content = (content ? content + '\n' : '') + `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`;
-        }
-      }
 
       // Bypass pairing for guild (group) messages
       if (!message.guildId) {
@@ -306,9 +277,6 @@ Ask the bot owner to approve with:
         }
       }
 
-      const attachments = await this.collectAttachments(message.attachments, message.channel.id);
-      if (!content && attachments.length === 0) return;
-
       if (content.startsWith('/')) {
         const parts = content.slice(1).split(/\s+/);
         const command = parts[0]?.toLowerCase();
@@ -324,6 +292,23 @@ Ask the bot owner to approve with:
 
         // Unknown commands (or managed commands without onCommand) fall through to agent processing.
         if (isHelpCommand || (isManagedCommand && this.onCommand)) {
+          if (isGroup && this.config.groups && !isHelpCommand) {
+            if (!isGroupAllowed(this.config.groups, keys)) {
+              log.info(`Group ${chatId} not in allowlist, ignoring command`);
+              return;
+            }
+            if (!isGroupUserAllowed(this.config.groups, keys, userId)) {
+              return;
+            }
+            const mode = resolveGroupMode(this.config.groups, keys, 'open');
+            if (mode === 'disabled') {
+              return;
+            }
+            if (mode === 'mention-only' && !wasMentioned) {
+              return;
+            }
+          }
+
           let commandChatId = message.channel.id;
           let commandSendTarget: { send: (content: string) => Promise<unknown> } | null =
             message.channel.isTextBased() && 'send' in message.channel
@@ -433,6 +418,37 @@ Ask the bot owner to approve with:
             effectiveGroupName = createdThread.name || effectiveGroupName;
           }
         }
+
+        const audioAttachment = message.attachments.find((a) => a.contentType?.startsWith('audio/'));
+        if (audioAttachment?.url) {
+          try {
+            const { isTranscriptionConfigured } = await import('../transcription/index.js');
+            if (!isTranscriptionConfigured()) {
+              await message.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice');
+            } else {
+              const response = await fetch(audioAttachment.url);
+              const buffer = Buffer.from(await response.arrayBuffer());
+
+              const { transcribeAudio } = await import('../transcription/index.js');
+              const ext = audioAttachment.contentType?.split('/')[1] || 'mp3';
+              const result = await transcribeAudio(buffer, audioAttachment.name || `audio.${ext}`);
+
+              if (result.success && result.text) {
+                log.info(`Transcribed audio: "${result.text.slice(0, 50)}..."`);
+                content = (content ? content + '\n' : '') + `[Voice message]: ${result.text}`;
+              } else {
+                log.error(`Transcription failed: ${result.error}`);
+                content = (content ? content + '\n' : '') + `[Voice message - transcription failed: ${result.error}]`;
+              }
+            }
+          } catch (error) {
+            log.error('Error transcribing audio:', error);
+            content = (content ? content + '\n' : '') + `[Voice message - error: ${error instanceof Error ? error.message : 'unknown error'}]`;
+          }
+        }
+
+        const attachments = await this.collectAttachments(message.attachments, message.channel.id);
+        if (!content && attachments.length === 0) return;
 
         await this.onMessage({
           channel: 'discord',
@@ -720,7 +736,9 @@ Ask the bot owner to approve with:
         }
         const target = buildAttachmentPath(this.attachmentsDir, 'discord', channelId, name);
         try {
-          await downloadToFile(attachment.url, target);
+          await downloadToFile(attachment.url, target, {
+            timeoutMs: DISCORD_ATTACHMENT_DOWNLOAD_TIMEOUT_MS,
+          });
           entry.localPath = target;
           log.info(`Attachment saved to ${target}`);
         } catch (err) {

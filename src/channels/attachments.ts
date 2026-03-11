@@ -5,6 +5,12 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 const SAFE_NAME_RE = /[^A-Za-z0-9._-]/g;
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 15000;
+
+type DownloadToFileOptions = {
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+};
 
 export function sanitizeFilename(input: string): string {
   const cleaned = input.replace(SAFE_NAME_RE, '_').replace(/^_+|_+$/g, '');
@@ -30,10 +36,14 @@ export function buildAttachmentPath(
 export async function downloadToFile(
   url: string,
   filePath: string,
-  headers?: Record<string, string>
+  options: DownloadToFileOptions = {}
 ): Promise<void> {
+  const { headers, timeoutMs = DEFAULT_DOWNLOAD_TIMEOUT_MS } = options;
   ensureParentDir(filePath);
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, {
+    headers,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (!res.ok || !res.body) {
     throw new Error(`Download failed (${res.status})`);
   }
