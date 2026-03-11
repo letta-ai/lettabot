@@ -46,4 +46,13 @@ describe('resolveSessionMemfs', () => {
 
     expect(result).toEqual({ value: undefined, source: 'unset' });
   });
+
+  it('treats null configured memfs as unset and applies docker default', () => {
+    const result = resolveSessionMemfs({
+      configuredMemfs: null as unknown as boolean,
+      serverMode: 'selfhosted',
+    });
+
+    expect(result).toEqual({ value: false, source: 'default-docker' });
+  });
 });

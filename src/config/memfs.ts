@@ -29,7 +29,9 @@ function parseBooleanEnv(value?: string): boolean | undefined {
  * 4) `undefined` in API mode (leave agent memfs unchanged)
  */
 export function resolveSessionMemfs(input: ResolveSessionMemfsInput): ResolveSessionMemfsResult {
-  if (input.configuredMemfs !== undefined) {
+  // Runtime config parsing can surface non-boolean values (e.g. YAML `memfs:` -> null).
+  // Only treat explicit booleans as configured; everything else falls through.
+  if (typeof input.configuredMemfs === 'boolean') {
     return { value: input.configuredMemfs, source: 'config' };
   }
 
