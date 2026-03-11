@@ -90,9 +90,9 @@
 
   <div class="auth" id="auth">
     <label for="key">API Key</label>
-    <input type="password" id="key" placeholder="Paste your LETTABOT_API_KEY" autocomplete="off" onkeydown="if(event.key==='Enter')login()">
+    <input type="password" id="key" placeholder="Paste your LETTABOT_API_KEY" autocomplete="off">
     <div class="auth-help">Find your API key at <a href="https://app.letta.com/projects/default-project/api-keys" target="_blank" rel="noopener noreferrer">app.letta.com/projects/default-project/api-keys</a>.</div>
-    <button onclick="login()">Connect</button>
+    <button id="login-btn">Connect</button>
   </div>
 
   <div id="app" class="hidden">
@@ -297,6 +297,8 @@ function timeAgo(iso) {
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+document.getElementById('login-btn').addEventListener('click', login);
+document.getElementById('key').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 if (apiKey) init();
 </script>
 </body>
