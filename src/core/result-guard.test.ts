@@ -255,7 +255,7 @@ describe('result divergence guard', () => {
     expect(sentTexts).toEqual(['Before tool. ', 'After tool.']);
   });
 
-  it('buffers pre-foreground run-scoped display events and drops non-foreground buffers', async () => {
+  it('flushes all pre-foreground buffered events when foreground is locked', async () => {
     const bot = new LettaBot({
       workingDir: workDir,
       allowedTools: [],
@@ -276,11 +276,14 @@ describe('result divergence guard', () => {
       sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
     };
 
+    // Pre-foreground events from a different run (e.g. tool-calling phase)
+    // should be flushed when the foreground is locked. Background Tasks use
+    // separate sessions and don't produce events here.
     (bot as any).sessionManager.runSession = vi.fn(async () => ({
       session: { abort: vi.fn(async () => {}) },
       stream: async function* () {
-        yield { type: 'reasoning', content: 'background-thinking', runId: 'run-bg' };
-        yield { type: 'tool_call', toolCallId: 'tc-bg', toolName: 'Bash', toolInput: { command: 'echo leak' }, runId: 'run-bg' };
+        yield { type: 'reasoning', content: 'pre-tool thinking', runId: 'run-tool' };
+        yield { type: 'tool_call', toolCallId: 'tc-1', toolName: 'Bash', toolInput: { command: 'echo hi' }, runId: 'run-tool' };
         yield { type: 'assistant', content: 'main reply', runId: 'run-main' };
         yield { type: 'result', success: true, result: 'main reply', runIds: ['run-main'] };
       },
@@ -297,7 +300,9 @@ describe('result divergence guard', () => {
     await (bot as any).processMessage(msg, adapter);
 
     const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
-    expect(sentTexts).toEqual(['main reply']);
+    // Pre-foreground reasoning + tool call display + main reply
+    expect(sentTexts.length).toBe(3);
+    expect(sentTexts[2]).toBe('main reply');
   });
 
   it('retries once when a competing result arrives before any foreground terminal result', async () => {

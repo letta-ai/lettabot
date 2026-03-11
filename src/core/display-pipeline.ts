@@ -180,9 +180,13 @@ export async function* createDisplayPipeline(
   let filteredCount = 0;
 
   // ── Helpers ──
-  function* flushBuffered(targetRunId: string): Generator<DisplayEvent> {
+  function* flushBuffered(): Generator<DisplayEvent> {
+    // Flush ALL buffered events regardless of run ID.
+    // Pre-foreground events are always from the current session's turn --
+    // background Tasks use separate sessions and don't leak events here.
+    // The server often assigns different run IDs for the tool-calling
+    // phase vs the continuation (response) phase of the same turn.
     for (const evt of buffered) {
-      if (evt.runId !== targetRunId) continue;
       if (evt.kind === 'reasoning') {
         yield { type: 'reasoning', content: evt.content };
       } else {
@@ -221,6 +225,8 @@ export async function* createDisplayPipeline(
     // Skip stream_event (low-level deltas, not semantic)
     if (msg.type === 'stream_event') continue;
 
+    log.trace(`raw: type=${msg.type} runIds=${eventRunIds.join(',') || 'none'} fg=${foregroundRunId || 'unlocked'}`);
+
     // ── Run ID filtering ──
     if (foregroundRunId === null && eventRunIds.length > 0) {
       // Lock to foreground on the first assistant or result event.
@@ -229,7 +235,7 @@ export async function* createDisplayPipeline(
         foregroundSource = msg.type === 'assistant' ? 'assistant' : 'result';
         log.info(`Foreground run locked: ${foregroundRunId} (source=${foregroundSource})`);
         if (!bufferedFlushed && buffered.length > 0) {
-          yield* flushBuffered(foregroundRunId);
+          yield* flushBuffered();
         }
       } else if (msg.type === 'reasoning' || msg.type === 'tool_call') {
         // Buffer pre-foreground display events
@@ -262,7 +268,7 @@ export async function* createDisplayPipeline(
         foregroundSource = 'assistant';
         // Flush any buffered events for the new run
         if (buffered.length > 0) {
-          yield* flushBuffered(newRunId);
+          yield* flushBuffered();
         }
       } else {
         filteredCount++;
