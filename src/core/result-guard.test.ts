@@ -39,10 +39,11 @@ describe('result divergence guard', () => {
     (bot as any).sessionManager.runSession = vi.fn(async () => ({
       session: { abort: vi.fn(async () => {}) },
       stream: async function* () {
-        // Assistant text is flushed when tool_call arrives.
+        // Assistant text is NOT flushed when tool_call arrives -- mid-turn
+        // assistant content (model scratch notes) must not leak to the user.
+        // Instead, text accumulates and delivers after the turn ends.
         yield { type: 'assistant', content: 'first segment' };
         yield { type: 'tool_call', toolCallId: 'tc-1', toolName: 'Bash', toolInput: { command: 'echo hi' } };
-        // Result repeats the same text; this must not cause a duplicate send.
         yield { type: 'result', success: true, result: 'first segment' };
       },
     }));
@@ -61,7 +62,7 @@ describe('result divergence guard', () => {
     expect(sentTexts).toEqual(['first segment']);
   });
 
-  it('prefers streamed assistant text when result text diverges after flush', async () => {
+  it('does not leak mid-turn assistant text on tool_call boundary', async () => {
     const bot = new LettaBot({
       workingDir: workDir,
       allowedTools: [],
@@ -84,10 +85,12 @@ describe('result divergence guard', () => {
     (bot as any).sessionManager.runSession = vi.fn(async () => ({
       session: { abort: vi.fn(async () => {}) },
       stream: async function* () {
-        yield { type: 'assistant', content: 'streamed-segment' };
+        // Model emits scratch text between tool calls -- must not leak.
+        yield { type: 'assistant', content: 'Need to check something. ' };
         yield { type: 'tool_call', toolCallId: 'tc-1', toolName: 'Bash', toolInput: { command: 'echo hi' } };
-        // Divergent stale result should not replace or resend streamed content.
-        yield { type: 'result', success: true, result: 'stale-result-segment' };
+        yield { type: 'tool_result', toolCallId: 'tc-1', content: 'hi', isError: false };
+        yield { type: 'assistant', content: 'The answer is hi.' };
+        yield { type: 'result', success: true, result: 'The answer is hi.' };
       },
     }));
 
@@ -102,7 +105,53 @@ describe('result divergence guard', () => {
     await (bot as any).processMessage(msg, adapter);
 
     const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
-    expect(sentTexts).toEqual(['streamed-segment']);
+    // Only the final assistant message should be delivered, not the mid-turn scratch.
+    expect(sentTexts).toEqual(['The answer is hi.']);
+  });
+
+  it('discards pre-tool assistant text and falls back to result when no post-tool response', async () => {
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
+      session: { abort: vi.fn(async () => {}) },
+      stream: async function* () {
+        yield { type: 'assistant', content: 'scratch notes' };
+        yield { type: 'tool_call', toolCallId: 'tc-1', toolName: 'Bash', toolInput: { command: 'echo hi' } };
+        // No post-tool assistant text; result provides the actual response.
+        yield { type: 'result', success: true, result: 'final answer' };
+      },
+    }));
+
+    const msg: InboundMessage = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
+    // Pre-tool text is discarded; result text is used as fallback.
+    expect(sentTexts).toEqual(['final answer']);
   });
 
   it('stops after repeated failing lettabot CLI bash calls', async () => {
@@ -251,8 +300,9 @@ describe('result divergence guard', () => {
     await (bot as any).processMessage(msg, adapter);
 
     const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
-    // Pre-tool and post-tool text are separate messages (finalized on type change)
-    expect(sentTexts).toEqual(['Before tool. ', 'After tool.']);
+    // Pre-tool text is discarded (mid-turn scratch notes must not leak).
+    // Only post-tool assistant text is delivered.
+    expect(sentTexts).toEqual(['After tool.']);
   });
 
   it('buffers pre-foreground run-scoped display events and drops non-foreground buffers', async () => {
