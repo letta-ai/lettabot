@@ -2005,7 +2005,9 @@ export class LettaBot implements AgentSession {
                 apiError: (msg as any).apiError,
               };
             }
-            if (msg.type === 'assistant') {
+            if (msg.type === 'reasoning') {
+              // Skip reasoning -- internal thinking should not leak into delivery
+            } else if (msg.type === 'assistant') {
               response += msg.content || '';
             }
             if (msg.type === 'result') {
