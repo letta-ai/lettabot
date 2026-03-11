@@ -5,13 +5,13 @@
  */
 
 import { imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
-import { randomUUID } from 'node:crypto';
-import { mkdirSync, existsSync } from 'node:fs';
-import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
+import { mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { access, unlink, realpath, stat, constants, appendFile, readFile, writeFile, rename } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
-import { extname, resolve, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { extname, resolve, join, dirname } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
-import type { BotConfig, InboundMessage, TriggerContext, StreamMsg, MessageHookContext, MessageHooksConfig, ToolCallHookContext, ToolResultHookContext } from './types.js';
+import type { BotConfig, InboundMessage, TriggerContext, TriggerType, StreamMsg, MessageHookContext, MessageHooksConfig, ToolCallHookContext, ToolResultHookContext } from './types.js';
 import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError, formatApiErrorForUser } from './errors.js';
 import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
@@ -216,6 +216,151 @@ export function resolveHeartbeatConversationKey(
   return 'shared';
 }
 
+// ---------------------------------------------------------------------------
+// Turn logger - writes one JSONL record per agent turn
+// ---------------------------------------------------------------------------
+
+type TurnEvent =
+  | { type: 'reasoning'; content: string }
+  | { type: 'tool_call'; id: string; name: string; args: unknown }
+  | { type: 'tool_result'; id: string; content: string; isError: boolean };
+
+interface TurnRecord {
+  ts: string;
+  turnId: string;
+  trigger: TriggerType;
+  channel?: string;
+  chatId?: string;
+  userId?: string;
+  input: string;
+  events: TurnEvent[];
+  output: string;
+  durationMs?: number;
+}
+
+const DEFAULT_MAX_TURNS = 1000;
+const MAX_TOOL_RESULT_BYTES = 4 * 1024;
+
+/** Extract tool arguments from a stream message, normalising SDK field name differences. */
+function extractToolArgs(msg: StreamMsg): unknown {
+  return (msg as any).toolInput ?? (msg as any).rawArguments ?? null;
+}
+
+/**
+ * Accumulates turn events (reasoning, tool_call, tool_result) and assistant output
+ * for one agent turn. Feed each stream message via feed(); call finalize() at turn end.
+ */
+class TurnAccumulator {
+  private _events: TurnEvent[] = [];
+  private _reasoningAcc = '';
+  private _output = '';
+  private _lastType: string | null = null;
+
+  feed(msg: StreamMsg): void {
+    const isSemanticType = msg.type !== 'stream_event';
+    // Flush reasoning buffer on transition away from reasoning
+    if (isSemanticType && this._lastType === 'reasoning' && msg.type !== 'reasoning' && this._reasoningAcc.trim()) {
+      this._events.push({ type: 'reasoning', content: this._reasoningAcc.trim() });
+      this._reasoningAcc = '';
+    }
+    switch (msg.type) {
+      case 'reasoning':
+        this._reasoningAcc += msg.content || '';
+        break;
+      case 'tool_call':
+        this._events.push({
+          type: 'tool_call',
+          id: msg.toolCallId || '',
+          name: msg.toolName || 'unknown',
+          args: extractToolArgs(msg),
+        });
+        break;
+      case 'tool_result': {
+        const raw = (msg as any).content ?? '';
+        const str = typeof raw === 'string' ? raw : JSON.stringify(raw);
+        this._events.push({
+          type: 'tool_result',
+          id: msg.toolCallId || '',
+          content: str.length > MAX_TOOL_RESULT_BYTES
+            ? str.slice(0, MAX_TOOL_RESULT_BYTES) + '…[truncated]'
+            : str,
+          isError: !!msg.isError,
+        });
+        break;
+      }
+      case 'assistant':
+        this._output += msg.content || '';
+        break;
+    }
+    if (isSemanticType) this._lastType = msg.type;
+  }
+
+  /** Flush any trailing reasoning and return the accumulated events and output text. */
+  finalize(): { events: TurnEvent[]; output: string } {
+    if (this._reasoningAcc.trim()) {
+      this._events.push({ type: 'reasoning', content: this._reasoningAcc.trim() });
+      this._reasoningAcc = '';
+    }
+    return { events: this._events, output: this._output };
+  }
+}
+
+class TurnLogger {
+  private filePath: string;
+  private maxTurns: number;
+  private ready = false;
+  private lineCount = 0;
+
+  constructor(filePath: string, maxTurns = DEFAULT_MAX_TURNS) {
+    this.filePath = filePath;
+    if (!Number.isInteger(maxTurns) || maxTurns <= 0) {
+      throw new Error(`TurnLogger: maxTurns must be a positive integer (got ${maxTurns})`);
+    }
+    this.maxTurns = maxTurns;
+    try {
+      mkdirSync(dirname(filePath), { recursive: true });
+      this.ready = true;
+      // Count existing lines so the in-memory counter starts accurate
+      try {
+        const existing = readFileSync(filePath, 'utf8');
+        this.lineCount = existing.split('\n').filter(l => l.trim()).length;
+      } catch {
+        this.lineCount = 0; // file doesn't exist yet
+      }
+    } catch (err) {
+      log.warn(`TurnLogger: failed to create log directory for ${filePath}:`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  async write(record: TurnRecord): Promise<void> {
+    if (!this.ready) return;
+    try {
+      await appendFile(this.filePath, JSON.stringify(record) + '\n');
+      this.lineCount++;
+      if (this.lineCount > this.maxTurns) {
+        await this.trim();
+      }
+    } catch (err) {
+      log.warn(`TurnLogger: failed to write turn record:`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  private async trim(): Promise<void> {
+    try {
+      const content = await readFile(this.filePath, 'utf8');
+      const lines = content.split('\n').filter(l => l.trim());
+      // Remove oldest entries (from the top), keep the most recent maxTurns
+      const trimmed = lines.slice(lines.length - this.maxTurns).join('\n') + '\n';
+      const tmp = this.filePath + '.tmp';
+      await writeFile(tmp, trimmed);
+      await rename(tmp, this.filePath);
+      this.lineCount = this.maxTurns;
+    } catch (err) {
+      log.warn(`TurnLogger: failed to trim turn log:`, err instanceof Error ? err.message : err);
+    }
+  }
+}
+
 export class LettaBot implements AgentSession {
   readonly store: Store;
   private config: BotConfig;
@@ -247,12 +392,15 @@ export class LettaBot implements AgentSession {
   private readonly sessionManager: SessionManager;
   private hooksConfig?: MessageHooksConfig;
   private hookRunner?: MessageHookRunner;
-
+  private readonly turnLogger: TurnLogger | null;
 
   constructor(config: BotConfig) {
     this.config = config;
     mkdirSync(config.workingDir, { recursive: true });
     this.store = new Store('lettabot-agent.json', config.agentName);
+    this.turnLogger = config.logging?.turnLogFile
+      ? new TurnLogger(config.logging.turnLogFile, config.logging.maxTurns)
+      : null;
     if (config.reuseSession === false) {
       log.warn('Session reuse disabled (conversations.reuseSession=false): each foreground/background message uses a fresh SDK subprocess (~5s overhead per turn).');
     }
@@ -1250,6 +1398,9 @@ export class LettaBot implements AgentSession {
     let turnCostUsd: number | undefined;
     let turnUsage: MessageHookContext['usage'] | undefined;
     let reasoningStepIndex = 0;
+    // Turn accumulator for JSONL logging
+    const acc = new TurnAccumulator();
+    let turnWritten = false;
 
     // Run session
     const convKey = this.resolveConversationKey(msg.channel, msg.chatId, msg.forcePerChat);
@@ -1529,6 +1680,8 @@ export class LettaBot implements AgentSession {
           // prematurely flush reasoning buffers or finalize assistant messages.
           const isSemanticType = streamMsg.type !== 'stream_event';
 
+          if (this.turnLogger) acc.feed(streamMsg);
+
           // Finalize on type change (avoid double-handling when result provides full response)
           if (isSemanticType && lastMsgType && lastMsgType !== streamMsg.type && response.trim() && streamMsg.type !== 'result') {
             await finalizeMessage();
@@ -1557,7 +1710,7 @@ export class LettaBot implements AgentSession {
           }
 
           // (Tool call displays fire immediately in the tool_call handler below.)
-          
+
           // Tool loop detection
           const maxToolCalls = this.config.maxToolCalls ?? 100;
           if (streamMsg.type === 'tool_call' && (msgTypeCounts['tool_call'] || 0) >= maxToolCalls) {
@@ -1662,9 +1815,10 @@ export class LettaBot implements AgentSession {
               reasoningStartTime = performance.timeOrigin + performance.now();
             }
             sawNonAssistantSinceLastUuid = true;
+            const chunk = streamMsg.content || '';
             // Accumulate when needed for display or the postReasoning hook
             if (this.config.display?.showReasoning || this.hooksConfig?.postReasoning) {
-              reasoningBuffer += streamMsg.content || '';
+              reasoningBuffer += chunk;
             }
           } else if (streamMsg.type === 'error') {
             // SDK now surfaces error detail that was previously dropped.
@@ -1971,6 +2125,24 @@ export class LettaBot implements AgentSession {
       }
       lap('stream complete');
 
+      // Write turn JSONL record
+      if (this.turnLogger) {
+        const { events, output } = acc.finalize();
+        await this.turnLogger.write({
+          ts: new Date().toISOString(),
+          turnId,
+          trigger: 'user_message',
+          channel: msg.channel,
+          chatId: msg.chatId,
+          userId: msg.userId,
+          input: formattedText,
+          events,
+          output,
+          durationMs: Math.round(performance.now() - t0),
+        });
+        turnWritten = true;
+      }
+
       // If cancelled, clean up partial state and return early
       if (this.cancelledKeys.has(convKey)) {
         if (messageId) {
@@ -2137,6 +2309,22 @@ export class LettaBot implements AgentSession {
           agent: { ...this.buildHookContextBase(), conversationKey: convKey },
         }).catch(() => {});
       }
+      // Write partial turn on error/cancel paths (if not already written on success path)
+      if (this.turnLogger && !turnWritten) {
+        const { events, output } = acc.finalize();
+        await this.turnLogger.write({
+          ts: new Date().toISOString(),
+          turnId,
+          trigger: 'user_message',
+          channel: msg.channel,
+          chatId: msg.chatId,
+          userId: msg.userId,
+          input: formattedText,
+          events,
+          output,
+          durationMs: Math.round(performance.now() - t0),
+        }).catch(() => {});
+      }
       // When session reuse is disabled, invalidate after every message to
       // eliminate any possibility of stream state bleed between sequential
       // sends. Costs ~5s subprocess init overhead per message.
@@ -2200,7 +2388,7 @@ export class LettaBot implements AgentSession {
     const suppressDelivery = isSilent;
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
-
+    const t0 = performance.now();
     const turnId = randomUUID();
     let hookMessage: SendMessage = text;
     const hookContextBase: Omit<MessageHookContext, 'stage' | 'message'> = {
@@ -2231,6 +2419,9 @@ export class LettaBot implements AgentSession {
       });
       return override ?? currentResponse;
     };
+    // Turn accumulator for JSONL logging
+    const acc = new TurnAccumulator();
+    let turnWritten = false;
 
     const preResult = await this.runPreMessageHook({
       ...hookContextBase,
@@ -2258,6 +2449,8 @@ export class LettaBot implements AgentSession {
           let usedMessageCli = false;
           let lastErrorDetail: StreamErrorDetail | undefined;
           for await (const msg of stream()) {
+            if (this.turnLogger) acc.feed(msg);
+
             if (msg.type === 'tool_call') {
               this.sessionManager.syncTodoToolCall(msg);
               if (isSilent && msg.toolName === 'Bash') {
@@ -2426,6 +2619,20 @@ export class LettaBot implements AgentSession {
             }
           }
           hookResponse = response;
+          // Write turn JSONL record
+          if (this.turnLogger) {
+            const { events, output } = acc.finalize();
+            await this.turnLogger.write({
+              ts: new Date().toISOString(),
+              turnId,
+              trigger: context?.type || 'heartbeat',
+              input: text,
+              events,
+              output,
+              durationMs: Math.round(performance.now() - t0),
+            });
+            turnWritten = true;
+          }
           const finalResponse = await runPostHookOnce(hookResponse);
           return finalResponse;
         } catch (error) {
@@ -2439,6 +2646,19 @@ export class LettaBot implements AgentSession {
     } finally {
       if (!postHookRan) {
         await runPostHookOnce(hookResponse, hookError).catch(() => {});
+      }
+      // Write partial turn on error paths (if not already written on success path)
+      if (this.turnLogger && !turnWritten) {
+        const { events, output } = acc.finalize();
+        await this.turnLogger.write({
+          ts: new Date().toISOString(),
+          turnId,
+          trigger: context?.type || 'heartbeat',
+          input: text,
+          events,
+          output,
+          durationMs: Math.round(performance.now() - t0),
+        }).catch(() => {});
       }
       if (this.config.reuseSession === false) {
         this.sessionManager.invalidateSession(convKey);
@@ -2458,8 +2678,12 @@ export class LettaBot implements AgentSession {
     const suppressDelivery = context?.outputMode === 'silent';
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
-
+    const t0 = performance.now();
     const turnId = randomUUID();
+
+    // Turn accumulator for JSONL logging
+    const acc = new TurnAccumulator();
+
     let hookMessage: SendMessage = text;
     const hookContextBase: Omit<MessageHookContext, 'stage' | 'message'> = {
       turnId,
@@ -2568,6 +2792,7 @@ export class LettaBot implements AgentSession {
             if (typeof msg.totalCostUsd === 'number') turnCostUsd = msg.totalCostUsd;
             turnUsage = extractUsage(msg) ?? turnUsage;
           }
+          if (this.turnLogger) acc.feed(msg);
           yield msg;
         }
         await runPostHookOnce(hookResponse);
@@ -2579,6 +2804,19 @@ export class LettaBot implements AgentSession {
     } finally {
       if (!postHookRan) {
         await runPostHookOnce(hookResponse, hookError).catch(() => {});
+      }
+      // Write JSONL record after stream ends (success or error)
+      if (this.turnLogger) {
+        const { events, output } = acc.finalize();
+        await this.turnLogger.write({
+          ts: new Date().toISOString(),
+          turnId,
+          trigger: context?.type || 'webhook',
+          input: text,
+          events,
+          output,
+          durationMs: Math.round(performance.now() - t0),
+        }).catch(() => {});
       }
       if (this.config.reuseSession === false) {
         this.sessionManager.invalidateSession(convKey);

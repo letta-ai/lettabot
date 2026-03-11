@@ -5,6 +5,8 @@
 
 import * as http from 'http';
 import * as fs from 'fs';
+import { readFile } from 'node:fs/promises';
+import * as crypto from 'node:crypto';
 import { validateApiKey } from './auth.js';
 import type { SendMessageResponse, ChatRequest, ChatResponse, AsyncChatResponse, PairingListResponse, PairingApproveRequest, PairingApproveResponse } from './types.js';
 import { listPairingRequests, approvePairingCode } from '../pairing/store.js';
@@ -18,6 +20,7 @@ import {
   buildErrorResponse, buildModelList, validateChatRequest,
 } from './openai-compat.js';
 import type { OpenAIChatRequest } from './openai-compat.js';
+import { getTurnViewerHtml } from '../core/turn-viewer.js';
 
 import { createLogger } from '../logger.js';
 
@@ -38,17 +41,111 @@ type ResolvedChatRequest = {
 interface ServerOptions {
   port: number;
   apiKey: string;
-  host?: string; // Bind address (default: 127.0.0.1 for security)
+  host?: string;       // Bind address (default: 127.0.0.1 for security)
   corsOrigin?: string; // CORS origin (default: same-origin only)
+  turnLogFiles?: Record<string, string>; // agentName -> filePath; enables GET /turns viewer
   stores?: Map<string, Store>; // Agent stores for management endpoints
   agentChannels?: Map<string, string[]>; // Channel IDs per agent name
   sessionInvalidators?: Map<string, (key?: string) => void>; // Invalidate live sessions after store writes
+}
+
+// ── Turn viewer helpers ───────────────────────────────────────────────────
+
+async function readTurns(filePath: string): Promise<unknown[]> {
+  try {
+    const content = await readFile(filePath, 'utf8');
+    return content
+      .split('\n')
+      .filter(l => l.trim())
+      .map(l => { try { return JSON.parse(l); } catch { return null; } })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 /**
  * Create and start the HTTP API server
  */
 export function createApiServer(deliverer: AgentRouter, options: ServerOptions): http.Server {
+  // SSE clients keyed by agent name — scoped to this server instance
+  const sseClientsByAgent = new Map<string, Set<http.ServerResponse>>();
+
+  // Track how many lines have already been broadcast per file for incremental SSE updates.
+  const fileLineCounts = new Map<string, number>();
+
+  // Serialize broadcasts per file to prevent duplicate deliveries when file-change
+  // events fire concurrently (e.g. rapid successive writes or trim+append).
+  const broadcastQueues = new Map<string, Promise<void>>();
+
+  async function broadcastNewTurns(agentName: string, filePath: string): Promise<void> {
+    const clients = sseClientsByAgent.get(agentName);
+    if (!clients || clients.size === 0) return;
+    const allTurns = await readTurns(filePath);
+    const sent = fileLineCounts.get(filePath) ?? 0;
+    // If the file was trimmed, sent > allTurns.length. Reset the counter but don't
+    // re-broadcast — clients already received everything up to the trim boundary.
+    if (allTurns.length <= sent) {
+      fileLineCounts.set(filePath, allTurns.length);
+      return;
+    }
+    const newTurns = allTurns.slice(sent);
+    fileLineCounts.set(filePath, allTurns.length);
+    const payload = `data: ${JSON.stringify({ type: 'append', turns: newTurns })}\n\n`;
+    for (const res of clients) {
+      try { res.write(payload); } catch { clients.delete(res); }
+    }
+  }
+
+  function enqueueBroadcast(agentName: string, filePath: string): void {
+    const prev = broadcastQueues.get(filePath) ?? Promise.resolve();
+    const next = prev.then(() => broadcastNewTurns(agentName, filePath)).catch(() => {});
+    broadcastQueues.set(filePath, next);
+  }
+
+  // Watch each agent's turn log file and push updates to SSE clients.
+  // Watching is started on first SSE connection and stopped when the last client disconnects.
+  // If the file doesn't exist yet (no turns written), watching is retried on each
+  // subsequent SSE connection.
+  const watchers = new Map<string, fs.FSWatcher>();
+
+  function ensureWatching(agentName: string, filePath: string): void {
+    if (watchers.has(filePath)) return;
+    let watcher: fs.FSWatcher;
+    try {
+      watcher = fs.watch(filePath, { persistent: false }, () => {
+        enqueueBroadcast(agentName, filePath);
+      });
+    } catch {
+      // File doesn't exist yet (no turns written). Schedule a single retry so that
+      // clients who connected before the first message still receive live updates.
+      setTimeout(() => {
+        const clients = sseClientsByAgent.get(agentName);
+        if (clients && clients.size > 0) ensureWatching(agentName, filePath);
+      }, 2000);
+      return;
+    }
+    watcher.on('error', () => {
+      watcher.close();
+      watchers.delete(filePath);
+    });
+    watchers.set(filePath, watcher);
+  }
+
+  function maybeUnwatch(filePath: string, clients: Set<http.ServerResponse>): void {
+    if (clients.size === 0 && watchers.has(filePath)) {
+      watchers.get(filePath)!.close();
+      watchers.delete(filePath);
+      fileLineCounts.delete(filePath);
+      broadcastQueues.delete(filePath);
+    }
+  }
+
+  if (options.turnLogFiles) {
+    for (const agentName of Object.keys(options.turnLogFiles)) {
+      sseClientsByAgent.set(agentName, new Set());
+    }
+  }
   const server = http.createServer(async (req, res) => {
     // Set CORS headers (configurable origin, defaults to same-origin for security)
     const corsOrigin = options.corsOrigin || req.headers.origin || 'null';
@@ -68,6 +165,63 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('ok');
       return;
+    }
+
+    // Turn viewer routes
+    if (options.turnLogFiles && req.method === 'GET') {
+      const agentNames = Object.keys(options.turnLogFiles);
+      const parsedUrl = new URL(req.url ?? '/', `http://localhost`);
+
+      // Authenticate turn viewer routes; /turns (the HTML page) is exempt so the
+      // browser can load it and present a login prompt. Data/stream endpoints validate
+      // via X-Api-Key/Authorization header OR a ?key= query parameter (needed for
+      // EventSource which cannot set custom headers).
+      const validateTurnAuth = (): boolean => {
+        if (validateApiKey(req.headers, options.apiKey)) return true;
+        const qKey = parsedUrl.searchParams.get('key') || '';
+        if (!qKey) return false;
+        const a = Buffer.from(qKey);
+        const b = Buffer.from(options.apiKey);
+        return a.length === b.length && crypto.timingSafeEqual(a, b);
+      };
+
+      if (parsedUrl.pathname === '/turns') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(getTurnViewerHtml(agentNames));
+        return;
+      }
+      if (parsedUrl.pathname === '/turns/data') {
+        if (!validateTurnAuth()) { sendError(res, 401, 'Unauthorized'); return; }
+        const agentName = parsedUrl.searchParams.get('agent') || agentNames[0];
+        const filePath = options.turnLogFiles[agentName];
+        if (!filePath) { res.writeHead(404); res.end('Unknown agent'); return; }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(await readTurns(filePath)));
+        return;
+      }
+      if (parsedUrl.pathname === '/turns/stream') {
+        if (!validateTurnAuth()) { sendError(res, 401, 'Unauthorized'); return; }
+        const agentName = parsedUrl.searchParams.get('agent') || agentNames[0];
+        const filePath = options.turnLogFiles[agentName];
+        if (!filePath) { res.writeHead(404); res.end('Unknown agent'); return; }
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-store',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+        const allTurns = await readTurns(filePath);
+        fileLineCounts.set(filePath, allTurns.length);
+        res.write(`data: ${JSON.stringify({ type: 'init', turns: allTurns })}\n\n`);
+        const clients = sseClientsByAgent.get(agentName)!;
+        clients.add(res);
+        ensureWatching(agentName, filePath);
+        req.on('close', () => {
+          clients.delete(res);
+          maybeUnwatch(filePath, clients);
+        });
+        return;
+      }
     }
 
     // Route: POST /api/v1/messages (unified: supports both text and files)

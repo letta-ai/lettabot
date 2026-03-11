@@ -16,7 +16,7 @@
     "setup": "tsx src/setup.ts",
     "dev": "tsx src/main.ts",
     "build": "tsc",
-    "postbuild": "cp -r src/looms/*.txt dist/looms/ && cp src/api/portal.html dist/api/portal.html && node scripts/fix-bin-permissions.mjs",
+    "postbuild": "cp -r src/looms/*.txt dist/looms/ && cp src/core/turn-viewer.html dist/core/ && cp src/api/portal.html dist/api/ && node scripts/fix-bin-permissions.mjs",
     "prepare": "npx patch-package || true",
     "prepublishOnly": "npm run build && npm run test:run",
     "start": "node dist/main.js",
