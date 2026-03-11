@@ -133,6 +133,36 @@ describe('SDK session contract', () => {
     expect(mockSession.stream).toHaveBeenCalledTimes(2);
   });
 
+  it('does not include reasoning chunks in sendToAgent responses', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'reasoning', content: 'internal-thought-1' };
+          yield { type: 'assistant', content: 'public-response' };
+          yield { type: 'reasoning', content: 'internal-thought-2' };
+          yield { type: 'assistant', content: ' continues' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    const response = await bot.sendToAgent('test message');
+
+    expect(response).toBe('public-response continues');
+  });
+
   it('accumulates tool_call arguments when continuation chunks omit toolCallId', async () => {
     const mockSession = {
       initialize: vi.fn(async () => undefined),
