@@ -189,9 +189,12 @@ export async function* createDisplayPipeline(
     log.trace(`raw: type=${msg.type} runIds=${eventRunIds.join(',') || 'none'} fg=${foregroundRunId || 'unlocked'}`);
 
     // ── Run ID filtering ──
-    // Lock types: events that prove this run is the foreground turn.
+    // Lock types: substantive events that prove this run is the foreground turn.
     // Error/retry are excluded -- they're transient signals that could come
-    // from a failed run before the real foreground run starts.
+    // from a failed run before the real foreground starts. They pass through
+    // to the consumer without locking. This is safe because background Tasks
+    // use separate sessions and cannot produce events here; any pre-foreground
+    // error is from the same turn's failed attempt, not a different agent.
     const isLockType = msg.type === 'reasoning' || msg.type === 'tool_call'
       || msg.type === 'tool_result' || msg.type === 'assistant' || msg.type === 'result';
 
@@ -220,14 +223,13 @@ export async function* createDisplayPipeline(
     }
 
     // ── Type transitions ──
-    const isSemanticType = msg.type !== 'stream_event';
-    if (isSemanticType && lastSemanticType && lastSemanticType !== msg.type) {
-      // Flush reasoning on transition away from reasoning
+    // (stream_event is already `continue`d above, so all events here are semantic.)
+    if (lastSemanticType && lastSemanticType !== msg.type) {
       if (lastSemanticType === 'reasoning') {
         yield* flushReasoning();
       }
     }
-    if (isSemanticType) lastSemanticType = msg.type;
+    lastSemanticType = msg.type;
 
     // ── Dispatch by type ──
     switch (msg.type) {
@@ -265,12 +267,6 @@ export async function* createDisplayPipeline(
       case 'assistant': {
         const delta = msg.content || '';
         const uuid = msg.uuid || '';
-
-        // Detect assistant UUID change (multi-turn response boundary)
-        if (uuid && lastAssistantUuid && uuid !== lastAssistantUuid && assistantText.trim()) {
-          // Yield a finalize-like text event with empty delta to signal turn boundary
-          // The consumer can use this to finalize the previous message
-        }
         lastAssistantUuid = uuid || lastAssistantUuid;
 
         assistantText += delta;
@@ -351,7 +347,7 @@ export async function* createDisplayPipeline(
       }
 
       default:
-        // tool_result and other types we don't surface — skip
+        // Unhandled event types — skip
         break;
     }
   }
