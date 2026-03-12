@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SignalAdapter } from './signal.js';
 
-type SignalAdapterWithInternals = SignalAdapter & {
+type SignalAdapterWithInternals = {
   config: {
     readReceipts?: boolean;
   };
