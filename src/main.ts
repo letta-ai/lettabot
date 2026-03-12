@@ -259,6 +259,25 @@ async function main() {
   const isMultiAgent = agents.length > 1;
   log.info(`${agents.length} agent(s) configured: ${agents.map(a => a.name).join(', ')}`);
   
+  // Validate agent names are unique
+  const agentNames = agents.map(a => a.name);
+  const duplicateAgentName = agentNames.find((n, i) => agentNames.indexOf(n) !== i);
+  if (duplicateAgentName) {
+    log.error(`Multiple agents share the same name: "${duplicateAgentName}". Each agent must have a unique name.`);
+    process.exit(1);
+  }
+
+  // Validate no two agents share the same turnLogFile
+  const turnLogFilePaths = agents
+    .map(a => (a.features?.logging ?? yamlConfig.features?.logging)?.turnLogFile)
+    .filter((p): p is string => !!p)
+    .map(p => resolve(p));
+  const duplicateTurnLog = turnLogFilePaths.find((p, i) => turnLogFilePaths.indexOf(p) !== i);
+  if (duplicateTurnLog) {
+    log.error(`Multiple agents share the same turnLogFile: "${duplicateTurnLog}". Each agent must use a unique log file path.`);
+    process.exit(1);
+  }
+
   // Validate at least one agent has channels
   const totalChannels = agents.reduce((sum, a) => sum + Object.keys(a.channels).length, 0);
   if (totalChannels === 0) {
@@ -351,6 +370,7 @@ async function main() {
       maxSessions: agentConfig.conversations?.maxSessions,
       reuseSession: agentConfig.conversations?.reuseSession,
       redaction: agentConfig.security?.redaction,
+      logging: agentConfig.features?.logging ?? yamlConfig.features?.logging,
       cronStorePath,
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
@@ -530,11 +550,17 @@ async function main() {
   const apiPort = parseInt(process.env.PORT || '8080', 10);
   const apiHost = process.env.API_HOST || (isContainerDeploy ? '0.0.0.0' : undefined); // Container platforms need 0.0.0.0 for health checks
   const apiCorsOrigin = process.env.API_CORS_ORIGIN; // undefined = same-origin only
+  const turnLogFiles: Record<string, string> = {};
+  for (const a of agents) {
+    const logging = a.features?.logging ?? yamlConfig.features?.logging;
+    if (logging?.turnLogFile) turnLogFiles[a.name] = logging.turnLogFile;
+  }
   const apiServer = createApiServer(gateway, {
     port: apiPort,
     apiKey: apiKey,
     host: apiHost,
     corsOrigin: apiCorsOrigin,
+    turnLogFiles: Object.keys(turnLogFiles).length > 0 ? turnLogFiles : undefined,
     stores: agentStores,
     agentChannels: agentChannelMap,
     sessionInvalidators,

@@ -10,7 +10,7 @@ import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { extname, resolve, join } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
-import type { BotConfig, InboundMessage, TriggerContext, StreamMsg } from './types.js';
+import type { BotConfig, InboundMessage, TriggerContext, TriggerType, StreamMsg } from './types.js';
 import { formatApiErrorForUser } from './errors.js';
 import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
@@ -24,6 +24,7 @@ import { parseDirectives, stripActionsBlock, type Directive } from './directives
 import { resolveEmoji } from './emoji.js';
 import { SessionManager } from './session-manager.js';
 import { createDisplayPipeline, type DisplayEvent, type CompleteEvent, type ErrorEvent } from './display-pipeline.js';
+import { TurnLogger, TurnAccumulator, generateTurnId, type TurnRecord } from './turn-logger.js';
 
 
 import { createLogger } from '../logger.js';
@@ -233,11 +234,15 @@ export class LettaBot implements AgentSession {
 
   private conversationOverrides: Set<string> = new Set();
   private readonly sessionManager: SessionManager;
+  private readonly turnLogger: TurnLogger | null;
 
   constructor(config: BotConfig) {
     this.config = config;
     mkdirSync(config.workingDir, { recursive: true });
     this.store = new Store('lettabot-agent.json', config.agentName);
+    this.turnLogger = config.logging?.turnLogFile
+      ? new TurnLogger(config.logging.turnLogFile, config.logging.maxTurns)
+      : null;
     if (config.reuseSession === false) {
       log.warn('Session reuse disabled (conversations.reuseSession=false): each foreground/background message uses a fresh SDK subprocess (~5s overhead per turn).');
     }
@@ -1172,7 +1177,7 @@ export class LettaBot implements AgentSession {
   private async processMessage(msg: InboundMessage, adapter: ChannelAdapter, retried = false): Promise<void> {
     // Track timing and last target
     const debugTiming = !!process.env.LETTABOT_DEBUG_TIMING;
-    const t0 = debugTiming ? performance.now() : 0;
+    const t0 = performance.now();
     const lap = (label: string) => {
       log.debug(`${label}: ${(performance.now() - t0).toFixed(0)}ms`);
     };
@@ -1278,6 +1283,10 @@ export class LettaBot implements AgentSession {
         adapter.sendTypingIndicator(msg.chatId).catch(() => {});
       }, 4000);
 
+      const turnId = this.turnLogger ? generateTurnId() : '';
+      const turnAcc = this.turnLogger ? new TurnAccumulator() : null;
+      let turnWritten = false;
+
       try {
         let firstChunkLogged = false;
         const pipeline = createDisplayPipeline(run.stream(), {
@@ -1286,6 +1295,7 @@ export class LettaBot implements AgentSession {
         });
 
         for await (const event of pipeline) {
+          turnAcc?.feed(event);
           // Check for /cancel before processing each event
           if (this.cancelledKeys.has(convKey)) {
             log.info(`Stream cancelled by /cancel (key=${convKey})`);
@@ -1627,6 +1637,24 @@ export class LettaBot implements AgentSession {
       } finally {
         clearInterval(typingInterval);
         adapter.stopTypingIndicator?.(msg.chatId)?.catch(() => {});
+        // Write turn record (even partial turns on cancel/error)
+        if (this.turnLogger && turnAcc && !turnWritten) {
+          turnWritten = true;
+          const { events, output } = turnAcc.finalize();
+          this.turnLogger.write({
+            ts: new Date().toISOString(),
+            turnId,
+            trigger: 'user' as const,
+            channel: msg.channel,
+            chatId: msg.chatId,
+            userId: msg.userId,
+            input: typeof messageToSend === 'string' ? messageToSend : '[multimodal]',
+            events,
+            output: output || response,
+            durationMs: Math.round(performance.now() - t0),
+            error: lastErrorDetail?.message,
+          }).catch(() => {});
+        }
       }
       lap('stream complete');
 
@@ -1784,8 +1812,14 @@ export class LettaBot implements AgentSession {
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
     
+    const sendT0 = performance.now();
+    const sendTurnId = this.turnLogger ? generateTurnId() : '';
+    const sendTurnAcc = this.turnLogger ? new TurnAccumulator() : null;
+    let sendTurnWritten = false;
+
     try {
       let retried = false;
+
       while (true) {
         const { stream } = await this.sessionManager.runSession(text, { convKey, retried });
 
@@ -1796,6 +1830,7 @@ export class LettaBot implements AgentSession {
           let usedMessageCli = false;
           let lastErrorDetail: StreamErrorDetail | undefined;
           for await (const msg of stream()) {
+            sendTurnAcc?.feedRaw(msg);
             if (msg.type === 'tool_call') {
               this.sessionManager.syncTodoToolCall(msg);
               if (isSilent && msg.toolName === 'Bash') {
@@ -1930,6 +1965,21 @@ export class LettaBot implements AgentSession {
       if (this.config.reuseSession === false) {
         this.sessionManager.invalidateSession(convKey);
       }
+      // Write turn record
+      if (this.turnLogger && sendTurnAcc && !sendTurnWritten) {
+        sendTurnWritten = true;
+        const { events, output } = sendTurnAcc.finalize();
+        this.turnLogger.write({
+          ts: new Date().toISOString(),
+          turnId: sendTurnId,
+          trigger: context?.type ?? 'heartbeat',
+          channel: context?.sourceChannel,
+          input: text,
+          events,
+          output,
+          durationMs: Math.round(performance.now() - sendT0),
+        }).catch(() => {});
+      }
       this.releaseLock(convKey, acquired);
     }
   }
@@ -1944,19 +1994,41 @@ export class LettaBot implements AgentSession {
   ): AsyncGenerator<StreamMsg> {
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
+    const streamT0 = performance.now();
+    const streamTurnId = this.turnLogger ? generateTurnId() : '';
+    const streamTurnAcc = this.turnLogger ? new TurnAccumulator() : null;
+    let streamTurnError: string | undefined;
 
     try {
       const { stream } = await this.sessionManager.runSession(text, { convKey });
 
       try {
-        yield* stream();
+        for await (const msg of stream()) {
+          streamTurnAcc?.feedRaw(msg);
+          yield msg;
+        }
       } catch (error) {
         this.sessionManager.invalidateSession(convKey);
+        streamTurnError = error instanceof Error ? error.message : String(error);
         throw error;
       }
     } finally {
       if (this.config.reuseSession === false) {
         this.sessionManager.invalidateSession(convKey);
+      }
+      if (this.turnLogger && streamTurnAcc) {
+        const { events, output } = streamTurnAcc.finalize();
+        this.turnLogger.write({
+          ts: new Date().toISOString(),
+          turnId: streamTurnId,
+          trigger: context?.type ?? 'heartbeat',
+          channel: context?.sourceChannel,
+          input: text,
+          events,
+          output,
+          durationMs: Math.round(performance.now() - streamT0),
+          error: streamTurnError,
+        }).catch(() => {});
       }
       this.releaseLock(convKey, acquired);
     }
