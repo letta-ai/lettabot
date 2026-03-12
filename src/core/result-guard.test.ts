@@ -111,6 +111,8 @@ describe('result divergence guard', () => {
       allowedTools: [],
       maxToolCalls: 100,
     });
+    const writeTurn = vi.fn(async () => {});
+    (bot as any).turnLogger = { write: writeTurn };
 
     const abort = vi.fn(async () => {});
     const adapter = {
@@ -152,6 +154,10 @@ describe('result divergence guard', () => {
     expect(abort).toHaveBeenCalled();
     const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text as string);
     expect(sentTexts.some(text => text.includes('repeated CLI command failures'))).toBe(true);
+    expect(writeTurn).toHaveBeenCalledTimes(1);
+    expect(writeTurn).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'repeated Bash failure abort (3x): lettabot bluesky post --text "hi" --agent Bot',
+    }));
   });
 
   it('stops consuming stream and avoids retry after explicit tool-loop abort', async () => {
@@ -160,6 +166,8 @@ describe('result divergence guard', () => {
       allowedTools: [],
       maxToolCalls: 1,
     });
+    const writeTurn = vi.fn(async () => {});
+    (bot as any).turnLogger = { write: writeTurn };
 
     const adapter = {
       id: 'mock',
@@ -207,6 +215,10 @@ describe('result divergence guard', () => {
     expect(runSession).toHaveBeenCalledTimes(1);
     const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
     expect(sentTexts).toEqual(['(Agent got stuck in a tool loop and was stopped. Try sending your message again.)']);
+    expect(writeTurn).toHaveBeenCalledTimes(1);
+    expect(writeTurn).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'tool loop abort after 1 tool calls',
+    }));
   });
 
   it('does not deliver reasoning text from error results as the response', async () => {

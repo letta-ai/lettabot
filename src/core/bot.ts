@@ -1222,6 +1222,7 @@ export class LettaBot implements AgentSession {
       const maxRepeatedBashFailures = 3;
       let lastEventType: string | null = null;
       let abortedWithMessage = false;
+      let turnError: string | undefined;
 
       const parseAndHandleDirectives = async () => {
         if (!response.trim()) return;
@@ -1346,6 +1347,7 @@ export class LettaBot implements AgentSession {
                 log.error(`Agent stuck in tool loop (${msgTypeCounts['tool_call']} calls), aborting`);
                 session?.abort().catch(() => {});
                 response = '(Agent got stuck in a tool loop and was stopped. Try sending your message again.)';
+                turnError = `tool loop abort after ${msgTypeCounts['tool_call'] || 0} tool calls`;
                 abortedWithMessage = true;
                 break;
               }
@@ -1402,6 +1404,7 @@ export class LettaBot implements AgentSession {
                   log.error(`Stopping run after repeated Bash command failures (${repeatedBashFailureCount}) for: ${bashCommand}`);
                   session?.abort().catch(() => {});
                   response = `(I stopped after repeated CLI command failures while running: ${bashCommand}. The command path appears mismatched. Please confirm Bluesky CLI commands are available, then resend your request.)`;
+                  turnError = `repeated Bash failure abort (${repeatedBashFailureCount}x): ${bashCommand}`;
                   abortedWithMessage = true;
                   break;
                 }
@@ -1652,7 +1655,7 @@ export class LettaBot implements AgentSession {
             events,
             output: output || response,
             durationMs: Math.round(performance.now() - t0),
-            error: lastErrorDetail?.message,
+            error: turnError ?? lastErrorDetail?.message,
           }).catch(() => {});
         }
       }
