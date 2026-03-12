@@ -566,6 +566,16 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           sendError(res, 400, `Agent "${agentName}" uses ${mode} conversation mode — a key is required (e.g. "discord", "heartbeat")`);
           return;
         }
+        // Reject 'shared' key in per-key modes (per-channel, per-chat, disabled)
+        if (key === 'shared' && (mode === 'per-channel' || mode === 'per-chat' || mode === 'disabled')) {
+          const expectedFormat = mode === 'per-channel'
+            ? 'channel ID (e.g. "telegram", "discord")'
+            : mode === 'per-chat'
+            ? 'chat-specific key (e.g. "telegram:123456")'
+            : 'explicit key (shared mode is disabled)';
+          sendError(res, 400, `Agent "${agentName}" uses ${mode} conversation mode — key "shared" is not allowed. Expected: ${expectedFormat}`);
+          return;
+        }
         if (key === 'shared') {
           store.conversationId = request.conversationId;
         } else {
