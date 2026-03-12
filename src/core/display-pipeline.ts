@@ -237,7 +237,17 @@ export async function* createDisplayPipeline(
     // ── Dispatch by type ──
     switch (msg.type) {
       case 'reasoning': {
-        reasoningBuffer += msg.content || '';
+        const chunk = msg.content || '';
+        // When a new chunk starts with a markdown block indicator (bold header,
+        // heading, list item), insert a newline to prevent it running into the
+        // previous text. This separates complete reasoning blocks (common with
+        // OpenAI models that emit whole sections) without affecting token-level
+        // streaming where tokens don't start with these patterns.
+        if (chunk && reasoningBuffer && !reasoningBuffer.endsWith('\n')
+          && /^(\*\*|#{1,6}\s|[-*]\s|\d+\.\s)/.test(chunk)) {
+          reasoningBuffer += '\n';
+        }
+        reasoningBuffer += chunk;
         break;
       }
 

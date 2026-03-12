@@ -109,6 +109,68 @@ describe('createDisplayPipeline', () => {
     }
   });
 
+  it('inserts newline before reasoning chunk starting with bold header', async () => {
+    const events = await collect([
+      { type: 'reasoning', content: 'First section ends here.', runId: 'run-1' },
+      { type: 'reasoning', content: '**Second Section**\nMore text.', runId: 'run-1' },
+      { type: 'assistant', content: 'reply', runId: 'run-1' },
+      { type: 'result', success: true, result: 'reply', runIds: ['run-1'] },
+    ]);
+
+    const reasoning = events.find(e => e.type === 'reasoning');
+    expect(reasoning).toBeDefined();
+    if (reasoning?.type === 'reasoning') {
+      expect(reasoning.content).toBe('First section ends here.\n**Second Section**\nMore text.');
+    }
+  });
+
+  it('inserts newline before reasoning chunk starting with markdown heading', async () => {
+    const events = await collect([
+      { type: 'reasoning', content: 'End of thought.', runId: 'run-1' },
+      { type: 'reasoning', content: '## Next Topic\nDetails here.', runId: 'run-1' },
+      { type: 'assistant', content: 'reply', runId: 'run-1' },
+      { type: 'result', success: true, result: 'reply', runIds: ['run-1'] },
+    ]);
+
+    const reasoning = events.find(e => e.type === 'reasoning');
+    expect(reasoning).toBeDefined();
+    if (reasoning?.type === 'reasoning') {
+      expect(reasoning.content).toBe('End of thought.\n## Next Topic\nDetails here.');
+    }
+  });
+
+  it('does not insert separator for token-level streaming chunks', async () => {
+    const events = await collect([
+      { type: 'reasoning', content: "I'm", runId: 'run-1' },
+      { type: 'reasoning', content: ' thinking', runId: 'run-1' },
+      { type: 'reasoning', content: ' about this', runId: 'run-1' },
+      { type: 'assistant', content: 'reply', runId: 'run-1' },
+      { type: 'result', success: true, result: 'reply', runIds: ['run-1'] },
+    ]);
+
+    const reasoning = events.find(e => e.type === 'reasoning');
+    expect(reasoning).toBeDefined();
+    if (reasoning?.type === 'reasoning') {
+      expect(reasoning.content).toBe("I'm thinking about this");
+    }
+  });
+
+  it('skips separator when buffer already ends with newline', async () => {
+    const events = await collect([
+      { type: 'reasoning', content: 'First block.\n', runId: 'run-1' },
+      { type: 'reasoning', content: '**Second block**', runId: 'run-1' },
+      { type: 'assistant', content: 'reply', runId: 'run-1' },
+      { type: 'result', success: true, result: 'reply', runIds: ['run-1'] },
+    ]);
+
+    const reasoning = events.find(e => e.type === 'reasoning');
+    expect(reasoning).toBeDefined();
+    if (reasoning?.type === 'reasoning') {
+      // No double newline -- buffer already ended with \n
+      expect(reasoning.content).toBe('First block.\n**Second block**');
+    }
+  });
+
   it('prefers streamed text over result field on divergence', async () => {
     const events = await collect([
       { type: 'assistant', content: 'streamed reply', runId: 'run-1' },
