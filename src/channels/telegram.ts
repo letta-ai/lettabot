@@ -22,6 +22,7 @@ import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { applyTelegramGroupGating } from './telegram-group-gating.js';
 import { resolveDailyLimits, checkDailyLimit, type GroupModeConfig } from './group-mode.js';
+import { HELP_TEXT } from '../core/commands.js';
 
 import { createLogger } from '../logger.js';
 
@@ -250,17 +251,15 @@ export class TelegramAdapter implements ChannelAdapter {
     
     // Handle /start and /help
     this.bot.command(['start', 'help'], async (ctx) => {
-      await ctx.reply(
-        "*LettaBot* - AI assistant with persistent memory\n\n" +
-        "*Commands:*\n" +
-        "/status - Show current status\n" +
-        "/model - Show current model and recommendations\n" +
-        "/reset - Reset conversation\n" +
-        "/cancel - Cancel active run\n" +
-        "/help - Show this message\n\n" +
-        "Just send me a message to get started!",
-        { parse_mode: 'Markdown' }
-      );
+      const replyToMessageId =
+        'message' in ctx && ctx.message
+          ? String(ctx.message.message_id)
+          : undefined;
+      await this.sendMessage({
+        chatId: String(ctx.chat.id),
+        text: HELP_TEXT,
+        replyToMessageId,
+      });
     });
     
     // Handle /status
