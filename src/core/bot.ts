@@ -20,7 +20,13 @@ import { getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/lo
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
 import { redactOutbound } from './redact.js';
-import { parseDirectives, stripActionsBlock, type Directive } from './directives.js';
+import {
+  hasIncompleteActionsTag,
+  hasUnclosedActionsBlock,
+  parseDirectives,
+  stripActionsBlock,
+  type Directive,
+} from './directives.js';
 import { resolveEmoji } from './emoji.js';
 import { SessionManager } from './session-manager.js';
 import { createDisplayPipeline, type DisplayEvent, type CompleteEvent, type ErrorEvent } from './display-pipeline.js';
@@ -1437,8 +1443,8 @@ export class LettaBot implements AgentSession {
               const canEdit = adapter.supportsEditing?.() ?? false;
               const trimmed = response.trim();
               const mayBeHidden = '<no-reply/>'.startsWith(trimmed)
-                || '<actions>'.startsWith(trimmed)
-                || (trimmed.startsWith('<actions') && !trimmed.includes('</actions>'));
+                || hasIncompleteActionsTag(response)
+                || hasUnclosedActionsBlock(response);
               const streamText = stripActionsBlock(response).trim();
               if (canEdit && !mayBeHidden && !suppressDelivery && !this.cancelledKeys.has(convKey)
                 && streamText.length > 0 && Date.now() - lastUpdate > 1500 && Date.now() > rateLimitedUntil) {
