@@ -10,7 +10,7 @@ import type { SkillEntry, ClawdbotMetadata } from './types.js';
 
 // Skills directories (in priority order: project > agent > global > bundled > skills.sh)
 const HOME = process.env.HOME || process.env.USERPROFILE || '';
-export const WORKING_DIR = process.env.WORKING_DIR || '/tmp/lettabot';
+export const WORKING_DIR = getWorkingDir();
 export const PROJECT_SKILLS_DIR = resolve(process.cwd(), '.skills');
 export const WORKING_SKILLS_DIR = join(WORKING_DIR, '.skills'); // skills enabled via CLI
 export const GLOBAL_SKILLS_DIR = join(HOME, '.letta', 'skills');
@@ -20,6 +20,7 @@ export const SKILLS_SH_DIR = join(HOME, '.agents', 'skills'); // skills.sh globa
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import { createLogger } from '../logger.js';
+import { getWorkingDir } from '../utils/paths.js';
 
 const log = createLogger('Skills');
 const __dirname = dirname(fileURLToPath(import.meta.url));
