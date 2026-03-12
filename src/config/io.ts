@@ -379,6 +379,10 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   }
   if (config.channels.signal?.phone) {
     env.SIGNAL_PHONE_NUMBER = config.channels.signal.phone;
+    // Signal readReceipts defaults to true, so only set env if explicitly false
+    if (config.channels.signal.readReceipts === false) {
+      env.SIGNAL_READ_RECEIPTS = 'false';
+    }
     // Signal selfChat defaults to true, so only set env if explicitly false
     if (config.channels.signal.selfChat === false) {
       env.SIGNAL_SELF_CHAT_MODE = 'false';

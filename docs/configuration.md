@@ -92,6 +92,7 @@ channels:
   signal:
     enabled: true
     phone: "+1234567890"
+    readReceipts: true
     selfChat: true
     dmPolicy: pairing
 
@@ -239,6 +240,7 @@ agents:
     channels:
       signal:
         phone: "+1234567890"
+        readReceipts: true
         selfChat: true
       whatsapp:
         enabled: true
@@ -521,6 +523,7 @@ For dedicated bot numbers (`selfChat: false`), onboarding defaults to **allowlis
 | Option | Type | Description |
 |--------|------|-------------|
 | `phone` | string | Phone number with + prefix |
+| `readReceipts` | boolean | Send read receipts for incoming messages (default: `true`) |
 | `selfChat` | boolean | `true` = only "Note to Self" works |
 
 ## Features Configuration
@@ -1052,6 +1055,7 @@ Reference:
 | `WHATSAPP_ENABLED` | `channels.whatsapp.enabled` |
 | `WHATSAPP_SELF_CHAT_MODE` | `channels.whatsapp.selfChat` |
 | `SIGNAL_PHONE_NUMBER` | `channels.signal.phone` |
+| `SIGNAL_READ_RECEIPTS` | `channels.signal.readReceipts` |
 | `OPENAI_API_KEY` | `transcription.apiKey` |
 | `GMAIL_ACCOUNT` | `polling.gmail.account` (comma-separated list allowed) |
 | `POLLING_INTERVAL_MS` | `polling.intervalMs` |

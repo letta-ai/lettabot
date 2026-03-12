@@ -27,7 +27,7 @@ describe('normalizeAgents', () => {
     'TELEGRAM_BOT_TOKEN', 'TELEGRAM_DM_POLICY', 'TELEGRAM_ALLOWED_USERS',
     'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_DM_POLICY', 'SLACK_ALLOWED_USERS',
     'WHATSAPP_ENABLED', 'WHATSAPP_SELF_CHAT_MODE', 'WHATSAPP_DM_POLICY', 'WHATSAPP_ALLOWED_USERS',
-    'SIGNAL_PHONE_NUMBER', 'SIGNAL_SELF_CHAT_MODE', 'SIGNAL_DM_POLICY', 'SIGNAL_ALLOWED_USERS',
+    'SIGNAL_PHONE_NUMBER', 'SIGNAL_SELF_CHAT_MODE', 'SIGNAL_READ_RECEIPTS', 'SIGNAL_DM_POLICY', 'SIGNAL_ALLOWED_USERS',
     'DISCORD_BOT_TOKEN', 'DISCORD_DM_POLICY', 'DISCORD_ALLOWED_USERS',
     'BLUESKY_WANTED_DIDS', 'BLUESKY_WANTED_COLLECTIONS', 'BLUESKY_JETSTREAM_URL', 'BLUESKY_CURSOR',
     'BLUESKY_HANDLE', 'BLUESKY_APP_PASSWORD', 'BLUESKY_SERVICE_URL', 'BLUESKY_APPVIEW_URL',
@@ -594,7 +594,23 @@ describe('normalizeAgents', () => {
       expect(agents[0].channels.slack?.appToken).toBe('slack-app');
       expect(agents[0].channels.whatsapp?.enabled).toBe(true);
       expect(agents[0].channels.signal?.phone).toBe('+1234567890');
+      expect(agents[0].channels.signal?.readReceipts).toBe(true);
       expect(agents[0].channels.discord?.token).toBe('discord-token');
+    });
+
+    it('should allow disabling Signal read receipts via env var', () => {
+      process.env.SIGNAL_PHONE_NUMBER = '+1234567890';
+      process.env.SIGNAL_READ_RECEIPTS = 'false';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].channels.signal?.readReceipts).toBe(false);
     });
 
     it('should pick up allowedUsers from env vars for all channels', () => {
