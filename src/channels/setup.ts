@@ -97,7 +97,7 @@ async function promptGroupSettings(
 
   const configure = await p.confirm({
     message: 'Configure group chat settings?',
-    initialValue: hasExisting,
+    initialValue: false,
   });
   if (p.isCancel(configure)) {
     p.cancel('Cancelled');

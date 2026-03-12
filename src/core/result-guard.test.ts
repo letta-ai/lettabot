@@ -111,6 +111,8 @@ describe('result divergence guard', () => {
       allowedTools: [],
       maxToolCalls: 100,
     });
+    const writeTurn = vi.fn(async () => {});
+    (bot as any).turnLogger = { write: writeTurn };
 
     const abort = vi.fn(async () => {});
     const adapter = {
@@ -152,6 +154,71 @@ describe('result divergence guard', () => {
     expect(abort).toHaveBeenCalled();
     const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text as string);
     expect(sentTexts.some(text => text.includes('repeated CLI command failures'))).toBe(true);
+    expect(writeTurn).toHaveBeenCalledTimes(1);
+    expect(writeTurn).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'repeated Bash failure abort (3x): lettabot bluesky post --text "hi" --agent Bot',
+    }));
+  });
+
+  it('stops consuming stream and avoids retry after explicit tool-loop abort', async () => {
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+      maxToolCalls: 1,
+    });
+    const writeTurn = vi.fn(async () => {});
+    (bot as any).turnLogger = { write: writeTurn };
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    const runSession = vi.fn();
+    runSession.mockResolvedValueOnce({
+      session: { abort: vi.fn(async () => {}) },
+      stream: async function* () {
+        yield { type: 'tool_call', toolCallId: 'tc-1', toolName: 'Bash', toolInput: { command: 'echo hi' } };
+        // These trailing events should be ignored because the run was already aborted.
+        yield { type: 'assistant', content: 'late assistant text' };
+        yield { type: 'result', success: false, error: 'error', stopReason: 'cancelled', result: '' };
+      },
+    });
+    runSession.mockResolvedValueOnce({
+      session: { abort: vi.fn(async () => {}) },
+      stream: async function* () {
+        yield { type: 'assistant', content: 'retried response' };
+        yield { type: 'result', success: true, result: 'retried response' };
+      },
+    });
+    (bot as any).sessionManager.runSession = runSession;
+
+    const msg: InboundMessage = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    expect(runSession).toHaveBeenCalledTimes(1);
+    const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
+    expect(sentTexts).toEqual(['(Agent got stuck in a tool loop and was stopped. Try sending your message again.)']);
+    expect(writeTurn).toHaveBeenCalledTimes(1);
+    expect(writeTurn).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'tool loop abort after 1 tool calls',
+    }));
   });
 
   it('does not deliver reasoning text from error results as the response', async () => {
@@ -255,7 +322,7 @@ describe('result divergence guard', () => {
     expect(sentTexts).toEqual(['Before tool. ', 'After tool.']);
   });
 
-  it('buffers pre-foreground run-scoped display events and drops non-foreground buffers', async () => {
+  it('locks foreground on first event with run ID and displays immediately', async () => {
     const bot = new LettaBot({
       workingDir: workDir,
       allowedTools: [],
@@ -276,11 +343,14 @@ describe('result divergence guard', () => {
       sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
     };
 
+    // Reasoning and tool_call arrive before any assistant event. The pipeline
+    // locks foreground on the first event with a run ID (the reasoning event)
+    // and processes everything immediately -- no buffering.
     (bot as any).sessionManager.runSession = vi.fn(async () => ({
       session: { abort: vi.fn(async () => {}) },
       stream: async function* () {
-        yield { type: 'reasoning', content: 'background-thinking', runId: 'run-bg' };
-        yield { type: 'tool_call', toolCallId: 'tc-bg', toolName: 'Bash', toolInput: { command: 'echo leak' }, runId: 'run-bg' };
+        yield { type: 'reasoning', content: 'pre-tool thinking', runId: 'run-tool' };
+        yield { type: 'tool_call', toolCallId: 'tc-1', toolName: 'Bash', toolInput: { command: 'echo hi' }, runId: 'run-tool' };
         yield { type: 'assistant', content: 'main reply', runId: 'run-main' };
         yield { type: 'result', success: true, result: 'main reply', runIds: ['run-main'] };
       },
@@ -297,7 +367,9 @@ describe('result divergence guard', () => {
     await (bot as any).processMessage(msg, adapter);
 
     const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text);
-    expect(sentTexts).toEqual(['main reply']);
+    // Reasoning display + tool call display + main reply -- all immediate, no buffering
+    expect(sentTexts.length).toBe(3);
+    expect(sentTexts[2]).toBe('main reply');
   });
 
   it('retries once when a competing result arrives before any foreground terminal result', async () => {

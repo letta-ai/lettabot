@@ -542,6 +542,12 @@ export async function rejectApproval(
       log.warn(`Approval already resolved for tool call ${approval.toolCallId}`);
       return true;
     }
+    // Re-throw rate limit errors so callers can bail out early instead of
+    // hammering the API in a tight loop.
+    if (err?.status === 429) {
+      log.error('Failed to reject approval:', e);
+      throw e;
+    }
     log.error('Failed to reject approval:', e);
     return false;
   }
@@ -895,8 +901,9 @@ export async function recoverOrphanedConversationApproval(
               streaming: false,
             });
           } catch (batchError) {
+            const batchErrMsg = batchError instanceof Error ? batchError.message : String(batchError);
             log.warn(`Failed to submit approval denial batch for run ${runId} (${approvals.length} tool call(s)):`, batchError);
-            details.push(`Failed to deny ${approvals.length} approval(s) from run ${runId}`);
+            details.push(`Failed to deny ${approvals.length} approval(s) from run ${runId}: ${batchErrMsg}`);
             continue;
           }
           

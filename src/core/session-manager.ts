@@ -8,7 +8,7 @@
 
 import { createAgent, createSession, resumeSession, type Session, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
 import type { BotConfig, StreamMsg } from './types.js';
-import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError } from './errors.js';
+import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError, isInvalidToolCallIdsError } from './errors.js';
 import { Store } from './store.js';
 import { updateAgentName, recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { installSkillsToAgent, prependSkillDirsToPath } from '../skills/loader.js';
@@ -19,6 +19,23 @@ import { syncTodosFromTool } from '../todo/store.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Session');
+
+function formatMemfsStartupOption(memfs: boolean | undefined): string {
+  if (memfs === true) return 'enabled (--memfs)';
+  if (memfs === false) return 'disabled (--no-memfs)';
+  return 'unchanged (omitted)';
+}
+
+function formatSleeptimeStartupOption(
+  sleeptime: BotConfig['sleeptime'],
+): string {
+  if (!sleeptime) return 'none';
+  const parts: string[] = [];
+  if (sleeptime.trigger) parts.push(`trigger=${sleeptime.trigger}`);
+  if (sleeptime.behavior) parts.push(`behavior=${sleeptime.behavior}`);
+  if (sleeptime.stepCount !== undefined) parts.push(`stepCount=${sleeptime.stepCount}`);
+  return parts.length > 0 ? parts.join(', ') : 'configured';
+}
 
 function toConcreteConversationId(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -313,6 +330,11 @@ export class SessionManager {
     }
 
     // Initialize eagerly so the subprocess is ready before the first send()
+    log.info(
+      `Session startup options (key=${key}): ` +
+      `memfs=${formatMemfsStartupOption(this.config.memfs)}, ` +
+      `sleeptime=${formatSleeptimeStartupOption(this.config.sleeptime)}`,
+    );
     log.info(`Initializing session subprocess (key=${key})...`);
     try {
       await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
@@ -376,6 +398,18 @@ export class SessionManager {
               log.info(`Proactive approval recovery succeeded: ${result.details}`);
             } else {
               log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
+            }
+            // Even on partial recovery, if any denial failed with mismatched IDs the
+            // conversation may still be stuck. Clear it so the retry creates a fresh one.
+            // TEMP(letta-code-sdk): remove this detail-string fallback once the SDK
+            // exposes typed terminal approval conflicts with built-in recovery policy.
+            if (isInvalidToolCallIdsError(result.details)) {
+              log.warn(`Clearing stuck conversation (key=${key}) due to invalid tool call IDs mismatch`);
+              if (key !== 'shared') {
+                this.store.clearConversation(key);
+              } else {
+                this.store.conversationId = null;
+              }
             }
             return this._createSessionForKey(key, true, generation);
           }
@@ -563,6 +597,19 @@ export class SessionManager {
         const result = isRecoverableConversationId(convId)
           ? await recoverOrphanedConversationApproval(this.store.agentId, convId)
           : await recoverPendingApprovalsForAgent(this.store.agentId);
+        // Even on partial recovery, if any denial failed with mismatched IDs the
+        // conversation may still be stuck. Clear it so the retry creates a fresh one.
+        // TEMP(letta-code-sdk): remove this detail-string fallback once the SDK
+        // exposes typed terminal approval conflicts with built-in recovery policy.
+        if (isInvalidToolCallIdsError(result.details)) {
+          log.warn(`Clearing stuck conversation (key=${convKey}) due to invalid tool call IDs mismatch, retrying with fresh conversation`);
+          if (convKey !== 'shared') {
+            this.store.clearConversation(convKey);
+          } else {
+            this.store.conversationId = null;
+          }
+          return this.runSession(message, { retried: true, canUseTool, convKey });
+        }
         if (result.recovered) {
           log.info(`Recovery succeeded (${result.details}), retrying...`);
           return this.runSession(message, { retried: true, canUseTool, convKey });

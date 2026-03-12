@@ -7,8 +7,10 @@
  * The agent must use `lettabot-message` CLI via Bash to contact the user.
  */
 
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { resolve, dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import type { AgentSession } from '../core/interfaces.js';
 import type { TriggerContext } from '../core/types.js';
 import { buildHeartbeatPrompt, buildCustomHeartbeatPrompt } from '../core/prompts.js';
@@ -49,6 +51,9 @@ export interface HeartbeatConfig {
   workingDir: string;
   agentKey: string;
   
+  // Whether memfs (git-backed memory filesystem) is enabled for this agent
+  memfs?: boolean;
+  
   // Custom heartbeat prompt (optional)
   prompt?: string;
   
@@ -81,6 +86,57 @@ export class HeartbeatService {
       return 5 * 60 * 1000; // default: 5 minutes
     }
     return Math.floor(raw * 60 * 1000);
+  }
+
+  /**
+   * Resolve the memory directory for this agent.
+   * Returns null if memfs is disabled or agent ID is unavailable.
+   */
+  private getMemoryDir(): string | null {
+    if (!this.config.memfs) return null;
+    const agentId = this.bot.getStatus().agentId;
+    if (!agentId) return null;
+    return join(homedir(), '.letta', 'agents', agentId, 'memory');
+  }
+
+  /**
+   * Check if the memfs git repo has untracked or uncommitted files.
+   * Logs a warning if it does. Non-fatal: heartbeat proceeds regardless.
+   */
+  private checkMemfsHealth(): void {
+    const memoryDir = this.getMemoryDir();
+    if (!memoryDir) return;
+
+    if (!existsSync(memoryDir)) {
+      log.debug(`Memory directory does not exist yet: ${memoryDir}`);
+      return;
+    }
+
+    try {
+      const output = execFileSync('git', ['status', '--porcelain'], {
+        cwd: memoryDir,
+        encoding: 'utf-8',
+        timeout: 5000,
+      }).trim();
+
+      if (output) {
+        const lines = output.split('\n');
+        log.warn(
+          `Memory directory has ${lines.length} uncommitted/untracked file(s). ` +
+          `This may cause heartbeat failures. Run "cd ${memoryDir} && git add -A && git commit -m 'sync'" to fix. ` +
+          `Files: ${lines.slice(0, 5).join(', ')}${lines.length > 5 ? ` (and ${lines.length - 5} more)` : ''}`,
+        );
+        logEvent('heartbeat_memfs_dirty', {
+          memoryDir,
+          fileCount: lines.length,
+          files: lines.slice(0, 10),
+        });
+      }
+    } catch (err) {
+      log.warn(
+        `Failed to check memfs health in ${memoryDir}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
   
   /**
@@ -168,6 +224,9 @@ export class HeartbeatService {
       }
     }
     
+    // Pre-flight: check for dirty memfs state that could cause session init failures
+    this.checkMemfsHealth();
+
     log.info(`Sending heartbeat to agent...`);
     
     logEvent('heartbeat_running', { 
@@ -226,10 +285,22 @@ export class HeartbeatService {
       });
       
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       log.error('Error:', error);
-      logEvent('heartbeat_error', {
-        error: error instanceof Error ? error.message : String(error),
-      });
+
+      // Surface git/memfs-related errors with actionable diagnostics
+      if (/\b(git|memfs|memory)\b/i.test(errorMsg)) {
+        const memoryDir = this.getMemoryDir();
+        log.warn(
+          `Heartbeat failed due to a git/memfs error. ` +
+          `This often happens when the memory directory has untracked or uncommitted files. ` +
+          (memoryDir
+            ? `Check: cd ${memoryDir} && git status`
+            : `Enable memfs or check LETTA_AGENT_ID to diagnose.`),
+        );
+      }
+
+      logEvent('heartbeat_error', { error: errorMsg });
     }
   }
 }

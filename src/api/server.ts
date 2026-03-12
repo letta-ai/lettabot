@@ -5,6 +5,8 @@
 
 import * as http from 'http';
 import * as fs from 'fs';
+import { readFile } from 'node:fs/promises';
+import * as crypto from 'node:crypto';
 import { validateApiKey } from './auth.js';
 import type { SendMessageResponse, ChatRequest, ChatResponse, AsyncChatResponse, PairingListResponse, PairingApproveRequest, PairingApproveResponse } from './types.js';
 import { listPairingRequests, approvePairingCode } from '../pairing/store.js';
@@ -18,6 +20,7 @@ import {
   buildErrorResponse, buildModelList, validateChatRequest,
 } from './openai-compat.js';
 import type { OpenAIChatRequest } from './openai-compat.js';
+import { getTurnViewerHtml } from '../core/turn-viewer.js';
 
 import { createLogger } from '../logger.js';
 
@@ -38,8 +41,9 @@ type ResolvedChatRequest = {
 interface ServerOptions {
   port: number;
   apiKey: string;
-  host?: string; // Bind address (default: 127.0.0.1 for security)
+  host?: string;       // Bind address (default: 127.0.0.1 for security)
   corsOrigin?: string; // CORS origin (default: same-origin only)
+  turnLogFiles?: Record<string, string>; // agentName -> filePath; enables GET /turns viewer
   stores?: Map<string, Store>; // Agent stores for management endpoints
   agentChannels?: Map<string, string[]>; // Channel IDs per agent name
   agentConversationModes?: Map<string, string>; // agentName -> conversationMode (shared|per-channel|per-chat|disabled)
@@ -50,6 +54,155 @@ interface ServerOptions {
  * Create and start the HTTP API server
  */
 export function createApiServer(deliverer: AgentRouter, options: ServerOptions): http.Server {
+  // ── Turn viewer SSE infrastructure ──────────────────────────────────────
+  interface SSEClient {
+    res: http.ServerResponse;
+    sentCount: number;
+    lastTurnId?: string;
+  }
+  const sseClientsByAgent = new Map<string, Set<SSEClient>>();
+  const broadcastQueues = new Map<string, Promise<void>>();
+
+  function getTurnId(turn: unknown): string | undefined {
+    if (!turn || typeof turn !== 'object') return undefined;
+    const id = (turn as { turnId?: unknown }).turnId;
+    return typeof id === 'string' && id.trim() ? id : undefined;
+  }
+
+  async function readTurns(filePath: string): Promise<unknown[]> {
+    try {
+      const content = await readFile(filePath, 'utf8');
+      return content.split('\n').filter(l => l.trim()).map(l => {
+        try { return JSON.parse(l); } catch { return null; }
+      }).filter(Boolean);
+    } catch { return []; }
+  }
+
+  async function broadcastNewTurns(agentName: string, filePath: string): Promise<void> {
+    const clients = sseClientsByAgent.get(agentName);
+    if (!clients || clients.size === 0) return;
+    const allTurns = await readTurns(filePath);
+    const currentLastTurnId = getTurnId(allTurns[allTurns.length - 1]);
+
+    for (const client of clients) {
+      // If the log was cleared, reset the client snapshot and UI.
+      if (allTurns.length === 0) {
+        const shouldReset = client.sentCount !== 0 || !!client.lastTurnId;
+        client.sentCount = 0;
+        client.lastTurnId = undefined;
+        if (shouldReset) {
+          const payload = `data: ${JSON.stringify({ type: 'init', turns: [] })}\n\n`;
+          try { client.res.write(payload); } catch { clients.delete(client); }
+        }
+        continue;
+      }
+
+      if (client.lastTurnId === currentLastTurnId && client.sentCount === allTurns.length) {
+        continue;
+      }
+
+      let turnsToAppend: unknown[] | null = null;
+      if (client.lastTurnId) {
+        let previousIndex = -1;
+        for (let i = allTurns.length - 1; i >= 0; i--) {
+          if (getTurnId(allTurns[i]) === client.lastTurnId) {
+            previousIndex = i;
+            break;
+          }
+        }
+        if (previousIndex >= 0) {
+          turnsToAppend = allTurns.slice(previousIndex + 1);
+        }
+      } else if (client.sentCount < allTurns.length) {
+        // Fallback for older records without turnId.
+        turnsToAppend = allTurns.slice(client.sentCount);
+      }
+
+      const appendTurns = turnsToAppend ?? [];
+      const shouldResync = turnsToAppend === null
+        || (appendTurns.length === 0 && (client.sentCount !== allTurns.length || client.lastTurnId !== currentLastTurnId));
+
+      const payload = shouldResync
+        ? `data: ${JSON.stringify({ type: 'init', turns: allTurns })}\n\n`
+        : appendTurns.length > 0
+          ? `data: ${JSON.stringify({ type: 'append', turns: appendTurns })}\n\n`
+          : null;
+
+      if (payload) {
+        try {
+          client.res.write(payload);
+        } catch {
+          clients.delete(client);
+          continue;
+        }
+      }
+
+      client.sentCount = allTurns.length;
+      client.lastTurnId = currentLastTurnId;
+    }
+  }
+
+  function enqueueBroadcast(agentName: string, filePath: string): void {
+    const prev = broadcastQueues.get(filePath) ?? Promise.resolve();
+    const next = prev.then(() => broadcastNewTurns(agentName, filePath)).catch(() => {});
+    broadcastQueues.set(filePath, next);
+  }
+
+  const watchers = new Map<string, fs.FSWatcher>();
+
+  function ensureWatching(agentName: string, filePath: string): void {
+    if (watchers.has(filePath)) return;
+    let watcher: fs.FSWatcher;
+    try {
+      watcher = fs.watch(filePath, { persistent: false }, (eventType) => {
+        if (eventType === 'rename') {
+          // Inode replaced (trim via atomic rename on Linux). Restart watcher.
+          watcher.close();
+          watchers.delete(filePath);
+          setTimeout(() => {
+            const clients = sseClientsByAgent.get(agentName);
+            if (clients && clients.size > 0) {
+              enqueueBroadcast(agentName, filePath);
+              ensureWatching(agentName, filePath);
+            }
+          }, 200);
+          return;
+        }
+        enqueueBroadcast(agentName, filePath);
+      });
+    } catch {
+      setTimeout(() => {
+        const clients = sseClientsByAgent.get(agentName);
+        if (clients && clients.size > 0) ensureWatching(agentName, filePath);
+      }, 2000);
+      return;
+    }
+    watcher.on('error', () => {
+      watcher.close();
+      watchers.delete(filePath);
+      // Auto-restart watcher after trim (inode replacement on Linux)
+      setTimeout(() => {
+        const clients = sseClientsByAgent.get(agentName);
+        if (clients && clients.size > 0) ensureWatching(agentName, filePath);
+      }, 500);
+    });
+    watchers.set(filePath, watcher);
+  }
+
+  function maybeUnwatch(filePath: string, clients: Set<SSEClient>): void {
+    if (clients.size === 0 && watchers.has(filePath)) {
+      watchers.get(filePath)!.close();
+      watchers.delete(filePath);
+      broadcastQueues.delete(filePath);
+    }
+  }
+
+  if (options.turnLogFiles) {
+    for (const agentName of Object.keys(options.turnLogFiles)) {
+      sseClientsByAgent.set(agentName, new Set());
+    }
+  }
+
   const server = http.createServer(async (req, res) => {
     // Set CORS headers (configurable origin, defaults to same-origin for security)
     const corsOrigin = options.corsOrigin || req.headers.origin || 'null';
@@ -69,6 +222,63 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('ok');
       return;
+    }
+
+    // Turn viewer routes
+    if (options.turnLogFiles && req.method === 'GET') {
+      const agentNames = Object.keys(options.turnLogFiles);
+      const parsedUrl = new URL(req.url ?? '/', `http://localhost`);
+
+      const validateTurnAuth = (): boolean => {
+        if (validateApiKey(req.headers, options.apiKey)) return true;
+        const qKey = parsedUrl.searchParams.get('key') || '';
+        if (!qKey) return false;
+        const a = Buffer.from(qKey);
+        const b = Buffer.from(options.apiKey);
+        return a.length === b.length && crypto.timingSafeEqual(a, b);
+      };
+
+      if (parsedUrl.pathname === '/turns') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(getTurnViewerHtml(agentNames));
+        return;
+      }
+      if (parsedUrl.pathname === '/turns/data') {
+        if (!validateTurnAuth()) { sendError(res, 401, 'Unauthorized'); return; }
+        const agentName = parsedUrl.searchParams.get('agent') || agentNames[0];
+        const filePath = options.turnLogFiles[agentName];
+        if (!filePath) { res.writeHead(404); res.end('Unknown agent'); return; }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(await readTurns(filePath)));
+        return;
+      }
+      if (parsedUrl.pathname === '/turns/stream') {
+        if (!validateTurnAuth()) { sendError(res, 401, 'Unauthorized'); return; }
+        const agentName = parsedUrl.searchParams.get('agent') || agentNames[0];
+        const filePath = options.turnLogFiles[agentName];
+        if (!filePath) { res.writeHead(404); res.end('Unknown agent'); return; }
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-store',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+        const allTurns = await readTurns(filePath);
+        res.write(`data: ${JSON.stringify({ type: 'init', turns: allTurns })}\n\n`);
+        const clients = sseClientsByAgent.get(agentName)!;
+        const client: SSEClient = {
+          res,
+          sentCount: allTurns.length,
+          lastTurnId: getTurnId(allTurns[allTurns.length - 1]),
+        };
+        clients.add(client);
+        ensureWatching(agentName, filePath);
+        req.on('close', () => {
+          clients.delete(client);
+          maybeUnwatch(filePath, clients);
+        });
+        return;
+      }
     }
 
     // Route: POST /api/v1/messages (unified: supports both text and files)
