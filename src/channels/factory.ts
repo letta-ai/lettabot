@@ -94,6 +94,7 @@ const SHARED_CHANNEL_BUILDERS: SharedChannelBuilder[] = [
         cliPath: signal.cliPath || process.env.SIGNAL_CLI_PATH || 'signal-cli',
         httpHost: signal.httpHost || process.env.SIGNAL_HTTP_HOST || '127.0.0.1',
         httpPort: signal.httpPort || parseInt(process.env.SIGNAL_HTTP_PORT || '8090', 10),
+        readReceipts: signal.readReceipts ?? (process.env.SIGNAL_READ_RECEIPTS !== 'false'),
         dmPolicy: signal.dmPolicy || 'pairing',
         allowedUsers: nonEmpty(signal.allowedUsers),
         selfChatMode,

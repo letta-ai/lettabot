@@ -374,6 +374,7 @@ export interface SignalConfig {
   cliPath?: string;     // Path to signal-cli binary (default: "signal-cli")
   httpHost?: string;    // Daemon HTTP host (default: "127.0.0.1")
   httpPort?: number;    // Daemon HTTP port (default: 8090)
+  readReceipts?: boolean; // Send read receipts for incoming messages (default: true)
   selfChat?: boolean;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
@@ -707,6 +708,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     channels.signal = {
       enabled: true,
       phone: process.env.SIGNAL_PHONE_NUMBER,
+      readReceipts: process.env.SIGNAL_READ_RECEIPTS !== 'false',
       selfChat: process.env.SIGNAL_SELF_CHAT_MODE !== 'false',
       dmPolicy: (process.env.SIGNAL_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
       allowedUsers: parseList(process.env.SIGNAL_ALLOWED_USERS),

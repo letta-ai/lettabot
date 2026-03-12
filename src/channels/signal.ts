@@ -35,6 +35,7 @@ export interface SignalConfig {
   httpHost?: string;          // Daemon HTTP host (default: "127.0.0.1")
   httpPort?: number;          // Daemon HTTP port (default: 8090)
   startupTimeoutMs?: number;  // Max time to wait for daemon startup (default: 30000)
+  readReceipts?: boolean;     // Send read receipts for incoming messages (default: true)
   // Security
   dmPolicy?: DmPolicy;        // 'pairing' (default), 'allowlist', or 'open'
   allowedUsers?: string[];    // Phone numbers (config allowlist)
@@ -171,6 +172,7 @@ export class SignalAdapter implements ChannelAdapter {
     this.config = {
       ...config,
       dmPolicy: config.dmPolicy || 'pairing',
+      readReceipts: config.readReceipts !== false, // Default true
       selfChatMode: config.selfChatMode !== false, // Default true
     };
     const host = config.httpHost || '127.0.0.1';
@@ -394,21 +396,28 @@ This code expires in 1 hour.`;
   }
   
   // --- Private methods ---
-  
-  private async startDaemon(): Promise<void> {
-    const cliPath = this.config.cliPath || 'signal-cli';
-    const host = this.config.httpHost || '127.0.0.1';
-    const port = this.config.httpPort || 8090;
-    
+
+  private buildDaemonArgs(): string[] {
     const args: string[] = [];
-    
+
     if (this.config.phoneNumber) {
       args.push('-a', this.config.phoneNumber);
     }
-    
+
     args.push('daemon');
-    args.push('--http', `${host}:${port}`);
+    args.push('--http', `${this.config.httpHost || '127.0.0.1'}:${this.config.httpPort || 8090}`);
     args.push('--no-receive-stdout');
+
+    if (this.config.readReceipts !== false) {
+      args.push('--send-read-receipts');
+    }
+
+    return args;
+  }
+  
+  private async startDaemon(): Promise<void> {
+    const cliPath = this.config.cliPath || 'signal-cli';
+    const args = this.buildDaemonArgs();
     
     log.info(`Spawning: ${cliPath} ${args.join(' ')}`);
     
