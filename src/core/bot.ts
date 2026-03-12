@@ -1644,7 +1644,7 @@ export class LettaBot implements AgentSession {
           this.turnLogger.write({
             ts: new Date().toISOString(),
             turnId,
-            trigger: 'user' as const,
+            trigger: 'user_message' as const,
             channel: msg.channel,
             chatId: msg.chatId,
             userId: msg.userId,

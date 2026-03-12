@@ -54,8 +54,8 @@ interface ServerOptions {
  */
 export function createApiServer(deliverer: AgentRouter, options: ServerOptions): http.Server {
   // ── Turn viewer SSE infrastructure ──────────────────────────────────────
-  const sseClientsByAgent = new Map<string, Set<http.ServerResponse>>();
-  const fileLineCounts = new Map<string, number>();
+  interface SSEClient { res: http.ServerResponse; sentCount: number; }
+  const sseClientsByAgent = new Map<string, Set<SSEClient>>();
   const broadcastQueues = new Map<string, Promise<void>>();
 
   async function readTurns(filePath: string): Promise<unknown[]> {
@@ -71,16 +71,17 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     const clients = sseClientsByAgent.get(agentName);
     if (!clients || clients.size === 0) return;
     const allTurns = await readTurns(filePath);
-    const sent = fileLineCounts.get(filePath) ?? 0;
-    if (allTurns.length <= sent) {
-      fileLineCounts.set(filePath, allTurns.length);
-      return;
-    }
-    const newTurns = allTurns.slice(sent);
-    fileLineCounts.set(filePath, allTurns.length);
-    const payload = `data: ${JSON.stringify({ type: 'append', turns: newTurns })}\n\n`;
-    for (const res of clients) {
-      try { res.write(payload); } catch { clients.delete(res); }
+    for (const client of clients) {
+      // After trim, file may be shorter than what we've sent. Reset counter.
+      if (allTurns.length < client.sentCount) {
+        client.sentCount = allTurns.length;
+        continue;
+      }
+      if (allTurns.length === client.sentCount) continue;
+      const newTurns = allTurns.slice(client.sentCount);
+      client.sentCount = allTurns.length;
+      const payload = `data: ${JSON.stringify({ type: 'append', turns: newTurns })}\n\n`;
+      try { client.res.write(payload); } catch { clients.delete(client); }
     }
   }
 
@@ -96,7 +97,17 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     if (watchers.has(filePath)) return;
     let watcher: fs.FSWatcher;
     try {
-      watcher = fs.watch(filePath, { persistent: false }, () => {
+      watcher = fs.watch(filePath, { persistent: false }, (eventType) => {
+        if (eventType === 'rename') {
+          // Inode replaced (trim via atomic rename on Linux). Restart watcher.
+          watcher.close();
+          watchers.delete(filePath);
+          setTimeout(() => {
+            const clients = sseClientsByAgent.get(agentName);
+            if (clients && clients.size > 0) ensureWatching(agentName, filePath);
+          }, 200);
+          return;
+        }
         enqueueBroadcast(agentName, filePath);
       });
     } catch {
@@ -118,11 +129,10 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     watchers.set(filePath, watcher);
   }
 
-  function maybeUnwatch(filePath: string, clients: Set<http.ServerResponse>): void {
+  function maybeUnwatch(filePath: string, clients: Set<SSEClient>): void {
     if (clients.size === 0 && watchers.has(filePath)) {
       watchers.get(filePath)!.close();
       watchers.delete(filePath);
-      fileLineCounts.delete(filePath);
       broadcastQueues.delete(filePath);
     }
   }
@@ -194,13 +204,13 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           'X-Accel-Buffering': 'no',
         });
         const allTurns = await readTurns(filePath);
-        fileLineCounts.set(filePath, allTurns.length);
         res.write(`data: ${JSON.stringify({ type: 'init', turns: allTurns })}\n\n`);
         const clients = sseClientsByAgent.get(agentName)!;
-        clients.add(res);
+        const client: SSEClient = { res, sentCount: allTurns.length };
+        clients.add(client);
         ensureWatching(agentName, filePath);
         req.on('close', () => {
-          clients.delete(res);
+          clients.delete(client);
           maybeUnwatch(filePath, clients);
         });
         return;

@@ -14,7 +14,7 @@ export type OutputMode = 'responsive' | 'silent';
 /**
  * Trigger types
  */
-export type TriggerType = 'user' | 'user_message' | 'heartbeat' | 'cron' | 'webhook' | 'feed';
+export type TriggerType = 'user_message' | 'heartbeat' | 'cron' | 'webhook' | 'feed';
 
 /**
  * Context about what triggered the agent
