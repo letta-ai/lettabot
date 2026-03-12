@@ -54,9 +54,19 @@ interface ServerOptions {
  */
 export function createApiServer(deliverer: AgentRouter, options: ServerOptions): http.Server {
   // ── Turn viewer SSE infrastructure ──────────────────────────────────────
-  interface SSEClient { res: http.ServerResponse; sentCount: number; }
+  interface SSEClient {
+    res: http.ServerResponse;
+    sentCount: number;
+    lastTurnId?: string;
+  }
   const sseClientsByAgent = new Map<string, Set<SSEClient>>();
   const broadcastQueues = new Map<string, Promise<void>>();
+
+  function getTurnId(turn: unknown): string | undefined {
+    if (!turn || typeof turn !== 'object') return undefined;
+    const id = (turn as { turnId?: unknown }).turnId;
+    return typeof id === 'string' && id.trim() ? id : undefined;
+  }
 
   async function readTurns(filePath: string): Promise<unknown[]> {
     try {
@@ -71,17 +81,63 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     const clients = sseClientsByAgent.get(agentName);
     if (!clients || clients.size === 0) return;
     const allTurns = await readTurns(filePath);
+    const currentLastTurnId = getTurnId(allTurns[allTurns.length - 1]);
+
     for (const client of clients) {
-      // After trim, file may be shorter than what we've sent. Reset counter.
-      if (allTurns.length < client.sentCount) {
-        client.sentCount = allTurns.length;
+      // If the log was cleared, reset the client snapshot and UI.
+      if (allTurns.length === 0) {
+        const shouldReset = client.sentCount !== 0 || !!client.lastTurnId;
+        client.sentCount = 0;
+        client.lastTurnId = undefined;
+        if (shouldReset) {
+          const payload = `data: ${JSON.stringify({ type: 'init', turns: [] })}\n\n`;
+          try { client.res.write(payload); } catch { clients.delete(client); }
+        }
         continue;
       }
-      if (allTurns.length === client.sentCount) continue;
-      const newTurns = allTurns.slice(client.sentCount);
+
+      if (client.lastTurnId === currentLastTurnId && client.sentCount === allTurns.length) {
+        continue;
+      }
+
+      let turnsToAppend: unknown[] | null = null;
+      if (client.lastTurnId) {
+        let previousIndex = -1;
+        for (let i = allTurns.length - 1; i >= 0; i--) {
+          if (getTurnId(allTurns[i]) === client.lastTurnId) {
+            previousIndex = i;
+            break;
+          }
+        }
+        if (previousIndex >= 0) {
+          turnsToAppend = allTurns.slice(previousIndex + 1);
+        }
+      } else if (client.sentCount < allTurns.length) {
+        // Fallback for older records without turnId.
+        turnsToAppend = allTurns.slice(client.sentCount);
+      }
+
+      const appendTurns = turnsToAppend ?? [];
+      const shouldResync = turnsToAppend === null
+        || (appendTurns.length === 0 && (client.sentCount !== allTurns.length || client.lastTurnId !== currentLastTurnId));
+
+      const payload = shouldResync
+        ? `data: ${JSON.stringify({ type: 'init', turns: allTurns })}\n\n`
+        : appendTurns.length > 0
+          ? `data: ${JSON.stringify({ type: 'append', turns: appendTurns })}\n\n`
+          : null;
+
+      if (payload) {
+        try {
+          client.res.write(payload);
+        } catch {
+          clients.delete(client);
+          continue;
+        }
+      }
+
       client.sentCount = allTurns.length;
-      const payload = `data: ${JSON.stringify({ type: 'append', turns: newTurns })}\n\n`;
-      try { client.res.write(payload); } catch { clients.delete(client); }
+      client.lastTurnId = currentLastTurnId;
     }
   }
 
@@ -104,7 +160,10 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           watchers.delete(filePath);
           setTimeout(() => {
             const clients = sseClientsByAgent.get(agentName);
-            if (clients && clients.size > 0) ensureWatching(agentName, filePath);
+            if (clients && clients.size > 0) {
+              enqueueBroadcast(agentName, filePath);
+              ensureWatching(agentName, filePath);
+            }
           }, 200);
           return;
         }
@@ -206,7 +265,11 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         const allTurns = await readTurns(filePath);
         res.write(`data: ${JSON.stringify({ type: 'init', turns: allTurns })}\n\n`);
         const clients = sseClientsByAgent.get(agentName)!;
-        const client: SSEClient = { res, sentCount: allTurns.length };
+        const client: SSEClient = {
+          res,
+          sentCount: allTurns.length,
+          lastTurnId: getTurnId(allTurns[allTurns.length - 1]),
+        };
         clients.add(client);
         ensureWatching(agentName, filePath);
         req.on('close', () => {
