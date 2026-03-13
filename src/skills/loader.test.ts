@@ -12,8 +12,66 @@ import {
   isVoiceMemoConfigured,
 } from './loader.js';
 
+const ORIGINAL_WORKING_DIR = process.env.WORKING_DIR;
+const ORIGINAL_RAILWAY_VOLUME_MOUNT_PATH = process.env.RAILWAY_VOLUME_MOUNT_PATH;
+
+async function importFreshLoader() {
+  vi.resetModules();
+  return import('./loader.js');
+}
+
+function restoreLoaderPathEnv() {
+  if (ORIGINAL_WORKING_DIR === undefined) {
+    delete process.env.WORKING_DIR;
+  } else {
+    process.env.WORKING_DIR = ORIGINAL_WORKING_DIR;
+  }
+
+  if (ORIGINAL_RAILWAY_VOLUME_MOUNT_PATH === undefined) {
+    delete process.env.RAILWAY_VOLUME_MOUNT_PATH;
+  } else {
+    process.env.RAILWAY_VOLUME_MOUNT_PATH = ORIGINAL_RAILWAY_VOLUME_MOUNT_PATH;
+  }
+}
+
 describe('skills loader', () => {
+  afterEach(() => {
+    restoreLoaderPathEnv();
+    vi.resetModules();
+  });
+
+  describe('working directory resolution', () => {
+    it('uses Railway volume-backed working dir when WORKING_DIR is not set', async () => {
+      process.env.RAILWAY_VOLUME_MOUNT_PATH = '/railway-volume';
+      delete process.env.WORKING_DIR;
+
+      const mod = await importFreshLoader();
+
+      expect(mod.WORKING_DIR).toBe('/railway-volume/data');
+      expect(mod.WORKING_SKILLS_DIR).toBe('/railway-volume/data/.skills');
+    });
+
+    it('prefers explicit WORKING_DIR over Railway volume mount', async () => {
+      process.env.RAILWAY_VOLUME_MOUNT_PATH = '/railway-volume';
+      process.env.WORKING_DIR = '/custom/workdir';
+
+      const mod = await importFreshLoader();
+
+      expect(mod.WORKING_DIR).toBe('/custom/workdir');
+      expect(mod.WORKING_SKILLS_DIR).toBe('/custom/workdir/.skills');
+    });
+  });
+
   describe('getAgentSkillsDir', () => {
+    it('uses Railway volume path for agent-scoped skills when mounted', async () => {
+      process.env.RAILWAY_VOLUME_MOUNT_PATH = '/railway-volume';
+
+      const mod = await importFreshLoader();
+      const dir = mod.getAgentSkillsDir('agent-railway');
+
+      expect(dir).toBe('/railway-volume/.letta/agents/agent-railway/skills');
+    });
+
     it('returns path containing agent ID', () => {
       const agentId = 'agent-test-123';
       const dir = getAgentSkillsDir(agentId);
