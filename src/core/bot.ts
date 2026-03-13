@@ -1955,6 +1955,12 @@ export class LettaBot implements AgentSession {
             }
           }
 
+          // Strip <no-reply/> marker so callers (cron, webhooks) see empty string
+          if (response.trim() === '<no-reply/>') {
+            log.info('sendToAgent: agent responded with <no-reply/> marker, suppressing');
+            response = '';
+          }
+
           if (isSilent && response.trim()) {
             if (usedMessageCli || executedDirectives) {
               log.info(`Silent mode: agent delivered via ${[usedMessageCli && 'CLI', executedDirectives && 'directives'].filter(Boolean).join(' + ')}, remaining text (${response.length} chars) not delivered`);
