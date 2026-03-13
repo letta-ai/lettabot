@@ -23,6 +23,8 @@ LettaBot scans these directories in priority order. Same-name skills at higher p
 | 4 | `skills/` (in lettabot repo) | Bundled | Ships with lettabot |
 | 5 (lowest) | `~/.agents/skills/` | skills.sh | Installed via [skills.sh](https://skills.sh) |
 
+On Railway with a mounted volume, LettaBot stores `.letta` skill paths under `$RAILWAY_VOLUME_MOUNT_PATH/.letta/` by default, so agent-scoped and global skills survive redeploys.
+
 Feature-gated skills are copied from source directories into the agent-scoped directory (`~/.letta/agents/{id}/skills/`) when a session is first acquired. The copy is idempotent -- skills already present in the target are skipped.
 
 ## Feature-gated skills
@@ -113,6 +115,10 @@ When a session starts, `prependSkillDirsToPath()` in `src/skills/loader.ts` prep
 
 1. **Agent-scoped skills** (`~/.letta/agents/{id}/skills/`) — feature-gated skills installed by `installSkillsToAgent()` on startup.
 2. **Working-dir skills** (`WORKING_DIR/.skills/`) — skills enabled via `lettabot skills enable <name>` or the interactive `lettabot skills` wizard.
+
+On Railway with a mounted volume, `WORKING_DIR` defaults to `$RAILWAY_VOLUME_MOUNT_PATH/data` when not explicitly set, so working-dir skills are persisted on the volume by default.
+
+On Railway with a mounted volume, agent-scoped skills are stored under `$RAILWAY_VOLUME_MOUNT_PATH/.letta/agents/{id}/skills/`.
 
 Only directories containing at least one non-`.md` file are added. The prepend is idempotent — directories already on PATH are not duplicated. PATH is not restored after the call; the augmented PATH persists for the lifetime of the process, which is correct because the subprocess retains its inherited environment.
 

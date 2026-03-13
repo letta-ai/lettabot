@@ -1557,33 +1557,33 @@ export class LettaBot implements AgentSession {
 
               // Approval conflict recovery
               if (retryDecision.isApprovalConflict && !retried && this.store.agentId) {
-                if (retryConvId) {
-                  log.info('Approval conflict detected -- attempting targeted recovery...');
-                  this.sessionManager.invalidateSession(retryConvKey);
-                  session = null;
-                  clearInterval(typingInterval);
-                  const convResult = await recoverOrphanedConversationApproval(
-                    this.store.agentId, retryConvId, true,
-                  );
-                  if (convResult.recovered) {
-                    log.info(`Approval recovery succeeded (${convResult.details}), retrying message...`);
+                log.info('Approval conflict detected -- attempting SDK recovery...');
+                clearInterval(typingInterval);
+
+                // Try SDK-level recovery first (through CLI control protocol)
+                if (session) {
+                  const sdkResult = await session.recoverPendingApprovals({ timeoutMs: 10_000 });
+                  if (sdkResult.recovered) {
+                    log.info('SDK approval recovery succeeded, retrying message...');
+                    this.sessionManager.invalidateSession(retryConvKey);
+                    session = null;
                     return this.processMessage(msg, adapter, true);
                   }
-                  log.warn(`Approval recovery failed: ${convResult.details}`);
-                  return this.processMessage(msg, adapter, true);
-                } else {
-                  log.info('Approval conflict in default conversation -- attempting agent-level recovery...');
-                  this.sessionManager.invalidateSession(retryConvKey);
-                  session = null;
-                  clearInterval(typingInterval);
-                  const agentResult = await recoverPendingApprovalsForAgent(this.store.agentId);
-                  if (agentResult.recovered) {
-                    log.info(`Agent-level recovery succeeded (${agentResult.details}), retrying message...`);
-                    return this.processMessage(msg, adapter, true);
-                  }
-                  log.warn(`Agent-level recovery failed: ${agentResult.details}`);
-                  return this.processMessage(msg, adapter, true);
+                  log.warn(`SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
                 }
+
+                // Fall back to API-level recovery
+                this.sessionManager.invalidateSession(retryConvKey);
+                session = null;
+                const result = (retryConvId && isRecoverableConversationId(retryConvId))
+                  ? await recoverOrphanedConversationApproval(this.store.agentId, retryConvId, true)
+                  : await recoverPendingApprovalsForAgent(this.store.agentId);
+                if (result.recovered) {
+                  log.info(`API-level recovery succeeded (${result.details}), retrying message...`);
+                } else {
+                  log.warn(`API-level recovery failed: ${result.details}`);
+                }
+                return this.processMessage(msg, adapter, true);
               }
 
               // Empty/error result retry
@@ -1830,7 +1830,7 @@ export class LettaBot implements AgentSession {
       let retried = false;
 
       while (true) {
-        const { stream } = await this.sessionManager.runSession(text, { convKey, retried });
+        const { session, stream } = await this.sessionManager.runSession(text, { convKey, retried });
 
         try {
           let response = '';
@@ -1885,15 +1885,21 @@ export class LettaBot implements AgentSession {
                   || ((lastErrorDetail?.message?.toLowerCase().includes('conflict') || false)
                   && (lastErrorDetail?.message?.toLowerCase().includes('waiting for approval') || false));
                 if (isApprovalIssue && !retried) {
-                  if (this.store.agentId) {
-                    const recovery = await recoverPendingApprovalsForAgent(this.store.agentId);
-                    if (recovery.recovered) {
-                      log.info(`sendToAgent: agent-level approval recovery succeeded (${recovery.details})`);
-                    } else {
-                      log.warn(`sendToAgent: agent-level approval recovery did not resolve approvals (${recovery.details})`);
+                  log.info('sendToAgent: approval conflict detected -- attempting SDK recovery...');
+                  const sdkResult = await session.recoverPendingApprovals({ timeoutMs: 10_000 });
+                  if (sdkResult.recovered) {
+                    log.info('sendToAgent: SDK approval recovery succeeded');
+                  } else {
+                    log.warn(`sendToAgent: SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
+                    if (this.store.agentId) {
+                      const recovery = await recoverPendingApprovalsForAgent(this.store.agentId);
+                      if (recovery.recovered) {
+                        log.info(`sendToAgent: API-level recovery succeeded (${recovery.details})`);
+                      } else {
+                        log.warn(`sendToAgent: API-level recovery failed (${recovery.details})`);
+                      }
                     }
                   }
-                  log.info('sendToAgent: approval issue detected -- retrying once with fresh session...');
                   this.sessionManager.invalidateSession(convKey);
                   retried = true;
                   approvalRetryPending = true;

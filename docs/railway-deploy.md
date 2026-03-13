@@ -104,7 +104,7 @@ The Railway template includes a persistent volume mounted at `/data`. This is se
 
 - **Agent ID** - No need to set `LETTA_AGENT_ID` manually after first run
 - **Cron jobs** - Scheduled tasks survive restarts
-- **Skills** - Downloaded skills persist
+- **Skills** - Agent-scoped (`.letta/agents/.../skills`) and working-dir (`WORKING_DIR/.skills`) skills persist
 - **Attachments** - Downloaded media files
 
 ### Volume Size
@@ -122,6 +122,8 @@ If you deploy manually from a fork instead of using the template, you'll need to
 3. Set the mount path to `/data`
 
 LettaBot automatically detects `RAILWAY_VOLUME_MOUNT_PATH` and uses it for persistent data.
+
+By default (when `WORKING_DIR` is unset), LettaBot uses `$RAILWAY_VOLUME_MOUNT_PATH/data` as the working directory, so `WORKING_DIR/.skills` is persisted across redeploys. Agent-scoped skills are also stored under `$RAILWAY_VOLUME_MOUNT_PATH/.letta/agents/.../skills`.
 
 ## Remote Pairing Approval
 
