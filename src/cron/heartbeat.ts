@@ -48,6 +48,8 @@ export interface HeartbeatConfig {
   enabled: boolean;
   intervalMinutes: number;
   skipRecentUserMinutes?: number; // Default 5. Set to 0 to disable skip logic.
+  skipRecentPolicy?: 'fixed' | 'fraction' | 'off';
+  skipRecentFraction?: number; // Used when policy=fraction. Expected range: 0-1.
   workingDir: string;
   agentKey: string;
   
@@ -80,12 +82,51 @@ export class HeartbeatService {
     this.config = config;
   }
 
-  private getSkipWindowMs(): number {
-    const raw = this.config.skipRecentUserMinutes;
-    if (raw === undefined || !Number.isFinite(raw) || raw < 0) {
-      return 5 * 60 * 1000; // default: 5 minutes
+  private getSkipRecentPolicy(): 'fixed' | 'fraction' | 'off' {
+    const configured = this.config.skipRecentPolicy;
+    if (configured === 'fixed' || configured === 'fraction' || configured === 'off') {
+      return configured;
     }
-    return Math.floor(raw * 60 * 1000);
+
+    // Backward compatibility: if explicit minutes are configured, preserve the
+    // historical fixed-window behavior unless policy is explicitly set.
+    if (this.config.skipRecentUserMinutes !== undefined) {
+      return 'fixed';
+    }
+
+    // New default: skip for half the heartbeat interval.
+    return 'fraction';
+  }
+
+  private getSkipWindow(): { policy: 'fixed' | 'fraction' | 'off'; minutes: number; milliseconds: number } {
+    const policy = this.getSkipRecentPolicy();
+
+    if (policy === 'off') {
+      return { policy, minutes: 0, milliseconds: 0 };
+    }
+
+    if (policy === 'fraction') {
+      const rawFraction = this.config.skipRecentFraction;
+      const fraction = rawFraction !== undefined && Number.isFinite(rawFraction)
+        ? Math.max(0, Math.min(1, rawFraction))
+        : 0.5;
+      const minutes = Math.ceil(Math.max(0, this.config.intervalMinutes) * fraction);
+      return {
+        policy,
+        minutes,
+        milliseconds: Math.floor(minutes * 60 * 1000),
+      };
+    }
+
+    const raw = this.config.skipRecentUserMinutes;
+    const minutes = (raw === undefined || !Number.isFinite(raw) || raw < 0)
+      ? 5
+      : raw;
+    return {
+      policy,
+      minutes,
+      milliseconds: Math.floor(minutes * 60 * 1000),
+    };
   }
 
   /**
@@ -207,17 +248,19 @@ export class HeartbeatService {
     
     // Skip if user sent a message in the configured window (unless manual trigger)
     if (!skipRecentCheck) {
-      const skipWindowMs = this.getSkipWindowMs();
+      const { policy, minutes: skipWindowMin, milliseconds: skipWindowMs } = this.getSkipWindow();
       const lastUserMessage = this.bot.getLastUserMessageTime();
       if (skipWindowMs > 0 && lastUserMessage) {
         const msSinceLastMessage = now.getTime() - lastUserMessage.getTime();
         
         if (msSinceLastMessage < skipWindowMs) {
           const minutesAgo = Math.round(msSinceLastMessage / 60000);
-          log.info(`User messaged ${minutesAgo}m ago - skipping heartbeat`);
+          log.info(`User messaged ${minutesAgo}m ago - skipping heartbeat (policy=${policy}, window=${skipWindowMin}m)`);
           logEvent('heartbeat_skipped_recent_user', {
             lastUserMessage: lastUserMessage.toISOString(),
             minutesAgo,
+            skipPolicy: policy,
+            skipWindowMin,
           });
           return;
         }

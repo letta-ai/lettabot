@@ -67,7 +67,10 @@ SLACK_APP_TOKEN=xapp-...
 | `CRON_ENABLED` | `false` | Enable cron jobs |
 | `HEARTBEAT_ENABLED` | `false` | Enable heartbeat service |
 | `HEARTBEAT_INTERVAL_MIN` | `30` | Heartbeat interval (minutes). Also enables heartbeat when set |
-| `HEARTBEAT_SKIP_RECENT_USER_MIN` | `5` | Skip automatic heartbeats for N minutes after user messages (`0` disables) |
+| `HEARTBEAT_SKIP_RECENT_POLICY` | `fraction` | Recent-user skip policy (`fixed`, `fraction`, `off`) |
+| `HEARTBEAT_SKIP_RECENT_FRACTION` | `0.5` | Fraction of interval used when policy is `fraction` |
+| `HEARTBEAT_SKIP_RECENT_USER_MIN` | `5` | Skip window in minutes when policy is `fixed` (`0` disables) |
+| `HEARTBEAT_INTERRUPT_ON_USER_MESSAGE` | `true` | Cancel in-flight heartbeat when a user message arrives on the same key |
 | `HEARTBEAT_TARGET` | - | Target chat (e.g., `telegram:123456`) |
 | `OPENAI_API_KEY` | - | For voice message transcription |
 | `API_HOST` | `0.0.0.0` on Railway | Optional override for API bind address |

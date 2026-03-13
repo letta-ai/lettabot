@@ -142,6 +142,43 @@ describe('config TUI helpers', () => {
     expect(updated.providers?.[0].name).toBe('OpenAI');
   });
 
+  it('extract/apply preserves heartbeat policy and preemption fields', () => {
+    const config: LettaBotConfig = {
+      ...makeBaseConfig(),
+      agents: [
+        {
+          name: 'Primary',
+          channels: {},
+          features: {
+            heartbeat: {
+              enabled: true,
+              intervalMin: 30,
+              skipRecentPolicy: 'fraction',
+              skipRecentFraction: 0.5,
+              interruptOnUserMessage: true,
+            },
+          },
+        },
+      ],
+    };
+
+    const draft = extractCoreDraft(config);
+    expect(draft.features.heartbeat.skipRecentPolicy).toBe('fraction');
+    expect(draft.features.heartbeat.skipRecentFraction).toBe(0.5);
+    expect(draft.features.heartbeat.interruptOnUserMessage).toBe(true);
+
+    draft.features.heartbeat.skipRecentPolicy = 'fixed';
+    draft.features.heartbeat.skipRecentUserMin = 7;
+    delete draft.features.heartbeat.skipRecentFraction;
+    draft.features.heartbeat.interruptOnUserMessage = false;
+
+    const updated = applyCoreDraft(config, draft);
+    expect(updated.agents?.[0].features?.heartbeat?.skipRecentPolicy).toBe('fixed');
+    expect(updated.agents?.[0].features?.heartbeat?.skipRecentUserMin).toBe(7);
+    expect(updated.agents?.[0].features?.heartbeat?.skipRecentFraction).toBeUndefined();
+    expect(updated.agents?.[0].features?.heartbeat?.interruptOnUserMessage).toBe(false);
+  });
+
   it('getCoreDraftWarnings flags missing API key and no enabled channels', () => {
     const draft: CoreConfigDraft = {
       server: { mode: 'api', apiKey: undefined, baseUrl: undefined },

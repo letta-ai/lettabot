@@ -228,6 +228,8 @@ export class LettaBot implements AgentSession {
   private processing = false; // Global lock for shared mode
   private processingKeys: Set<string> = new Set(); // Per-key locks for per-channel mode
   private cancelledKeys: Set<string> = new Set(); // Tracks keys where /cancel was issued
+  private backgroundCancelledKeys: Set<string> = new Set(); // Tracks background runs cancelled by live user activity
+  private activeBackgroundTriggerByKey: Map<string, string> = new Map();
   private sendSequence = 0; // Monotonic counter for desync diagnostics
   // Forward-looking: stale-result detection via runIds becomes active once the
   // SDK surfaces non-empty result run_ids. Until then, this map mostly stays
@@ -911,6 +913,23 @@ export class LettaBot implements AgentSession {
   // =========================================================================
   // Message queue
   // =========================================================================
+
+  private maybePreemptHeartbeatForUserMessage(convKey: string): void {
+    if (this.config.interruptHeartbeatOnUserMessage === false) {
+      return;
+    }
+
+    if (this.activeBackgroundTriggerByKey.get(convKey) !== 'heartbeat') {
+      return;
+    }
+
+    this.backgroundCancelledKeys.add(convKey);
+    const session = this.sessionManager.getSession(convKey);
+    if (session) {
+      session.abort().catch(() => {});
+    }
+    log.info(`Preempted in-flight heartbeat due to user message (key=${convKey})`);
+  }
   
   private async handleMessage(msg: InboundMessage, adapter: ChannelAdapter): Promise<void> {
     // AskUserQuestion support: if the agent is waiting for a user answer,
@@ -926,6 +945,8 @@ export class LettaBot implements AgentSession {
       this.pendingQuestionResolvers.delete(incomingConvKey);
       return;
     }
+
+    this.maybePreemptHeartbeatForUserMessage(incomingConvKey);
 
     log.info(`Message from ${msg.userId} on ${msg.channel}: ${msg.text}`);
 
@@ -1820,7 +1841,9 @@ export class LettaBot implements AgentSession {
   ): Promise<string> {
     const isSilent = context?.outputMode === 'silent';
     const convKey = this.resolveHeartbeatConversationKey();
+    const triggerType = context?.type ?? 'heartbeat';
     const acquired = await this.acquireLock(convKey);
+    this.activeBackgroundTriggerByKey.set(convKey, triggerType);
     
     const sendT0 = performance.now();
     const sendTurnId = this.turnLogger ? generateTurnId() : '';
@@ -1831,15 +1854,29 @@ export class LettaBot implements AgentSession {
       let retried = false;
 
       while (true) {
+        if (this.backgroundCancelledKeys.has(convKey)) {
+          log.info(`sendToAgent: background run pre-cancelled by live user activity (key=${convKey})`);
+          return '';
+        }
         const { session, stream } = await this.sessionManager.runSession(text, { convKey, retried });
 
         try {
+          if (this.backgroundCancelledKeys.has(convKey)) {
+            session.abort().catch(() => {});
+            log.info(`sendToAgent: background run cancelled before stream start (key=${convKey})`);
+            return '';
+          }
           let response = '';
           let sawStaleDuplicateResult = false;
           let approvalRetryPending = false;
           let usedMessageCli = false;
           let lastErrorDetail: StreamErrorDetail | undefined;
           for await (const msg of stream()) {
+            if (this.backgroundCancelledKeys.has(convKey)) {
+              session.abort().catch(() => {});
+              log.info(`sendToAgent: cancelled in-flight background stream (key=${convKey})`);
+              return '';
+            }
             sendTurnAcc?.feedRaw(msg);
             if (msg.type === 'tool_call') {
               this.sessionManager.syncTodoToolCall(msg);
@@ -1869,6 +1906,10 @@ export class LettaBot implements AgentSession {
 
               // TODO(letta-code-sdk#31): Remove once SDK handles HITL approvals in bypassPermissions mode.
               if (msg.success === false || msg.error) {
+                if (this.backgroundCancelledKeys.has(convKey)) {
+                  log.info(`sendToAgent: cancelled heartbeat produced terminal error result; suppressing (key=${convKey})`);
+                  return '';
+                }
                 // Enrich opaque errors from run metadata (mirrors processMessage logic).
                 const convId = typeof msg.conversationId === 'string' ? msg.conversationId : undefined;
                 if (this.store.agentId &&
@@ -1979,11 +2020,17 @@ export class LettaBot implements AgentSession {
         } catch (error) {
           // Invalidate on stream errors so next call gets a fresh subprocess
           this.sessionManager.invalidateSession(convKey);
+          if (this.backgroundCancelledKeys.has(convKey)) {
+            log.info(`sendToAgent: background run ended after cancellation (key=${convKey})`);
+            return '';
+          }
           throw error;
         }
 
       }
     } finally {
+      this.activeBackgroundTriggerByKey.delete(convKey);
+      this.backgroundCancelledKeys.delete(convKey);
       if (this.config.reuseSession === false) {
         this.sessionManager.invalidateSession(convKey);
       }
