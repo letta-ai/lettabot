@@ -19,6 +19,7 @@ import { getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, re
 import { getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
+import { recoverPendingApprovalsWithSdk } from './session-sdk-compat.js';
 import { redactOutbound } from './redact.js';
 import {
   hasIncompleteActionsTag,
@@ -1562,7 +1563,7 @@ export class LettaBot implements AgentSession {
 
                 // Try SDK-level recovery first (through CLI control protocol)
                 if (session) {
-                  const sdkResult = await session.recoverPendingApprovals({ timeoutMs: 10_000 });
+                  const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
                   if (sdkResult.recovered) {
                     log.info('SDK approval recovery succeeded, retrying message...');
                     this.sessionManager.invalidateSession(retryConvKey);
@@ -1886,7 +1887,7 @@ export class LettaBot implements AgentSession {
                   && (lastErrorDetail?.message?.toLowerCase().includes('waiting for approval') || false));
                 if (isApprovalIssue && !retried) {
                   log.info('sendToAgent: approval conflict detected -- attempting SDK recovery...');
-                  const sdkResult = await session.recoverPendingApprovals({ timeoutMs: 10_000 });
+                  const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
                   if (sdkResult.recovered) {
                     log.info('sendToAgent: SDK approval recovery succeeded');
                   } else {
