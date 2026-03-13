@@ -527,6 +527,15 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
     if (config.features.heartbeat.skipRecentUserMin !== undefined) {
       env.HEARTBEAT_SKIP_RECENT_USER_MIN = String(config.features.heartbeat.skipRecentUserMin);
     }
+    if (config.features.heartbeat.skipRecentPolicy !== undefined) {
+      env.HEARTBEAT_SKIP_RECENT_POLICY = config.features.heartbeat.skipRecentPolicy;
+    }
+    if (config.features.heartbeat.skipRecentFraction !== undefined) {
+      env.HEARTBEAT_SKIP_RECENT_FRACTION = String(config.features.heartbeat.skipRecentFraction);
+    }
+    if (config.features.heartbeat.interruptOnUserMessage !== undefined) {
+      env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE = config.features.heartbeat.interruptOnUserMessage ? 'true' : 'false';
+    }
   }
   if (config.features?.sleeptime) {
     if (config.features.sleeptime.trigger) {

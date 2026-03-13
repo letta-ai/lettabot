@@ -34,6 +34,7 @@ describe('normalizeAgents', () => {
     'BLUESKY_NOTIFICATIONS_ENABLED', 'BLUESKY_NOTIFICATIONS_INTERVAL_SEC', 'BLUESKY_NOTIFICATIONS_LIMIT',
     'BLUESKY_NOTIFICATIONS_PRIORITY', 'BLUESKY_NOTIFICATIONS_REASONS',
     'HEARTBEAT_ENABLED', 'HEARTBEAT_INTERVAL_MIN', 'HEARTBEAT_SKIP_RECENT_USER_MIN',
+    'HEARTBEAT_SKIP_RECENT_POLICY', 'HEARTBEAT_SKIP_RECENT_FRACTION', 'HEARTBEAT_INTERRUPT_ON_USER_MESSAGE',
     'SLEEPTIME_TRIGGER', 'SLEEPTIME_BEHAVIOR', 'SLEEPTIME_STEP_COUNT',
     'CRON_ENABLED',
   ];
@@ -424,6 +425,30 @@ describe('normalizeAgents', () => {
       });
     });
 
+    it('should pick up heartbeat policy and preemption settings from env vars', () => {
+      process.env.HEARTBEAT_ENABLED = 'true';
+      process.env.HEARTBEAT_INTERVAL_MIN = '30';
+      process.env.HEARTBEAT_SKIP_RECENT_POLICY = 'fraction';
+      process.env.HEARTBEAT_SKIP_RECENT_FRACTION = '0.5';
+      process.env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE = 'false';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.heartbeat).toEqual({
+        enabled: true,
+        intervalMin: 30,
+        skipRecentPolicy: 'fraction',
+        skipRecentFraction: 0.5,
+        interruptOnUserMessage: false,
+      });
+    });
+
     it('should pick up sleeptime from env vars when YAML features is empty', () => {
       process.env.SLEEPTIME_TRIGGER = 'step-count';
       process.env.SLEEPTIME_BEHAVIOR = 'reminder';
@@ -511,6 +536,8 @@ describe('normalizeAgents', () => {
     it('should not override YAML heartbeat with env vars', () => {
       process.env.HEARTBEAT_ENABLED = 'true';
       process.env.HEARTBEAT_INTERVAL_MIN = '99';
+      process.env.HEARTBEAT_SKIP_RECENT_POLICY = 'off';
+      process.env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE = 'false';
 
       const config: LettaBotConfig = {
         server: { mode: 'cloud' },
@@ -521,6 +548,8 @@ describe('normalizeAgents', () => {
             enabled: true,
             intervalMin: 10,
             skipRecentUserMin: 3,
+            skipRecentPolicy: 'fixed',
+            interruptOnUserMessage: true,
           },
         },
       };
@@ -530,6 +559,8 @@ describe('normalizeAgents', () => {
       // YAML values should win
       expect(agents[0].features?.heartbeat?.intervalMin).toBe(10);
       expect(agents[0].features?.heartbeat?.skipRecentUserMin).toBe(3);
+      expect(agents[0].features?.heartbeat?.skipRecentPolicy).toBe('fixed');
+      expect(agents[0].features?.heartbeat?.interruptOnUserMessage).toBe(true);
     });
 
     it('should not override YAML sleeptime with env vars', () => {

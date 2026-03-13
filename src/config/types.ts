@@ -11,6 +11,7 @@ import { createLogger } from '../logger.js';
 const log = createLogger('Config');
 export type ServerMode = 'api' | 'docker' | 'cloud' | 'selfhosted';
 export type CanonicalServerMode = 'api' | 'docker';
+export type HeartbeatSkipRecentPolicy = 'fixed' | 'fraction' | 'off';
 
 export function canonicalizeServerMode(mode?: ServerMode): CanonicalServerMode {
   return mode === 'docker' || mode === 'selfhosted' ? 'docker' : 'api';
@@ -89,6 +90,9 @@ export interface AgentConfig {
       enabled: boolean;
       intervalMin?: number;
       skipRecentUserMin?: number; // Skip auto-heartbeats for N minutes after user message (0 disables)
+      skipRecentPolicy?: HeartbeatSkipRecentPolicy; // 'fixed' | 'fraction' | 'off'
+      skipRecentFraction?: number; // Fraction of intervalMin when policy=fraction (0-1)
+      interruptOnUserMessage?: boolean; // Cancel in-flight heartbeat when user messages arrive
       prompt?: string;       // Custom heartbeat prompt (replaces default body)
       promptFile?: string;   // Path to prompt file (re-read each tick for live editing)
       target?: string;       // Delivery target ("telegram:123", "slack:C123", etc.)
@@ -185,6 +189,9 @@ export interface LettaBotConfig {
       enabled: boolean;
       intervalMin?: number;
       skipRecentUserMin?: number; // Skip auto-heartbeats for N minutes after user message (0 disables)
+      skipRecentPolicy?: HeartbeatSkipRecentPolicy; // 'fixed' | 'fraction' | 'off'
+      skipRecentFraction?: number; // Fraction of intervalMin when policy=fraction (0-1)
+      interruptOnUserMessage?: boolean; // Cancel in-flight heartbeat when user messages arrive
       prompt?: string;       // Custom heartbeat prompt (replaces default body)
       promptFile?: string;   // Path to prompt file (re-read each tick for live editing)
       target?: string;       // Delivery target ("telegram:123", "slack:C123", etc.)
@@ -804,11 +811,29 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     const skipRecentUserMin = process.env.HEARTBEAT_SKIP_RECENT_USER_MIN
       ? parseInt(process.env.HEARTBEAT_SKIP_RECENT_USER_MIN, 10)
       : undefined;
+    const skipRecentPolicyRaw = process.env.HEARTBEAT_SKIP_RECENT_POLICY;
+    const skipRecentPolicy = skipRecentPolicyRaw === 'fixed'
+      || skipRecentPolicyRaw === 'fraction'
+      || skipRecentPolicyRaw === 'off'
+      ? skipRecentPolicyRaw
+      : undefined;
+    const skipRecentFraction = process.env.HEARTBEAT_SKIP_RECENT_FRACTION
+      ? Number(process.env.HEARTBEAT_SKIP_RECENT_FRACTION)
+      : undefined;
+    const interruptOnUserMessageRaw = process.env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE;
+    const interruptOnUserMessage = interruptOnUserMessageRaw === 'true'
+      ? true
+      : interruptOnUserMessageRaw === 'false'
+        ? false
+        : undefined;
 
     features.heartbeat = {
       enabled: true,
       ...(Number.isFinite(intervalMin) ? { intervalMin } : {}),
       ...(Number.isFinite(skipRecentUserMin) ? { skipRecentUserMin } : {}),
+      ...(skipRecentPolicy ? { skipRecentPolicy } : {}),
+      ...(Number.isFinite(skipRecentFraction) ? { skipRecentFraction } : {}),
+      ...(interruptOnUserMessage !== undefined ? { interruptOnUserMessage } : {}),
     };
   }
 

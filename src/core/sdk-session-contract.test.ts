@@ -882,6 +882,66 @@ describe('SDK session contract', () => {
     expect(processSpy).toHaveBeenCalledWith('slack');
   });
 
+  it('preempts an in-flight heartbeat when a user message arrives on the same key', async () => {
+    const streamStarted = deferred<void>();
+    const releaseStream = deferred<void>();
+    let aborted = false;
+
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          streamStarted.resolve();
+          await releaseStream.promise;
+          if (aborted) {
+            throw new Error('aborted');
+          }
+          yield { type: 'assistant', content: 'heartbeat reply' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      abort: vi.fn(async () => {
+        aborted = true;
+        releaseStream.resolve();
+      }),
+      close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      interruptHeartbeatOnUserMessage: true,
+    });
+    const botInternal = bot as any;
+    const processQueueSpy = vi.spyOn(botInternal, 'processQueue').mockResolvedValue(undefined);
+
+    const heartbeatPromise = bot.sendToAgent('heartbeat');
+    await streamStarted.promise;
+
+    await botInternal.handleMessage({
+      userId: 'u1',
+      channel: 'telegram',
+      chatId: 'c1',
+      text: 'hi during heartbeat',
+      timestamp: new Date(),
+      isGroup: false,
+    }, {} as any);
+
+    const response = await heartbeatPromise;
+    await Promise.resolve();
+
+    expect(response).toBe('');
+    expect(mockSession.abort).toHaveBeenCalledTimes(1);
+    expect(botInternal.processing).toBe(false);
+    expect(processQueueSpy).toHaveBeenCalled();
+  });
+
   it('LRU eviction in per-chat mode does not close active keys', async () => {
     const createdSession = {
       initialize: vi.fn(async () => undefined),

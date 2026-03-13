@@ -262,14 +262,17 @@ describe('server.api config (canonical location)', () => {
     expect(env.API_CORS_ORIGIN).toBe('*');
   });
 
-  it('configToEnv should map heartbeat skip window env var', () => {
+  it('configToEnv should map heartbeat skip/preemption env vars', () => {
     const config: LettaBotConfig = {
       ...DEFAULT_CONFIG,
       features: {
         heartbeat: {
           enabled: true,
           intervalMin: 30,
+          skipRecentPolicy: 'fraction',
+          skipRecentFraction: 0.5,
           skipRecentUserMin: 4,
+          interruptOnUserMessage: false,
         },
       },
     };
@@ -277,6 +280,9 @@ describe('server.api config (canonical location)', () => {
     const env = configToEnv(config);
     expect(env.HEARTBEAT_INTERVAL_MIN).toBe('30');
     expect(env.HEARTBEAT_SKIP_RECENT_USER_MIN).toBe('4');
+    expect(env.HEARTBEAT_SKIP_RECENT_POLICY).toBe('fraction');
+    expect(env.HEARTBEAT_SKIP_RECENT_FRACTION).toBe('0.5');
+    expect(env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE).toBe('false');
   });
 
   it('configToEnv should fall back to top-level api (deprecated)', () => {
