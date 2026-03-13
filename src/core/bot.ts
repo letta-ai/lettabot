@@ -6,8 +6,7 @@
 
 import { imageFromBase64, type ImageContent, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
 import { mkdirSync, existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
-import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
+import { readFile, access, unlink, realpath, stat, constants } from 'node:fs/promises';
 import sharp from 'sharp';
 import { execFile } from 'node:child_process';
 import { extname, resolve, join } from 'node:path';
@@ -87,6 +86,10 @@ async function prepareImage(
     mediaType = resolveMime(source.mimeType, source.localPath);
   } else if (source.url) {
     const response = await fetch(source.url);
+    if (!response.ok) {
+      log.warn(`Failed to fetch image from ${source.url}: HTTP ${response.status}`);
+      return null;
+    }
     buffer = Buffer.from(await response.arrayBuffer());
     const ct = response.headers.get('content-type') ?? undefined;
     mediaType = resolveMime(ct ?? source.mimeType, source.url);

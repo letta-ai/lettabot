@@ -7,8 +7,7 @@ vi.mock('@letta-ai/letta-code-sdk', () => ({
   createAgent: vi.fn(),
   createSession: vi.fn(),
   resumeSession: vi.fn(),
-  imageFromFile: vi.fn(),
-  imageFromURL: vi.fn(),
+  imageFromBase64: vi.fn((_data: string, _type: string) => ({ type: 'image', source: { type: 'base64', media_type: _type, data: _data } })),
 }));
 
 vi.mock('../tools/letta-api.js', () => ({
