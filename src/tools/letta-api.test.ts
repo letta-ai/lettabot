@@ -282,8 +282,42 @@ describe('recoverOrphanedConversationApproval', () => {
     expect(approvals[0].tool_call_id).toBe('tc-dup');
   });
 
-  it('continues recovery if batch denial API call fails', async () => {
-    // Two runs with approvals -- first batch fails, second should still succeed
+  it('recovers remaining approvals by submitting denials sequentially', async () => {
+    // Parallel tool calls can fail when denied as one batch. Verify we keep
+    // progressing by submitting one tool_call_id per request.
+    mockConversationsMessagesList.mockReturnValue(mockPageIterator([
+      {
+        message_type: 'approval_request_message',
+        tool_calls: [
+          { tool_call_id: 'tc-a', name: 'Bash' },
+          { tool_call_id: 'tc-b', name: 'Read' },
+          { tool_call_id: 'tc-c', name: 'Grep' },
+        ],
+        run_id: 'run-parallel',
+        id: 'msg-parallel',
+      },
+    ]));
+    mockRunsRetrieve.mockResolvedValue({ status: 'failed', stop_reason: 'error' });
+    mockConversationsMessagesCreate
+      .mockRejectedValueOnce(new Error("Invalid tool call IDs. Expected '['tc-b']', but received '['tc-a']'"))
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    mockRunsList.mockReturnValue(mockPageIterator([]));
+
+    const resultPromise = recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    await vi.advanceTimersByTimeAsync(10000);
+    const result = await resultPromise;
+
+    expect(result.recovered).toBe(true);
+    expect(result.details).toContain('Failed to deny approval tc-a from run run-parallel');
+    expect(result.details).toContain('Denied 2 approval(s) from failed run run-parallel');
+    expect(mockConversationsMessagesCreate).toHaveBeenCalledTimes(3);
+    expect(mockConversationsMessagesCreate.mock.calls.map((call) => call[1].messages[0].approvals[0].tool_call_id))
+      .toEqual(['tc-a', 'tc-b', 'tc-c']);
+  });
+
+  it('continues recovery if approval denial API call fails for one run', async () => {
+    // Two runs with approvals -- first denial fails, second should still succeed
     mockConversationsMessagesList.mockReturnValue(mockPageIterator([
       {
         message_type: 'approval_request_message',
