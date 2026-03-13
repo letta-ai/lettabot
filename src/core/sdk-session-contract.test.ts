@@ -110,6 +110,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -147,6 +148,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -176,6 +178,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -211,6 +214,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -241,6 +245,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-stale',
     };
@@ -255,6 +260,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-recreated',
       conversationId: 'conv-recreated',
     };
@@ -293,6 +299,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-keep',
     };
@@ -331,6 +338,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test-1',
     };
@@ -346,6 +354,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test-2',
     };
@@ -378,6 +387,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-old',
     };
@@ -392,6 +402,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-new',
     };
@@ -453,6 +464,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'default',
     };
@@ -468,6 +480,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'default',
     };
@@ -506,6 +519,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-stuck',
     };
@@ -521,6 +535,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-fresh',
     };
@@ -567,6 +582,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -596,6 +612,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -625,6 +642,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -654,6 +672,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -692,6 +711,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -754,6 +774,7 @@ describe('SDK session contract', () => {
           })()
         ),
         close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
         agentId: 'agent-contract-test',
         conversationId: `${sessionName}-conversation`,
       } as never;
@@ -872,6 +893,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-new',
     };
@@ -879,9 +901,11 @@ describe('SDK session contract', () => {
 
     const activeSession = {
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
     };
     const idleSession = {
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
     };
 
     const bot = new LettaBot({
@@ -920,6 +944,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -946,6 +971,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-123',
     };
@@ -978,6 +1004,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -1012,6 +1039,7 @@ describe('SDK session contract', () => {
         })();
       }),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-approval',
     };
@@ -1042,7 +1070,7 @@ describe('SDK session contract', () => {
 
     let runCall = 0;
     (bot as any).sessionManager.runSession = vi.fn(async () => ({
-      session: { abort: vi.fn(async () => undefined) },
+      session: { abort: vi.fn(async () => undefined), recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })) },
       stream: async function* () {
         if (runCall++ === 0) {
           yield { type: 'result', success: false, error: 'error', conversationId: 'conv-approval' };
@@ -1108,7 +1136,7 @@ describe('SDK session contract', () => {
 
     let runCall = 0;
     (bot as any).sessionManager.runSession = vi.fn(async () => ({
-      session: { abort: vi.fn(async () => undefined) },
+      session: { abort: vi.fn(async () => undefined), recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })) },
       stream: async function* () {
         if (runCall++ === 0) {
           // Pre-foreground error is filtered by the pipeline -- it never
@@ -1183,7 +1211,7 @@ describe('SDK session contract', () => {
 
     let runCall = 0;
     (bot as any).sessionManager.runSession = vi.fn(async () => ({
-      session: { abort: vi.fn(async () => undefined) },
+      session: { abort: vi.fn(async () => undefined), recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })) },
       stream: async function* () {
         if (runCall++ === 0) {
           yield { type: 'result', success: false, error: 'error', conversationId: 'default' };
@@ -1255,6 +1283,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-stuck',
     };
@@ -1270,6 +1299,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-fresh',
     };
@@ -1316,6 +1346,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-new-tagged',
       conversationId: 'conversation-new-tagged',
     };
@@ -1371,6 +1402,7 @@ describe('SDK session contract', () => {
         })();
       }),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-runid-test',
       conversationId: 'conversation-runid-test',
     };
@@ -1409,6 +1441,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-reuse-false',
       conversationId: 'conversation-reuse-false',
     };
@@ -1442,6 +1475,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-background-directives',
       conversationId: 'conversation-background-directives',
     };
@@ -1528,6 +1562,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-queue-leak-test',
       conversationId: 'conversation-queue-leak-test',
     };
