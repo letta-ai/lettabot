@@ -634,6 +634,11 @@ export class BlueskyAdapter implements ChannelAdapter {
         return await fn();
       } catch (err) {
         lastError = err as Error;
+        // Don't retry rate limit errors -- back off and let the next poll cycle handle it
+        if (lastError.message?.includes('RateLimitExceeded')) {
+          log.warn(`${label} rate-limited. Skipping retries.`);
+          throw lastError;
+        }
         if (attempt < maxRetries - 1) {
           const delay = Math.min(5000, 1000 * Math.pow(2, attempt));
           log.warn(`${label} failed (attempt ${attempt + 1}/${maxRetries}). Retrying in ${delay}ms.`);
@@ -1470,6 +1475,8 @@ export class BlueskyAdapter implements ChannelAdapter {
           auth?: {
             did?: string;
             handle?: string;
+            accessJwt?: string;
+            refreshJwt?: string;
           };
           notificationsCursor?: string;
         }>;
@@ -1482,12 +1489,20 @@ export class BlueskyAdapter implements ChannelAdapter {
       // wantedDids and wantedCollections are NOT restored from state -- config is
       // authoritative. State previously persisted these, but restoring them would
       // silently override user edits to lettabot.yaml made while the bot was down.
-      // JWTs are not persisted; session DID and handle are non-secret and safe to store
       if (entry?.auth?.did) {
         this.sessionDid = entry.auth.did;
       }
       if (entry?.auth?.handle && entry?.auth?.did) {
         this.handleByDid.set(entry.auth.did, entry.auth.handle);
+      }
+      // Restore JWTs so we can refresh instead of re-authenticating on restart
+      if (entry?.auth?.accessJwt) {
+        this.accessJwt = entry.auth.accessJwt;
+        this.accessJwtExpiresAt = decodeJwtExp(entry.auth.accessJwt);
+      }
+      if (entry?.auth?.refreshJwt) {
+        this.refreshJwt = entry.auth.refreshJwt;
+        this.refreshJwtExpiresAt = decodeJwtExp(entry.auth.refreshJwt);
       }
       if (entry?.notificationsCursor) {
         this.notificationsCursor = entry.notificationsCursor;
@@ -1528,11 +1543,12 @@ export class BlueskyAdapter implements ChannelAdapter {
       const agents = typeof existing.agents === 'object' && existing.agents
         ? { ...existing.agents }
         : {};
-      // Only persist non-secret session metadata; JWTs are re-acquired on startup
       const auth = this.sessionDid
         ? {
             did: this.sessionDid,
             handle: this.config.handle,
+            accessJwt: this.accessJwt,
+            refreshJwt: this.refreshJwt,
           }
         : undefined;
 
