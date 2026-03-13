@@ -63,8 +63,9 @@ describe('skills loader', () => {
   });
 
   describe('getAgentSkillsDir', () => {
-    it('uses Railway volume path for agent-scoped skills when mounted', async () => {
+    it('uses Railway volume for agent-scoped skills when mounted', async () => {
       process.env.RAILWAY_VOLUME_MOUNT_PATH = '/railway-volume';
+      delete process.env.WORKING_DIR;
 
       const mod = await importFreshLoader();
       const dir = mod.getAgentSkillsDir('agent-railway');
