@@ -73,13 +73,20 @@ export function decodeYamlOrBase64(value: string): string {
   }
 
   const normalized = trimmed.replace(/\s+/g, '');
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(normalized) || normalized.length % 4 !== 0) {
+  const base64Standard = normalized.replace(/-/g, '+').replace(/_/g, '/');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64Standard)) {
     throw new Error('LETTABOT_CONFIG_YAML must be raw YAML or base64-encoded YAML');
   }
 
-  const decoded = Buffer.from(normalized, 'base64').toString('utf-8');
+  const normalizedNoPad = base64Standard.replace(/=+$/, '');
+  if (normalizedNoPad.length === 0 || normalizedNoPad.length % 4 === 1) {
+    throw new Error('LETTABOT_CONFIG_YAML must be raw YAML or base64-encoded YAML');
+  }
+
+  const padded = normalizedNoPad + '='.repeat((4 - (normalizedNoPad.length % 4)) % 4);
+
+  const decoded = Buffer.from(padded, 'base64').toString('utf-8');
   const roundTrip = Buffer.from(decoded, 'utf-8').toString('base64').replace(/=+$/, '');
-  const normalizedNoPad = normalized.replace(/=+$/, '');
   if (roundTrip !== normalizedNoPad) {
     throw new Error('LETTABOT_CONFIG_YAML is not valid base64');
   }

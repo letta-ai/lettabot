@@ -568,6 +568,9 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     const normalized: AgentConfig['channels'] = {};
     if (!channels) return normalized;
 
+    const hasValidMtprotoApiId = (value: unknown): value is number =>
+      typeof value === 'number' && Number.isInteger(value) && value > 0;
+
     // Merge env vars into YAML blocks that are missing their key credential.
     // Without this, `signal: enabled: true` + SIGNAL_PHONE_NUMBER env var
     // silently fails because the env-var-only fallback (below) only fires
@@ -588,7 +591,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     if (channels['telegram-mtproto']) {
       if (channels['telegram-mtproto'].apiId === undefined && process.env.TELEGRAM_API_ID) {
         const parsedApiId = parseInt(process.env.TELEGRAM_API_ID, 10);
-        if (!Number.isNaN(parsedApiId)) {
+        if (hasValidMtprotoApiId(parsedApiId)) {
           channels['telegram-mtproto'].apiId = parsedApiId;
         }
       }
@@ -607,7 +610,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     }
     if (
       channels['telegram-mtproto']?.enabled !== false
-      && channels['telegram-mtproto']?.apiId !== undefined
+      && hasValidMtprotoApiId(channels['telegram-mtproto']?.apiId)
       && !!channels['telegram-mtproto']?.apiHash
       && !!channels['telegram-mtproto']?.phoneNumber
     ) {

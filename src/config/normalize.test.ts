@@ -217,6 +217,23 @@ describe('normalizeAgents', () => {
     expect(() => normalizeAgents(config)).toThrow('channels.telegram-mtproto');
   });
 
+  it('should fail fast when telegram-mtproto apiId is not a positive integer', () => {
+    const config: LettaBotConfig = {
+      server: { mode: 'cloud' },
+      agent: { name: 'TestBot', model: 'test' },
+      channels: {
+        'telegram-mtproto': {
+          enabled: true,
+          apiId: 0,
+          apiHash: 'hash',
+          phoneNumber: '+15550001111',
+        },
+      },
+    };
+
+    expect(() => normalizeAgents(config)).toThrow('channels.telegram-mtproto');
+  });
+
   it('should preserve agent id when provided', () => {
     const config: LettaBotConfig = {
       server: { mode: 'cloud' },

@@ -72,6 +72,22 @@ describe('inline config helpers', () => {
     expect(decodeYamlOrBase64(encoded)).toBe(yaml);
   });
 
+  it('decodes unpadded base64 inline config', () => {
+    const yaml = 'server:\n  mode: api\n';
+    const encoded = Buffer.from(yaml, 'utf-8').toString('base64').replace(/=+$/, '');
+    expect(decodeYamlOrBase64(encoded)).toBe(yaml);
+  });
+
+  it('decodes URL-safe base64 inline config', () => {
+    const yaml = 'server:\n  mode: api\n';
+    const encoded = Buffer.from(yaml, 'utf-8')
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+    expect(decodeYamlOrBase64(encoded)).toBe(yaml);
+  });
+
   it('throws for empty inline config values', () => {
     expect(() => decodeYamlOrBase64('')).toThrow('LETTABOT_CONFIG_YAML is empty');
     expect(() => decodeYamlOrBase64('   ')).toThrow('LETTABOT_CONFIG_YAML is empty');
