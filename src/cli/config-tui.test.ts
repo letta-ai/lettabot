@@ -163,14 +163,18 @@ describe('config TUI helpers', () => {
     };
 
     const draft = extractCoreDraft(config);
-    expect(draft.features.heartbeat.skipRecentPolicy).toBe('fraction');
-    expect(draft.features.heartbeat.skipRecentFraction).toBe(0.5);
-    expect(draft.features.heartbeat.interruptOnUserMessage).toBe(true);
+    const heartbeat = draft.features.heartbeat;
+    if (!heartbeat) {
+      throw new Error('Expected heartbeat settings in extracted draft');
+    }
+    expect(heartbeat.skipRecentPolicy).toBe('fraction');
+    expect(heartbeat.skipRecentFraction).toBe(0.5);
+    expect(heartbeat.interruptOnUserMessage).toBe(true);
 
-    draft.features.heartbeat.skipRecentPolicy = 'fixed';
-    draft.features.heartbeat.skipRecentUserMin = 7;
-    delete draft.features.heartbeat.skipRecentFraction;
-    draft.features.heartbeat.interruptOnUserMessage = false;
+    heartbeat.skipRecentPolicy = 'fixed';
+    heartbeat.skipRecentUserMin = 7;
+    delete heartbeat.skipRecentFraction;
+    heartbeat.interruptOnUserMessage = false;
 
     const updated = applyCoreDraft(config, draft);
     expect(updated.agents?.[0].features?.heartbeat?.skipRecentPolicy).toBe('fixed');
