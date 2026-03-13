@@ -157,10 +157,10 @@ function renderTabs() {
     const n = (data[ch] || []).length;
     const cls = ch === activeTab ? 'tab active' : 'tab';
     const count = n > 0 ? '<span class="count">' + n + '</span>' : '';
-    return '<div class="' + cls + '" onclick="switchTab(\\'' + ch + '\\')">' + ch.charAt(0).toUpperCase() + ch.slice(1) + count + '</div>';
+    return '<div class="' + cls + '" onclick="switchTab(\'' + ch + '\')">' + ch.charAt(0).toUpperCase() + ch.slice(1) + count + '</div>';
   }).join('');
   const statusCls = activeTab === '__status__' ? 'tab active' : 'tab';
-  html += '<div class="' + statusCls + '" onclick="switchTab(\\'__status__\\')">Status</div>';
+  html += '<div class="' + statusCls + '" onclick="switchTab(\'__status__\')">Status</div>';
   el.innerHTML = html;
 }
 
@@ -176,7 +176,7 @@ function renderList() {
   el.innerHTML = items.map(r => {
     const name = r.meta?.username ? '@' + r.meta.username : r.meta?.firstName || 'User ' + r.id;
     const ago = timeAgo(r.createdAt);
-    return '<div class="request"><div class="code">' + esc(r.code) + '</div><div class="meta"><div class="name">' + esc(name) + '</div><div class="time">' + ago + '</div></div><button class="approve-btn" onclick="approve(\\'' + activeTab + '\\',\\'' + r.code + '\\', this)">Approve</button></div>';
+    return '<div class="request"><div class="code">' + esc(r.code) + '</div><div class="meta"><div class="name">' + esc(name) + '</div><div class="time">' + ago + '</div></div><button class="approve-btn" onclick="approve(\'' + activeTab + '\',\'' + r.code + '\', this)">Approve</button></div>';
   }).join('');
 }
 
@@ -213,7 +213,7 @@ function renderStatus() {
         const summary = c.summary ? esc(c.summary) : '';
         const msgs = c.messageCount ? c.messageCount + ' msgs' : '';
         const ago = c.updatedAt ? timeAgo(c.updatedAt) : '';
-        html += '<div class="conv-row' + isActive + '" onclick="pickConversation(\\'' + esc(c.id) + '\\',\\'' + esc(name) + '\\')">';
+        html += '<div class="conv-row' + isActive + '" onclick="pickConversation(\'' + esc(c.id) + '\',\'' + esc(name) + '\')">';
         html += '<div class="conv-id">' + esc(c.id) + '</div>';
         html += '<div class="conv-meta">' + (summary || ago) + '</div>';
         html += '<div class="conv-msgs">' + msgs + '</div>';
