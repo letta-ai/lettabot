@@ -21,6 +21,13 @@ import { LETTA_API_URL } from '../auth/oauth.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Config');
+
+function getInlineConfigEnvValue(): string | undefined {
+  const raw = process.env.LETTABOT_CONFIG_YAML;
+  if (raw === undefined) return undefined;
+  return raw.trim().length > 0 ? raw : undefined;
+}
+
 // Config file locations (checked in order)
 function getConfigPaths(): string[] {
   return [
@@ -40,26 +47,71 @@ const DEFAULT_CONFIG_PATH = join(homedir(), '.lettabot', 'config.yaml');
  * When set, this takes priority over all file-based config sources.
  */
 export function hasInlineConfig(): boolean {
-  return !!process.env.LETTABOT_CONFIG_YAML;
+  return getInlineConfigEnvValue() !== undefined;
 }
 
 /**
  * Decode a value that may be raw YAML or base64-encoded YAML.
- * Detection: if the value contains a colon, it's raw YAML (every valid config
- * has key: value pairs). Otherwise it's base64 (which uses only [A-Za-z0-9+/=]).
+ * Detection strategy:
+ * 1) Treat values that parse as YAML objects as raw YAML.
+ * 2) Otherwise, require strict base64 and decode to YAML object.
  */
 export function decodeYamlOrBase64(value: string): string {
-  if (value.includes(':')) {
-    return value;
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error('LETTABOT_CONFIG_YAML is empty');
   }
-  return Buffer.from(value, 'base64').toString('utf-8');
+
+  // Prefer raw YAML when it parses successfully.
+  try {
+    const parsed = YAML.parse(trimmed);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return value;
+    }
+  } catch {
+    // Fall through to base64 decoding.
+  }
+
+  const normalized = trimmed.replace(/\s+/g, '');
+  const base64Standard = normalized.replace(/-/g, '+').replace(/_/g, '/');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64Standard)) {
+    throw new Error('LETTABOT_CONFIG_YAML must be raw YAML or base64-encoded YAML');
+  }
+
+  const normalizedNoPad = base64Standard.replace(/=+$/, '');
+  if (normalizedNoPad.length === 0 || normalizedNoPad.length % 4 === 1) {
+    throw new Error('LETTABOT_CONFIG_YAML must be raw YAML or base64-encoded YAML');
+  }
+
+  const padded = normalizedNoPad + '='.repeat((4 - (normalizedNoPad.length % 4)) % 4);
+
+  const decoded = Buffer.from(padded, 'base64').toString('utf-8');
+  const roundTrip = Buffer.from(decoded, 'utf-8').toString('base64').replace(/=+$/, '');
+  if (roundTrip !== normalizedNoPad) {
+    throw new Error('LETTABOT_CONFIG_YAML is not valid base64');
+  }
+
+  try {
+    const parsed = YAML.parse(decoded);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Decoded YAML must be an object');
+    }
+  } catch {
+    throw new Error('LETTABOT_CONFIG_YAML decoded from base64 but is not valid YAML');
+  }
+
+  return decoded;
 }
 
 /**
  * Decode inline config from LETTABOT_CONFIG_YAML env var.
  */
 function decodeInlineConfig(): string {
-  return decodeYamlOrBase64(process.env.LETTABOT_CONFIG_YAML!);
+  const value = getInlineConfigEnvValue();
+  if (!value) {
+    throw new Error('LETTABOT_CONFIG_YAML is empty');
+  }
+  return decodeYamlOrBase64(value);
 }
 
 /**

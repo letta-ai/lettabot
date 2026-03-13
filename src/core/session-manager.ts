@@ -16,6 +16,7 @@ import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { createManageTodoTool } from '../tools/todo.js';
 import { syncTodosFromTool } from '../todo/store.js';
+import { recoverPendingApprovalsWithSdk } from './session-sdk-compat.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Session');
@@ -376,7 +377,7 @@ export class SessionManager {
           log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
 
           // Try SDK-level recovery first (goes through CLI control protocol)
-          const sdkResult = await session.recoverPendingApprovals({ timeoutMs: 10_000 });
+          const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
           if (sdkResult.recovered) {
             log.info('Proactive SDK approval recovery succeeded');
             return this._createSessionForKey(key, true, generation);
@@ -574,7 +575,7 @@ export class SessionManager {
       // 409 CONFLICT from orphaned approval -- use SDK recovery first, fall back to API
       if (!retried && isApprovalConflictError(error) && this.store.agentId) {
         log.info('CONFLICT detected - attempting SDK approval recovery...');
-        const sdkResult = await session.recoverPendingApprovals({ timeoutMs: 10_000 });
+        const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
         if (sdkResult.recovered) {
           log.info('SDK approval recovery succeeded, retrying...');
           return this.runSession(message, { retried: true, canUseTool, convKey });

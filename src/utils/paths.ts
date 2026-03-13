@@ -91,7 +91,7 @@ export function getCronDataDir(): string {
   }
 
   if (process.env.WORKING_DIR) {
-    return process.env.WORKING_DIR;
+    return resolveWorkingDirPath(process.env.WORKING_DIR);
   }
 
   return '/tmp/lettabot';
