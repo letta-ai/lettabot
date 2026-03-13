@@ -495,7 +495,7 @@ describe('SDK session contract', () => {
     expect(initialSession.close).toHaveBeenCalledTimes(1);
   });
 
-  it('clears stuck shared conversation during proactive recovery when details include invalid tool call IDs', async () => {
+  it('keeps shared conversation during proactive recovery when details include invalid tool call IDs', async () => {
     const initialSession = {
       initialize: vi.fn(async () => undefined),
       bootstrapState: vi.fn(async () => ({ hasPendingApproval: true, conversationId: 'conv-stuck' })),
@@ -552,7 +552,7 @@ describe('SDK session contract', () => {
     );
     expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(resumeSession).mock.calls[0][0]).toBe('conv-stuck');
-    expect(vi.mocked(resumeSession).mock.calls[1][0]).toBe('agent-contract-test');
+    expect(vi.mocked(resumeSession).mock.calls[1][0]).toBe('conv-stuck');
     expect(initialSession.close).toHaveBeenCalledTimes(1);
   });
 
@@ -1238,7 +1238,7 @@ describe('SDK session contract', () => {
     expect(sentTexts).toContain('after default recovery');
   });
 
-  it('clears stuck shared conversation during reactive conflict recovery when details include invalid tool call IDs', async () => {
+  it('keeps shared conversation during reactive conflict recovery when details include invalid tool call IDs', async () => {
     const conflictError = new Error(
       'CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.'
     );
@@ -1297,7 +1297,7 @@ describe('SDK session contract', () => {
     expect(recoverOrphanedConversationApproval).toHaveBeenCalledWith('agent-contract-test', 'conv-stuck');
     expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(resumeSession).mock.calls[0][0]).toBe('conv-stuck');
-    expect(vi.mocked(resumeSession).mock.calls[1][0]).toBe('agent-contract-test');
+    expect(vi.mocked(resumeSession).mock.calls[1][0]).toBe('conv-stuck');
     expect(stuckSession.close).toHaveBeenCalledTimes(1);
   });
 
