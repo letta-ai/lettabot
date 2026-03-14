@@ -63,6 +63,14 @@ describe('cron path resolution', () => {
     expect(getCronDataDir()).toBe('/custom/work');
   });
 
+  it('normalizes WORKING_DIR for cron data paths', () => {
+    process.env.WORKING_DIR = '~/cron-work';
+    expect(getCronDataDir()).toBe(resolve(homedir(), 'cron-work'));
+
+    process.env.WORKING_DIR = 'relative/cron-work';
+    expect(getCronDataDir()).toBe(resolve('relative/cron-work'));
+  });
+
   it('falls back to /tmp/lettabot when no overrides are set', () => {
     expect(getCronDataDir()).toBe('/tmp/lettabot');
     expect(getCronStorePath()).toBe('/tmp/lettabot/cron-jobs.json');

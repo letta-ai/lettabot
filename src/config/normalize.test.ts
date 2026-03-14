@@ -27,13 +27,14 @@ describe('normalizeAgents', () => {
     'TELEGRAM_BOT_TOKEN', 'TELEGRAM_DM_POLICY', 'TELEGRAM_ALLOWED_USERS',
     'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_DM_POLICY', 'SLACK_ALLOWED_USERS',
     'WHATSAPP_ENABLED', 'WHATSAPP_SELF_CHAT_MODE', 'WHATSAPP_DM_POLICY', 'WHATSAPP_ALLOWED_USERS',
-    'SIGNAL_PHONE_NUMBER', 'SIGNAL_SELF_CHAT_MODE', 'SIGNAL_DM_POLICY', 'SIGNAL_ALLOWED_USERS',
+    'SIGNAL_PHONE_NUMBER', 'SIGNAL_SELF_CHAT_MODE', 'SIGNAL_READ_RECEIPTS', 'SIGNAL_DM_POLICY', 'SIGNAL_ALLOWED_USERS',
     'DISCORD_BOT_TOKEN', 'DISCORD_DM_POLICY', 'DISCORD_ALLOWED_USERS',
     'BLUESKY_WANTED_DIDS', 'BLUESKY_WANTED_COLLECTIONS', 'BLUESKY_JETSTREAM_URL', 'BLUESKY_CURSOR',
     'BLUESKY_HANDLE', 'BLUESKY_APP_PASSWORD', 'BLUESKY_SERVICE_URL', 'BLUESKY_APPVIEW_URL',
     'BLUESKY_NOTIFICATIONS_ENABLED', 'BLUESKY_NOTIFICATIONS_INTERVAL_SEC', 'BLUESKY_NOTIFICATIONS_LIMIT',
     'BLUESKY_NOTIFICATIONS_PRIORITY', 'BLUESKY_NOTIFICATIONS_REASONS',
     'HEARTBEAT_ENABLED', 'HEARTBEAT_INTERVAL_MIN', 'HEARTBEAT_SKIP_RECENT_USER_MIN',
+    'HEARTBEAT_SKIP_RECENT_POLICY', 'HEARTBEAT_SKIP_RECENT_FRACTION', 'HEARTBEAT_INTERRUPT_ON_USER_MESSAGE',
     'SLEEPTIME_TRIGGER', 'SLEEPTIME_BEHAVIOR', 'SLEEPTIME_STEP_COUNT',
     'CRON_ENABLED',
   ];
@@ -116,7 +117,7 @@ describe('normalizeAgents', () => {
         name: 'Bot1',
         channels: {
           telegram: { enabled: true, token: 'token1' },
-          slack: { enabled: true, botToken: 'missing-app-token' },
+          slack: { enabled: true, botToken: 'token1', appToken: 'app1' },
         },
       },
       {
@@ -140,7 +141,7 @@ describe('normalizeAgents', () => {
 
     expect(agents).toHaveLength(2);
     expect(agents[0].channels.telegram?.token).toBe('token1');
-    expect(agents[0].channels.slack).toBeUndefined();
+    expect(agents[0].channels.slack?.botToken).toBe('token1');
     expect(agents[1].channels.slack?.botToken).toBe('token2');
     expect(agents[1].channels.discord).toBeUndefined();
   });
@@ -173,7 +174,7 @@ describe('normalizeAgents', () => {
     expect(agents[0].name).toBe('LettaBot');
   });
 
-  it('should drop channels without required credentials', () => {
+  it('should fail fast when enabled channels are missing required credentials', () => {
     const config: LettaBotConfig = {
       server: { mode: 'cloud' },
       agent: { name: 'TestBot', model: 'test' },
@@ -198,9 +199,40 @@ describe('normalizeAgents', () => {
       },
     };
 
-    const agents = normalizeAgents(config);
+    expect(() => normalizeAgents(config)).toThrow('Invalid channel configuration');
+  });
 
-    expect(agents[0].channels).toEqual({});
+  it('should fail fast when telegram-mtproto is missing required credentials', () => {
+    const config: LettaBotConfig = {
+      server: { mode: 'cloud' },
+      agent: { name: 'TestBot', model: 'test' },
+      channels: {
+        'telegram-mtproto': {
+          enabled: true,
+          apiId: 12345,
+          // Missing apiHash and phoneNumber
+        },
+      },
+    };
+
+    expect(() => normalizeAgents(config)).toThrow('channels.telegram-mtproto');
+  });
+
+  it('should fail fast when telegram-mtproto apiId is not a positive integer', () => {
+    const config: LettaBotConfig = {
+      server: { mode: 'cloud' },
+      agent: { name: 'TestBot', model: 'test' },
+      channels: {
+        'telegram-mtproto': {
+          enabled: true,
+          apiId: 0,
+          apiHash: 'hash',
+          phoneNumber: '+15550001111',
+        },
+      },
+    };
+
+    expect(() => normalizeAgents(config)).toThrow('channels.telegram-mtproto');
   });
 
   it('should preserve agent id when provided', () => {
@@ -393,6 +425,30 @@ describe('normalizeAgents', () => {
       });
     });
 
+    it('should pick up heartbeat policy and preemption settings from env vars', () => {
+      process.env.HEARTBEAT_ENABLED = 'true';
+      process.env.HEARTBEAT_INTERVAL_MIN = '30';
+      process.env.HEARTBEAT_SKIP_RECENT_POLICY = 'fraction';
+      process.env.HEARTBEAT_SKIP_RECENT_FRACTION = '0.5';
+      process.env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE = 'false';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].features?.heartbeat).toEqual({
+        enabled: true,
+        intervalMin: 30,
+        skipRecentPolicy: 'fraction',
+        skipRecentFraction: 0.5,
+        interruptOnUserMessage: false,
+      });
+    });
+
     it('should pick up sleeptime from env vars when YAML features is empty', () => {
       process.env.SLEEPTIME_TRIGGER = 'step-count';
       process.env.SLEEPTIME_BEHAVIOR = 'reminder';
@@ -480,6 +536,8 @@ describe('normalizeAgents', () => {
     it('should not override YAML heartbeat with env vars', () => {
       process.env.HEARTBEAT_ENABLED = 'true';
       process.env.HEARTBEAT_INTERVAL_MIN = '99';
+      process.env.HEARTBEAT_SKIP_RECENT_POLICY = 'off';
+      process.env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE = 'false';
 
       const config: LettaBotConfig = {
         server: { mode: 'cloud' },
@@ -490,6 +548,8 @@ describe('normalizeAgents', () => {
             enabled: true,
             intervalMin: 10,
             skipRecentUserMin: 3,
+            skipRecentPolicy: 'fixed',
+            interruptOnUserMessage: true,
           },
         },
       };
@@ -499,6 +559,8 @@ describe('normalizeAgents', () => {
       // YAML values should win
       expect(agents[0].features?.heartbeat?.intervalMin).toBe(10);
       expect(agents[0].features?.heartbeat?.skipRecentUserMin).toBe(3);
+      expect(agents[0].features?.heartbeat?.skipRecentPolicy).toBe('fixed');
+      expect(agents[0].features?.heartbeat?.interruptOnUserMessage).toBe(true);
     });
 
     it('should not override YAML sleeptime with env vars', () => {
@@ -594,7 +656,43 @@ describe('normalizeAgents', () => {
       expect(agents[0].channels.slack?.appToken).toBe('slack-app');
       expect(agents[0].channels.whatsapp?.enabled).toBe(true);
       expect(agents[0].channels.signal?.phone).toBe('+1234567890');
+      expect(agents[0].channels.signal?.readReceipts).toBe(true);
       expect(agents[0].channels.discord?.token).toBe('discord-token');
+    });
+
+    it('should allow disabling Signal read receipts via env var', () => {
+      process.env.SIGNAL_PHONE_NUMBER = '+1234567890';
+      process.env.SIGNAL_READ_RECEIPTS = 'false';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].channels.signal?.readReceipts).toBe(false);
+    });
+
+    it('treats empty boolean env vars as unset for channel defaults', () => {
+      process.env.WHATSAPP_ENABLED = 'true';
+      process.env.WHATSAPP_SELF_CHAT_MODE = '   ';
+      process.env.SIGNAL_PHONE_NUMBER = '+1234567890';
+      process.env.SIGNAL_READ_RECEIPTS = '';
+      process.env.SIGNAL_SELF_CHAT_MODE = '   ';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+
+      expect(agents[0].channels.whatsapp?.selfChat).toBe(true);
+      expect(agents[0].channels.signal?.readReceipts).toBe(true);
+      expect(agents[0].channels.signal?.selfChat).toBe(true);
     });
 
     it('should pick up allowedUsers from env vars for all channels', () => {
@@ -641,6 +739,20 @@ describe('normalizeAgents', () => {
 
       expect(agents[0].channels.signal?.dmPolicy).toBe('allowlist');
       expect(agents[0].channels.signal?.allowedUsers).toEqual(['+1555111111']);
+    });
+
+    it('treats empty allowed-users env vars as unset', () => {
+      process.env.TELEGRAM_BOT_TOKEN = 'tg-token';
+      process.env.TELEGRAM_ALLOWED_USERS = ' ,  , ';
+
+      const config: LettaBotConfig = {
+        server: { mode: 'cloud' },
+        agent: { name: 'TestBot', model: 'test' },
+        channels: {},
+      };
+
+      const agents = normalizeAgents(config);
+      expect(agents[0].channels.telegram?.allowedUsers).toBeUndefined();
     });
   });
 

@@ -92,6 +92,7 @@ channels:
   signal:
     enabled: true
     phone: "+1234567890"
+    readReceipts: true
     selfChat: true
     dmPolicy: pairing
 
@@ -239,6 +240,7 @@ agents:
     channels:
       signal:
         phone: "+1234567890"
+        readReceipts: true
         selfChat: true
       whatsapp:
         enabled: true
@@ -521,6 +523,7 @@ For dedicated bot numbers (`selfChat: false`), onboarding defaults to **allowlis
 | Option | Type | Description |
 |--------|------|-------------|
 | `phone` | string | Phone number with + prefix |
+| `readReceipts` | boolean | Send read receipts for incoming messages (default: `true`) |
 | `selfChat` | boolean | `true` = only "Note to Self" works |
 
 ## Features Configuration
@@ -532,12 +535,20 @@ features:
   heartbeat:
     enabled: true
     intervalMin: 60    # Check every 60 minutes
-    skipRecentUserMin: 5  # Skip auto-heartbeats for N minutes after user message (0 disables)
+    skipRecentPolicy: fraction      # fixed | fraction | off
+    skipRecentFraction: 0.5         # Used when policy=fraction (0-1)
+    # skipRecentUserMin: 5          # Used when policy=fixed (0 disables)
+    interruptOnUserMessage: true    # Cancel in-flight heartbeat when user messages arrive
 ```
 
 Heartbeats are background tasks where the agent can review pending work.
-If the user messaged recently, automatic heartbeats are skipped by default for 5 minutes (`skipRecentUserMin`).
-Set this to `0` to disable skipping. Manual `/heartbeat` bypasses the skip check.
+By default, automatic heartbeats skip for half of the heartbeat interval (`skipRecentPolicy: fraction` with `skipRecentFraction: 0.5`).
+- `fixed`: use `skipRecentUserMin`.
+- `fraction`: use `ceil(intervalMin * skipRecentFraction)`.
+- `off`: disable recent-user skipping.
+
+`interruptOnUserMessage` defaults to `true`, so live user messages cancel in-flight heartbeat runs on the same conversation key.
+Manual `/heartbeat` bypasses the recent-user skip check.
 
 #### Custom Heartbeat Prompt
 
@@ -568,13 +579,19 @@ Via environment variable:
 ```bash
 HEARTBEAT_PROMPT="Review recent conversations" npm start
 # Optional: HEARTBEAT_SKIP_RECENT_USER_MIN=0 to disable recent-user skip
+# Optional: HEARTBEAT_SKIP_RECENT_POLICY=fixed|fraction|off
+# Optional: HEARTBEAT_SKIP_RECENT_FRACTION=0.5
+# Optional: HEARTBEAT_INTERRUPT_ON_USER_MESSAGE=true
 ```
 
 Precedence: `prompt` (inline YAML) > `HEARTBEAT_PROMPT` (env var) > `promptFile` (file) > built-in default.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `features.heartbeat.skipRecentUserMin` | number | `5` | Skip auto-heartbeats for N minutes after a user message. Set `0` to disable. |
+| `features.heartbeat.skipRecentPolicy` | `'fixed' \| 'fraction' \| 'off'` | `'fraction'` | How recent-user skipping is calculated. |
+| `features.heartbeat.skipRecentFraction` | number | `0.5` | Fraction of `intervalMin` used when policy is `fraction` (range: `0`-`1`). |
+| `features.heartbeat.skipRecentUserMin` | number | `5` | Skip auto-heartbeats for N minutes when policy is `fixed`. Set `0` to disable fixed-window skipping. |
+| `features.heartbeat.interruptOnUserMessage` | boolean | `true` | Cancel in-flight heartbeat runs when a user message arrives on the same conversation key. |
 | `features.heartbeat.prompt` | string | _(none)_ | Custom heartbeat prompt text |
 | `features.heartbeat.promptFile` | string | _(none)_ | Path to prompt file (relative to working dir) |
 
@@ -1052,6 +1069,7 @@ Reference:
 | `WHATSAPP_ENABLED` | `channels.whatsapp.enabled` |
 | `WHATSAPP_SELF_CHAT_MODE` | `channels.whatsapp.selfChat` |
 | `SIGNAL_PHONE_NUMBER` | `channels.signal.phone` |
+| `SIGNAL_READ_RECEIPTS` | `channels.signal.readReceipts` |
 | `OPENAI_API_KEY` | `transcription.apiKey` |
 | `GMAIL_ACCOUNT` | `polling.gmail.account` (comma-separated list allowed) |
 | `POLLING_INTERVAL_MS` | `polling.intervalMs` |

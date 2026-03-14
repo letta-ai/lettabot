@@ -218,6 +218,19 @@ function ensureRequiredTools(tools: string[]): string[] {
   return out;
 }
 
+function parseOptionalBoolean(raw?: string): boolean | undefined {
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  return undefined;
+}
+
+function parseHeartbeatSkipRecentPolicy(raw?: string): 'fixed' | 'fraction' | 'off' | undefined {
+  if (raw === 'fixed' || raw === 'fraction' || raw === 'off') {
+    return raw;
+  }
+  return undefined;
+}
+
 // Global config (shared across all agents)
 const globalConfig = {
   workingDir: getWorkingDir(),
@@ -232,6 +245,9 @@ const globalConfig = {
   attachmentsMaxAgeDays: resolveAttachmentsMaxAgeDays(),
   cronEnabled: process.env.CRON_ENABLED === 'true',  // Legacy env var fallback
   heartbeatSkipRecentUserMin: parseNonNegativeNumber(process.env.HEARTBEAT_SKIP_RECENT_USER_MIN),
+  heartbeatSkipRecentPolicy: parseHeartbeatSkipRecentPolicy(process.env.HEARTBEAT_SKIP_RECENT_POLICY),
+  heartbeatSkipRecentFraction: parseNonNegativeNumber(process.env.HEARTBEAT_SKIP_RECENT_FRACTION),
+  heartbeatInterruptOnUserMessage: parseOptionalBoolean(process.env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE),
 };
 
 // Validate LETTA_API_KEY is set for API mode (docker mode doesn't require it)
@@ -351,6 +367,7 @@ async function main() {
     const cronStorePath = cronStoreFilename
       ? resolve(getCronDataDir(), cronStoreFilename)
       : undefined;
+    const heartbeatConfig = agentConfig.features?.heartbeat;
 
     const bot = new LettaBot({
       workingDir: resolvedWorkingDir,
@@ -367,6 +384,10 @@ async function main() {
       display: agentConfig.features?.display,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
+      interruptHeartbeatOnUserMessage:
+        heartbeatConfig?.interruptOnUserMessage
+        ?? globalConfig.heartbeatInterruptOnUserMessage
+        ?? true,
       conversationOverrides: agentConfig.conversations?.perChannel,
       maxSessions: agentConfig.conversations?.maxSessions,
       reuseSession: agentConfig.conversations?.reuseSession,
@@ -470,11 +491,12 @@ async function main() {
     }
 
     // Per-agent heartbeat
-    const heartbeatConfig = agentConfig.features?.heartbeat;
     const heartbeatService = new HeartbeatService(bot, {
       enabled: heartbeatConfig?.enabled ?? false,
       intervalMinutes: heartbeatConfig?.intervalMin ?? 240,
       skipRecentUserMinutes: heartbeatConfig?.skipRecentUserMin ?? globalConfig.heartbeatSkipRecentUserMin,
+      skipRecentPolicy: heartbeatConfig?.skipRecentPolicy ?? globalConfig.heartbeatSkipRecentPolicy,
+      skipRecentFraction: heartbeatConfig?.skipRecentFraction ?? globalConfig.heartbeatSkipRecentFraction,
       agentKey: agentConfig.name,
       memfs: resolvedMemfs,
       prompt: heartbeatConfig?.prompt || process.env.HEARTBEAT_PROMPT,

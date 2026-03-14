@@ -8,7 +8,7 @@
 
 import { createAgent, createSession, resumeSession, type Session, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
 import type { BotConfig, StreamMsg } from './types.js';
-import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError, isInvalidToolCallIdsError } from './errors.js';
+import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError } from './errors.js';
 import { Store } from './store.js';
 import { updateAgentName, recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { installSkillsToAgent, prependSkillDirsToPath } from '../skills/loader.js';
@@ -16,6 +16,7 @@ import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { createManageTodoTool } from '../tools/todo.js';
 import { syncTodosFromTool } from '../todo/store.js';
+import { recoverPendingApprovalsWithSdk } from './session-sdk-compat.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Session');
@@ -373,46 +374,27 @@ export class SessionManager {
         );
         if (bootstrap.hasPendingApproval) {
           const convId = bootstrap.conversationId || session.conversationId;
-          if (!isRecoverableConversationId(convId)) {
-            log.warn(
-              `Pending approval detected at session startup (key=${key}, conv=${convId}) ` +
-              'using agent-level recovery fallback.'
-            );
-            session.close();
-            const result = await recoverPendingApprovalsForAgent(this.store.agentId);
-            if (result.recovered) {
-              log.info(`Proactive agent-level recovery succeeded: ${result.details}`);
-            } else {
-              log.warn(`Proactive agent-level recovery did not resolve approvals: ${result.details}`);
-            }
-            return this._createSessionForKey(key, true, generation);
-          } else {
-            log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
-            session.close();
-            const result = await recoverOrphanedConversationApproval(
-              this.store.agentId,
-              convId,
-              true, /* deepScan */
-            );
-            if (result.recovered) {
-              log.info(`Proactive approval recovery succeeded: ${result.details}`);
-            } else {
-              log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
-            }
-            // Even on partial recovery, if any denial failed with mismatched IDs the
-            // conversation may still be stuck. Clear it so the retry creates a fresh one.
-            // TEMP(letta-code-sdk): remove this detail-string fallback once the SDK
-            // exposes typed terminal approval conflicts with built-in recovery policy.
-            if (isInvalidToolCallIdsError(result.details)) {
-              log.warn(`Clearing stuck conversation (key=${key}) due to invalid tool call IDs mismatch`);
-              if (key !== 'shared') {
-                this.store.clearConversation(key);
-              } else {
-                this.store.conversationId = null;
-              }
-            }
+          log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
+
+          // Try SDK-level recovery first (goes through CLI control protocol)
+          const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
+          if (sdkResult.recovered) {
+            log.info('Proactive SDK approval recovery succeeded');
             return this._createSessionForKey(key, true, generation);
           }
+
+          // SDK recovery failed -- fall back to API-level recovery
+          log.warn(`SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
+          session.close();
+          const result = isRecoverableConversationId(convId)
+            ? await recoverOrphanedConversationApproval(this.store.agentId, convId, true)
+            : await recoverPendingApprovalsForAgent(this.store.agentId);
+          if (result.recovered) {
+            log.info(`Proactive API-level recovery succeeded: ${result.details}`);
+          } else {
+            log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
+          }
+          return this._createSessionForKey(key, true, generation);
         }
       } catch (err) {
         // bootstrapState failure is non-fatal -- the reactive 409 handler in
@@ -590,31 +572,25 @@ export class SessionManager {
     try {
       await this.withSessionTimeout(session.send(message), `Session send (key=${convKey})`);
     } catch (error) {
-      // 409 CONFLICT from orphaned approval
+      // 409 CONFLICT from orphaned approval -- use SDK recovery first, fall back to API
       if (!retried && isApprovalConflictError(error) && this.store.agentId) {
-        log.info('CONFLICT detected - attempting orphaned approval recovery...');
+        log.info('CONFLICT detected - attempting SDK approval recovery...');
+        const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
+        if (sdkResult.recovered) {
+          log.info('SDK approval recovery succeeded, retrying...');
+          return this.runSession(message, { retried: true, canUseTool, convKey });
+        }
+        // SDK recovery failed or unsupported -- fall back to API-level recovery
+        log.warn(`SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
         this.invalidateSession(convKey);
         const result = isRecoverableConversationId(convId)
           ? await recoverOrphanedConversationApproval(this.store.agentId, convId)
           : await recoverPendingApprovalsForAgent(this.store.agentId);
-        // Even on partial recovery, if any denial failed with mismatched IDs the
-        // conversation may still be stuck. Clear it so the retry creates a fresh one.
-        // TEMP(letta-code-sdk): remove this detail-string fallback once the SDK
-        // exposes typed terminal approval conflicts with built-in recovery policy.
-        if (isInvalidToolCallIdsError(result.details)) {
-          log.warn(`Clearing stuck conversation (key=${convKey}) due to invalid tool call IDs mismatch, retrying with fresh conversation`);
-          if (convKey !== 'shared') {
-            this.store.clearConversation(convKey);
-          } else {
-            this.store.conversationId = null;
-          }
-          return this.runSession(message, { retried: true, canUseTool, convKey });
-        }
         if (result.recovered) {
-          log.info(`Recovery succeeded (${result.details}), retrying...`);
+          log.info(`API-level recovery succeeded (${result.details}), retrying...`);
           return this.runSession(message, { retried: true, canUseTool, convKey });
         }
-        log.error(`Orphaned approval recovery failed: ${result.details}`);
+        log.error(`Approval recovery failed: ${result.details}`);
         throw error;
       }
 

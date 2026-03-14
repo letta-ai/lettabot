@@ -289,6 +289,9 @@ Environment:
   SLACK_APP_TOKEN         Slack app token (xapp-...)
   HEARTBEAT_INTERVAL_MIN  Heartbeat interval in minutes
   HEARTBEAT_SKIP_RECENT_USER_MIN  Skip auto-heartbeats after user messages (0 disables)
+  HEARTBEAT_SKIP_RECENT_POLICY  Heartbeat skip policy (fixed, fraction, off)
+  HEARTBEAT_SKIP_RECENT_FRACTION  Fraction of interval to skip when policy=fraction
+  HEARTBEAT_INTERRUPT_ON_USER_MESSAGE  Cancel in-flight heartbeat on user message (true/false)
   CRON_ENABLED            Enable cron jobs (true/false)
 `);
 }

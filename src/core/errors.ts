@@ -112,7 +112,7 @@ export function formatApiErrorForUser(error: { message: string; stopReason: stri
     || apiMsg.includes('409')
     || stopReason === 'requires_approval';
   if (hasApprovalSignal && hasConflictSignal) {
-    return '(A stuck tool approval is blocking this conversation. Run `lettabot reset-conversation` to clear it, or approve/deny the pending request at app.letta.com.)';
+    return '(A stuck tool approval is blocking this conversation. Send /reset to start a new conversation, or approve/deny the pending request at app.letta.com. Note: /reset creates a fresh conversation -- previous context will no longer be active.)';
   }
 
   // 409 CONFLICT (concurrent request on same conversation)
