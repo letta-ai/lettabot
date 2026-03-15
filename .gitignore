@@ -61,3 +61,6 @@ bun.lock
 # Telegram MTProto session data (contains auth secrets)
 data/telegram-mtproto/
 logs/
+
+# Matrix session data (contains crypto keys)
+data/matrix/

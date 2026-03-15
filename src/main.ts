@@ -24,7 +24,6 @@ import {
   serverModeLabel,
   wasLoadedFromFleetConfig,
 } from './config/index.js';
-import { resolveSessionMemfs } from './config/memfs.js';
 import { getCronDataDir, getDataDir, getWorkingDir, hasRailwayVolume, resolveWorkingDirPath } from './utils/paths.js';
 import { parseCsvList, parseNonNegativeNumber } from './utils/parse.js';
 import { createLogger, setLogLevel } from './logger.js';
@@ -67,6 +66,7 @@ import { LettaGateway } from './core/gateway.js';
 import { LettaBot } from './core/bot.js';
 import type { Store } from './core/store.js';
 import { createChannelsForAgent } from './channels/factory.js';
+import type { MatrixAdapter } from './channels/matrix/index.js';
 import { GroupBatcher } from './core/group-batcher.js';
 import { printStartupBanner } from './core/banner.js';
 import { collectGroupBatchingConfig } from './core/group-batching-config.js';
@@ -99,10 +99,14 @@ Encode your config: base64 < lettabot.yaml | tr -d '\\n'
   process.exit(1);
 }
 
-// Parse heartbeat target (format: "telegram:123456789", "slack:C1234567890", or "discord:123456789012345678")
+// Parse heartbeat target (format: "telegram:123456789", "slack:C1234567890", "matrix:!roomId:homeserver.net")
+// Splits only on the FIRST colon so Matrix room IDs (which contain colons) are preserved intact.
 function parseHeartbeatTarget(raw?: string): { channel: string; chatId: string } | undefined {
-  if (!raw || !raw.includes(':')) return undefined;
-  const [channel, chatId] = raw.split(':');
+  if (!raw) return undefined;
+  const colonIdx = raw.indexOf(':');
+  if (colonIdx < 0) return undefined;
+  const channel = raw.slice(0, colonIdx);
+  const chatId = raw.slice(colonIdx + 1);
   if (!channel || !chatId) return undefined;
   return { channel: channel.toLowerCase(), chatId };
 }
@@ -218,19 +222,6 @@ function ensureRequiredTools(tools: string[]): string[] {
   return out;
 }
 
-function parseOptionalBoolean(raw?: string): boolean | undefined {
-  if (raw === 'true') return true;
-  if (raw === 'false') return false;
-  return undefined;
-}
-
-function parseHeartbeatSkipRecentPolicy(raw?: string): 'fixed' | 'fraction' | 'off' | undefined {
-  if (raw === 'fixed' || raw === 'fraction' || raw === 'off') {
-    return raw;
-  }
-  return undefined;
-}
-
 // Global config (shared across all agents)
 const globalConfig = {
   workingDir: getWorkingDir(),
@@ -245,9 +236,6 @@ const globalConfig = {
   attachmentsMaxAgeDays: resolveAttachmentsMaxAgeDays(),
   cronEnabled: process.env.CRON_ENABLED === 'true',  // Legacy env var fallback
   heartbeatSkipRecentUserMin: parseNonNegativeNumber(process.env.HEARTBEAT_SKIP_RECENT_USER_MIN),
-  heartbeatSkipRecentPolicy: parseHeartbeatSkipRecentPolicy(process.env.HEARTBEAT_SKIP_RECENT_POLICY),
-  heartbeatSkipRecentFraction: parseNonNegativeNumber(process.env.HEARTBEAT_SKIP_RECENT_FRACTION),
-  heartbeatInterruptOnUserMessage: parseOptionalBoolean(process.env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE),
 };
 
 // Validate LETTA_API_KEY is set for API mode (docker mode doesn't require it)
@@ -275,25 +263,6 @@ async function main() {
   const isMultiAgent = agents.length > 1;
   log.info(`${agents.length} agent(s) configured: ${agents.map(a => a.name).join(', ')}`);
   
-  // Validate agent names are unique
-  const agentNames = agents.map(a => a.name);
-  const duplicateAgentName = agentNames.find((n, i) => agentNames.indexOf(n) !== i);
-  if (duplicateAgentName) {
-    log.error(`Multiple agents share the same name: "${duplicateAgentName}". Each agent must have a unique name.`);
-    process.exit(1);
-  }
-
-  // Validate no two agents share the same turnLogFile
-  const turnLogFilePaths = agents
-    .map(a => (a.features?.logging ?? yamlConfig.features?.logging)?.turnLogFile)
-    .filter((p): p is string => !!p)
-    .map(p => resolve(p));
-  const duplicateTurnLog = turnLogFilePaths.find((p, i) => turnLogFilePaths.indexOf(p) !== i);
-  if (duplicateTurnLog) {
-    log.error(`Multiple agents share the same turnLogFile: "${duplicateTurnLog}". Each agent must use a unique log file path.`);
-    process.exit(1);
-  }
-
   // Validate at least one agent has channels
   const totalChannels = agents.reduce((sum, a) => sum + Object.keys(a.channels).length, 0);
   if (totalChannels === 0) {
@@ -335,25 +304,10 @@ async function main() {
   for (const agentConfig of agents) {
     log.info(`Configuring agent: ${agentConfig.name}`);
     
-    const resolvedMemfsResult = resolveSessionMemfs({
-      configuredMemfs: agentConfig.features?.memfs,
-      envMemfs: process.env.LETTABOT_MEMFS,
-      serverMode: yamlConfig.server.mode,
-    });
-    const resolvedMemfs = resolvedMemfsResult.value;
-    const configuredSleeptime = agentConfig.features?.sleeptime;
-    // Treat missing trigger as active (conservative): only `trigger: 'off'` explicitly disables.
-    const sleeptimeRequiresMemfs = !!configuredSleeptime && configuredSleeptime.trigger !== 'off';
-    const effectiveSleeptime = resolvedMemfs === false && sleeptimeRequiresMemfs
-      ? undefined
-      : configuredSleeptime;
-
-    if (resolvedMemfs === false && sleeptimeRequiresMemfs) {
-      log.warn(
-        `Agent ${agentConfig.name}: sleeptime is configured but memfs is disabled; ` +
-        `sleeptime will be ignored. Enable features.memfs (or set LETTABOT_MEMFS=true) to use sleeptime.`
-      );
-    }
+    // Resolve memfs: YAML config takes precedence, then env var, then default false.
+    // Default false prevents the SDK from auto-enabling memfs, which crashes on
+    // self-hosted Letta servers that don't have the git endpoint.
+    const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : false);
 
     // Create LettaBot for this agent
     const resolvedWorkingDir = agentConfig.workingDir
@@ -366,7 +320,6 @@ async function main() {
     const cronStorePath = cronStoreFilename
       ? resolve(getCronDataDir(), cronStoreFilename)
       : undefined;
-    const heartbeatConfig = agentConfig.features?.heartbeat;
 
     const bot = new LettaBot({
       workingDir: resolvedWorkingDir,
@@ -379,44 +332,34 @@ async function main() {
       sendFileMaxSize: agentConfig.features?.sendFileMaxSize,
       sendFileCleanup: agentConfig.features?.sendFileCleanup,
       memfs: resolvedMemfs,
-      sleeptime: effectiveSleeptime,
       display: agentConfig.features?.display,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
-      interruptHeartbeatOnUserMessage:
-        heartbeatConfig?.interruptOnUserMessage
-        ?? globalConfig.heartbeatInterruptOnUserMessage
-        ?? true,
+      heartbeatTargetChatId: parseHeartbeatTarget(agentConfig.features?.heartbeat?.target)?.chatId,
       conversationOverrides: agentConfig.conversations?.perChannel,
       maxSessions: agentConfig.conversations?.maxSessions,
       reuseSession: agentConfig.conversations?.reuseSession,
+      sessionModel: agentConfig.conversations?.sessionModel,
       redaction: agentConfig.security?.redaction,
-      logging: agentConfig.features?.logging ?? yamlConfig.features?.logging,
       cronStorePath,
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
         googleEnabled: !!agentConfig.integrations?.google?.enabled || !!agentConfig.polling?.gmail?.enabled,
-        blueskyEnabled: !!agentConfig.channels?.bluesky?.enabled,
         ttsEnabled: voiceMemoEnabled,
       },
     });
     
     // Log memfs config (from either YAML or env var)
     if (resolvedMemfs !== undefined) {
-      const source = resolvedMemfsResult.source === 'config'
-        ? ''
-        : resolvedMemfsResult.source === 'env'
-          ? ' (from LETTABOT_MEMFS env)'
-          : ' (default for docker/selfhosted mode)';
+      const source = agentConfig.features?.memfs !== undefined ? '' : ' (from LETTABOT_MEMFS env)';
       log.info(`Agent ${agentConfig.name}: memfs ${resolvedMemfs ? 'enabled' : 'disabled'}${source}`);
-    } else {
-      log.info(`Agent ${agentConfig.name}: memfs unchanged (not explicitly configured)`);
     }
 
     // Apply explicit agent ID from config (before store verification)
+    // Always use config's ID if explicitly set - it takes precedence over stored value
     let initialStatus = bot.getStatus();
-    if (agentConfig.id && !initialStatus.agentId) {
-      log.info(`Using configured agent ID: ${agentConfig.id}`);
+    if (agentConfig.id) {
+      log.info(`Using configured agent ID: ${agentConfig.id} (overrides stored: ${initialStatus.agentId})`);
       bot.setAgentId(agentConfig.id);
       initialStatus = bot.getStatus();
     }
@@ -490,14 +433,12 @@ async function main() {
     }
 
     // Per-agent heartbeat
+    const heartbeatConfig = agentConfig.features?.heartbeat;
     const heartbeatService = new HeartbeatService(bot, {
       enabled: heartbeatConfig?.enabled ?? false,
       intervalMinutes: heartbeatConfig?.intervalMin ?? 240,
       skipRecentUserMinutes: heartbeatConfig?.skipRecentUserMin ?? globalConfig.heartbeatSkipRecentUserMin,
-      skipRecentPolicy: heartbeatConfig?.skipRecentPolicy ?? globalConfig.heartbeatSkipRecentPolicy,
-      skipRecentFraction: heartbeatConfig?.skipRecentFraction ?? globalConfig.heartbeatSkipRecentFraction,
       agentKey: agentConfig.name,
-      memfs: resolvedMemfs,
       prompt: heartbeatConfig?.prompt || process.env.HEARTBEAT_PROMPT,
       promptFile: heartbeatConfig?.promptFile,
       workingDir: resolvedWorkingDir,
@@ -508,6 +449,17 @@ async function main() {
       services.heartbeatServices.push(heartbeatService);
     }
     bot.onTriggerHeartbeat = () => heartbeatService.trigger();
+
+    // Wire Matrix adapter callbacks (heartbeat toggle, !timeout, !new, agent ID query)
+    const matrixAdapter = adapters.find(a => a.id === 'matrix') as MatrixAdapter | undefined;
+    if (matrixAdapter) {
+      matrixAdapter.onHeartbeatStop = () => heartbeatService.stop();
+      matrixAdapter.onHeartbeatStart = () => heartbeatService.start();
+      // Best-effort: stops the timer so no new runs fire; running promise times out on its own
+      matrixAdapter.onTimeoutHeartbeat = () => { heartbeatService.stop(); log.warn('Matrix !timeout: heartbeat stopped (abort not yet supported)'); };
+      matrixAdapter.getAgentId = () => bot.getStatus().agentId ?? undefined;
+      matrixAdapter.onInvalidateSession = (key?: string) => bot.invalidateSession(key);
+    }
     
     // Per-agent polling -- resolve accounts from polling > integrations.google (legacy) > env
     const pollConfig = (() => {
@@ -561,28 +513,34 @@ async function main() {
     agentChannelMap.set(agentConfig.name, adapters.map(a => a.id));
   }
   
+  // Load/generate API key BEFORE gateway.start() so letta.js subprocesses inherit it.
+  // The lettabot-message CLI needs LETTABOT_API_KEY to route through the bot's HTTP API for E2EE.
+  const apiKey = loadOrGenerateApiKey();
+  if (!process.env.LETTABOT_API_KEY) {
+    process.env.LETTABOT_API_KEY = apiKey;
+  }
+  log.info(`Key: ${apiKey.slice(0, 8)}... (set LETTABOT_API_KEY to customize)`);
+
   // Start all agents
   await gateway.start();
-  
-  // Load/generate API key for CLI authentication
-  const apiKey = loadOrGenerateApiKey();
-  log.info(`Key: ${apiKey.slice(0, 8)}... (set LETTABOT_API_KEY to customize)`);
+
+  // Olm WASM (matrix-js-sdk) registers process.on("uncaughtException", (e) => { throw e })
+  // during Olm.init(). Without this fix, any uncaught async exception crashes the bot.
+  // Must run AFTER gateway.start() since that's when the Matrix adapter initialises Olm.
+  process.removeAllListeners('uncaughtException');
+  process.removeAllListeners('unhandledRejection');
+  process.on('uncaughtException', (err) => { log.error('Uncaught exception (suppressed):', err); });
+  process.on('unhandledRejection', (reason) => { log.error('Unhandled rejection (suppressed):', reason); });
 
   // Start API server - uses gateway for delivery
   const apiPort = parseInt(process.env.PORT || '8080', 10);
   const apiHost = process.env.API_HOST || (isContainerDeploy ? '0.0.0.0' : undefined); // Container platforms need 0.0.0.0 for health checks
   const apiCorsOrigin = process.env.API_CORS_ORIGIN; // undefined = same-origin only
-  const turnLogFiles: Record<string, string> = {};
-  for (const a of agents) {
-    const logging = a.features?.logging ?? yamlConfig.features?.logging;
-    if (logging?.turnLogFile) turnLogFiles[a.name] = logging.turnLogFile;
-  }
   const apiServer = createApiServer(gateway, {
     port: apiPort,
     apiKey: apiKey,
     host: apiHost,
     corsOrigin: apiCorsOrigin,
-    turnLogFiles: Object.keys(turnLogFiles).length > 0 ? turnLogFiles : undefined,
     stores: agentStores,
     agentChannels: agentChannelMap,
     sessionInvalidators,

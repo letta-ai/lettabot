@@ -39,6 +39,10 @@ export interface DisplayConfig {
   showReasoning?: boolean;
   /** Truncate reasoning to N characters (default: 0 = no limit) */
   reasoningMaxChars?: number;
+  /** Room IDs where reasoning should be shown (empty = all rooms that have showReasoning) */
+  reasoningRooms?: string[];
+  /** Room IDs where reasoning should be hidden (takes precedence over reasoningRooms) */
+  noReasoningRooms?: string[];
 }
 
 export type SleeptimeTrigger = 'off' | 'step-count' | 'compaction-event';
@@ -74,6 +78,7 @@ export interface AgentConfig {
     signal?: SignalConfig;
     discord?: DiscordConfig;
     bluesky?: BlueskyConfig;
+    matrix?: MatrixConfig;
   };
   /** Conversation routing */
   conversations?: {
@@ -82,6 +87,7 @@ export interface AgentConfig {
     perChannel?: string[];            // Channels that should always have their own conversation
     maxSessions?: number;             // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
     reuseSession?: boolean;           // Reuse SDK subprocess across messages (default: true). Set false to eliminate stream state bleed.
+    sessionModel?: string;            // Model override for session creation (e.g., "synthetic-direct/hf:moonshotai/Kimi-K2.5")
   };
   /** Features for this agent */
   features?: {
@@ -433,6 +439,69 @@ export interface BlueskyNotificationsConfig {
 }
 
 /**
+ * Matrix configuration.
+ * Supports end-to-end encryption (E2EE) with Element client.
+ */
+export interface MatrixConfig {
+  enabled: boolean;
+  homeserverUrl: string;
+  userId: string;
+  accessToken?: string;
+  password?: string;
+  deviceId?: string;
+
+  // Security
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
+  allowedUsers?: string[];
+  selfChatMode?: boolean;
+
+  // E2EE
+  enableEncryption?: boolean;
+  recoveryKey?: string;
+  userDeviceId?: string; // User's Element device ID for proactive verification
+
+  // Storage
+  storeDir?: string;
+  sessionDir?: string; // Session directory for Matrix client
+
+  // Auto-join rooms on startup
+  autoJoinRooms?: boolean;
+
+  // Groups
+  groups?: Record<string, GroupConfig>;
+
+  // TTS/STT (voice message) configuration
+  /** Enable voice message transcription (STT) */
+  transcriptionEnabled?: boolean;
+  /** STT server URL for voice transcription */
+  sttUrl?: string;
+  /** TTS server URL for outbound voice memos */
+  ttsUrl?: string;
+  /** TTS voice ID/name */
+  ttsVoice?: string;
+  /** Enable audio responses (TTS) */
+  enableAudioResponse?: boolean;
+  /** Filter for which rooms get audio responses */
+  audioRoomFilter?: 'dm_only' | 'all' | 'none';
+
+  // Media settings
+  /** Maximum image dimension before resize (default: 1024) */
+  imageMaxSize?: number;
+  /** Prefix prepended to every outbound message */
+  messagePrefix?: string;
+  /** Enable live streaming edits (default: true) */
+  streaming?: boolean;
+
+  // Group batching settings
+  /** Debounce interval for group room messages in seconds (default: 5s, 0 = immediate) */
+  groupDebounceSec?: number;
+  /** Room IDs that bypass debouncing entirely */
+  instantGroups?: string[];
+  /** Room IDs where bot listens but doesn't respond (observer mode) */
+  listeningGroups?: string[];
+}
+
+/**
  * Telegram MTProto (user account) configuration.
  * Uses TDLib for user account mode instead of Bot API.
  * Cannot be used simultaneously with TelegramConfig (bot mode).
@@ -609,6 +678,18 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
         channels['telegram-mtproto'].phoneNumber = process.env.TELEGRAM_PHONE_NUMBER;
       }
     }
+    // Matrix TTS/STT env var merging
+    if (channels.matrix) {
+      if (!channels.matrix.ttsUrl && process.env.MATRIX_TTS_URL) channels.matrix.ttsUrl = process.env.MATRIX_TTS_URL;
+      if (!channels.matrix.ttsVoice && process.env.MATRIX_TTS_VOICE) channels.matrix.ttsVoice = process.env.MATRIX_TTS_VOICE;
+      if (!channels.matrix.sttUrl && process.env.MATRIX_STT_URL) channels.matrix.sttUrl = process.env.MATRIX_STT_URL;
+      if (channels.matrix.transcriptionEnabled === undefined && process.env.MATRIX_TRANSCRIPTION_ENABLED) {
+        channels.matrix.transcriptionEnabled = process.env.MATRIX_TRANSCRIPTION_ENABLED === 'true';
+      }
+      if (channels.matrix.enableAudioResponse === undefined && process.env.MATRIX_ENABLE_AUDIO_RESPONSE) {
+        channels.matrix.enableAudioResponse = process.env.MATRIX_ENABLE_AUDIO_RESPONSE === 'true';
+      }
+    }
 
     if (channels.telegram?.enabled !== false && channels.telegram?.token) {
       const telegram = { ...channels.telegram };
@@ -654,6 +735,12 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
         normalized.bluesky = bluesky;
       }
     }
+    // Matrix: requires homeserverUrl and userId as credentials
+    if (channels.matrix?.enabled !== false && channels.matrix?.homeserverUrl && channels.matrix?.userId) {
+      const matrix = { ...channels.matrix };
+      normalizeLegacyGroupFields(matrix, `${sourcePath}.matrix`);
+      normalized.matrix = matrix;
+    }
 
     const channelCredentials: Array<{ name: string; raw: unknown; included: boolean; required: string }> = [
       { name: 'telegram', raw: channels.telegram, included: !!normalized.telegram, required: 'token' },
@@ -661,6 +748,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       { name: 'slack', raw: channels.slack, included: !!normalized.slack, required: 'botToken, appToken' },
       { name: 'signal', raw: channels.signal, included: !!normalized.signal, required: 'phone' },
       { name: 'discord', raw: channels.discord, included: !!normalized.discord, required: 'token' },
+      { name: 'matrix', raw: channels.matrix, included: !!normalized.matrix, required: 'userId, password' },
     ];
 
     const invalidChannels = channelCredentials
@@ -792,6 +880,27 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
             reasons: parseList(process.env.BLUESKY_NOTIFICATIONS_REASONS),
           }
         : undefined,
+    };
+  }
+  if (!channels.matrix && process.env.MATRIX_HOMESERVER_URL && process.env.MATRIX_USER_ID) {
+    channels.matrix = {
+      enabled: true,
+      homeserverUrl: process.env.MATRIX_HOMESERVER_URL,
+      userId: process.env.MATRIX_USER_ID,
+      accessToken: process.env.MATRIX_ACCESS_TOKEN,
+      password: process.env.MATRIX_PASSWORD,
+      deviceId: process.env.MATRIX_DEVICE_ID,
+      dmPolicy: (process.env.MATRIX_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.MATRIX_ALLOWED_USERS),
+      selfChatMode: process.env.MATRIX_SELF_CHAT_MODE === 'true',
+      enableEncryption: process.env.MATRIX_ENABLE_ENCRYPTION === 'true',
+      // TTS/STT fields
+      ttsUrl: process.env.MATRIX_TTS_URL,
+      ttsVoice: process.env.MATRIX_TTS_VOICE,
+      sttUrl: process.env.MATRIX_STT_URL,
+      transcriptionEnabled: process.env.MATRIX_TRANSCRIPTION_ENABLED === 'true',
+      enableAudioResponse: process.env.MATRIX_ENABLE_AUDIO_RESPONSE === 'true',
+      audioRoomFilter: (process.env.MATRIX_AUDIO_ROOM_FILTER as 'dm_only' | 'all' | 'none') || 'dm_only',
     };
   }
 

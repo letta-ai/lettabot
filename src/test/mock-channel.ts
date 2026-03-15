@@ -9,7 +9,7 @@ import type { InboundMessage, OutboundMessage } from '../core/types.js';
 import { parseCommand, HELP_TEXT } from '../core/commands.js';
 
 export class MockChannelAdapter implements ChannelAdapter {
-  readonly id = 'mock' as const;
+  readonly id = 'mock' as any;
   readonly name = 'Mock (Testing)';
   
   private running = false;

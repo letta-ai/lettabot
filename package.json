@@ -23,7 +23,6 @@
     "test": "vitest",
     "test:run": "vitest run --exclude 'e2e/**'",
     "lint:console": "bash scripts/no-console.sh",
-    "repro:context-window-reset": "tsx scripts/repro-context-window-reset.ts",
     "test:e2e": "vitest run e2e/",
     "skills": "tsx src/cli.ts skills",
     "skills:list": "tsx src/cli.ts skills list",
@@ -35,7 +34,8 @@
     "skill:search": "npx clawdhub search",
     "skill:list": "npx clawdhub list --dir ~/.letta/skills",
     "skills:add": "npx skills add --global --yes",
-    "skills:find": "npx skills find"
+    "skills:find": "npx skills find",
+    "repro:context-window-reset": "tsx scripts/repro-context-window-reset.ts"
   },
   "keywords": [
     "letta",
@@ -66,7 +66,7 @@
     "patches/"
   ],
   "dependencies": {
-    "@atproto/api": "^0.19.1",
+    "@atproto/api": "^0.19.3",
     "@clack/prompts": "^0.11.0",
     "@hapi/boom": "^10.0.1",
     "@letta-ai/letta-client": "^1.7.12",
@@ -93,9 +93,17 @@
     "yaml": "^2.8.2"
   },
   "optionalDependencies": {
+    "@matrix-org/matrix-sdk-crypto-wasm": "^1.3.0",
+    "@matrix-org/olm": "^3.2.15",
     "@slack/bolt": "^4.6.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/matrix-js-sdk": "28.1.0",
     "@whiskeysockets/baileys": "6.7.21",
+    "better-sqlite3": "^11.10.0",
     "discord.js": "^14.25.1",
+    "fake-indexeddb": "^6.2.5",
+    "indexeddbshim": "^16.1.0",
+    "matrix-js-sdk": "^28.2.0",
     "prebuilt-tdlib": "^0.1008060.0",
     "slackify-markdown": "^5.0.0",
     "tdl": "^8.0.2"

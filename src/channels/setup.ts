@@ -20,9 +20,10 @@ export const CHANNELS = [
   { id: 'whatsapp', displayName: 'WhatsApp', hint: 'QR code pairing' },
   { id: 'signal', displayName: 'Signal', hint: 'signal-cli daemon' },
   { id: 'bluesky', displayName: 'Bluesky', hint: 'Jetstream feed (read-only)' },
+  { id: 'matrix', displayName: 'Matrix', hint: 'E2EE support with Element' },
 ] as const;
 
-export type ChannelId = typeof CHANNELS[number]['id'];
+export type ChannelId = typeof CHANNELS[number]['id'] | 'telegram-mtproto' | 'mock';
 
 export function getChannelMeta(id: ChannelId) {
   return CHANNELS.find(c => c.id === id)!;
@@ -43,7 +44,7 @@ export function getChannelHint(id: ChannelId): string {
 // Group ID hints per channel
 // ============================================================================
 
-const GROUP_ID_HINTS: Record<ChannelId, string> = {
+const GROUP_ID_HINTS: Record<typeof CHANNELS[number]['id'], string> = {
   telegram:
     'Group IDs are negative numbers (e.g., -1001234567890).\n' +
     'Forward a group message to @userinfobot, or check bot logs.',
@@ -60,6 +61,9 @@ const GROUP_ID_HINTS: Record<ChannelId, string> = {
     'Group IDs appear in bot logs on first group message.',
   bluesky:
     'Bluesky does not support groups. This setting is not used.',
+  matrix:
+    'Room IDs are in the format: !room:server.com\n' +
+    'In Element: Room Settings > Advanced > Room ID',
 };
 
 // ============================================================================
@@ -152,7 +156,7 @@ async function promptGroupSettings(
   }
 
   // Step 3: Channel-specific hint for finding group IDs
-  const hint = GROUP_ID_HINTS[channelId];
+  const hint = (GROUP_ID_HINTS as any)[channelId];
   if (hint && mode !== 'disabled') {
     p.note(
       hint + '\n\n' +
@@ -718,15 +722,31 @@ export async function setupBluesky(existing?: BlueskyConfig): Promise<BlueskyCon
   };
 }
 
+export async function setupMatrix(existing?: any): Promise<any> {
+  p.note(
+    'Matrix setup is extensive. Please configure lettabot.yaml manually.\n' +
+    'See docs/matrix-setup.md for detailed instructions.',
+    'Matrix Setup'
+  );
+  return existing || {};
+}
+
 /** Get the setup function for a channel */
 export function getSetupFunction(id: ChannelId): (existing?: any) => Promise<any> {
-  const setupFunctions: Record<ChannelId, (existing?: any) => Promise<any>> = {
+  // Only setup channels that appear in CHANNELS array
+  const setupChannel = CHANNELS.find(c => c.id === id);
+  if (!setupChannel) {
+    throw new Error(`Channel '${id}' does not have a setup function`);
+  }
+
+  const setupFunctions: Record<typeof CHANNELS[number]['id'], (existing?: any) => Promise<any>> = {
     telegram: setupTelegram,
     slack: setupSlack,
     discord: setupDiscord,
     whatsapp: setupWhatsApp,
     signal: setupSignal,
     bluesky: setupBluesky,
+    matrix: setupMatrix,
   };
-  return setupFunctions[id];
+  return setupFunctions[id as typeof CHANNELS[number]['id']];
 }

@@ -59,6 +59,7 @@ function createMockBot(): AgentSession {
     reset: vi.fn(),
     getLastMessageTarget: vi.fn().mockReturnValue(null),
     getLastUserMessageTime: vi.fn().mockReturnValue(null),
+    invalidateSession: vi.fn(),
   };
 }
 

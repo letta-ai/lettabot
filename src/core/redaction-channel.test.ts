@@ -27,7 +27,7 @@ describe('channel redaction wrapping', () => {
     const sendSpy = vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'sent-1' }));
 
     const adapter: ChannelAdapter = {
-      id: 'mock',
+      id: 'mock' as any,
       name: 'Mock',
       start: vi.fn(async () => {}),
       stop: vi.fn(async () => {}),
