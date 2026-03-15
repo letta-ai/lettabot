@@ -152,7 +152,7 @@ function isChannelEnabled(config: unknown): boolean {
 function getEnabledChannelIds(channels: AgentConfig['channels']): ChannelId[] {
   return CHANNELS
     .map((channel) => channel.id)
-    .filter((channelId) => isChannelEnabled(channels[channelId]));
+    .filter((channelId) => isChannelEnabled((channels as any)[channelId]));
 }
 
 export function getCoreDraftWarnings(draft: CoreConfigDraft): string[] {
@@ -262,6 +262,11 @@ async function editAgent(draft: CoreConfigDraft): Promise<void> {
 }
 
 async function runChannelSetupSafely(channelId: ChannelId, existing?: unknown): Promise<unknown | undefined> {
+  // Only setup channels that appear in CHANNELS array
+  const channelIds = CHANNELS.map(c => c.id);
+  if (!channelIds.includes(channelId as typeof CHANNELS[number]['id'])) {
+    return undefined;
+  }
   const setup = getSetupFunction(channelId);
   const originalExit = process.exit;
 
@@ -283,7 +288,7 @@ async function runChannelSetupSafely(channelId: ChannelId, existing?: unknown): 
 }
 
 async function configureChannel(draft: CoreConfigDraft, channelId: ChannelId): Promise<void> {
-  const current = draft.channels[channelId];
+  const current = (draft.channels as any)[channelId];
   const enabled = isChannelEnabled(current);
 
   const action = await p.select({
@@ -308,7 +313,7 @@ async function configureChannel(draft: CoreConfigDraft, channelId: ChannelId): P
       initialValue: false,
     });
     if (p.isCancel(confirmed) || !confirmed) return;
-    draft.channels[channelId] = { enabled: false } as AgentConfig['channels'][ChannelId];
+    ;(draft.channels as any)[channelId] = { enabled: false };
     return;
   }
 
@@ -317,7 +322,7 @@ async function configureChannel(draft: CoreConfigDraft, channelId: ChannelId): P
     p.log.info(`${channelId} setup cancelled.`);
     return;
   }
-  draft.channels[channelId] = result as AgentConfig['channels'][ChannelId];
+  ;(draft.channels as any)[channelId] = result as any;
 }
 
 async function editChannels(draft: CoreConfigDraft): Promise<void> {
@@ -326,7 +331,7 @@ async function editChannels(draft: CoreConfigDraft): Promise<void> {
       message: 'Select a channel to edit',
       options: [
         ...CHANNELS.map((channel) => {
-          const enabled = isChannelEnabled(draft.channels[channel.id]);
+          const enabled = isChannelEnabled((draft.channels as any)[channel.id]);
           return {
             value: channel.id,
             label: `${enabled ? '✓' : '✗'} ${channel.displayName}`,

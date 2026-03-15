@@ -2,7 +2,7 @@
  * Cron Types
  */
 
-import type { ChannelId } from '../core/types.js';
+import type { ChannelId } from '../channels/setup.js';
 
 /**
  * Cron schedule

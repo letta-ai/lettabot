@@ -12,7 +12,7 @@ import type { SendMessageResponse, ChatRequest, ChatResponse, AsyncChatResponse,
 import { listPairingRequests, approvePairingCode } from '../pairing/store.js';
 import { parseMultipart } from './multipart.js';
 import type { AgentRouter } from '../core/interfaces.js';
-import type { ChannelId } from '../core/types.js';
+import type { ChannelId } from '../channels/setup.js';
 import type { Store } from '../core/store.js';
 import {
   generateCompletionId, extractLastUserMessage, buildCompletion,
@@ -25,7 +25,7 @@ import { getTurnViewerHtml } from '../core/turn-viewer.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('API');
-const VALID_CHANNELS: ChannelId[] = ['telegram', 'slack', 'discord', 'whatsapp', 'signal'];
+const VALID_CHANNELS: ChannelId[] = ['telegram', 'slack', 'discord', 'whatsapp', 'signal', 'matrix'];
 const MAX_BODY_SIZE = 10 * 1024; // 10KB
 const MAX_TEXT_LENGTH = 10000; // 10k chars
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
