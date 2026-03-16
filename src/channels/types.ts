@@ -41,7 +41,6 @@ export interface ChannelAdapter {
   // Event handlers (set by bot core)
   onMessage?: (msg: InboundMessage) => Promise<void>;
   onCommand?: (command: string, chatId?: string, args?: string, forcePerChat?: boolean) => Promise<string | null>;
-  onInvalidateSession?: (key?: string) => void;
 }
 
 /**

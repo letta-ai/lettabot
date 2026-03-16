@@ -60,9 +60,6 @@ export interface AgentSession {
 
   /** Invalidate a cached session, forcing fresh session on next message */
   invalidateSession(key?: string): void;
-
-  /** Callback for session invalidation requests (e.g., from !new command) */
-  onInvalidateSession?: (key?: string) => void;
 }
 
 /**

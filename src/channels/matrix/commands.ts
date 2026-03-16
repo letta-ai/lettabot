@@ -1,14 +1,22 @@
 /**
  * Matrix Bot Command Processor
  *
- * Handles !commands sent by allowed users in Matrix rooms:
+ * Handles !commands sent by allowed users in Matrix rooms.
+ *
+ * Matrix-specific commands (per-room state, bot-loop prevention):
  *   !commands          — list all available commands
  *   !pause             — silence bot in current room (SQLite persisted)
  *   !resume            — re-enable bot in current room
- *   !status            — show paused rooms, ignored bots, heartbeat state
  *   !ignorebot-add @u:s — add user to global ignore list (prevents bot loops)
  *   !ignorebot-remove @u:s — remove user from ignore list
- *   !heartbeat on/off  — toggle the heartbeat cron (in-memory)
+ *   !turns N           — respond to bot messages for N turns
+ *   !timeout           — kill stuck heartbeat run
+ *
+ * Delegated to upstream bot commands (full store + session lifecycle):
+ *   !reset             — delegates to /reset (clear conversation + new session)
+ *   !cancel            — delegates to /cancel (abort active run)
+ *   !status            — delegates to /status (agent info + conversation keys)
+ *   !heartbeat         — delegates to /heartbeat (trigger) or toggle on/off locally
  *
  * Commands run AFTER access control (allowedUsers) but BEFORE the paused-room
  * check, so !resume always works even in a paused room.
@@ -24,8 +32,8 @@ interface CommandCallbacks {
   onHeartbeatStart?: () => void;
   isHeartbeatEnabled?: () => boolean;
   onTimeoutHeartbeat?: () => void;
-  getAgentId?: () => string | undefined;
-  onInvalidateSession?: (key: string) => void;
+  /** Delegate to upstream bot /commands (reset, cancel, status, heartbeat, model) */
+  onCommand?: (command: string, chatId?: string, args?: string) => Promise<string | null>;
 }
 
 export class MatrixCommandProcessor {
@@ -48,37 +56,40 @@ export class MatrixCommandProcessor {
     body: string,
     roomId: string,
     sender: string,
-    roomMeta?: { isDm: boolean; roomName: string },
+    _roomMeta?: { isDm: boolean; roomName: string },
   ): Promise<string | undefined> {
     const parts = body.slice(1).trim().split(/\s+/);
     const cmd = parts[0]?.toLowerCase();
     const args = parts.slice(1);
 
     switch (cmd) {
+      // Matrix-specific commands (per-room state)
       case "commands":
         return this.doCommands();
       case "pause":
         return this.doPause(roomId, sender);
       case "resume":
         return this.doResume(roomId);
-      case "status":
-        return this.doStatus(roomId);
       case "ignorebot-add":
         return this.doBotAdd(args[0], sender);
       case "ignorebot-remove":
         return this.doBotRemove(args[0]);
-      case "heartbeat":
-        return this.doHeartbeat(args[0]);
-      case "restore":
-        return this.doRestore(args[0], roomId, roomMeta?.isDm ?? false, roomMeta?.roomName ?? roomId);
       case "turns":
         return this.doTurns(args[0], roomId);
       case "timeout":
         return this.doTimeout();
-      case "new":
-        return await this.doNew(roomId, roomMeta?.isDm ?? false, roomMeta?.roomName ?? roomId);
-      case "showreasoning":
-        return this.doShowReasoning();
+
+      // Heartbeat: on/off toggles locally, bare !heartbeat delegates to /heartbeat (trigger)
+      case "heartbeat":
+        return this.doHeartbeat(args[0], roomId);
+
+      // Delegate to upstream /commands
+      case "reset":
+      case "cancel":
+      case "status":
+      case "model":
+        return await this.delegateToBot(cmd, roomId, args.join(' ') || undefined);
+
       default:
         return undefined;
     }
@@ -120,29 +131,44 @@ export class MatrixCommandProcessor {
     return false;
   }
 
-  // ─── Command implementations ─────────────────────────────────────────────
+  // ─── Delegate to upstream bot commands ──────────────────────────────────
+
+  private async delegateToBot(
+    command: string,
+    roomId: string,
+    args?: string,
+  ): Promise<string> {
+    if (!this.callbacks.onCommand) {
+      return `⚠️ !${command} not available (bot command handler not wired)`;
+    }
+    const result = await this.callbacks.onCommand(command, roomId, args);
+    return result ?? `(No response from /${command})`;
+  }
+
+  // ─── Matrix-specific command implementations ────────────────────────────
 
   private doCommands(): string {
     const lines = [
       "📜 **Available Commands**",
       "",
-      "**Bot Control**",
+      "**Room Control**",
       "  `!pause`       — Silence bot in current room",
       "  `!resume`      — Re-enable bot in current room",
-      "  `!status`      — Show bot status, paused rooms, heartbeat state",
+      "  `!status`      — Show agent status and conversation info",
       "",
       "**Bot Loop Prevention**",
       "  `!ignorebot-add @user:server`   — Add bot to ignore list",
       "  `!ignorebot-remove @user:server` — Remove from ignore list",
       "  `!turns N` (1-50) — Respond to bot messages for N turns",
       "",
-      "**Conversation Management**",
-      "  `!new`         — Create fresh Letta conversation for this room",
-      "  `!restore conv-xxxx` — Point room at specific conversation",
-      "  `!showreasoning` — Show current reasoning display status",
+      "**Conversation**",
+      "  `!reset`       — Reset conversation for this room (fresh start)",
+      "  `!cancel`      — Cancel active run",
+      "  `!model [handle]` — View or change LLM model",
       "",
-      "**Heartbeat Control**",
+      "**Heartbeat**",
       "  `!heartbeat on/off` — Toggle heartbeat cron",
+      "  `!heartbeat`   — Trigger heartbeat now",
       "  `!timeout`     — Kill stuck heartbeat run",
     ];
     return lines.join("\n");
@@ -156,28 +182,6 @@ export class MatrixCommandProcessor {
   private doResume(roomId: string): string {
     this.storage.resumeRoom(roomId);
     return "▶️ Bot resumed in this room.";
-  }
-
-  private doStatus(roomId: string): string {
-    const paused = this.storage.getPausedRooms();
-    const ignored = this.storage.getIgnoredBots();
-    const hbState = this.callbacks.isHeartbeatEnabled?.() ? "on" : "off";
-    const thisRoomPaused = this.storage.isRoomPaused(roomId);
-
-    const turnsRemaining = this.botTurns.get(roomId);
-    const lines = [
-      "📊 **Bot Status**",
-      `This room: ${thisRoomPaused ? "⏸️ paused" : "▶️ active"}`,
-      `Conversation key: \`matrix:${roomId}\``,
-      turnsRemaining ? `Bot turns: ${turnsRemaining} remaining` : "Bot turns: off (observer mode in multi-bot rooms)",
-      paused.length > 0 ? `Paused rooms: ${paused.length}` : "No rooms paused",
-      ignored.length > 0
-        ? `Known bots:\n${ignored.map((u) => `  • ${u}`).join("\n")}`
-        : "No known bots",
-      `Heartbeat: ${hbState}`,
-    ];
-
-    return lines.join("\n");
   }
 
   private doBotAdd(userId: string | undefined, sender: string): string {
@@ -196,8 +200,9 @@ export class MatrixCommandProcessor {
     return `✅ Removed ${userId} from ignore list`;
   }
 
-  private doHeartbeat(arg: string | undefined): string {
+  private async doHeartbeat(arg: string | undefined, roomId: string): Promise<string> {
     const normalized = arg?.toLowerCase();
+    // !heartbeat on/off — local toggle
     if (normalized === "off" || normalized === "stop") {
       this.callbacks.onHeartbeatStop?.();
       return "⏸️ Heartbeat cron stopped";
@@ -206,7 +211,8 @@ export class MatrixCommandProcessor {
       this.callbacks.onHeartbeatStart?.();
       return "▶️ Heartbeat cron started";
     }
-    return "⚠️ Usage: !heartbeat on | !heartbeat off";
+    // Bare !heartbeat — delegate to /heartbeat (trigger)
+    return await this.delegateToBot('heartbeat', roomId);
   }
 
   private doTurns(arg: string | undefined, roomId: string): string {
@@ -220,54 +226,11 @@ export class MatrixCommandProcessor {
     return `🔄 Will respond to bot messages for the next ${n} turns in this room`;
   }
 
-  private doRestore(
-    _convId: string | undefined,
-    _roomId: string,
-    _isDm: boolean,
-    _roomName: string,
-  ): string {
-    return "ℹ️ !restore is no longer needed — each room has its own persistent conversation via per-chat mode.\nUse !new to start a fresh conversation.";
-  }
-
   private doTimeout(): string {
     if (this.callbacks.onTimeoutHeartbeat) {
       this.callbacks.onTimeoutHeartbeat();
       return "⏹ Killing stuck heartbeat run";
     }
     return "⚠️ No heartbeat timeout handler registered";
-  }
-
-  private async doNew(
-    roomId: string,
-    isDm: boolean,
-    roomName: string,
-  ): Promise<string> {
-    const agentId = this.callbacks.getAgentId?.();
-    if (!agentId) {
-      return "⚠️ No agent ID available";
-    }
-    if (!this.callbacks.onInvalidateSession) {
-      return "⚠️ Session reset not available (onInvalidateSession not wired)";
-    }
-    // In per-chat mode the conversation key is 'matrix:{roomId}'
-    const key = `matrix:${roomId}`;
-    this.callbacks.onInvalidateSession(key);
-    log.info(`!new: invalidated session for key ${key}`);
-    return `✓ Fresh conversation started for ${isDm ? "this DM" : roomName}. Next message will begin a new session.`;
-  }
-
-  private doShowReasoning(): string {
-    return [
-      "🧠 **Reasoning Text Display**",
-      "",
-      "Controls whether the agent's thinking/reasoning text is shown in chat.",
-      "The 🧠 emoji always appears when reasoning starts — this setting controls the text.",
-      "",
-      "**Configuration:** Set `display.showReasoning` in your `lettabot.yaml`.",
-      "  - `true`: Show reasoning text in a collapsible block",
-      "  - `false`: Hide reasoning text (only final response shown)",
-      "",
-      "Restart the bot after changing config.",
-    ].join('\n');
   }
 }

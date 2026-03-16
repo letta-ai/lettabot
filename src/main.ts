@@ -457,8 +457,6 @@ async function main() {
       matrixAdapter.onHeartbeatStart = () => heartbeatService.start();
       // Best-effort: stops the timer so no new runs fire; running promise times out on its own
       matrixAdapter.onTimeoutHeartbeat = () => { heartbeatService.stop(); log.warn('Matrix !timeout: heartbeat stopped (abort not yet supported)'); };
-      matrixAdapter.getAgentId = () => bot.getStatus().agentId ?? undefined;
-      matrixAdapter.onInvalidateSession = (key?: string) => bot.invalidateSession(key);
     }
     
     // Per-agent polling -- resolve accounts from polling > integrations.google (legacy) > env

@@ -80,9 +80,6 @@ export class MatrixAdapter implements ChannelAdapter {
   onHeartbeatStop?: () => void;
   onHeartbeatStart?: () => void;
   onTimeoutHeartbeat?: () => void;
-  getAgentId?: () => string | undefined;
-  // Invalidate the session for a conversation key — used by !new to force a fresh conversation
-  onInvalidateSession?: (key?: string) => void;
 
   constructor(config: MatrixAdapterConfig) {
     if (!config.homeserverUrl) throw new Error("homeserverUrl is required");
@@ -145,8 +142,7 @@ export class MatrixAdapter implements ChannelAdapter {
       onHeartbeatStart: () => { this._heartbeatEnabled = true; this.onHeartbeatStart?.(); },
       isHeartbeatEnabled: () => this._heartbeatEnabled,
       onTimeoutHeartbeat: () => this.onTimeoutHeartbeat?.(),
-      getAgentId: () => this.getAgentId?.(),
-      onInvalidateSession: (key: string) => this.onInvalidateSession?.(key),
+      onCommand: (cmd, chatId, args) => this.onCommand?.(cmd, chatId, args) ?? Promise.resolve(null),
     });
 
     await this.initClient();
