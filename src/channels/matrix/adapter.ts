@@ -854,7 +854,7 @@ export class MatrixAdapter implements ChannelAdapter {
     const fs = await import('fs');
     const path = await import('path');
 
-    // Check for pre-decrypted keys first (from import-casey-keys.ts)
+    // Check for pre-decrypted keys first (from key import utility)
     const storeDir = path.resolve(this.config.storeDir || './data/matrix');
     const decryptedKeysFile = path.join(storeDir, 'imported-keys.json');
 
@@ -1540,7 +1540,7 @@ export class MatrixAdapter implements ChannelAdapter {
    * Track a sent message for reaction feedback
    */
   onMessageSent(chatId: string, messageId: string, stepId?: string): void {
-    this.storage.storeMessageMapping(messageId, "default", stepId, "@ani:wiuf.net", chatId);
+    this.storage.storeMessageMapping(messageId, "default", stepId, this.config.userId, chatId);
   }
 
   /**
