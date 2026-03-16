@@ -892,18 +892,36 @@ export async function recoverOrphanedConversationApproval(
             reason: `Auto-denied: originating run was ${status}/${stopReason}`,
           }));
           
-          try {
-            await client.conversations.messages.create(conversationId, {
-              messages: [{
-                type: 'approval',
-                approvals: approvalResponses,
-              }],
-              streaming: false,
-            });
-          } catch (batchError) {
-            const batchErrMsg = batchError instanceof Error ? batchError.message : String(batchError);
-            log.warn(`Failed to submit approval denial batch for run ${runId} (${approvals.length} tool call(s)):`, batchError);
-            details.push(`Failed to deny ${approvals.length} approval(s) from run ${runId}: ${batchErrMsg}`);
+          let deniedForRun = 0;
+          for (let i = 0; i < approvalResponses.length; i++) {
+            const approvalResponse = approvalResponses[i];
+            try {
+              // Letta surfaces one pending approval at a time for parallel tool calls,
+              // so submit denials sequentially instead of as a single multi-ID batch.
+              await client.conversations.messages.create(conversationId, {
+                messages: [{
+                  type: 'approval',
+                  approvals: [approvalResponse],
+                }],
+                streaming: false,
+              });
+              deniedForRun += 1;
+            } catch (approvalError) {
+              const approvalErrMsg = approvalError instanceof Error ? approvalError.message : String(approvalError);
+              log.warn(
+                `Failed to submit approval denial for run ${runId} (tool_call_id=${approvalResponse.tool_call_id}):`,
+                approvalError,
+              );
+              details.push(`Failed to deny approval ${approvalResponse.tool_call_id} from run ${runId}: ${approvalErrMsg}`);
+              continue;
+            }
+
+            if (i < approvalResponses.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 1500));
+            }
+          }
+
+          if (deniedForRun === 0) {
             continue;
           }
           
@@ -925,9 +943,9 @@ export async function recoverOrphanedConversationApproval(
             log.info(`No active runs to cancel for conversation ${conversationId}`);
           }
           
-          recoveredCount += approvals.length;
+          recoveredCount += deniedForRun;
           const suffix = cancelled ? ' (runs cancelled)' : '';
-          details.push(`Denied ${approvals.length} approval(s) from ${status} run ${runId}${suffix}`);
+          details.push(`Denied ${deniedForRun} approval(s) from ${status} run ${runId}${suffix}`);
         } else {
           details.push(`Run ${runId} is ${status}/${stopReason} - not orphaned`);
         }

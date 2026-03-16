@@ -204,6 +204,7 @@ export interface BotConfig {
   // Conversation routing
   conversationMode?: 'disabled' | 'shared' | 'per-channel' | 'per-chat'; // Default: shared
   heartbeatConversation?: string; // "dedicated" | "last-active" | "<channel>" (default: last-active)
+  interruptHeartbeatOnUserMessage?: boolean; // Default true. Cancel in-flight heartbeat on user message.
   conversationOverrides?: string[]; // Channels that always use their own conversation (shared mode)
   maxSessions?: number; // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
   reuseSession?: boolean; // Reuse SDK subprocess across messages (default: true). Set false to eliminate stream state bleed at cost of ~5s latency per message.

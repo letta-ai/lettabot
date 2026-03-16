@@ -101,7 +101,7 @@ describe('formatApiErrorForUser', () => {
       stopReason: 'error',
     });
     expect(msg).toContain('stuck tool approval');
-    expect(msg).toContain('reset-conversation');
+    expect(msg).toContain('/reset');
     // Should NOT match the generic conflict message
     expect(msg).not.toContain('Another request is still processing');
   });
@@ -120,7 +120,7 @@ describe('formatApiErrorForUser', () => {
       stopReason: 'requires_approval',
     });
     expect(msg).toContain('stuck tool approval');
-    expect(msg).toContain('reset-conversation');
+    expect(msg).toContain('/reset');
   });
 
   it('falls back to sanitized original message when no mapping matches', () => {

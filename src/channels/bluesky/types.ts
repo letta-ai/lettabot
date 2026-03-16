@@ -49,6 +49,8 @@ export interface BlueskyConfig {
     reasons?: string[] | string;
     backfill?: boolean;
   };
+  /** Max parent posts to fetch for thread context on replies (0 to disable). Default: 5. */
+  threadContextDepth?: number;
 }
 
 export interface JetstreamCommit {
