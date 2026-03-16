@@ -13,7 +13,7 @@ import { extname, resolve, join } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext, TriggerType, StreamMsg } from './types.js';
 import { formatApiErrorForUser } from './errors.js';
-import { formatToolCallDisplay, formatQuestionsForChannel, formatReasoningAsCodeBlock } from './display.js';
+import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel, formatReasoningAsCodeBlock } from './display.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
 import { getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
@@ -1431,7 +1431,7 @@ export class LettaBot implements AgentSession {
               }
               lastEventType = 'reasoning';
               sawNonAssistantSinceLastUuid = true;
-              // Collect reasoning for later prepending to final response
+              // Collect reasoning for later prepending (Matrix <details> block)
               if (event.content) {
                 collectedReasoning += event.content;
               }
@@ -1446,8 +1446,21 @@ export class LettaBot implements AgentSession {
                 adapter.addReaction?.(msg.chatId, msg.messageId, '🧠').catch(() => {});
                 brainAdded = true;
               }
-              // Note: reasoning is now collected and prepended to final response
-              // instead of being sent as a separate message
+              // Send reasoning as separate message (upstream behavior for all channels)
+              if (this.config.display?.showReasoning && !suppressDelivery && event.content.trim()) {
+                log.info(`Reasoning: ${event.content.trim().slice(0, 100)}`);
+                try {
+                  const reasoning = formatReasoningDisplay(event.content, adapter.id, this.config.display?.reasoningMaxChars);
+                  await adapter.sendMessage({
+                    chatId: msg.chatId,
+                    text: reasoning.text,
+                    threadId: msg.threadId,
+                    parseMode: reasoning.parseMode,
+                  });
+                } catch (err) {
+                  log.warn('Failed to send reasoning display:', err instanceof Error ? err.message : err);
+                }
+              }
               break;
             }
 
