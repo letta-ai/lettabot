@@ -316,13 +316,24 @@ export function buildSessionContext(options: SessionContextOptions): string[] {
  * In listening mode, shows minimal directives. In normal mode, shows the full set
  * filtered by what the channel actually supports.
  */
-function buildResponseDirectives(msg: InboundMessage): string[] {
+function buildResponseDirectives(msg: InboundMessage, hasDirectivesBlock: boolean): string[] {
   const lines: string[] = [];
   const supportsReactions = msg.formatterHints?.supportsReactions ?? false;
   const supportsFiles = msg.formatterHints?.supportsFiles ?? false;
   const messageType = msg.messageType ?? (msg.isGroup ? 'group' : 'dm');
   const isGroup = messageType === 'group';
   const isListeningMode = msg.isListeningMode ?? false;
+
+  // Compact mode assumes system/directives memory block is attached and
+  // understands these capability flags.
+  if (hasDirectivesBlock) {
+    lines.push(`- \`<mode chat="${messageType}" listening="${isListeningMode}" />\``);
+    lines.push(`- \`<capabilities reactions="${supportsReactions}" files="${supportsFiles}" voice="true" />\``);
+    lines.push(
+      `- \`<allow no_reply="true" react="${supportsReactions}" react_target="${supportsReactions && isGroup ? 'message' : 'self'}" send_file="${supportsFiles}" />\``,
+    );
+    return lines;
+  }
 
   // Listening mode: minimal directives only
   if (isListeningMode) {
@@ -391,6 +402,7 @@ export function formatMessageEnvelope(
   msg: InboundMessage,
   options: EnvelopeOptions = {},
   sessionContext?: SessionContextOptions,
+  hasDirectivesBlock = false,
 ): string {
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const sections: string[] = [];
@@ -421,7 +433,7 @@ export function formatMessageEnvelope(
   // Response directives (skip if channel provides its own actionsSection)
   const hasCustomActions = (msg.formatterHints?.actionsSection?.length ?? 0) > 0;
   if (!hasCustomActions && !msg.formatterHints?.skipDirectives) {
-    const directiveLines = buildResponseDirectives(msg);
+    const directiveLines = buildResponseDirectives(msg, hasDirectivesBlock);
     sections.push(`## Response Directives\n${directiveLines.join('\n')}`);
   }
 

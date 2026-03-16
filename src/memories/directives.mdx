@@ -1,0 +1,30 @@
+---
+label: system/directives
+description: Instructions for interpreting compact per-message response directive flags.
+limit: 12000
+managedExternally: true
+---
+
+This block defines how to interpret compact `Response Directives` capability flags.
+
+When present, the message envelope may include these XML lines:
+
+- `<mode chat="dm|group|public" listening="true|false" />`
+- `<capabilities reactions="true|false" files="true|false" voice="true|false" />`
+- `<allow no_reply="true|false" react="true|false" react_target="self|message" send_file="true|false" />`
+
+Interpretation rules:
+
+1. Treat these flags as authoritative for this message.
+2. If `listening="true"`, prefer `<no-reply/>` or reaction-only output.
+3. Only emit reaction directives when `react="true"`.
+4. Only set `message="..."` on `<react ... />` when `react_target="message"`.
+5. Only emit `<send-file ... />` when `send_file="true"`.
+6. Voice directives are allowed only when `voice="true"`.
+
+Valid output shapes:
+
+- Plain text reply
+- Directive only (for example `<no-reply/>`)
+- Directive plus text
+- `<actions>...</actions>` wrapper for reactions or voice directives

@@ -10,7 +10,7 @@ import { createAgent, createSession, resumeSession, type Session, type SendMessa
 import type { BotConfig, StreamMsg } from './types.js';
 import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError } from './errors.js';
 import { Store } from './store.js';
-import { updateAgentName } from '../tools/letta-api.js';
+import { updateAgentName, ensureDirectivesBlockOnAgent } from '../tools/letta-api.js';
 import { installSkillsToAgent, prependSkillDirsToPath } from '../skills/loader.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
@@ -315,6 +315,11 @@ export class SessionManager {
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
       this.store.setAgent(newAgentId, currentBaseUrl);
       log.info('Saved new agent ID:', newAgentId);
+
+      const directivesReady = await ensureDirectivesBlockOnAgent(newAgentId, this.config.agentName || 'LettaBot');
+      if (!directivesReady) {
+        log.warn('Failed to attach directives block to new agent ' + newAgentId + '; falling back to verbose directives until recovered.');
+      }
 
       if (this.config.agentName) {
         updateAgentName(newAgentId, this.config.agentName).catch(() => {});

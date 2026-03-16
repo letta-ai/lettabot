@@ -289,6 +289,30 @@ describe('formatMessageEnvelope', () => {
       expect(result).toContain('<no-reply/>');
       expect(result).not.toContain('<actions>');
     });
+
+    it('uses compact capability flags when directives block is available', () => {
+      const msg = createMessage({
+        isGroup: true,
+        formatterHints: { supportsReactions: true, supportsFiles: true },
+      });
+      const result = formatMessageEnvelope(msg, {}, undefined, true);
+      expect(result).toContain('<mode chat="group" listening="false" />');
+      expect(result).toContain('<capabilities reactions="true" files="true" voice="true" />');
+      expect(result).toContain('<allow no_reply="true" react="true" react_target="message" send_file="true" />');
+      expect(result).not.toContain('react without sending text');
+    });
+
+    it('uses compact flags in listening mode when directives block is available', () => {
+      const msg = createMessage({
+        isGroup: true,
+        isListeningMode: true,
+        formatterHints: { supportsReactions: true },
+      });
+      const result = formatMessageEnvelope(msg, {}, undefined, true);
+      expect(result).toContain('<mode chat="group" listening="true" />');
+      expect(result).toContain('<allow no_reply="true" react="true" react_target="message" send_file="false" />');
+      expect(result).not.toContain('react to show you saw this');
+    });
   });
 
   describe('format hints', () => {
