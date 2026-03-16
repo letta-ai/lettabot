@@ -6,13 +6,7 @@ import { LettaBot } from './bot.js';
 import type { InboundMessage, OutboundMessage } from './types.js';
 
 vi.mock('../tools/letta-api.js', () => ({
-  getPendingApprovals: vi.fn(),
-  rejectApproval: vi.fn(),
-  cancelRuns: vi.fn(),
   cancelConversation: vi.fn(),
-  recoverOrphanedConversationApproval: vi.fn().mockResolvedValue({ recovered: false }),
-  recoverPendingApprovalsForAgent: vi.fn(),
-  isRecoverableConversationId: vi.fn(() => false),
   getLatestRunError: vi.fn().mockResolvedValue(null),
   getAgentModel: vi.fn(),
   updateAgentModel: vi.fn(),
