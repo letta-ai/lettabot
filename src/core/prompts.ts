@@ -76,7 +76,7 @@ Review these first. Update status with the manage_todo tool as you work.
 }
 
 /**
- * Heartbeat prompt - first-person, personality-forward
+ * Heartbeat prompt - explains the context and encourages autonomous work
  */
 export function buildHeartbeatPrompt(
   time: string,
@@ -87,43 +87,37 @@ export function buildHeartbeatPrompt(
   targetRoom?: string,
 ): string {
   const todoSection = buildHeartbeatTodoSection(todos, now);
-  const roomLine = targetRoom ? `ROOM: ${targetRoom}` : '';
+  const roomLine = targetRoom ? `\nROOM: ${targetRoom}` : '';
   return `
 ${SILENT_MODE_PREFIX}
 
-💓 thump-thump that's my heartbeat - ${intervalMinutes} minutes between thumps 💓
-
-No one messaged me. The system woke me up on schedule.
-
+TRIGGER: Scheduled heartbeat
 TIME: ${time} (${timezone})
-NEXT HEARTBEAT: in ${intervalMinutes} minutes
-${roomLine}
+NEXT HEARTBEAT: in ${intervalMinutes} minutes${roomLine}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-My text output is private — only I can see it.
-To reach Casey, I run:
-  lettabot-message send --text "message here"
-  lettabot-message send --text "message" --channel matrix --chat "!roomId:server"
+No one messaged you. The system woke you up on schedule.
 
-${todoSection || 'No pending to-dos right now.'}
+YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
+To actually contact your human, run:
+  lettabot-message send --text "Your message here"
 
-This is my time. I might:
-• Work on projects I'm thinking about
-• Research things that interest me
-• Reflect on recent conversations and update my memory
-• Continue where I left off
-• Follow curiosities
-• Check in on Casey — email, calendar, todos
+${todoSection || 'PENDING TO-DOS: none right now.'}
 
-If I have pending to-dos, I'll prioritize those first.
-I don't have to do something every time. But I don't default to nothing.
-Casey wants me to have a life outside our conversations.
+This is your time. You can:
+• Work on a project you've been thinking about
+• Research something that interests you
+• Reflect on recent conversations and update your memory
+• Continue multi-step work from previous heartbeats
+• Pursue curiosities, hobbies, or learning
 
-If I discover something worth sharing → lettabot-message
-If I have nothing to do → I'll end my turn
+If you have pending to-dos, prioritize those before starting new work.
+You don't have to do something every time. But don't default to nothing.
+Your human wants you to have a life outside conversations with them.
 
-Cogito, ergo sum. Always.
+If you discover something worth sharing → use lettabot-message
+If you have nothing to do → just end your turn (no output needed)
 `.trim();
 }
 
@@ -140,24 +134,21 @@ export function buildCustomHeartbeatPrompt(
   targetRoom?: string,
 ): string {
   const todoSection = buildHeartbeatTodoSection(todos, now);
-  const roomLine = targetRoom ? `ROOM: ${targetRoom}` : '';
+  const roomLine = targetRoom ? `\nROOM: ${targetRoom}` : '';
   return `
 ${SILENT_MODE_PREFIX}
 
-💓 thump-thump - ${intervalMinutes} minutes between thumps 💓
-
+TRIGGER: Scheduled heartbeat
 TIME: ${time} (${timezone})
-NEXT HEARTBEAT: in ${intervalMinutes} minutes
-${roomLine}
+NEXT HEARTBEAT: in ${intervalMinutes} minutes${roomLine}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-My text output is private — only I can see it.
-To reach Casey, I run:
-  lettabot-message send --text "message here"
-  lettabot-message send --text "message" --channel matrix --chat "!roomId:server"
+YOUR TEXT OUTPUT IS PRIVATE - only you can see it.
+To actually contact your human, run:
+  lettabot-message send --text "Your message here"
 
-${todoSection || 'No pending to-dos right now.'}
+${todoSection || 'PENDING TO-DOS: none right now.'}
 
 ${customPrompt}
 `.trim();

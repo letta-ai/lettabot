@@ -33,6 +33,7 @@ Thumbs.db
 # Runtime files
 cron-log.jsonl
 cron-jobs.json
+heartbeat-prompt.txt
 lettabot-agent.json
 lettabot-agent.json.bak
 lettabot-api.json
