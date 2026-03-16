@@ -278,12 +278,9 @@ export class HeartbeatService {
     });
     
     // Build trigger context for silent mode
-    const lastTarget = this.bot.getLastMessageTarget();
     const triggerContext: TriggerContext = {
       type: 'heartbeat',
       outputMode: 'silent',
-      sourceChannel: lastTarget?.channel,
-      sourceChatId: lastTarget?.chatId,
     };
     
     try {

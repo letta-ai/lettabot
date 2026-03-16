@@ -90,8 +90,13 @@ export async function recoverPendingApprovalsForAgent(
       };
     }
 
+    // Deduplicate by tool_call_id defensively (getPendingApprovals should
+    // already dedup, but this guards against any upstream regression).
+    const rejectedIds = new Set<string>();
     let rejectedCount = 0;
     for (const approval of pending) {
+      if (rejectedIds.has(approval.toolCallId)) continue;
+      rejectedIds.add(approval.toolCallId);
       const ok = await rejectApproval(agentId, {
         toolCallId: approval.toolCallId,
         reason,
@@ -433,70 +438,73 @@ export async function getPendingApprovals(
       stop_reason: 'requires_approval',
       limit: 10,
     });
-    
-    const pendingApprovals: PendingApproval[] = [];
-    
+
+    // Collect qualifying run IDs (avoid re-fetching messages per run)
+    const qualifyingRunIds: string[] = [];
     for await (const run of runsPage) {
       if (run.status === 'running' || run.stop_reason === 'requires_approval') {
-        // Get recent messages to find approval_request_message
-        const messagesPage = await client.agents.messages.list(agentId, {
-          conversation_id: conversationId,
-          limit: 100,
-        });
-        
-        const messages: Array<{ message_type?: string }> = [];
-        for await (const msg of messagesPage) {
-          messages.push(msg as { message_type?: string });
-        }
-        
-        const resolvedToolCalls = new Set<string>();
-        for (const msg of messages) {
-          if ('message_type' in msg && msg.message_type === 'approval_response_message') {
-            const approvalMsg = msg as {
-              approvals?: Array<{ tool_call_id?: string | null }>;
-            };
-            const approvals = approvalMsg.approvals || [];
-            for (const approval of approvals) {
-              if (approval.tool_call_id) {
-                resolvedToolCalls.add(approval.tool_call_id);
-              }
-            }
-          }
-        }
-        
-        const seenToolCalls = new Set<string>();
-        for (const msg of messages) {
-          // Check for approval_request_message type
-          if ('message_type' in msg && msg.message_type === 'approval_request_message') {
-            const approvalMsg = msg as {
-              id: string;
-              tool_calls?: Array<{ tool_call_id: string; name: string }>;
-              tool_call?: { tool_call_id: string; name: string };
-              run_id?: string;
-            };
-            
-            // Extract tool call info
-            const toolCalls = approvalMsg.tool_calls || (approvalMsg.tool_call ? [approvalMsg.tool_call] : []);
-            for (const tc of toolCalls) {
-              if (resolvedToolCalls.has(tc.tool_call_id)) {
-                continue;
-              }
-              if (seenToolCalls.has(tc.tool_call_id)) {
-                continue;
-              }
-              seenToolCalls.add(tc.tool_call_id);
-              pendingApprovals.push({
-                runId: approvalMsg.run_id || run.id,
-                toolCallId: tc.tool_call_id,
-                toolName: tc.name,
-                messageId: approvalMsg.id,
-              });
-            }
+        qualifyingRunIds.push(run.id);
+      }
+    }
+
+    if (qualifyingRunIds.length === 0) {
+      return [];
+    }
+
+    // Fetch messages ONCE and scan for resolved + pending approvals
+    const messagesPage = await client.agents.messages.list(agentId, {
+      conversation_id: conversationId,
+      limit: 100,
+    });
+
+    const messages: Array<{ message_type?: string }> = [];
+    for await (const msg of messagesPage) {
+      messages.push(msg as { message_type?: string });
+    }
+
+    // Build set of already-resolved tool_call_ids
+    const resolvedToolCalls = new Set<string>();
+    for (const msg of messages) {
+      if ('message_type' in msg && msg.message_type === 'approval_response_message') {
+        const approvalMsg = msg as {
+          approvals?: Array<{ tool_call_id?: string | null }>;
+        };
+        const approvals = approvalMsg.approvals || [];
+        for (const approval of approvals) {
+          if (approval.tool_call_id) {
+            resolvedToolCalls.add(approval.tool_call_id);
           }
         }
       }
     }
-    
+
+    // Collect unresolved approval requests, deduplicating across all runs
+    const pendingApprovals: PendingApproval[] = [];
+    const seenToolCalls = new Set<string>();
+    for (const msg of messages) {
+      if ('message_type' in msg && msg.message_type === 'approval_request_message') {
+        const approvalMsg = msg as {
+          id: string;
+          tool_calls?: Array<{ tool_call_id: string; name: string }>;
+          tool_call?: { tool_call_id: string; name: string };
+          run_id?: string;
+        };
+
+        const toolCalls = approvalMsg.tool_calls || (approvalMsg.tool_call ? [approvalMsg.tool_call] : []);
+        for (const tc of toolCalls) {
+          if (resolvedToolCalls.has(tc.tool_call_id)) continue;
+          if (seenToolCalls.has(tc.tool_call_id)) continue;
+          seenToolCalls.add(tc.tool_call_id);
+          pendingApprovals.push({
+            runId: approvalMsg.run_id || qualifyingRunIds[0],
+            toolCallId: tc.tool_call_id,
+            toolName: tc.name,
+            messageId: approvalMsg.id,
+          });
+        }
+      }
+    }
+
     return pendingApprovals;
   } catch (e) {
     log.error('Failed to get pending approvals:', e);
