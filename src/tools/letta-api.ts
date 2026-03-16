@@ -9,14 +9,14 @@ import { Letta } from '@letta-ai/letta-client';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Letta-api');
-const LETTA_BASE_URL = process.env.LETTA_BASE_URL || 'https://api.letta.com';
-
 function getClient(): Letta {
+  // Read env at call time, not at module load time — applyConfigToEnv() runs after imports
+  const baseURL = process.env.LETTA_BASE_URL || 'https://api.letta.com';
   const apiKey = process.env.LETTA_API_KEY;
   // Local servers may not require an API key
-  return new Letta({ 
-    apiKey: apiKey || '', 
-    baseURL: LETTA_BASE_URL,
+  return new Letta({
+    apiKey: apiKey || '',
+    baseURL,
     defaultHeaders: { "X-Letta-Source": "lettabot" },
   });
 }
@@ -549,12 +549,6 @@ export async function rejectApproval(
     if (err?.status === 400 && detail.includes('No tool call is currently awaiting approval')) {
       log.warn(`Approval already resolved for tool call ${approval.toolCallId}`);
       return true;
-    }
-    // Re-throw rate limit errors so callers can bail out early instead of
-    // hammering the API in a tight loop.
-    if (err?.status === 429) {
-      log.error('Failed to reject approval:', e);
-      throw e;
     }
     log.error('Failed to reject approval:', e);
     return false;

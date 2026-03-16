@@ -1,6 +1,6 @@
 /**
  * LettaBot - Multi-Channel AI Assistant
- * 
+ *
  * Single agent, single conversation across all channels.
  * Chat continues seamlessly between Telegram, Slack, and WhatsApp.
  */
@@ -67,6 +67,7 @@ import { LettaGateway } from './core/gateway.js';
 import { LettaBot } from './core/bot.js';
 import type { Store } from './core/store.js';
 import { createChannelsForAgent } from './channels/factory.js';
+import type { MatrixAdapter } from './channels/matrix/index.js';
 import { GroupBatcher } from './core/group-batcher.js';
 import { printStartupBanner } from './core/banner.js';
 import { collectGroupBatchingConfig } from './core/group-batching-config.js';
@@ -99,10 +100,14 @@ Encode your config: base64 < lettabot.yaml | tr -d '\\n'
   process.exit(1);
 }
 
-// Parse heartbeat target (format: "telegram:123456789", "slack:C1234567890", or "discord:123456789012345678")
+// Parse heartbeat target (format: "telegram:123456789", "slack:C1234567890", "matrix:!roomId:homeserver.net")
+// Splits only on the FIRST colon so Matrix room IDs (which contain colons) are preserved intact.
 function parseHeartbeatTarget(raw?: string): { channel: string; chatId: string } | undefined {
-  if (!raw || !raw.includes(':')) return undefined;
-  const [channel, chatId] = raw.split(':');
+  if (!raw) return undefined;
+  const colonIdx = raw.indexOf(':');
+  if (colonIdx < 0) return undefined;
+  const channel = raw.slice(0, colonIdx);
+  const chatId = raw.slice(colonIdx + 1);
   if (!channel || !chatId) return undefined;
   return { channel: channel.toLowerCase(), chatId };
 }
@@ -260,7 +265,7 @@ if (!isDockerServerMode(yamlConfig.server.mode) && !process.env.LETTA_API_KEY) {
 
 async function main() {
   log.info('Starting LettaBot...');
-  
+
   // Log storage locations (helpful for Railway debugging)
   const dataDir = getDataDir();
   if (hasRailwayVolume()) {
@@ -269,12 +274,12 @@ async function main() {
   log.info(`Data directory: ${dataDir}`);
   log.info(`Working directory: ${globalConfig.workingDir}`);
   process.env.LETTABOT_WORKING_DIR = globalConfig.workingDir;
-  
+
   // Normalize config to agents array
   const agents = normalizeAgents(yamlConfig);
   const isMultiAgent = agents.length > 1;
   log.info(`${agents.length} agent(s) configured: ${agents.map(a => a.name).join(', ')}`);
-  
+
   // Validate agent names are unique
   const agentNames = agents.map(a => a.name);
   const duplicateAgentName = agentNames.find((n, i) => agentNames.indexOf(n) !== i);
@@ -314,27 +319,27 @@ async function main() {
     }, ATTACHMENTS_PRUNE_INTERVAL_MS);
     timer.unref?.();
   }
-  
+
   const gateway = new LettaGateway();
   const agentStores = new Map<string, Store>();
   const sessionInvalidators = new Map<string, (key?: string) => void>();
   const agentChannelMap = new Map<string, string[]>();
   const voiceMemoEnabled = isVoiceMemoConfigured();
-  const services: { 
-    cronServices: CronService[], 
-    heartbeatServices: HeartbeatService[], 
-    pollingServices: PollingService[], 
-    groupBatchers: GroupBatcher[] 
+  const services: {
+    cronServices: CronService[],
+    heartbeatServices: HeartbeatService[],
+    pollingServices: PollingService[],
+    groupBatchers: GroupBatcher[]
   } = {
     cronServices: [],
     heartbeatServices: [],
     pollingServices: [],
     groupBatchers: [],
   };
-  
+
   for (const agentConfig of agents) {
     log.info(`Configuring agent: ${agentConfig.name}`);
-    
+
     const resolvedMemfsResult = resolveSessionMemfs({
       configuredMemfs: agentConfig.features?.memfs,
       envMemfs: process.env.LETTABOT_MEMFS,
@@ -383,6 +388,7 @@ async function main() {
       display: agentConfig.features?.display,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
+      heartbeatTargetChatId: parseHeartbeatTarget(heartbeatConfig?.target)?.chatId,
       interruptHeartbeatOnUserMessage:
         heartbeatConfig?.interruptOnUserMessage
         ?? globalConfig.heartbeatInterruptOnUserMessage
@@ -390,6 +396,7 @@ async function main() {
       conversationOverrides: agentConfig.conversations?.perChannel,
       maxSessions: agentConfig.conversations?.maxSessions,
       reuseSession: agentConfig.conversations?.reuseSession,
+      sessionModel: agentConfig.conversations?.sessionModel,
       redaction: agentConfig.security?.redaction,
       logging: agentConfig.features?.logging ?? yamlConfig.features?.logging,
       cronStorePath,
@@ -400,7 +407,7 @@ async function main() {
         ttsEnabled: voiceMemoEnabled,
       },
     });
-    
+
     // Log memfs config (from either YAML or env var)
     if (resolvedMemfs !== undefined) {
       const source = resolvedMemfsResult.source === 'config'
@@ -414,13 +421,14 @@ async function main() {
     }
 
     // Apply explicit agent ID from config (before store verification)
+    // Always use config's ID if explicitly set - it takes precedence over stored value
     let initialStatus = bot.getStatus();
-    if (agentConfig.id && !initialStatus.agentId) {
-      log.info(`Using configured agent ID: ${agentConfig.id}`);
+    if (agentConfig.id) {
+      log.info(`Using configured agent ID: ${agentConfig.id} (overrides stored: ${initialStatus.agentId})`);
       bot.setAgentId(agentConfig.id);
       initialStatus = bot.getStatus();
     }
-    
+
     // Verify agent exists (clear stale ID if deleted)
     if (initialStatus.agentId) {
       const exists = await agentExists(initialStatus.agentId);
@@ -458,7 +466,7 @@ async function main() {
     if (!initialStatus.agentId) {
       log.info(`No agent found - will create on first message`);
     }
-    
+
     // Disable tool approvals
     if (initialStatus.agentId) {
       ensureNoToolApprovals(initialStatus.agentId).catch(err => {
@@ -508,7 +516,16 @@ async function main() {
       services.heartbeatServices.push(heartbeatService);
     }
     bot.onTriggerHeartbeat = () => heartbeatService.trigger();
-    
+
+    // Wire Matrix adapter callbacks (heartbeat toggle, !timeout)
+    const matrixAdapter = adapters.find(a => a.id === 'matrix') as MatrixAdapter | undefined;
+    if (matrixAdapter) {
+      matrixAdapter.onHeartbeatStop = () => heartbeatService.stop();
+      matrixAdapter.onHeartbeatStart = () => heartbeatService.start();
+      // Best-effort: stops the timer so no new runs fire; running promise times out on its own
+      matrixAdapter.onTimeoutHeartbeat = () => { heartbeatService.stop(); log.warn('Matrix !timeout: heartbeat stopped (abort not yet supported)'); };
+    }
+
     // Per-agent polling -- resolve accounts from polling > integrations.google (legacy) > env
     const pollConfig = (() => {
       const pollingAccounts = parseGmailAccounts(
@@ -544,7 +561,7 @@ async function main() {
         },
       };
     })();
-    
+
     if (pollConfig.enabled && pollConfig.gmail.enabled && pollConfig.gmail.accounts.length > 0) {
       const pollingService = new PollingService(bot, {
         intervalMs: pollConfig.intervalMs,
@@ -554,19 +571,31 @@ async function main() {
       pollingService.start();
       services.pollingServices.push(pollingService);
     }
-    
+
     gateway.addAgent(agentConfig.name, bot);
     agentStores.set(agentConfig.name, bot.store);
     sessionInvalidators.set(agentConfig.name, (key) => bot.invalidateSession(key));
     agentChannelMap.set(agentConfig.name, adapters.map(a => a.id));
   }
-  
+
+  // Load/generate API key BEFORE gateway.start() so letta.js subprocesses inherit it.
+  // The lettabot-message CLI needs LETTABOT_API_KEY to route through the bot's HTTP API for E2EE.
+  const apiKey = loadOrGenerateApiKey();
+  if (!process.env.LETTABOT_API_KEY) {
+    process.env.LETTABOT_API_KEY = apiKey;
+  }
+  log.info(`Key: ${apiKey.slice(0, 8)}... (set LETTABOT_API_KEY to customize)`);
+
   // Start all agents
   await gateway.start();
-  
-  // Load/generate API key for CLI authentication
-  const apiKey = loadOrGenerateApiKey();
-  log.info(`Key: ${apiKey.slice(0, 8)}... (set LETTABOT_API_KEY to customize)`);
+
+  // Olm WASM (matrix-js-sdk) registers process.on("uncaughtException", (e) => { throw e })
+  // during Olm.init(). Without this fix, any uncaught async exception crashes the bot.
+  // Must run AFTER gateway.start() since that's when the Matrix adapter initialises Olm.
+  process.removeAllListeners('uncaughtException');
+  process.removeAllListeners('unhandledRejection');
+  process.on('uncaughtException', (err) => { log.error('Uncaught exception (suppressed):', err); });
+  process.on('unhandledRejection', (reason) => { log.error('Unhandled rejection (suppressed):', reason); });
 
   // Start API server - uses gateway for delivery
   const apiPort = parseInt(process.env.PORT || '8080', 10);
@@ -587,7 +616,7 @@ async function main() {
     agentChannels: agentChannelMap,
     sessionInvalidators,
   });
-  
+
   // Startup banner
   const bannerAgents = gateway.getAgentNames().map(name => {
     const agent = gateway.getAgent(name)!;
@@ -608,7 +637,7 @@ async function main() {
   if (!process.env.LETTABOT_NO_BANNER) {
     printStartupBanner(bannerAgents);
   }
-  
+
   // Shutdown
   const shutdown = async () => {
     log.info('Shutting down...');

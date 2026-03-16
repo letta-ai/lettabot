@@ -4,7 +4,8 @@
  * Each channel (Telegram, Slack, Discord, WhatsApp, Signal) implements this interface.
  */
 
-import type { ChannelId, InboundMessage, OutboundMessage, OutboundFile, FormatterHints } from '../core/types.js';
+import type { InboundMessage, OutboundMessage, OutboundFile, FormatterHints } from '../core/types.js';
+import type { ChannelId } from './setup.js';
 
 /**
  * Channel adapter - implement this for each messaging platform
@@ -20,14 +21,20 @@ export interface ChannelAdapter {
   
   // Messaging
   sendMessage(msg: OutboundMessage): Promise<{ messageId: string }>;
-  editMessage(chatId: string, messageId: string, text: string): Promise<void>;
+  editMessage(chatId: string, messageId: string, text: string, htmlPrefix?: string): Promise<void>;
   sendTypingIndicator(chatId: string): Promise<void>;
   stopTypingIndicator?(chatId: string): Promise<void>;
 
   // Capabilities (optional)
   supportsEditing?(): boolean;
   sendFile?(file: OutboundFile): Promise<{ messageId: string }>;
+  sendAudio?(chatId: string, text: string): Promise<void>;
   addReaction?(chatId: string, messageId: string, emoji: string): Promise<void>;
+  removeReaction?(chatId: string, messageId: string, emoji: string): Promise<void>;
+  /** Called after a bot message is sent (for TTS mapping, etc.) */
+  onMessageSent?(chatId: string, messageId: string, stepId?: string): void;
+  /** Store text for TTS regeneration on 🎤 reaction */
+  storeAudioMessage?(messageId: string, conversationId: string, roomId: string, text: string): void;
   getDmPolicy?(): string;
   getFormatterHints(): FormatterHints;
   

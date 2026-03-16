@@ -256,6 +256,36 @@ export function formatReasoningDisplay(
 }
 
 /**
+ * Format reasoning as a collapsible <details> block for prepending to the response.
+ * Returns pre-escaped HTML meant to be injected directly into formatted_body
+ * (bypasses the adapter's markdown-to-HTML conversion to avoid double-escaping).
+ */
+export function formatReasoningAsCodeBlock(
+  text: string,
+  channelId?: string,
+  reasoningMaxChars?: number,
+): { text: string } | null {
+  const maxChars = reasoningMaxChars ?? 0;
+  const cleaned = text.split('\n').map(line => line.trimStart()).join('\n').trim();
+  if (!cleaned) return null;
+
+  const truncated = maxChars > 0 && cleaned.length > maxChars
+    ? cleaned.slice(0, maxChars) + '...'
+    : cleaned;
+
+  // HTML-escape the reasoning content, then convert newlines to <br>
+  const escaped = truncated
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+
+  return {
+    text: `<details><summary>🧠 Thinking</summary><br>${escaped}</details><br>`,
+  };
+}
+
+/**
  * Format AskUserQuestion options for channel display.
  */
 export function formatQuestionsForChannel(questions: Array<{

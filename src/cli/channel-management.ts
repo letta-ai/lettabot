@@ -7,11 +7,11 @@
 
 import * as p from '@clack/prompts';
 import { loadAppConfigOrExit, saveConfig, resolveConfigPath } from '../config/index.js';
-import { 
-  CHANNELS, 
-  getChannelHint, 
+import {
+  CHANNELS,
+  getChannelHint,
   getSetupFunction,
-  type ChannelId 
+  type ChannelId
 } from '../channels/setup.js';
 import { listGroupsFromArgs } from './group-listing.js';
 
@@ -201,7 +201,7 @@ export async function addChannel(channelId?: string): Promise<void> {
   }
   
   const channelIds = CHANNELS.map(c => c.id);
-  if (!channelIds.includes(channelId as ChannelId)) {
+  if (!channelIds.includes(channelId as typeof CHANNELS[number]['id'])) {
     console.error(`Unknown channel: ${channelId}`);
     console.error(`Valid channels: ${channelIds.join(', ')}`);
     process.exit(1);
@@ -229,7 +229,7 @@ export async function removeChannel(channelId?: string): Promise<void> {
     process.exit(1);
   }
   
-  if (!channelIds.includes(channelId as ChannelId)) {
+  if (!channelIds.includes(channelId as typeof CHANNELS[number]['id'])) {
     console.error(`Unknown channel: ${channelId}`);
     console.error(`Valid channels: ${channelIds.join(', ')}`);
     process.exit(1);

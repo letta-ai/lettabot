@@ -301,9 +301,13 @@ export class HeartbeatService {
         }
       }
 
+      const targetRoom = this.config.target
+        ? `${this.config.target.channel}:${this.config.target.chatId}`
+        : undefined;
+
       const message = customPrompt
-        ? buildCustomHeartbeatPrompt(customPrompt, formattedTime, timezone, this.config.intervalMinutes, actionableTodos, now)
-        : buildHeartbeatPrompt(formattedTime, timezone, this.config.intervalMinutes, actionableTodos, now);
+        ? buildCustomHeartbeatPrompt(customPrompt, formattedTime, timezone, this.config.intervalMinutes, actionableTodos, now, targetRoom)
+        : buildHeartbeatPrompt(formattedTime, timezone, this.config.intervalMinutes, actionableTodos, now, targetRoom);
       
       log.info(`Sending prompt (SILENT MODE):\n${'─'.repeat(50)}\n${message}\n${'─'.repeat(50)}\n`);
       

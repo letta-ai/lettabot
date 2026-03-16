@@ -13,7 +13,7 @@ import { extname, resolve, join } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext, TriggerType, StreamMsg } from './types.js';
 import { formatApiErrorForUser } from './errors.js';
-import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
+import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel, formatReasoningAsCodeBlock } from './display.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
 import { getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
@@ -220,8 +220,11 @@ export function resolveConversationKey(
   conversationOverrides: Set<string>,
   chatId?: string,
   forcePerChat?: boolean,
+  heartbeatTargetChatId?: string,
 ): string {
   if (conversationMode === 'disabled') return 'default';
+  // Messages in the heartbeat target room share the heartbeat conversation
+  if (heartbeatTargetChatId && chatId === heartbeatTargetChatId) return 'heartbeat';
   const normalized = channel.toLowerCase();
   if ((conversationMode === 'per-chat' || forcePerChat) && chatId) return `${normalized}:${chatId}`;
   if (conversationMode === 'per-channel') return normalized;
@@ -401,15 +404,17 @@ export class LettaBot implements AgentSession {
     let acted = false;
     for (const directive of directives) {
       if (directive.type === 'react') {
+        // Skip 👀 eyes emoji — it's handled as a receipt indicator, not a directive target
+        const resolved = resolveEmoji(directive.emoji);
+        if (resolved.unicode === '👀') {
+          continue;
+        }
         const targetId = directive.messageId || fallbackMessageId;
         if (!adapter.addReaction) {
           log.warn(`Directive react skipped: ${adapter.name} does not support addReaction`);
           continue;
         }
         if (targetId) {
-          // Resolve text aliases (thumbsup, eyes, etc.) to Unicode characters.
-          // The LLM typically outputs names; channel APIs need actual emoji.
-          const resolved = resolveEmoji(directive.emoji);
           try {
             await adapter.addReaction(chatId, targetId, resolved.unicode);
             acted = true;
@@ -639,7 +644,7 @@ export class LettaBot implements AgentSession {
    * Returns channel id in per-channel mode or for override channels.
    */
   private resolveConversationKey(channel: string, chatId?: string, forcePerChat?: boolean): string {
-    return resolveConversationKey(channel, this.config.conversationMode, this.conversationOverrides, chatId, forcePerChat);
+    return resolveConversationKey(channel, this.config.conversationMode, this.conversationOverrides, chatId, forcePerChat, this.config.heartbeatTargetChatId);
   }
 
   /**
@@ -1317,6 +1322,30 @@ export class LettaBot implements AgentSession {
       let lastEventType: string | null = null;
       let abortedWithMessage = false;
       let turnError: string | undefined;
+      let collectedReasoning = '';
+
+      // ── Reaction tracking ──
+      // 👀 = receipt indicator (bot saw the message); removed when reasoning/tools start
+      // 🧠 = reasoning is happening; fires on first reasoning event
+      // Tool emojis = per-tool type indicators (max 6, deduplicated)
+      // 🎤 = on bot's sent message (tap to regenerate TTS)
+      let eyesAdded = false;
+      let brainAdded = false;
+      if (!suppressDelivery && msg.messageId) {
+        adapter.addReaction?.(msg.chatId, msg.messageId, '👀').catch(() => {});
+        eyesAdded = true;
+      }
+      const seenToolEmojis = new Set<string>();
+      const getToolEmoji = (toolName: string): string => {
+        const n = toolName.toLowerCase();
+        if (n.includes('search') || n.includes('web') || n.includes('browse')) return '🔍';
+        if (n.includes('read') || n.includes('get') || n.includes('fetch') || n.includes('retrieve') || n.includes('recall')) return '📖';
+        if (n.includes('write') || n.includes('send') || n.includes('create') || n.includes('post') || n.includes('insert')) return '✍️';
+        if (n.includes('memory') || n.includes('archival')) return '💾';
+        if (n.includes('shell') || n.includes('bash') || n.includes('exec') || n.includes('run') || n.includes('code') || n.includes('terminal')) return '⚙️';
+        if (n.includes('image') || n.includes('vision') || n.includes('photo')) return '📸';
+        return '🔧';
+      };
 
       const parseAndHandleDirectives = async () => {
         if (!response.trim()) return;
@@ -1408,6 +1437,22 @@ export class LettaBot implements AgentSession {
               }
               lastEventType = 'reasoning';
               sawNonAssistantSinceLastUuid = true;
+              // Collect reasoning for later prepending (Matrix <details> block)
+              if (event.content) {
+                collectedReasoning += event.content;
+              }
+
+              // Remove 👀 on first reasoning event (replaced by 🧠)
+              if (eyesAdded && msg.messageId) {
+                adapter.removeReaction?.(msg.chatId, msg.messageId, '👀').catch(() => {});
+                eyesAdded = false;
+              }
+              // Add 🧠 on first reasoning event (once only — Matrix toggles on duplicate)
+              if (!brainAdded && !suppressDelivery && msg.messageId) {
+                adapter.addReaction?.(msg.chatId, msg.messageId, '🧠').catch(() => {});
+                brainAdded = true;
+              }
+              // Send reasoning as separate message (upstream behavior for all channels)
               if (this.config.display?.showReasoning && !suppressDelivery && event.content.trim()) {
                 log.info(`Reasoning: ${event.content.trim().slice(0, 100)}`);
                 try {
@@ -1434,6 +1479,20 @@ export class LettaBot implements AgentSession {
               this.sessionManager.syncTodoToolCall(event.raw);
               log.info(`>>> TOOL CALL: ${event.name} (id: ${event.id.slice(0, 12) || '?'})`);
               sawNonAssistantSinceLastUuid = true;
+
+              // Remove 👀 on first tool event (replaced by tool emoji)
+              if (eyesAdded && msg.messageId) {
+                adapter.removeReaction?.(msg.chatId, msg.messageId, '👀').catch(() => {});
+                eyesAdded = false;
+              }
+              // Add per-tool emoji (fire-and-forget, max 6 deduplicated)
+              if (!suppressDelivery && msg.messageId) {
+                const emoji = getToolEmoji(event.name);
+                if (!seenToolEmojis.has(emoji) && seenToolEmojis.size < 6) {
+                  seenToolEmojis.add(emoji);
+                  adapter.addReaction?.(msg.chatId, msg.messageId, emoji).catch(() => {});
+                }
+              }
 
               // Tool loop detection
               const maxToolCalls = this.config.maxToolCalls ?? 100;
@@ -1535,7 +1594,7 @@ export class LettaBot implements AgentSession {
                 || hasUnclosedActionsBlock(response);
               const streamText = stripActionsBlock(response).trim();
               if (canEdit && !mayBeHidden && !suppressDelivery && !this.cancelledKeys.has(convKey)
-                && streamText.length > 0 && Date.now() - lastUpdate > 1500 && Date.now() > rateLimitedUntil) {
+                && streamText.length > 0 && Date.now() - lastUpdate > 800 && Date.now() > rateLimitedUntil) {
                 try {
                   const prefixedStream = this.prefixResponse(streamText);
                   if (messageId) {
@@ -1756,6 +1815,12 @@ export class LettaBot implements AgentSession {
       }
       lap('stream complete');
 
+      // Remove 👀 if still present (stream had only assistant chunks, no reasoning/tools)
+      if (eyesAdded && msg.messageId) {
+        adapter.removeReaction?.(msg.chatId, msg.messageId, '👀').catch(() => {});
+        eyesAdded = false;
+      }
+
       // If cancelled, clean up partial state and return early.
       // Invalidate defensively in case the cancel handler's invalidation
       // didn't fire (e.g., race with command dispatch).
@@ -1814,23 +1879,64 @@ export class LettaBot implements AgentSession {
           log.info(`Waiting ${(waitMs / 1000).toFixed(1)}s for rate limit before final send`);
           await new Promise(resolve => setTimeout(resolve, waitMs));
         }
-        const prefixedFinal = this.prefixResponse(response);
+
+        // Determine if reasoning should be shown for this room
+        const chatId = msg.chatId;
+        const noReasoningRooms = this.config.display?.noReasoningRooms || [];
+        const reasoningRooms = this.config.display?.reasoningRooms;
+        const shouldShowReasoning = this.config.display?.showReasoning &&
+          !noReasoningRooms.includes(chatId) &&
+          (!reasoningRooms || reasoningRooms.length === 0 || reasoningRooms.includes(chatId));
+
+        // Build reasoning HTML prefix if available (injected into formatted_body only)
+        let reasoningHtmlPrefix: string | undefined;
+        if (collectedReasoning.trim() && shouldShowReasoning) {
+          const reasoningBlock = formatReasoningAsCodeBlock(
+            collectedReasoning,
+            adapter.id,
+            this.config.display?.reasoningMaxChars
+          );
+          if (reasoningBlock) {
+            reasoningHtmlPrefix = reasoningBlock.text;
+            log.info(`Reasoning block generated (${reasoningHtmlPrefix.length} chars) for ${chatId}`);
+          }
+        }
+
+        const finalResponse = this.prefixResponse(response);
+
         try {
           if (messageId) {
-            await adapter.editMessage(msg.chatId, messageId, prefixedFinal);
+            await adapter.editMessage(msg.chatId, messageId, finalResponse, reasoningHtmlPrefix);
           } else {
-            await adapter.sendMessage({ chatId: msg.chatId, text: prefixedFinal, threadId: msg.threadId });
+            await adapter.sendMessage({ chatId: msg.chatId, text: finalResponse, threadId: msg.threadId, htmlPrefix: reasoningHtmlPrefix });
           }
           sentAnyMessage = true;
           this.store.resetRecoveryAttempts();
         } catch (sendErr) {
           log.warn('Final message delivery failed:', sendErr instanceof Error ? sendErr.message : sendErr);
           try {
-            await adapter.sendMessage({ chatId: msg.chatId, text: prefixedFinal, threadId: msg.threadId });
+            const result = await adapter.sendMessage({ chatId: msg.chatId, text: finalResponse, threadId: msg.threadId, htmlPrefix: reasoningHtmlPrefix });
+            messageId = result.messageId ?? null;
             sentAnyMessage = true;
             this.store.resetRecoveryAttempts();
           } catch (retryError) {
             log.error('Retry send also failed:', retryError);
+          }
+        }
+
+        // Post-response: 🎤 on bot's message + TTS audio (non-blocking)
+        // Tool/reasoning reactions already fired on USER's message during stream.
+        if (sentAnyMessage && messageId) {
+          adapter.onMessageSent?.(msg.chatId, messageId);
+          // 🎤 on bot's TEXT message (tap to regenerate TTS audio)
+          adapter.addReaction?.(msg.chatId, messageId, '🎤').catch(() => {});
+          // Store raw text — adapter's TTS layer will clean it at synthesis time
+          adapter.storeAudioMessage?.(messageId, 'default', msg.chatId, response);
+          // Generate TTS audio only in response to voice input
+          if (msg.isVoiceInput) {
+            adapter.sendAudio?.(msg.chatId, response).catch((err) => {
+              log.warn('TTS failed (non-fatal):', err);
+            });
           }
         }
       }

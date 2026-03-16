@@ -1,5 +1,6 @@
 import { BlueskyAdapter } from './bluesky.js';
 import { DiscordAdapter } from './discord.js';
+import { MatrixAdapter } from './matrix/index.js';
 import { SignalAdapter } from './signal.js';
 import { SlackAdapter } from './slack.js';
 import { TelegramMTProtoAdapter } from './telegram-mtproto.js';
@@ -186,6 +187,41 @@ export function createChannelsForAgent(
     if (builder.isEnabled(agentConfig)) {
       adapters.push(builder.build(agentConfig, sharedOptions));
     }
+  }
+
+  // Matrix: E2EE, TTS, STT, per-room routing
+  const matrixConfig = agentConfig.channels.matrix;
+  if (matrixConfig?.enabled !== false && matrixConfig?.homeserverUrl && matrixConfig?.userId) {
+    adapters.push(new MatrixAdapter({
+      homeserverUrl: matrixConfig.homeserverUrl,
+      userId: matrixConfig.userId,
+      accessToken: matrixConfig.accessToken,
+      password: matrixConfig.password,
+      deviceId: matrixConfig.deviceId,
+      dmPolicy: matrixConfig.dmPolicy || 'pairing',
+      allowedUsers: nonEmpty(matrixConfig.allowedUsers),
+      selfChatMode: matrixConfig.selfChatMode ?? false,
+      enableEncryption: matrixConfig.enableEncryption ?? true,
+      recoveryKey: matrixConfig.recoveryKey,
+      userDeviceId: matrixConfig.userDeviceId,
+      storeDir: matrixConfig.storeDir || './data/matrix',
+      sessionDir: matrixConfig.sessionDir || matrixConfig.storeDir || './data/matrix',
+      autoJoinRooms: matrixConfig.autoJoinRooms ?? true,
+      // Group batching
+      groupDebounceSec: matrixConfig.groupDebounceSec,
+      instantGroups: nonEmpty(matrixConfig.instantGroups),
+      listeningGroups: nonEmpty(matrixConfig.listeningGroups),
+      // TTS/STT
+      transcriptionEnabled: matrixConfig.transcriptionEnabled ?? true,
+      sttUrl: matrixConfig.sttUrl,
+      ttsUrl: matrixConfig.ttsUrl,
+      ttsVoice: matrixConfig.ttsVoice,
+      enableAudioResponse: matrixConfig.enableAudioResponse ?? false,
+      audioRoomFilter: matrixConfig.audioRoomFilter || 'dm_only',
+      // Other features
+      attachmentsDir: sharedOptions.attachmentsDir,
+      attachmentsMaxBytes: sharedOptions.attachmentsMaxBytes,
+    }));
   }
 
   // Bluesky: only start if there's something to subscribe to

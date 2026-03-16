@@ -57,6 +57,9 @@ export interface AgentSession {
 
   /** Callback to trigger heartbeat */
   onTriggerHeartbeat?: () => Promise<void>;
+
+  /** Invalidate a cached session, forcing fresh session on next message */
+  invalidateSession(key?: string): void;
 }
 
 /**

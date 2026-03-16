@@ -33,6 +33,7 @@ Thumbs.db
 # Runtime files
 cron-log.jsonl
 cron-jobs.json
+heartbeat-prompt.txt
 lettabot-agent.json
 lettabot-agent.json.bak
 lettabot-api.json
@@ -61,3 +62,6 @@ bun.lock
 # Telegram MTProto session data (contains auth secrets)
 data/telegram-mtproto/
 logs/
+
+# Matrix session data (contains crypto keys)
+data/matrix/

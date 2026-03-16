@@ -2,6 +2,8 @@
  * Core Types for LettaBot
  */
 
+import type { ChannelId } from '../channels/setup.js';
+
 // =============================================================================
 // Output Control Types (NEW)
 // =============================================================================
@@ -43,7 +45,6 @@ export interface TriggerContext {
 // Original Types
 // =============================================================================
 
-export type ChannelId = 'telegram' | 'telegram-mtproto' | 'slack' | 'whatsapp' | 'signal' | 'discord' | 'bluesky' | 'mock';
 
 /**
  * Message type indicating the context of the message.
@@ -103,6 +104,7 @@ export interface InboundMessage {
   timestamp: Date;
   threadId?: string;      // Slack thread_ts
   messageType?: MessageType; // 'dm', 'group', or 'public' (defaults to 'dm')
+  isVoiceInput?: boolean; // Matrix: indicates this came from voice-to-text transcription
   isGroup?: boolean;      // True if group chat (convenience alias for messageType === 'group')
   groupName?: string;     // Group/channel name if applicable
   serverId?: string;      // Server/guild ID (Discord only)
@@ -130,6 +132,9 @@ export interface OutboundMessage {
    *  'HTML') and to skip its default markdown conversion. Adapters that don't
    *  support the specified mode ignore this and fall back to default. */
   parseMode?: string;
+  /** Pre-escaped HTML to prepend to formatted_body only (bypasses markdown conversion).
+   *  Used for reasoning blocks with <details> tags that would be double-escaped. */
+  htmlPrefix?: string;
 }
 
 /**
@@ -173,6 +178,8 @@ export interface BotConfig {
     showToolCalls?: boolean;      // Show tool invocations in channel output
     showReasoning?: boolean;      // Show agent reasoning/thinking in channel output
     reasoningMaxChars?: number;   // Truncate reasoning to N chars (default: 0 = no limit)
+    reasoningRooms?: string[];    // Room IDs where reasoning should be shown (empty = all rooms)
+    noReasoningRooms?: string[];  // Room IDs where reasoning should be hidden (takes precedence)
   };
 
   // Skills
@@ -205,9 +212,11 @@ export interface BotConfig {
   conversationMode?: 'disabled' | 'shared' | 'per-channel' | 'per-chat'; // Default: shared
   heartbeatConversation?: string; // "dedicated" | "last-active" | "<channel>" (default: last-active)
   interruptHeartbeatOnUserMessage?: boolean; // Default true. Cancel in-flight heartbeat on user message.
+  heartbeatTargetChatId?: string; // When set + dedicated, user messages in this room route to 'heartbeat' conv key
   conversationOverrides?: string[]; // Channels that always use their own conversation (shared mode)
   maxSessions?: number; // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
   reuseSession?: boolean; // Reuse SDK subprocess across messages (default: true). Set false to eliminate stream state bleed at cost of ~5s latency per message.
+  sessionModel?: string; // Model override for session creation (e.g., "synthetic-direct/hf:moonshotai/Kimi-K2.5")
 }
 
 /**

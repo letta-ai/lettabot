@@ -84,14 +84,16 @@ export function buildHeartbeatPrompt(
   intervalMinutes: number,
   todos: HeartbeatTodo[] = [],
   now: Date = new Date(),
+  targetRoom?: string,
 ): string {
   const todoSection = buildHeartbeatTodoSection(todos, now);
+  const roomLine = targetRoom ? `\nROOM: ${targetRoom}` : '';
   return `
 ${SILENT_MODE_PREFIX}
 
 TRIGGER: Scheduled heartbeat
 TIME: ${time} (${timezone})
-NEXT HEARTBEAT: in ${intervalMinutes} minutes
+NEXT HEARTBEAT: in ${intervalMinutes} minutes${roomLine}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -129,14 +131,16 @@ export function buildCustomHeartbeatPrompt(
   intervalMinutes: number,
   todos: HeartbeatTodo[] = [],
   now: Date = new Date(),
+  targetRoom?: string,
 ): string {
   const todoSection = buildHeartbeatTodoSection(todos, now);
+  const roomLine = targetRoom ? `\nROOM: ${targetRoom}` : '';
   return `
 ${SILENT_MODE_PREFIX}
 
 TRIGGER: Scheduled heartbeat
 TIME: ${time} (${timezone})
-NEXT HEARTBEAT: in ${intervalMinutes} minutes
+NEXT HEARTBEAT: in ${intervalMinutes} minutes${roomLine}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
