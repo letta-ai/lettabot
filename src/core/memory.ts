@@ -24,6 +24,27 @@ export interface MemoryBlock {
   limit?: number;
 }
 
+function parseMemoryBlock(
+  raw: string,
+  filename: string,
+  agentName: string,
+): { block: MemoryBlock; managedExternally: boolean } {
+  const { data, content } = matter(raw);
+  const label = data.label || filename.replace('.mdx', '');
+  const block: MemoryBlock = {
+    label,
+    value: content.trim().replaceAll('{{AGENT_NAME}}', agentName),
+  };
+
+  if (data.description) block.description = data.description;
+  if (data.limit) block.limit = Number(data.limit);
+
+  return {
+    block,
+    managedExternally: data.managedExternally === true,
+  };
+}
+
 /**
  * Load all .mdx files from the memories directory and parse them into
  * memory blocks for the SDK's `memory` option.
@@ -41,19 +62,31 @@ export function loadMemoryBlocks(agentName = 'LettaBot'): MemoryBlock[] {
 
   for (const file of files) {
     const raw = readFileSync(join(MEMORIES_DIR, file), 'utf-8');
-    const { data, content } = matter(raw);
-
-    const label = data.label || file.replace('.mdx', '');
-    const block: MemoryBlock = {
-      label,
-      value: content.trim().replaceAll('{{AGENT_NAME}}', agentName),
-    };
-
-    if (data.description) block.description = data.description;
-    if (data.limit) block.limit = Number(data.limit);
-
+    const { block, managedExternally } = parseMemoryBlock(raw, file, agentName);
+    if (managedExternally) continue;
     blocks.push(block);
   }
 
   return blocks;
+}
+
+export function loadManagedMemoryBlock(
+  label: string,
+  agentName = 'LettaBot',
+): MemoryBlock | null {
+  if (!existsSync(MEMORIES_DIR)) {
+    return null;
+  }
+
+  const files = readdirSync(MEMORIES_DIR).filter((f: string) => f.endsWith('.mdx'));
+  for (const file of files) {
+    const raw = readFileSync(join(MEMORIES_DIR, file), 'utf-8');
+    const parsed = parseMemoryBlock(raw, file, agentName);
+    if (!parsed.managedExternally) continue;
+    if (parsed.block.label === label) {
+      return parsed.block;
+    }
+  }
+
+  return null;
 }

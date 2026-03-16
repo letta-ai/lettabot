@@ -12,6 +12,7 @@ vi.mock('@letta-ai/letta-code-sdk', () => ({
 
 vi.mock('../tools/letta-api.js', () => ({
   updateAgentName: vi.fn().mockResolvedValue(undefined),
+  ensureDirectivesBlockOnAgent: vi.fn().mockResolvedValue(true),
   getLatestRunError: vi.fn().mockResolvedValue(null),
 }));
 
