@@ -12,6 +12,16 @@ vi.mock('@letta-ai/letta-code-sdk', () => ({
 
 vi.mock('../tools/letta-api.js', () => ({
   updateAgentName: vi.fn().mockResolvedValue(undefined),
+  getPendingApprovals: vi.fn(),
+  rejectApproval: vi.fn(),
+  cancelRuns: vi.fn(),
+  recoverOrphanedConversationApproval: vi.fn(),
+  recoverPendingApprovalsForAgent: vi.fn(),
+  isRecoverableConversationId: vi.fn((conversationId?: string | null) => (
+    typeof conversationId === 'string' && conversationId.length > 0
+      && conversationId !== 'default'
+      && conversationId !== 'shared'
+  )),
   getLatestRunError: vi.fn().mockResolvedValue(null),
 }));
 
@@ -31,7 +41,7 @@ vi.mock('./system-prompt.js', () => ({
 }));
 
 import { createAgent, createSession, resumeSession } from '@letta-ai/letta-code-sdk';
-import { getLatestRunError } from '../tools/letta-api.js';
+import { getLatestRunError, recoverOrphanedConversationApproval, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { LettaBot } from './bot.js';
 import { SessionManager } from './session-manager.js';
 import { Store } from './store.js';
@@ -66,6 +76,10 @@ describe('SDK session contract', () => {
     delete process.env.LETTA_SESSION_TIMEOUT_MS;
 
     vi.clearAllMocks();
+    vi.mocked(recoverPendingApprovalsForAgent).mockResolvedValue({
+      recovered: false,
+      details: 'No pending approvals found on agent',
+    });
   });
 
   afterEach(() => {
@@ -470,6 +484,11 @@ describe('SDK session contract', () => {
       conversationId: 'default',
     };
 
+    vi.mocked(recoverPendingApprovalsForAgent).mockResolvedValueOnce({
+      recovered: true,
+      details: 'Rejected 1 pending approval(s) and cancelled 1 run(s)',
+    });
+
     vi.mocked(resumeSession)
       .mockReturnValueOnce(initialSession as never)
       .mockReturnValueOnce(recoveredSession as never);
@@ -483,6 +502,8 @@ describe('SDK session contract', () => {
 
     expect(response).toBe('ok');
     expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(2);
+    expect(recoverOrphanedConversationApproval).not.toHaveBeenCalled();
+    expect(recoverPendingApprovalsForAgent).toHaveBeenCalledWith('agent-contract-test');
     expect(initialSession.close).toHaveBeenCalledTimes(1);
   });
 
@@ -518,6 +539,11 @@ describe('SDK session contract', () => {
       conversationId: 'conv-fresh',
     };
 
+    vi.mocked(recoverOrphanedConversationApproval).mockResolvedValueOnce({
+      recovered: true,
+      details: "Denied 1 approval(s) from failed run run-ok; Failed to deny 1 approval(s) from run run-stuck: Invalid tool call IDs. Expected '['call_a']', but received '['call_b']'",
+    });
+
     vi.mocked(resumeSession)
       .mockReturnValueOnce(initialSession as never)
       .mockReturnValueOnce(recoveredSession as never);
@@ -533,6 +559,11 @@ describe('SDK session contract', () => {
     const response = await bot.sendToAgent('hello');
 
     expect(response).toBe('proactive recovered');
+    expect(recoverOrphanedConversationApproval).toHaveBeenCalledWith(
+      'agent-contract-test',
+      'conv-stuck',
+      true
+    );
     expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(resumeSession).mock.calls[0][0]).toBe('conv-stuck');
     expect(vi.mocked(resumeSession).mock.calls[1][0]).toBe('conv-stuck');
@@ -1114,6 +1145,10 @@ describe('SDK session contract', () => {
       stopReason: 'requires_approval',
       isApprovalError: true,
     });
+    vi.mocked(recoverOrphanedConversationApproval).mockResolvedValueOnce({
+      recovered: false,
+      details: 'No unresolved approval requests found',
+    });
 
     const adapter = {
       id: 'mock',
@@ -1140,6 +1175,11 @@ describe('SDK session contract', () => {
     await (bot as any).processMessage(msg, adapter);
 
     expect((bot as any).sessionManager.runSession).toHaveBeenCalledTimes(2);
+    expect(recoverOrphanedConversationApproval).toHaveBeenCalledWith(
+      'agent-contract-test',
+      'conv-approval',
+      true
+    );
     const sentTexts = adapter.sendMessage.mock.calls.map((call) => {
       const payload = call[0] as { text?: string };
       return payload.text;
@@ -1176,6 +1216,11 @@ describe('SDK session contract', () => {
       },
     }));
 
+    vi.mocked(recoverOrphanedConversationApproval).mockResolvedValueOnce({
+      recovered: false,
+      details: 'No unresolved approval requests found',
+    });
+
     const adapter = {
       id: 'mock',
       name: 'Mock',
@@ -1203,8 +1248,13 @@ describe('SDK session contract', () => {
     // The pre-foreground error is filtered, so lastErrorDetail is null.
     // The result (success=false, nothing delivered) triggers shouldRetryForErrorResult,
     // NOT isApprovalConflict. The retry goes through the error-result path with
-    // SDK-level approval recovery, then retries and succeeds.
+    // orphaned approval recovery, then retries and succeeds.
     expect((bot as any).sessionManager.runSession).toHaveBeenCalledTimes(2);
+    // Approval recovery should have been attempted via the error-result path
+    expect(recoverOrphanedConversationApproval).toHaveBeenCalledWith(
+      'agent-contract-test',
+      'conv-approval',
+    );
     const sentTexts = adapter.sendMessage.mock.calls.map((call) => {
       const payload = call[0] as { text?: string };
       return payload.text;
@@ -1236,6 +1286,10 @@ describe('SDK session contract', () => {
       stopReason: 'error',
       isApprovalError: true,
     });
+    vi.mocked(recoverPendingApprovalsForAgent).mockResolvedValueOnce({
+      recovered: true,
+      details: 'Rejected 1 pending approval(s) and cancelled 1 run(s)',
+    });
 
     const adapter = {
       id: 'mock',
@@ -1262,6 +1316,8 @@ describe('SDK session contract', () => {
     await (bot as any).processMessage(msg, adapter);
 
     expect((bot as any).sessionManager.runSession).toHaveBeenCalledTimes(2);
+    expect(recoverOrphanedConversationApproval).not.toHaveBeenCalled();
+    expect(recoverPendingApprovalsForAgent).toHaveBeenCalledWith('agent-contract-test');
     const sentTexts = adapter.sendMessage.mock.calls.map((call) => {
       const payload = call[0] as { text?: string };
       return payload.text;
@@ -1286,10 +1342,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
-      recoverPendingApprovals: vi.fn(async () => ({
-        recovered: true,
-        details: "Denied 1 approval(s) from failed run run-ok; Failed to deny 1 approval(s) from run run-stuck: Invalid tool call IDs. Expected '['call_a']', but received '['call_b']'",
-      })),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-stuck',
     };
@@ -1310,6 +1363,11 @@ describe('SDK session contract', () => {
       conversationId: 'conv-fresh',
     };
 
+    vi.mocked(recoverOrphanedConversationApproval).mockResolvedValueOnce({
+      recovered: true,
+      details: "Denied 1 approval(s) from failed run run-ok; Failed to deny 1 approval(s) from run run-stuck: Invalid tool call IDs. Expected '['call_a']', but received '['call_b']'",
+    });
+
     vi.mocked(resumeSession)
       .mockReturnValueOnce(stuckSession as never)
       .mockReturnValueOnce(recoveredSession as never);
@@ -1325,7 +1383,7 @@ describe('SDK session contract', () => {
     const response = await bot.sendToAgent('hello');
 
     expect(response).toBe('reactive recovered');
-    expect(stuckSession.recoverPendingApprovals).toHaveBeenCalledTimes(1);
+    expect(recoverOrphanedConversationApproval).toHaveBeenCalledWith('agent-contract-test', 'conv-stuck');
     expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(resumeSession).mock.calls[0][0]).toBe('conv-stuck');
     expect(vi.mocked(resumeSession).mock.calls[1][0]).toBe('conv-stuck');
