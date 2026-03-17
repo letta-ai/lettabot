@@ -13,7 +13,7 @@ import { extname, resolve, join } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext, TriggerType, StreamMsg } from './types.js';
 import { formatApiErrorForUser } from './errors.js';
-import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel, formatReasoningAsCodeBlock } from './display.js';
+import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
 import { getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
@@ -1880,42 +1880,20 @@ export class LettaBot implements AgentSession {
           await new Promise(resolve => setTimeout(resolve, waitMs));
         }
 
-        // Determine if reasoning should be shown for this room
-        const chatId = msg.chatId;
-        const noReasoningRooms = this.config.display?.noReasoningRooms || [];
-        const reasoningRooms = this.config.display?.reasoningRooms;
-        const shouldShowReasoning = this.config.display?.showReasoning &&
-          !noReasoningRooms.includes(chatId) &&
-          (!reasoningRooms || reasoningRooms.length === 0 || reasoningRooms.includes(chatId));
-
-        // Build reasoning HTML prefix if available (injected into formatted_body only)
-        let reasoningHtmlPrefix: string | undefined;
-        if (collectedReasoning.trim() && shouldShowReasoning) {
-          const reasoningBlock = formatReasoningAsCodeBlock(
-            collectedReasoning,
-            adapter.id,
-            this.config.display?.reasoningMaxChars
-          );
-          if (reasoningBlock) {
-            reasoningHtmlPrefix = reasoningBlock.text;
-            log.info(`Reasoning block generated (${reasoningHtmlPrefix.length} chars) for ${chatId}`);
-          }
-        }
-
         const finalResponse = this.prefixResponse(response);
 
         try {
           if (messageId) {
-            await adapter.editMessage(msg.chatId, messageId, finalResponse, reasoningHtmlPrefix);
+            await adapter.editMessage(msg.chatId, messageId, finalResponse);
           } else {
-            await adapter.sendMessage({ chatId: msg.chatId, text: finalResponse, threadId: msg.threadId, htmlPrefix: reasoningHtmlPrefix });
+            await adapter.sendMessage({ chatId: msg.chatId, text: finalResponse, threadId: msg.threadId });
           }
           sentAnyMessage = true;
           this.store.resetRecoveryAttempts();
         } catch (sendErr) {
           log.warn('Final message delivery failed:', sendErr instanceof Error ? sendErr.message : sendErr);
           try {
-            const result = await adapter.sendMessage({ chatId: msg.chatId, text: finalResponse, threadId: msg.threadId, htmlPrefix: reasoningHtmlPrefix });
+            const result = await adapter.sendMessage({ chatId: msg.chatId, text: finalResponse, threadId: msg.threadId });
             messageId = result.messageId ?? null;
             sentAnyMessage = true;
             this.store.resetRecoveryAttempts();
@@ -1931,7 +1909,7 @@ export class LettaBot implements AgentSession {
           // 🎤 on bot's TEXT message (tap to regenerate TTS audio)
           adapter.addReaction?.(msg.chatId, messageId, '🎤').catch(() => {});
           // Store raw text — adapter's TTS layer will clean it at synthesis time
-          adapter.storeAudioMessage?.(messageId, 'default', msg.chatId, response);
+          adapter.storeAudioMessage?.(messageId, convKey, msg.chatId, response);
           // Generate TTS audio only in response to voice input
           if (msg.isVoiceInput) {
             adapter.sendAudio?.(msg.chatId, response).catch((err) => {

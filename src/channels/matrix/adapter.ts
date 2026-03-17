@@ -227,8 +227,11 @@ export class MatrixAdapter implements ChannelAdapter {
     if (!this.client) throw new Error("Matrix client not initialized");
 
     const { chatId, text } = msg;
-    const { plain, html } = formatMatrixHTML(text);
-    const htmlBody = (msg.htmlPrefix || '') + html;
+    // If parseMode is HTML, text is already formatted — skip markdown conversion
+    const { plain, html } = msg.parseMode === 'HTML'
+      ? { plain: text.replace(/<[^>]+>/g, ''), html: text }
+      : formatMatrixHTML(text);
+    const htmlBody = html;
 
     const content = {
       msgtype: MsgType.Text,
@@ -273,11 +276,11 @@ export class MatrixAdapter implements ChannelAdapter {
     return true; // 'all'
   }
 
-  async editMessage(chatId: string, messageId: string, text: string, htmlPrefix?: string): Promise<void> {
+  async editMessage(chatId: string, messageId: string, text: string): Promise<void> {
     if (!this.client) throw new Error("Matrix client not initialized");
 
     const { plain, html } = formatMatrixHTML(text);
-    const htmlBody = (htmlPrefix || '') + html;
+    const htmlBody = html;
     const prefixedPlain = this.config.messagePrefix ? `${this.config.messagePrefix}\n\n${plain}` : plain;
     const prefixedHtml = this.config.messagePrefix ? `${this.config.messagePrefix}<br><br>${htmlBody}` : htmlBody;
 
@@ -1454,7 +1457,7 @@ export class MatrixAdapter implements ChannelAdapter {
     if (kind === 'audio') {
       this.ourAudioEvents.add(eventId);
       if (caption) {
-        this.storage.storeAudioMessage(eventId, 'default', chatId, caption);
+        this.storage.storeAudioMessage(eventId, chatId, chatId, caption);
       }
       const reactionContent: ReactionEventContent = {
         "m.relates_to": {
@@ -1485,7 +1488,7 @@ export class MatrixAdapter implements ChannelAdapter {
       const audioEventId = await this.uploadAndSendAudio(roomId, audioData);
       if (audioEventId) {
         // Store mapping so 🎤 on the regenerated audio works too
-        this.storage.storeAudioMessage(audioEventId, "default", roomId, text);
+        this.storage.storeAudioMessage(audioEventId, roomId, roomId, text);
       }
       return audioEventId;
     } catch (err) {
@@ -1516,7 +1519,7 @@ export class MatrixAdapter implements ChannelAdapter {
       const audioEventId = await this.uploadAndSendAudio(chatId, audioData);
       if (audioEventId) {
         // Store for 🎤 regeneration
-        this.storage.storeAudioMessage(audioEventId, "default", chatId, text);
+        this.storage.storeAudioMessage(audioEventId, chatId, chatId, text);
       }
     } catch (err) {
       log.error("TTS failed (non-fatal):", err);
