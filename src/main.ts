@@ -484,7 +484,7 @@ async function main() {
     
     if (pollConfig.enabled && pollConfig.gmail.enabled && pollConfig.gmail.accounts.length > 0) {
       if (!isGogAvailable()) {
-        log.warn('Gmail polling enabled but gog CLI is not installed.');
+        log.warn('Gmail polling enabled but gog CLI is not installed. Google Workspace services will be unavailable.');
         log.warn('Install: brew install steipete/tap/gogcli (local) or set GOG_CONFIG_BASE64 (cloud)');
       } else {
         const pollingService = new PollingService(bot, {

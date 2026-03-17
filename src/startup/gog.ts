@@ -7,7 +7,8 @@
  * deployment environment.
  *
  * At startup this module unpacks that tarball into the container's config
- * directory so that `gog gmail search …` works without interactive auth.
+ * directory so that all gog services (Gmail, Calendar, Drive, Contacts,
+ * Sheets, Docs) work without interactive auth.
  *
  * Export locally:
  *   tar -czf - -C ~/.config gogcli | base64 | tr -d '\n'

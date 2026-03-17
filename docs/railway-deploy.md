@@ -74,7 +74,7 @@ SLACK_APP_TOKEN=xapp-...
 | `LOG_LEVEL` | `info` | Log verbosity (fatal/error/warn/info/debug/trace) |
 | `LOG_FORMAT` | - | Set to `json` for structured JSON output (recommended for Railway) |
 | `GMAIL_ACCOUNT` | - | Gmail address(es) for polling (comma-separated) |
-| `GOG_CONFIG_BASE64` | - | Base64-encoded gogcli config for Gmail polling (see below) |
+| `GOG_CONFIG_BASE64` | - | Base64-encoded gogcli config for Google Workspace (see below) |
 | `GOG_KEYRING_PASSWORD` | - | Passphrase for gogcli's headless keyring |
 
 ## How It Works
@@ -163,23 +163,35 @@ curl -X POST \
 
 Alternatively, use `allowlist` DM policy and pre-configure allowed users in environment variables to skip pairing entirely.
 
-## Gmail Polling (gogcli)
+## Google Workspace (gogcli)
 
-Gmail polling via [gogcli](https://gogcli.sh) works on Railway. The `gog` binary is pre-installed in both Docker and Nixpacks builds. Since Railway is headless (no browser), you need to authenticate locally and export your credentials.
+All [gogcli](https://gogcli.sh) services work on Railway: **Gmail, Calendar, Drive, Contacts, Sheets, and Docs**. The `gog` binary is pre-installed in both Docker and Nixpacks builds. Since Railway is headless (no browser), you need to authenticate locally and export your credentials.
+
+This enables:
+- **Gmail polling** — automatic unread email notifications
+- **Agent skills** — the agent can send emails, manage calendar events, search Drive, read/write Sheets, and more via the `gog` and `google` skills
 
 ### Setup
 
 1. Install gogcli locally: `brew install steipete/tap/gogcli`
-2. Authenticate: `gog auth add you@gmail.com --services gmail,calendar,drive`
+2. Authenticate with all services:
+   ```bash
+   gog auth add you@gmail.com --services gmail,calendar,drive,contacts,docs,sheets
+   ```
 3. Export credentials as base64:
    ```bash
    tar -czf - -C ~/.config gogcli | base64 | tr -d '\n'
    ```
-4. Set `GOG_CONFIG_BASE64` in your Railway service variables (paste the output)
-5. Set `GOG_KEYRING_PASSWORD` to any passphrase (gogcli uses an encrypted on-disk keyring in containers)
-6. Set `GMAIL_ACCOUNT=you@gmail.com` (or configure in your YAML)
+4. Set these environment variables in your Railway service:
+   - `GOG_CONFIG_BASE64` — paste the base64 output from step 3
+   - `GOG_KEYRING_PASSWORD` — any passphrase (gogcli uses an encrypted on-disk keyring in containers)
+   - `GMAIL_ACCOUNT=you@gmail.com` — for Gmail polling (or configure in your YAML)
 
-On startup, LettaBot restores the gogcli config from `GOG_CONFIG_BASE64` and Gmail polling begins automatically.
+On startup, LettaBot restores the gogcli config from `GOG_CONFIG_BASE64`. Gmail polling and all Google Workspace agent skills begin working automatically.
+
+### Multiple accounts
+
+Repeat the `gog auth add` step for each account before exporting. The tarball includes all authenticated accounts.
 
 ### Re-exporting after token refresh
 
@@ -192,7 +204,7 @@ OAuth tokens are refreshed automatically by gogcli. If your Railway deployment s
 | Telegram | Yes | Full support |
 | Discord | Yes | Full support |
 | Slack | Yes | Full support |
-| Gmail | Yes | Requires `GOG_CONFIG_BASE64` (see above) |
+| Google Workspace | Yes | Gmail, Calendar, Drive, Contacts, Sheets, Docs — requires `GOG_CONFIG_BASE64` (see above) |
 | WhatsApp | No | Requires local QR pairing |
 | Signal | No | Requires local device registration |
 
