@@ -132,9 +132,6 @@ export interface OutboundMessage {
    *  'HTML') and to skip its default markdown conversion. Adapters that don't
    *  support the specified mode ignore this and fall back to default. */
   parseMode?: string;
-  /** Pre-escaped HTML to prepend to formatted_body only (bypasses markdown conversion).
-   *  Used for reasoning blocks with <details> tags that would be double-escaped. */
-  htmlPrefix?: string;
 }
 
 /**
