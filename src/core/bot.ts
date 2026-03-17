@@ -1316,6 +1316,14 @@ export class LettaBot implements AgentSession {
         if (!response.trim()) return;
         const { cleanText, directives } = parseDirectives(response);
         response = cleanText;
+
+        // Auto-voice: if enabled and no explicit <voice> directive, inject one
+        if (this.config.autoVoice &&
+            cleanText.trim() &&
+            !directives.some(d => d.type === 'voice')) {
+          directives.push({ type: 'voice', text: cleanText.trim() });
+        }
+
         if (directives.length === 0) return;
 
         if (suppressDelivery) {

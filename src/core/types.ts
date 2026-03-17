@@ -192,6 +192,9 @@ export interface BotConfig {
   sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
   sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete files after send (default: false)
 
+  // Auto-voice
+  autoVoice?: boolean; // Automatically generate a TTS voice memo for every text response (no <voice> directive needed)
+
   // Logging
   logging?: {
     turnLogFile?: string; // Path to JSONL file for turn logging (one record per agent turn)
