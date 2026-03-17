@@ -590,12 +590,27 @@ async function main() {
   await gateway.start();
 
   // Olm WASM (matrix-js-sdk) registers process.on("uncaughtException", (e) => { throw e })
-  // during Olm.init(). Without this fix, any uncaught async exception crashes the bot.
-  // Must run AFTER gateway.start() since that's when the Matrix adapter initialises Olm.
-  process.removeAllListeners('uncaughtException');
-  process.removeAllListeners('unhandledRejection');
-  process.on('uncaughtException', (err) => { log.error('Uncaught exception (suppressed):', err); });
-  process.on('unhandledRejection', (reason) => { log.error('Unhandled rejection (suppressed):', reason); });
+  // during Olm.init(). That rethrow handler turns any uncaught async error into a crash.
+  // Surgically remove only the Olm-registered rethrow handlers, preserving any others.
+  for (const event of ['uncaughtException', 'unhandledRejection'] as const) {
+    const listeners = process.listeners(event);
+    for (const listener of listeners) {
+      // Olm's handler is a one-liner that rethrows: (e) => { throw e }
+      // Detect by source — short function body that just throws its argument.
+      const src = listener.toString();
+      if (src.includes('throw') && src.length < 50) {
+        process.removeListener(event, listener as (...args: unknown[]) => void);
+      }
+    }
+  }
+  // Safety net: log unhandled errors instead of crashing.
+  // Only adds if no other handlers remain (avoids clobbering app-registered handlers).
+  if (process.listenerCount('uncaughtException') === 0) {
+    process.on('uncaughtException', (err) => { log.error('Uncaught exception (suppressed):', err); });
+  }
+  if (process.listenerCount('unhandledRejection') === 0) {
+    process.on('unhandledRejection', (reason) => { log.error('Unhandled rejection (suppressed):', reason); });
+  }
 
   // Start API server - uses gateway for delivery
   const apiPort = parseInt(process.env.PORT || '8080', 10);
