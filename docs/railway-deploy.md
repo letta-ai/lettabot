@@ -73,6 +73,9 @@ SLACK_APP_TOKEN=xapp-...
 | `API_HOST` | `0.0.0.0` on Railway | Optional override for API bind address |
 | `LOG_LEVEL` | `info` | Log verbosity (fatal/error/warn/info/debug/trace) |
 | `LOG_FORMAT` | - | Set to `json` for structured JSON output (recommended for Railway) |
+| `GMAIL_ACCOUNT` | - | Gmail address(es) for polling (comma-separated) |
+| `GOG_CONFIG_BASE64` | - | Base64-encoded gogcli config for Gmail polling (see below) |
+| `GOG_KEYRING_PASSWORD` | - | Passphrase for gogcli's headless keyring |
 
 ## How It Works
 
@@ -160,6 +163,28 @@ curl -X POST \
 
 Alternatively, use `allowlist` DM policy and pre-configure allowed users in environment variables to skip pairing entirely.
 
+## Gmail Polling (gogcli)
+
+Gmail polling via [gogcli](https://gogcli.sh) works on Railway. The `gog` binary is pre-installed in both Docker and Nixpacks builds. Since Railway is headless (no browser), you need to authenticate locally and export your credentials.
+
+### Setup
+
+1. Install gogcli locally: `brew install steipete/tap/gogcli`
+2. Authenticate: `gog auth add you@gmail.com --services gmail,calendar,drive`
+3. Export credentials as base64:
+   ```bash
+   tar -czf - -C ~/.config gogcli | base64 | tr -d '\n'
+   ```
+4. Set `GOG_CONFIG_BASE64` in your Railway service variables (paste the output)
+5. Set `GOG_KEYRING_PASSWORD` to any passphrase (gogcli uses an encrypted on-disk keyring in containers)
+6. Set `GMAIL_ACCOUNT=you@gmail.com` (or configure in your YAML)
+
+On startup, LettaBot restores the gogcli config from `GOG_CONFIG_BASE64` and Gmail polling begins automatically.
+
+### Re-exporting after token refresh
+
+OAuth tokens are refreshed automatically by gogcli. If your Railway deployment stops authenticating, re-export your local `~/.config/gogcli` directory and update `GOG_CONFIG_BASE64`.
+
 ## Channel Limitations
 
 | Channel | Railway Support | Notes |
@@ -167,6 +192,7 @@ Alternatively, use `allowlist` DM policy and pre-configure allowed users in envi
 | Telegram | Yes | Full support |
 | Discord | Yes | Full support |
 | Slack | Yes | Full support |
+| Gmail | Yes | Requires `GOG_CONFIG_BASE64` (see above) |
 | WhatsApp | No | Requires local QR pairing |
 | Signal | No | Requires local device registration |
 

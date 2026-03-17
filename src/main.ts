@@ -28,6 +28,7 @@ import { getCronDataDir, getDataDir, getWorkingDir, hasRailwayVolume, resolveWor
 import { parseCsvList, parseNonNegativeNumber } from './utils/parse.js';
 import { createLogger, setLogLevel } from './logger.js';
 import { loadStoredAgentId, refreshTokensIfNeeded, withDiscoveryLock } from './startup/bootstrap.js';
+import { restoreGogConfig, isGogAvailable } from './startup/gog.js';
 
 const log = createLogger('Config');
 
@@ -60,6 +61,9 @@ const STORE_PATH = resolve(getDataDir(), 'lettabot-agent.json');
 const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
 loadStoredAgentId(STORE_PATH, currentBaseUrl);
 await refreshTokensIfNeeded();
+
+// Restore gogcli credentials from env var for headless deployments (Railway/Docker)
+restoreGogConfig();
 
 import { normalizeAgents } from './config/types.js';
 import { LettaGateway } from './core/gateway.js';
@@ -479,13 +483,18 @@ async function main() {
     })();
     
     if (pollConfig.enabled && pollConfig.gmail.enabled && pollConfig.gmail.accounts.length > 0) {
-      const pollingService = new PollingService(bot, {
-        intervalMs: pollConfig.intervalMs,
-        workingDir: resolvedWorkingDir,
-        gmail: pollConfig.gmail,
-      });
-      pollingService.start();
-      services.pollingServices.push(pollingService);
+      if (!isGogAvailable()) {
+        log.warn('Gmail polling enabled but gog CLI is not installed.');
+        log.warn('Install: brew install steipete/tap/gogcli (local) or set GOG_CONFIG_BASE64 (cloud)');
+      } else {
+        const pollingService = new PollingService(bot, {
+          intervalMs: pollConfig.intervalMs,
+          workingDir: resolvedWorkingDir,
+          gmail: pollConfig.gmail,
+        });
+        pollingService.start();
+        services.pollingServices.push(pollingService);
+      }
     }
     
     gateway.addAgent(agentConfig.name, bot);
