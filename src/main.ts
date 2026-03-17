@@ -269,6 +269,12 @@ async function main() {
   log.info(`Data directory: ${dataDir}`);
   log.info(`Working directory: ${globalConfig.workingDir}`);
   process.env.LETTABOT_WORKING_DIR = globalConfig.workingDir;
+
+  // Propagate resolved config path so child processes (lettabot-message, lettabot-react)
+  // can find the config regardless of their working directory.
+  if (!process.env.LETTABOT_CONFIG && !hasInlineConfig()) {
+    process.env.LETTABOT_CONFIG = configPath;
+  }
   
   // Normalize config to agents array
   const agents = normalizeAgents(yamlConfig);
