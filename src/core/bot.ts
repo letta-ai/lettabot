@@ -16,7 +16,7 @@ import { formatApiErrorForUser } from './errors.js';
 import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
-import { getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
+import { cancelConversation, getLatestRunError, getAgentModel, updateAgentModel } from '../tools/letta-api.js';
 import { getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
@@ -911,72 +911,6 @@ export class LettaBot implements AgentSession {
   }
 
   // =========================================================================
-  // Approval recovery
-  // =========================================================================
-  
-  private async attemptRecovery(maxAttempts = 2): Promise<{ recovered: boolean; shouldReset: boolean }> {
-    if (!this.store.agentId) {
-      return { recovered: false, shouldReset: false };
-    }
-    
-    log.info('Checking for pending approvals...');
-    
-    try {
-      const pendingApprovals = await getPendingApprovals(
-        this.store.agentId,
-        this.store.conversationId || undefined
-      );
-      
-      if (pendingApprovals.length === 0) {
-        if (isRecoverableConversationId(this.store.conversationId)) {
-          const convResult = await recoverOrphanedConversationApproval(
-            this.store.agentId!,
-            this.store.conversationId
-          );
-          if (convResult.recovered) {
-            log.info(`Conversation-level recovery succeeded: ${convResult.details}`);
-            return { recovered: true, shouldReset: false };
-          }
-        }
-        this.store.resetRecoveryAttempts();
-        return { recovered: false, shouldReset: false };
-      }
-      
-      const attempts = this.store.recoveryAttempts;
-      if (attempts >= maxAttempts) {
-        log.error(`Recovery failed after ${attempts} attempts. Still have ${pendingApprovals.length} pending approval(s).`);
-        return { recovered: false, shouldReset: true };
-      }
-      
-      log.info(`Found ${pendingApprovals.length} pending approval(s), attempting recovery (attempt ${attempts + 1}/${maxAttempts})...`);
-      this.store.incrementRecoveryAttempts();
-      
-      for (const approval of pendingApprovals) {
-        log.info(`Rejecting approval for ${approval.toolName} (${approval.toolCallId})`);
-        await rejectApproval(
-          this.store.agentId,
-          { toolCallId: approval.toolCallId, reason: 'Session was interrupted - retrying request' },
-          this.store.conversationId || undefined
-        );
-      }
-      
-      const runIds = [...new Set(pendingApprovals.map(a => a.runId))];
-      if (runIds.length > 0) {
-        log.info(`Cancelling ${runIds.length} active run(s)...`);
-        await cancelRuns(this.store.agentId, runIds);
-      }
-      
-      log.info('Recovery completed');
-      return { recovered: true, shouldReset: false };
-      
-    } catch (error) {
-      log.error('Recovery failed:', error);
-      this.store.incrementRecoveryAttempts();
-      return { recovered: false, shouldReset: this.store.recoveryAttempts >= maxAttempts };
-    }
-  }
-
-  // =========================================================================
   // Message queue
   // =========================================================================
 
@@ -1154,25 +1088,6 @@ export class LettaBot implements AgentSession {
       adapter.sendTypingIndicator(msg.chatId).catch(() => {});
     }
     lap('typing indicator');
-
-    // Pre-send approval recovery (secondary defense).
-    // Primary detection is now in ensureSessionForKey() via bootstrapState().
-    // This fallback only fires when previous failures incremented recoveryAttempts,
-    // covering edge cases where a cached session encounters a new stuck approval.
-    const recovery = this.store.recoveryAttempts > 0
-      ? await this.attemptRecovery()
-      : { recovered: false, shouldReset: false };
-    lap('recovery check');
-    if (recovery.shouldReset) {
-      if (!suppressDelivery) {
-        await adapter.sendMessage({
-          chatId: msg.chatId,
-          text: `(I had trouble processing that -- the session hit a stuck state and automatic recovery failed after ${this.store.recoveryAttempts} attempt(s). Please try sending your message again. If this keeps happening, /reset will clear the conversation for this channel.)`,
-          threadId: msg.threadId,
-        });
-      }
-      return null;
-    }
 
     const prevTarget = this.store.lastMessageTarget;
     const isNewChatSession = !prevTarget || prevTarget.chatId !== msg.chatId || prevTarget.channel !== msg.channel;
@@ -1618,9 +1533,7 @@ export class LettaBot implements AgentSession {
               const retryConvIdRaw = (event.conversationId && event.conversationId.length > 0)
                 ? event.conversationId
                 : retryConvIdFromStore;
-              const retryConvId = isRecoverableConversationId(retryConvIdRaw)
-                ? retryConvIdRaw
-                : undefined;
+              const retryConvId = retryConvIdRaw || undefined;
 
               const initialRetryDecision = this.buildResultRetryDecision(
                 event.raw, resultText, hasResponse, sentAnyMessage, lastErrorDetail,
@@ -1649,7 +1562,7 @@ export class LettaBot implements AgentSession {
                 log.info('Approval conflict detected -- attempting SDK recovery...');
                 clearInterval(typingInterval);
 
-                // Try SDK-level recovery first (through CLI control protocol)
+                // Try SDK-level recovery (through CLI control protocol)
                 if (session) {
                   const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
                   if (sdkResult.recovered) {
@@ -1658,20 +1571,11 @@ export class LettaBot implements AgentSession {
                     session = null;
                     return this.processMessage(msg, adapter, true);
                   }
-                  log.warn(`SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
+                  log.warn(`SDK approval recovery did not resolve (${sdkResult.detail ?? 'unknown'})`);
                 }
 
-                // Fall back to API-level recovery
                 this.sessionManager.invalidateSession(retryConvKey);
                 session = null;
-                const result = (retryConvId && isRecoverableConversationId(retryConvId))
-                  ? await recoverOrphanedConversationApproval(this.store.agentId, retryConvId, true)
-                  : await recoverPendingApprovalsForAgent(this.store.agentId);
-                if (result.recovered) {
-                  log.info(`API-level recovery succeeded (${result.details}), retrying message...`);
-                } else {
-                  log.warn(`API-level recovery failed: ${result.details}`);
-                }
                 return this.processMessage(msg, adapter, true);
               }
 
@@ -1679,19 +1583,11 @@ export class LettaBot implements AgentSession {
               if (retryDecision.shouldRetryForEmptyResult || retryDecision.shouldRetryForErrorResult) {
                 if (!retried && this.store.agentId && retryConvId) {
                   const reason = retryDecision.shouldRetryForErrorResult ? 'error result' : 'empty result';
-                  log.info(`${reason} - attempting orphaned approval recovery...`);
+                  log.info(`${reason} - retrying once...`);
                   this.sessionManager.invalidateSession(retryConvKey);
                   session = null;
                   clearInterval(typingInterval);
-                  const convResult = await recoverOrphanedConversationApproval(this.store.agentId, retryConvId);
-                  if (convResult.recovered) {
-                    log.info(`Recovery succeeded (${convResult.details}), retrying message...`);
-                    return this.processMessage(msg, adapter, true);
-                  }
-                  if (retryDecision.shouldRetryForErrorResult) {
-                    log.info('Retrying once after terminal error...');
-                    return this.processMessage(msg, adapter, true);
-                  }
+                  return this.processMessage(msg, adapter, true);
                 }
               }
 
@@ -2004,15 +1900,7 @@ export class LettaBot implements AgentSession {
                   if (sdkResult.recovered) {
                     log.info('sendToAgent: SDK approval recovery succeeded');
                   } else {
-                    log.warn(`sendToAgent: SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
-                    if (this.store.agentId) {
-                      const recovery = await recoverPendingApprovalsForAgent(this.store.agentId);
-                      if (recovery.recovered) {
-                        log.info(`sendToAgent: API-level recovery succeeded (${recovery.details})`);
-                      } else {
-                        log.warn(`sendToAgent: API-level recovery failed (${recovery.details})`);
-                      }
-                    }
+                    log.warn(`sendToAgent: SDK approval recovery did not resolve (${sdkResult.detail ?? 'unknown'})`);
                   }
                   this.sessionManager.invalidateSession(convKey);
                   retried = true;
