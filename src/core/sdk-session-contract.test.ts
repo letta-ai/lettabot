@@ -1147,6 +1147,65 @@ describe('SDK session contract', () => {
     expect(sentTexts).toContain('after retry');
   });
 
+  it('retries processMessage after SDK approval recovery succeeds', async () => {
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    const recoverFn = vi.fn(async () => ({ recovered: true, detail: 'denied 1 approval' }));
+    let runCall = 0;
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
+      session: { abort: vi.fn(async () => undefined), recoverPendingApprovals: recoverFn },
+      stream: async function* () {
+        if (runCall++ === 0) {
+          yield { type: 'result', success: false, error: 'error', conversationId: 'conv-approval' };
+          return;
+        }
+        yield { type: 'assistant', content: 'recovered' };
+        yield { type: 'result', success: true, result: 'recovered', conversationId: 'conv-approval' };
+      },
+    }));
+
+    vi.mocked(getLatestRunError).mockResolvedValueOnce({
+      message: 'CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.',
+      stopReason: 'requires_approval',
+      isApprovalError: true,
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_payload: unknown) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    const msg = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    expect(recoverFn).toHaveBeenCalledTimes(1);
+    expect((bot as any).sessionManager.runSession).toHaveBeenCalledTimes(2);
+    const sentTexts = adapter.sendMessage.mock.calls.map((call) => {
+      const payload = call[0] as { text?: string };
+      return payload.text;
+    });
+    expect(sentTexts).toContain('recovered');
+  });
+
   it('filters pre-foreground errors so they do not trigger false approval recovery', async () => {
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
