@@ -98,7 +98,7 @@ export class TelegramAdapter implements ChannelAdapter {
    * Apply group gating for a message context.
    * Returns null if the message should be dropped, or message metadata if it should proceed.
    */
-  private applyGroupGating(ctx: { chat: { type: string; id: number; title?: string }; from?: { id: number }; message?: { text?: string; entities?: { type: string; offset: number; length: number }[] } }): { isGroup: boolean; groupName?: string; wasMentioned: boolean; isListeningMode?: boolean } | null {
+  private applyGroupGating(ctx: { chat: { type: string; id: number; title?: string }; from?: { id: number }; message?: { text?: string; entities?: { type: string; offset: number; length: number }[]; message_thread_id?: number; is_topic_message?: boolean } }): { isGroup: boolean; groupName?: string; wasMentioned: boolean; isListeningMode?: boolean } | null {
     const chatType = ctx.chat.type;
     const isGroup = chatType === 'group' || chatType === 'supergroup';
     const groupName = isGroup && 'title' in ctx.chat ? ctx.chat.title : undefined;
@@ -122,6 +122,7 @@ export class TelegramAdapter implements ChannelAdapter {
       })),
       groupsConfig: this.config.groups,
       mentionPatterns: this.config.mentionPatterns,
+      threadId: ctx.message?.is_topic_message ? String(ctx.message.message_thread_id) : undefined,
     });
 
     if (!gatingResult.shouldProcess) {
@@ -391,6 +392,7 @@ export class TelegramAdapter implements ChannelAdapter {
           groupName,
           wasMentioned,
           isListeningMode,
+          threadId: ctx.message.is_topic_message ? String(ctx.message.message_thread_id) : undefined,
           formatterHints: this.getFormatterHints(),
         });
       }
@@ -498,6 +500,7 @@ export class TelegramAdapter implements ChannelAdapter {
             groupName,
             wasMentioned,
             isListeningMode,
+            threadId: ctx.message.is_topic_message ? String(ctx.message.message_thread_id) : undefined,
             formatterHints: this.getFormatterHints(),
           });
         }
@@ -517,6 +520,7 @@ export class TelegramAdapter implements ChannelAdapter {
             groupName,
             wasMentioned,
             isListeningMode,
+            threadId: ctx.message.is_topic_message ? String(ctx.message.message_thread_id) : undefined,
             formatterHints: this.getFormatterHints(),
           });
         }
@@ -552,6 +556,7 @@ export class TelegramAdapter implements ChannelAdapter {
           wasMentioned,
           isListeningMode,
           attachments,
+          threadId: ctx.message.is_topic_message ? String(ctx.message.message_thread_id) : undefined,
           formatterHints: this.getFormatterHints(),
         });
       }
@@ -620,6 +625,7 @@ export class TelegramAdapter implements ChannelAdapter {
           const result = await this.bot.api.sendMessage(msg.chatId, chunk, {
             parse_mode: msg.parseMode as 'MarkdownV2' | 'HTML',
             reply_to_message_id: replyId,
+              message_thread_id: msg.threadId ? Number(msg.threadId) : undefined,
           });
           lastMessageId = String(result.message_id);
           continue;
@@ -639,6 +645,7 @@ export class TelegramAdapter implements ChannelAdapter {
             const result = await this.bot.api.sendMessage(msg.chatId, sub, {
               parse_mode: 'MarkdownV2',
               reply_to_message_id: replyId,
+              message_thread_id: msg.threadId ? Number(msg.threadId) : undefined,
             });
             lastMessageId = String(result.message_id);
           }
@@ -646,6 +653,7 @@ export class TelegramAdapter implements ChannelAdapter {
           const result = await this.bot.api.sendMessage(msg.chatId, formatted, {
             parse_mode: 'MarkdownV2',
             reply_to_message_id: replyId,
+              message_thread_id: msg.threadId ? Number(msg.threadId) : undefined,
           });
           lastMessageId = String(result.message_id);
         }
@@ -656,6 +664,7 @@ export class TelegramAdapter implements ChannelAdapter {
         for (const plain of plainChunks) {
           const result = await this.bot.api.sendMessage(msg.chatId, plain, {
             reply_to_message_id: replyId,
+              message_thread_id: msg.threadId ? Number(msg.threadId) : undefined,
           });
           lastMessageId = String(result.message_id);
         }
