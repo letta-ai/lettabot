@@ -378,6 +378,7 @@ async function main() {
       sendFileDir: agentConfig.features?.sendFileDir,
       sendFileMaxSize: agentConfig.features?.sendFileMaxSize,
       sendFileCleanup: agentConfig.features?.sendFileCleanup,
+      autoVoice: agentConfig.features?.autoVoice,
       memfs: resolvedMemfs,
       sleeptime: effectiveSleeptime,
       display: agentConfig.features?.display,
