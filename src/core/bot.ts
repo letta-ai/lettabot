@@ -209,6 +209,25 @@ export function isResponseDeliverySuppressed(msg: Pick<InboundMessage, 'isListen
 }
 
 /**
+ * Combine multiple pending messages into a single synthetic message.
+ * Text is joined with newlines; metadata comes from the last message.
+ * Used when rapid-fire DM messages accumulate while a turn is processing.
+ */
+export function combinePendingMessages(messages: InboundMessage[]): InboundMessage {
+  if (messages.length === 1) return messages[0];
+  const last = messages[messages.length - 1];
+  const combinedText = messages.map(m => m.text).filter(Boolean).join('\n');
+  const allAttachments = messages.flatMap(m => m.attachments || []);
+  return {
+    ...last,
+    text: combinedText,
+    ...(allAttachments.length > 0 ? { attachments: allAttachments } : {}),
+    isBatch: true,
+    batchedMessages: messages,
+  };
+}
+
+/**
  * Pure function: resolve the conversation key for a channel message.
  * Returns `${channel}:${chatId}` in per-chat mode.
  * Returns the channel id in per-channel mode or when the channel is in overrides.
@@ -1073,7 +1092,16 @@ export class LettaBot implements AgentSession {
 
     const queue = this.keyedQueues.get(key);
     while (queue && queue.length > 0) {
-      const { msg, adapter } = queue.shift()!;
+      // Drain all pending messages. If multiple accumulated while the previous
+      // turn was processing, combine them into a single processMessage call so
+      // the agent sees one turn with all the user's text.
+      const items = queue.splice(0, queue.length);
+      const { msg, adapter } = items.length === 1
+        ? items[0]
+        : { msg: combinePendingMessages(items.map(i => i.msg)), adapter: items[items.length - 1].adapter };
+      if (items.length > 1) {
+        log.info(`Batched ${items.length} queued DM messages for key=${key}`);
+      }
       try {
         await this.processMessage(msg, adapter);
       } catch (error) {
@@ -1091,7 +1119,13 @@ export class LettaBot implements AgentSession {
     this.processing = true;
     
     while (this.messageQueue.length > 0) {
-      const { msg, adapter } = this.messageQueue.shift()!;
+      const items = this.messageQueue.splice(0, this.messageQueue.length);
+      const { msg, adapter } = items.length === 1
+        ? items[0]
+        : { msg: combinePendingMessages(items.map(i => i.msg)), adapter: items[items.length - 1].adapter };
+      if (items.length > 1) {
+        log.info(`Batched ${items.length} queued messages (shared mode)`);
+      }
       try {
         await this.processMessage(msg, adapter);
       } catch (error) {
@@ -1189,7 +1223,7 @@ export class LettaBot implements AgentSession {
       serverUrl: process.env.LETTA_BASE_URL || this.store.baseUrl || 'https://api.letta.com',
     } : undefined;
 
-    const formattedText = msg.isBatch && msg.batchedMessages
+    const formattedText = msg.isBatch && msg.batchedMessages && msg.isGroup
       ? formatGroupBatchEnvelope(msg.batchedMessages, {}, msg.isListeningMode)
       : formatMessageEnvelope(msg, {}, sessionContext);
     const messageToSend = await buildMultimodalMessage(formattedText, msg);
