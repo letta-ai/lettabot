@@ -18,6 +18,8 @@ export interface GroupModeConfig {
   threadMode?: 'any' | 'thread-only';
   /** Discord only: when true, @mentions in parent channels auto-create a thread. */
   autoCreateThreadOnMention?: boolean;
+  /** Only process messages from these topic IDs (Telegram forum topics). Omit to allow all topics. */
+  allowedTopics?: string[];
   /**
    * @deprecated Use mode: "mention-only" (true) or "open" (false).
    */
@@ -184,6 +186,23 @@ export function resolveDailyLimits(
     dailyUserLimit: matched.config.dailyUserLimit ?? wildcard?.dailyUserLimit,
     matchedKey: matched.key,
   };
+}
+
+/**
+ * Resolve the allowed topic IDs for a group/channel.
+ * Returns undefined if no allowedTopics is configured (allow all topics).
+ */
+export function resolveAllowedTopics(
+  groups: GroupsConfig | undefined,
+  keys: string[],
+): string[] | undefined {
+  if (groups) {
+    for (const key of keys) {
+      if (groups[key]?.allowedTopics) return groups[key].allowedTopics;
+    }
+    if (groups['*']?.allowedTopics) return groups['*'].allowedTopics;
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
