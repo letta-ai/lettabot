@@ -825,12 +825,18 @@ export class LettaBot implements AgentSession {
         // Signal the stream loop to break
         this.cancelledKeys.add(convKey);
 
-        // Abort client-side stream
+        // Abort client-side stream and kill the session subprocess.
+        // abort() sends an interrupt control_request, but the CLI may not
+        // handle it if blocked on a long-running tool (e.g., Task subagent).
+        // invalidateSession() calls session.close() which kills the subprocess,
+        // closes the transport pump, and resolves all stream waiters with null
+        // -- guaranteeing the for-await loop in processMessage breaks.
         const session = this.sessionManager.getSession(convKey);
         if (session) {
           session.abort().catch(() => {});
           log.info(`/cancel - aborted session stream (key=${convKey})`);
         }
+        this.sessionManager.invalidateSession(convKey);
 
         // Cancel server-side run (conversation-scoped)
         const convId = convKey === 'shared'
@@ -945,11 +951,19 @@ export class LettaBot implements AgentSession {
       log.info(`Found ${pendingApprovals.length} pending approval(s), attempting recovery (attempt ${attempts + 1}/${maxAttempts})...`);
       this.store.incrementRecoveryAttempts();
       
+      // Group approvals by run_id and batch-deny (server requires all parallel
+      // tool calls from the same run to be denied in a single request).
+      const byRun = new Map<string, Array<{ toolCallId: string; reason: string }>>();
       for (const approval of pendingApprovals) {
-        log.info(`Rejecting approval for ${approval.toolName} (${approval.toolCallId})`);
+        const key = approval.runId || 'unknown';
+        if (!byRun.has(key)) byRun.set(key, []);
+        byRun.get(key)!.push({ toolCallId: approval.toolCallId, reason: 'Session was interrupted - retrying request' });
+      }
+      for (const [runId, batch] of byRun) {
+        log.info(`Batch-denying ${batch.length} approval(s) from run ${runId}`);
         await rejectApproval(
           this.store.agentId,
-          { toolCallId: approval.toolCallId, reason: 'Session was interrupted - retrying request' },
+          batch,
           this.store.conversationId || undefined
         );
       }
@@ -1750,8 +1764,12 @@ export class LettaBot implements AgentSession {
       }
       lap('stream complete');
 
-      // If cancelled, clean up partial state and return early
+      // If cancelled, clean up partial state and return early.
+      // Invalidate defensively in case the cancel handler's invalidation
+      // didn't fire (e.g., race with command dispatch).
       if (this.cancelledKeys.has(convKey)) {
+        this.sessionManager.invalidateSession(convKey);
+        session = null;
         if (messageId) {
           try {
             await adapter.editMessage(msg.chatId, messageId, '(Run cancelled.)');
