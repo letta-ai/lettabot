@@ -104,6 +104,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
+const PORTAL_MODE = window.__PORTAL_MODE__ || 'shared';
 const CHANNELS = ['telegram', 'discord', 'slack'];
 let apiKey = sessionStorage.getItem('lbkey') || '';
 let activeTab = 'telegram';
@@ -304,7 +305,14 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s; re
 
 document.getElementById('login-btn').addEventListener('click', login);
 document.getElementById('key').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
-if (apiKey) init();
+if (PORTAL_MODE === 'shared') {
+  // Shared mode: no per-user auth — skip the login wall and go straight to the app.
+  // Write operations (approve pairing, set conversation) will prompt for a key if needed.
+  document.getElementById('auth').classList.add('hidden');
+  init();
+} else if (apiKey) {
+  init();
+}
 </script>
 </body>
 </html>

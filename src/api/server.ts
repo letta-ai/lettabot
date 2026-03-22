@@ -450,7 +450,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     const pairingListMatch = req.url?.match(/^\/api\/v1\/pairing\/([a-z0-9-]+)$/);
     if (pairingListMatch && req.method === 'GET') {
       try {
-        if (!validateApiKey(req.headers, options.apiKey)) {
+        if (getPortalMode(options) !== 'shared' && !validateApiKey(req.headers, options.apiKey)) {
           sendError(res, 401, 'Unauthorized');
           return;
         }
@@ -707,7 +707,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     // Route: GET /api/v1/status - Agent status (conversation IDs, channels)
     if (req.url === '/api/v1/status' && req.method === 'GET') {
       try {
-        if (!validateApiKey(req.headers, options.apiKey)) {
+        if (getPortalMode(options) !== 'shared' && !validateApiKey(req.headers, options.apiKey)) {
           sendError(res, 401, 'Unauthorized');
           return;
         }
@@ -811,7 +811,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     // Route: GET /api/v1/conversations - List conversations from Letta API
     if (req.url?.startsWith('/api/v1/conversations') && req.method === 'GET') {
       try {
-        if (!validateApiKey(req.headers, options.apiKey)) {
+        if (getPortalMode(options) !== 'shared' && !validateApiKey(req.headers, options.apiKey)) {
           sendError(res, 401, 'Unauthorized');
           return;
         }
@@ -866,8 +866,14 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
 
     // Route: GET /portal - Admin portal for pairing approvals
     if ((req.url === '/portal' || req.url === '/portal/') && req.method === 'GET') {
+      const portalMode = getPortalMode(options);
+      if (portalMode === 'disabled') {
+        sendError(res, 404, 'Portal not available (conversation routing is disabled)');
+        return;
+      }
+      const modeScript = `<script>window.__PORTAL_MODE__ = '${portalMode}';</script>`;
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(PORTAL_HTML);
+      res.end(PORTAL_HTML.replace('</head>', modeScript + '</head>'));
       return;
     }
 
@@ -911,6 +917,21 @@ function readBody(req: http.IncomingMessage, maxSize: number): Promise<string> {
       reject(error);
     });
   });
+}
+
+/**
+ * Returns the effective portal mode based on agent conversation modes:
+ * - 'disabled' if ALL agents are disabled (portal not available)
+ * - 'shared' if ALL agents are in shared mode (no per-user auth)
+ * - otherwise the first non-shared mode (e.g. 'per-channel', 'per-chat')
+ */
+function getPortalMode(options: ServerOptions): string {
+  const modes = options.agentConversationModes;
+  if (!modes || modes.size === 0) return 'shared';
+  const values = [...modes.values()];
+  if (values.every(m => m === 'disabled')) return 'disabled';
+  if (values.every(m => m === 'shared')) return 'shared';
+  return values.find(m => m !== 'shared') ?? 'shared';
 }
 
 function ensureAuthorized(req: http.IncomingMessage, res: http.ServerResponse, apiKey: string): boolean {
