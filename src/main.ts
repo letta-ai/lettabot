@@ -317,6 +317,7 @@ async function main() {
   
   const gateway = new LettaGateway();
   const agentStores = new Map<string, Store>();
+  const agentConversationModes = new Map<string, string>();
   const sessionInvalidators = new Map<string, (key?: string) => void>();
   const agentChannelMap = new Map<string, string[]>();
   const voiceMemoEnabled = isVoiceMemoConfigured();
@@ -557,6 +558,7 @@ async function main() {
     
     gateway.addAgent(agentConfig.name, bot);
     agentStores.set(agentConfig.name, bot.store);
+    agentConversationModes.set(agentConfig.name, agentConfig.conversations?.mode || 'shared');
     sessionInvalidators.set(agentConfig.name, (key) => bot.invalidateSession(key));
     agentChannelMap.set(agentConfig.name, adapters.map(a => a.id));
   }
@@ -585,6 +587,7 @@ async function main() {
     turnLogFiles: Object.keys(turnLogFiles).length > 0 ? turnLogFiles : undefined,
     stores: agentStores,
     agentChannels: agentChannelMap,
+    agentConversationModes,
     sessionInvalidators,
   });
   

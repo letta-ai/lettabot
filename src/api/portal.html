@@ -90,9 +90,9 @@
 
   <div class="auth" id="auth">
     <label for="key">API Key</label>
-    <input type="password" id="key" placeholder="Paste your LETTABOT_API_KEY" autocomplete="off" onkeydown="if(event.key==='Enter')login()">
+    <input type="password" id="key" placeholder="Paste your LETTABOT_API_KEY" autocomplete="off">
     <div class="auth-help">Find your API key at <a href="https://app.letta.com/projects/default-project/api-keys" target="_blank" rel="noopener noreferrer">app.letta.com/projects/default-project/api-keys</a>.</div>
-    <button onclick="login()">Connect</button>
+    <button id="login-btn">Connect</button>
   </div>
 
   <div id="app" class="hidden">
@@ -104,6 +104,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
+const PORTAL_MODE = window.__PORTAL_MODE__ || 'shared';
 const CHANNELS = ['telegram', 'discord', 'slack'];
 let apiKey = sessionStorage.getItem('lbkey') || '';
 let activeTab = 'telegram';
@@ -245,13 +246,18 @@ async function loadConversations() {
   if (activeTab === '__status__') renderStatus();
 }
 
-async function pickConversation(id, agent) {
-  try {
-    const res = await apiFetch('/api/v1/conversation', { method: 'POST', body: JSON.stringify({ conversationId: id, agent }) });
-    const json = await res.json();
-    if (json.success) { toast('Switched to ' + id.slice(0, 20) + '...'); await refresh(); }
-    else { toast(json.error || 'Failed', true); }
-  } catch (e) { toast('Error: ' + e.message, true); }
+function pickConversation(id, agent) {
+  // Pre-fill the Set Conversation form so the user can verify/set the correct key.
+  // Do NOT auto-submit — in per-channel mode a missing key would incorrectly set
+  // the shared conversationId instead of the per-channel one.
+  const agentSel = document.getElementById('sc-agent');
+  const keyInput = document.getElementById('sc-key');
+  const idInput = document.getElementById('sc-id');
+  if (agentSel) agentSel.value = agent;
+  if (idInput) idInput.value = id;
+  if (keyInput) { keyInput.value = ''; keyInput.focus(); }
+  idInput?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  toast('Conversation ID copied to form — set the key and click Set Conversation');
 }
 
 function switchTab(t) { activeTab = t; renderTabs(); renderContent(); }
@@ -297,7 +303,16 @@ function timeAgo(iso) {
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-if (apiKey) init();
+document.getElementById('login-btn').addEventListener('click', login);
+document.getElementById('key').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+if (PORTAL_MODE === 'shared') {
+  // Shared mode: no per-user auth — skip the login wall and go straight to the app.
+  // Write operations (approve pairing, set conversation) will prompt for a key if needed.
+  document.getElementById('auth').classList.add('hidden');
+  init();
+} else if (apiKey) {
+  init();
+}
 </script>
 </body>
 </html>
