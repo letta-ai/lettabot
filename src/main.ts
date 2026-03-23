@@ -73,7 +73,7 @@ import { collectGroupBatchingConfig } from './core/group-batching-config.js';
 import { CronService } from './cron/service.js';
 import { HeartbeatService } from './cron/heartbeat.js';
 import { PollingService, parseGmailAccounts } from './polling/service.js';
-import { agentExists, findAgentByName, ensureNoToolApprovals } from './tools/letta-api.js';
+import { agentExists, findAgentByName, ensureNoToolApprovals, ensureDirectivesBlockOnAgent } from './tools/letta-api.js';
 import { isVoiceMemoConfigured } from './skills/loader.js';
 // Skills are now installed to agent-scoped location after agent creation (see bot.ts)
 
@@ -465,6 +465,11 @@ async function main() {
 
     if (!initialStatus.agentId) {
       log.info(`No agent found - will create on first message`);
+    } else {
+      const directivesReady = await ensureDirectivesBlockOnAgent(initialStatus.agentId, agentConfig.name);
+      if (!directivesReady) {
+        log.warn(`Failed to verify directives block for agent ${initialStatus.agentId}; envelope directives may remain verbose.`);
+      }
     }
     
     // Disable tool approvals

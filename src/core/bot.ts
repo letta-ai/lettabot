@@ -1225,7 +1225,7 @@ export class LettaBot implements AgentSession {
 
     const formattedText = msg.isBatch && msg.batchedMessages && msg.isGroup
       ? formatGroupBatchEnvelope(msg.batchedMessages, {}, msg.isListeningMode)
-      : formatMessageEnvelope(msg, {}, sessionContext);
+      : formatMessageEnvelope(msg, {}, sessionContext, Boolean(this.store.agentId));
     const messageToSend = await buildMultimodalMessage(formattedText, msg);
     lap('format message');
 

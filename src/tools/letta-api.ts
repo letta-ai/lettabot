@@ -4,12 +4,16 @@
  * Uses the official @letta-ai/letta-client SDK for all API interactions.
  */
 
+import { createHash } from 'node:crypto';
 import { Letta } from '@letta-ai/letta-client';
 
 import { createLogger } from '../logger.js';
+import { loadManagedMemoryBlock } from '../core/memory.js';
 
 const log = createLogger('Letta-api');
 const LETTA_BASE_URL = process.env.LETTA_BASE_URL || 'https://api.letta.com';
+const DIRECTIVES_BLOCK_LABEL = 'system/directives';
+const DIRECTIVES_HASH_LENGTH = 12;
 
 function getClient(): Letta {
   const apiKey = process.env.LETTA_API_KEY;
@@ -19,6 +23,119 @@ function getClient(): Letta {
     baseURL: LETTA_BASE_URL,
     defaultHeaders: { "X-Letta-Source": "lettabot" },
   });
+}
+
+
+interface VersionedDirectivesBlock {
+  baseLabel: string;
+  versionedLabel: string;
+  hash: string;
+  value: string;
+  description?: string;
+  limit?: number;
+}
+
+function buildVersionedDirectivesBlock(agentName = 'LettaBot'): VersionedDirectivesBlock | null {
+  const directives = loadManagedMemoryBlock(DIRECTIVES_BLOCK_LABEL, agentName);
+  if (!directives) {
+    log.warn(`Managed directives block '${DIRECTIVES_BLOCK_LABEL}' not found`);
+    return null;
+  }
+
+  const hash = createHash('sha256')
+    .update(directives.value)
+    .digest('hex')
+    .slice(0, DIRECTIVES_HASH_LENGTH);
+
+  return {
+    baseLabel: directives.label,
+    versionedLabel: `${directives.label}@${hash}`,
+    hash,
+    value: directives.value,
+    description: directives.description,
+    limit: directives.limit,
+  };
+}
+
+/**
+ * Ensure the current directives memory block version is attached to the agent.
+ * Creates a shared versioned block if needed and detaches stale versions.
+ */
+export async function ensureDirectivesBlockOnAgent(
+  agentId: string,
+  agentName = 'LettaBot',
+): Promise<boolean> {
+  try {
+    const directives = buildVersionedDirectivesBlock(agentName);
+    if (!directives) return false;
+
+    const client = getClient();
+    let directivesBlockId: string | null = null;
+
+    const matchingBlocks = await client.blocks.list({ label: directives.versionedLabel, limit: 5 });
+    for await (const block of matchingBlocks) {
+      if (block.label === directives.versionedLabel) {
+        directivesBlockId = block.id;
+        break;
+      }
+    }
+
+    if (!directivesBlockId) {
+      const created = await client.blocks.create({
+        label: directives.versionedLabel,
+        value: directives.value,
+        description: directives.description,
+        limit: directives.limit,
+        metadata: {
+          source: 'lettabot',
+          block_type: 'directives',
+          directives_hash: directives.hash,
+        },
+      });
+      directivesBlockId = created.id;
+      log.info(`Created directives block ${directives.versionedLabel} (${directivesBlockId})`);
+    }
+
+    const attachedBlocksPage = await client.agents.blocks.list(agentId, { limit: 200 });
+    const attachedBlocks: Array<{ id: string; label: string | null }> = [];
+    for await (const block of attachedBlocksPage) {
+      attachedBlocks.push({
+        id: block.id,
+        label: block.label || null,
+      });
+    }
+
+    const hasCurrentVersionAttached = attachedBlocks.some((b) => b.id === directivesBlockId);
+    if (!hasCurrentVersionAttached) {
+      await client.agents.blocks.attach(directivesBlockId, { agent_id: agentId });
+      log.info(`Attached directives block ${directives.versionedLabel} to ${agentId}`);
+    }
+
+    const staleBlocks = attachedBlocks.filter((block) => {
+      if (!block.label || block.id === directivesBlockId) return false;
+      if (block.label === directives.baseLabel) return true;
+      return block.label.startsWith(`${directives.baseLabel}@`);
+    });
+
+    for (const stale of staleBlocks) {
+      try {
+        await client.agents.blocks.detach(stale.id, { agent_id: agentId });
+      } catch (err) {
+        log.warn(
+          `Failed to detach stale directives block ${stale.label || stale.id} from ${agentId}:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+
+    return true;
+  } catch (e) {
+    log.warn(
+      `Failed to ensure directives block on agent ${agentId}:`,
+      e instanceof Error ? e.message : e,
+    );
+    return false;
+  }
 }
 
 async function listAgentApprovalRunIds(agentId: string, limit = 10): Promise<string[]> {
