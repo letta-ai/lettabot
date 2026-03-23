@@ -251,6 +251,7 @@ describe('HeartbeatService prompt resolution', () => {
 
     const service = new HeartbeatService(bot, createConfig({
       workingDir: tmpDir,
+      skipRecentPolicy: 'fixed',
       skipRecentUserMinutes: 5,
     }));
 
@@ -267,7 +268,42 @@ describe('HeartbeatService prompt resolution', () => {
 
     const service = new HeartbeatService(bot, createConfig({
       workingDir: tmpDir,
+      skipRecentPolicy: 'fixed',
       skipRecentUserMinutes: 0,
+    }));
+
+    await (service as any).runHeartbeat(false);
+
+    expect(bot.sendToAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('defaults to fraction policy (0.5 of interval) when no fixed window is configured', async () => {
+    const bot = createMockBot();
+    (bot.getLastUserMessageTime as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Date(Date.now() - 10 * 60 * 1000),
+    );
+
+    const service = new HeartbeatService(bot, createConfig({
+      workingDir: tmpDir,
+      intervalMinutes: 30,
+    }));
+
+    await (service as any).runHeartbeat(false);
+
+    // 30m * 0.5 => 15m skip window; 10m ago should skip.
+    expect(bot.sendToAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not skip when skipRecentPolicy is off', async () => {
+    const bot = createMockBot();
+    (bot.getLastUserMessageTime as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Date(Date.now() - 1 * 60 * 1000),
+    );
+
+    const service = new HeartbeatService(bot, createConfig({
+      workingDir: tmpDir,
+      skipRecentPolicy: 'off',
+      skipRecentUserMinutes: 60,
     }));
 
     await (service as any).runHeartbeat(false);

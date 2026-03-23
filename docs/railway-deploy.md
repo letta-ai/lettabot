@@ -67,7 +67,10 @@ SLACK_APP_TOKEN=xapp-...
 | `CRON_ENABLED` | `false` | Enable cron jobs |
 | `HEARTBEAT_ENABLED` | `false` | Enable heartbeat service |
 | `HEARTBEAT_INTERVAL_MIN` | `30` | Heartbeat interval (minutes). Also enables heartbeat when set |
-| `HEARTBEAT_SKIP_RECENT_USER_MIN` | `5` | Skip automatic heartbeats for N minutes after user messages (`0` disables) |
+| `HEARTBEAT_SKIP_RECENT_POLICY` | `fraction` | Recent-user skip policy (`fixed`, `fraction`, `off`) |
+| `HEARTBEAT_SKIP_RECENT_FRACTION` | `0.5` | Fraction of interval used when policy is `fraction` |
+| `HEARTBEAT_SKIP_RECENT_USER_MIN` | `5` | Skip window in minutes when policy is `fixed` (`0` disables) |
+| `HEARTBEAT_INTERRUPT_ON_USER_MESSAGE` | `true` | Cancel in-flight heartbeat when a user message arrives on the same key |
 | `HEARTBEAT_TARGET` | - | Target chat (e.g., `telegram:123456`) |
 | `OPENAI_API_KEY` | - | For voice message transcription |
 | `API_HOST` | `0.0.0.0` on Railway | Optional override for API bind address |
@@ -104,7 +107,7 @@ The Railway template includes a persistent volume mounted at `/data`. This is se
 
 - **Agent ID** - No need to set `LETTA_AGENT_ID` manually after first run
 - **Cron jobs** - Scheduled tasks survive restarts
-- **Skills** - Downloaded skills persist
+- **Skills** - Agent-scoped (`.letta/agents/.../skills`) and working-dir (`WORKING_DIR/.skills`) skills persist
 - **Attachments** - Downloaded media files
 
 ### Volume Size
@@ -122,6 +125,8 @@ If you deploy manually from a fork instead of using the template, you'll need to
 3. Set the mount path to `/data`
 
 LettaBot automatically detects `RAILWAY_VOLUME_MOUNT_PATH` and uses it for persistent data.
+
+By default (when `WORKING_DIR` is unset), LettaBot uses `$RAILWAY_VOLUME_MOUNT_PATH/data` as the working directory, so `WORKING_DIR/.skills` is persisted across redeploys. Agent-scoped skills are also stored under `$RAILWAY_VOLUME_MOUNT_PATH/.letta/agents/.../skills`.
 
 ## Remote Pairing Approval
 

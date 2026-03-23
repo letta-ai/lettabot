@@ -57,6 +57,8 @@ function getPrimaryAgent(config: LettaBotConfig): AgentConfig | null {
 
 function normalizeFeatures(source?: AgentConfig['features']): NonNullable<AgentConfig['features']> {
   const features = deepClone(source ?? {});
+  const skipRecentPolicy = features.heartbeat?.skipRecentPolicy
+    ?? (features.heartbeat?.skipRecentUserMin !== undefined ? 'fixed' : 'fraction');
   return {
     ...features,
     cron: typeof features.cron === 'boolean' ? features.cron : false,
@@ -64,6 +66,9 @@ function normalizeFeatures(source?: AgentConfig['features']): NonNullable<AgentC
       enabled: features.heartbeat?.enabled ?? false,
       intervalMin: features.heartbeat?.intervalMin ?? 60,
       skipRecentUserMin: features.heartbeat?.skipRecentUserMin,
+      skipRecentPolicy,
+      skipRecentFraction: features.heartbeat?.skipRecentFraction,
+      interruptOnUserMessage: features.heartbeat?.interruptOnUserMessage ?? true,
       prompt: features.heartbeat?.prompt,
       promptFile: features.heartbeat?.promptFile,
       target: features.heartbeat?.target,
@@ -183,7 +188,7 @@ export function formatCoreDraftSummary(draft: CoreConfigDraft, configPath: strin
     [
       'Heartbeat',
       draft.features.heartbeat?.enabled
-        ? `✓ ${draft.features.heartbeat.intervalMin ?? 60}min`
+        ? `✓ ${draft.features.heartbeat.intervalMin ?? 60}min • ${draft.features.heartbeat.skipRecentPolicy ?? 'fraction'} • preempt ${draft.features.heartbeat.interruptOnUserMessage === false ? 'off' : 'on'}`
         : '✗ Disabled',
     ],
   ];
@@ -370,6 +375,62 @@ async function editFeatures(draft: CoreConfigDraft): Promise<void> {
     });
     if (p.isCancel(interval)) return;
     draft.features.heartbeat.intervalMin = Number(interval.trim());
+
+    const skipPolicy = await p.select({
+      message: 'Heartbeat skip policy after user activity',
+      options: [
+        { value: 'fraction', label: 'Fraction of interval', hint: 'default: 0.5 × interval' },
+        { value: 'fixed', label: 'Fixed minutes', hint: 'manual skip window (legacy behavior)' },
+        { value: 'off', label: 'Disabled', hint: 'never skip based on recent user message' },
+      ],
+      initialValue: draft.features.heartbeat.skipRecentPolicy ?? 'fraction',
+    });
+    if (p.isCancel(skipPolicy)) return;
+    draft.features.heartbeat.skipRecentPolicy = skipPolicy as 'fixed' | 'fraction' | 'off';
+
+    if (skipPolicy === 'fixed') {
+      const skipMin = await p.text({
+        message: 'Skip heartbeats for this many minutes after user messages',
+        placeholder: '5',
+        initialValue: String(draft.features.heartbeat.skipRecentUserMin ?? 5),
+        validate: (value) => {
+          const parsed = Number(value.trim());
+          if (!Number.isFinite(parsed) || parsed < 0) {
+            return 'Enter a non-negative number';
+          }
+          return undefined;
+        },
+      });
+      if (p.isCancel(skipMin)) return;
+      draft.features.heartbeat.skipRecentUserMin = Number(skipMin.trim());
+      delete draft.features.heartbeat.skipRecentFraction;
+    } else if (skipPolicy === 'fraction') {
+      const skipFraction = await p.text({
+        message: 'Skip window as fraction of interval (0-1)',
+        placeholder: '0.5',
+        initialValue: String(draft.features.heartbeat.skipRecentFraction ?? 0.5),
+        validate: (value) => {
+          const parsed = Number(value.trim());
+          if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+            return 'Enter a number between 0 and 1';
+          }
+          return undefined;
+        },
+      });
+      if (p.isCancel(skipFraction)) return;
+      draft.features.heartbeat.skipRecentFraction = Number(skipFraction.trim());
+      delete draft.features.heartbeat.skipRecentUserMin;
+    } else {
+      delete draft.features.heartbeat.skipRecentUserMin;
+      delete draft.features.heartbeat.skipRecentFraction;
+    }
+
+    const interruptOnUserMessage = await p.confirm({
+      message: 'Interrupt in-flight heartbeat when a user message arrives?',
+      initialValue: draft.features.heartbeat.interruptOnUserMessage !== false,
+    });
+    if (p.isCancel(interruptOnUserMessage)) return;
+    draft.features.heartbeat.interruptOnUserMessage = interruptOnUserMessage;
   }
 }
 

@@ -1,11 +1,11 @@
 /**
  * XML Directive Parser
  *
- * Parses an <actions> block at the start of agent text responses.
+ * Parses <actions> blocks from agent text responses.
  * Extends the existing <no-reply/> pattern to support richer actions
  * (reactions, file sends, etc.) without requiring tool calls.
  *
- * The <actions> block must appear at the start of the response:
+ * <actions> blocks can appear anywhere in the response:
  *
  *   <actions>
  *     <react emoji="thumbsup" />
@@ -53,10 +53,14 @@ export interface ParseResult {
 }
 
 /**
- * Match the <actions>...</actions> wrapper at the start of the response.
- * Captures the inner content of the block.
+ * Match complete <actions>...</actions> wrappers anywhere in the response.
+ * Captures the inner content of each block.
  */
-const ACTIONS_BLOCK_REGEX = /^\s*<actions>([\s\S]*?)<\/actions>/;
+const ACTIONS_BLOCK_REGEX_SOURCE = '<actions>([\\s\\S]*?)<\\/actions>';
+
+function createActionsBlockRegex(flags = 'g'): RegExp {
+  return new RegExp(ACTIONS_BLOCK_REGEX_SOURCE, flags);
+}
 
 /**
  * Match supported directive tags inside the actions block in source order.
@@ -156,28 +160,52 @@ function parseChildDirectives(block: string): Directive[] {
 /**
  * Parse XML directives from agent response text.
  *
- * Looks for an <actions>...</actions> block at the start of the response.
- * Returns the cleaned text (block stripped) and an array of parsed directives.
- * If no <actions> block is found, the text is returned unchanged.
+ * Looks for complete <actions>...</actions> blocks anywhere in the response.
+ * Returns the cleaned text (all complete blocks stripped) and parsed directives.
+ * If no complete block is found, the text is returned unchanged.
  */
 export function parseDirectives(text: string): ParseResult {
-  const match = text.match(ACTIONS_BLOCK_REGEX);
-
-  if (!match) {
+  const blockRegex = createActionsBlockRegex();
+  if (!blockRegex.test(text)) {
     return { cleanText: text, directives: [] };
   }
 
-  const actionsContent = match[1];
-  const cleanText = text.slice(match[0].length).trim();
-  const directives = parseChildDirectives(actionsContent);
+  const directives: Directive[] = [];
+  const cleanText = text.replace(createActionsBlockRegex(), (_, actionsContent: string) => {
+    directives.push(...parseChildDirectives(actionsContent));
+    return '';
+  }).trim();
 
   return { cleanText, directives };
 }
 
 /**
- * Strip a leading <actions>...</actions> block from text for streaming display.
- * Returns the text after the block, or the original text if no complete block found.
+ * Returns true when text contains an opening <actions> tag with no matching
+ * closing tag yet. Used during streaming to avoid flashing raw XML.
+ */
+export function hasUnclosedActionsBlock(text: string): boolean {
+  const lastOpen = text.lastIndexOf('<actions>');
+  if (lastOpen < 0) return false;
+  const lastClose = text.lastIndexOf('</actions>');
+  return lastOpen > lastClose;
+}
+
+/**
+ * Returns true when the tail of the text contains a partial actions tag
+ * (opening or closing) that has not streamed fully yet.
+ */
+export function hasIncompleteActionsTag(text: string): boolean {
+  const lastLt = text.lastIndexOf('<');
+  const lastGt = text.lastIndexOf('>');
+  if (lastLt < 0 || lastLt <= lastGt) return false;
+  const tail = text.slice(lastLt);
+  return '<actions>'.startsWith(tail) || '</actions>'.startsWith(tail);
+}
+
+/**
+ * Strip complete <actions>...</actions> blocks from text for streaming display.
+ * Returns the text after stripping blocks, or the original text if none found.
  */
 export function stripActionsBlock(text: string): string {
-  return text.replace(ACTIONS_BLOCK_REGEX, '').trim();
+  return text.replace(createActionsBlockRegex(), '').trim();
 }

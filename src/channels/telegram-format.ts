@@ -17,7 +17,11 @@ export async function markdownToTelegramV2(markdown: string): Promise<string> {
     // Dynamic import to handle ESM module
     const telegramifyMarkdown = (await import('telegramify-markdown')).default;
     // Use 'keep' strategy for broad markdown support, including blockquotes.
-    return telegramifyMarkdown(markdown, 'keep');
+    let result = telegramifyMarkdown(markdown, 'keep');
+    // telegramify-markdown passes horizontal rules (---) through unescaped.
+    // '-' is reserved in MarkdownV2 and must be escaped.
+    result = result.replace(/^-{3,}$/gm, '\\-\\-\\-');
+    return result;
   } catch (e) {
     log.error('Markdown conversion failed, using escape fallback:', e);
     // Fallback: escape special characters manually (loses formatting)
