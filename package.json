@@ -69,7 +69,7 @@
     "@atproto/api": "^0.19.1",
     "@clack/prompts": "^0.11.0",
     "@hapi/boom": "^10.0.1",
-    "@letta-ai/letta-client": "^1.7.12",
+    "@letta-ai/letta-client": "^1.8.0",
     "@letta-ai/letta-code-sdk": "^0.1.14",
     "@types/express": "^5.0.6",
     "@types/node": "^25.0.10",
