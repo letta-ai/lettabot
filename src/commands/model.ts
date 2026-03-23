@@ -1,10 +1,11 @@
 /**
  * lettabot model - Manage the agent's model
- * 
+ *
  * Subcommands:
  *   lettabot model         - Interactive model selector
  *   lettabot model show    - Show current agent model
  *   lettabot model set <handle>  - Set model by handle
+ *   lettabot model list    - List all available models
  */
 
 import { getAgentModel, updateAgentModel } from '../tools/letta-api.js';
@@ -59,6 +60,52 @@ export async function modelSet(handle: string): Promise<void> {
   } else {
     log.error('Failed to update model. Check the handle is valid and try again.');
     process.exit(1);
+  }
+}
+
+/**
+ * List all available models
+ */
+export async function modelList(): Promise<void> {
+  const baseUrl = process.env.LETTA_BASE_URL;
+  const isSelfHosted = !!baseUrl && !isLettaApiUrl(baseUrl);
+
+  // Get billing tier for Letta API users
+  let billingTier: string | null = null;
+  if (!isSelfHosted) {
+    const apiKey = process.env.LETTA_API_KEY;
+    billingTier = await getBillingTier(apiKey, isSelfHosted);
+  }
+
+  // Build model options
+  const apiKey = process.env.LETTA_API_KEY;
+  const modelOptions = await buildModelOptions({ billingTier, isSelfHosted, apiKey });
+
+  // Filter out header entries and custom option
+  const models = modelOptions.filter(
+    m => !m.value.startsWith('__') && m.value !== '__custom__'
+  );
+
+  console.log(`\nAvailable models (${models.length}):\n`);
+
+  // Group by provider
+  const grouped = new Map<string, typeof models>();
+  for (const model of models) {
+    const provider = model.value.split('/')[0] || 'other';
+    if (!grouped.has(provider)) {
+      grouped.set(provider, []);
+    }
+    grouped.get(provider)!.push(model);
+  }
+
+  // Sort providers and print
+  for (const [provider, providerModels] of [...grouped.entries()].sort()) {
+    console.log(`${provider}:`);
+    for (const model of providerModels) {
+      const hint = model.hint ? ` - ${model.hint}` : '';
+      console.log(`  ${model.value.padEnd(45)} ${model.label}${hint}`);
+    }
+    console.log();
   }
 }
 
@@ -150,13 +197,16 @@ export async function modelCommand(subCommand?: string, arg?: string): Promise<v
       }
       await modelSet(arg);
       break;
+    case 'list':
+      await modelList();
+      break;
     case undefined:
     case '':
       await modelInteractive();
       break;
     default:
       log.error(`Unknown subcommand: ${subCommand}`);
-      log.error('Usage: lettabot model [show|set <handle>]');
+      log.error('Usage: lettabot model [show|set <handle>|list]');
       process.exit(1);
   }
 }
