@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Skill-local shim so `lettabot-bluesky` is available to agent subprocesses
+# whenever the Bluesky skill is installed.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
+
+# Prefer project-local entrypoints so development worktrees run their current code.
+# Run from the repo root so cwd-based config discovery finds lettabot.yaml / lettabot-agent.json.
+if [[ -f "$REPO_ROOT/dist/cli.js" ]]; then
+  cd "$REPO_ROOT"
+  exec node "$REPO_ROOT/dist/cli.js" bluesky "$@"
+fi
+
+if [[ -f "$REPO_ROOT/src/cli.ts" ]] && command -v npx >/dev/null 2>&1; then
+  cd "$REPO_ROOT"
+  exec npx tsx "$REPO_ROOT/src/cli.ts" bluesky "$@"
+fi
+
+# Fallback to an installed base CLI.
+if command -v lettabot >/dev/null 2>&1; then
+  exec lettabot bluesky "$@"
+fi
+
+echo "Error: unable to resolve a Bluesky CLI entrypoint." >&2
+echo "Expected one of: $REPO_ROOT/dist/cli.js, $REPO_ROOT/src/cli.ts (via npx tsx), or lettabot on PATH." >&2
+exit 1

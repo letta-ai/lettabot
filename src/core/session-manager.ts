@@ -16,9 +16,34 @@ import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { createManageTodoTool } from '../tools/todo.js';
 import { syncTodosFromTool } from '../todo/store.js';
+import { recoverPendingApprovalsWithSdk } from './session-sdk-compat.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Session');
+
+function formatMemfsStartupOption(memfs: boolean | undefined): string {
+  if (memfs === true) return 'enabled (--memfs)';
+  if (memfs === false) return 'disabled (--no-memfs)';
+  return 'unchanged (omitted)';
+}
+
+function formatSleeptimeStartupOption(
+  sleeptime: BotConfig['sleeptime'],
+): string {
+  if (!sleeptime) return 'none';
+  const parts: string[] = [];
+  if (sleeptime.trigger) parts.push(`trigger=${sleeptime.trigger}`);
+  if (sleeptime.behavior) parts.push(`behavior=${sleeptime.behavior}`);
+  if (sleeptime.stepCount !== undefined) parts.push(`stepCount=${sleeptime.stepCount}`);
+  return parts.length > 0 ? parts.join(', ') : 'configured';
+}
+
+function toConcreteConversationId(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === 'default') return null;
+  return trimmed;
+}
 
 export class SessionManager {
   private readonly store: Store;
@@ -230,11 +255,22 @@ export class SessionManager {
 
     // In disabled mode, always resume the agent's built-in default conversation.
     // Skip store lookup entirely -- no conversation ID is persisted.
-    const convId = key === 'default'
+    const rawConvId = key === 'default'
       ? null
       : key === 'shared'
         ? this.store.conversationId
         : this.store.getConversationId(key);
+    const convId = toConcreteConversationId(rawConvId);
+
+    // Cleanup legacy persisted alias values from older versions.
+    if (rawConvId === 'default') {
+      if (key === 'shared') {
+        this.store.conversationId = null;
+      } else {
+        this.store.clearConversation(key);
+      }
+      log.info(`Cleared legacy default conversation alias (key=${key})`);
+    }
 
     // Propagate per-agent cron store path to CLI subprocesses (lettabot-schedule)
     if (this.config.cronStorePath) {
@@ -295,6 +331,11 @@ export class SessionManager {
     }
 
     // Initialize eagerly so the subprocess is ready before the first send()
+    log.info(
+      `Session startup options (key=${key}): ` +
+      `memfs=${formatMemfsStartupOption(this.config.memfs)}, ` +
+      `sleeptime=${formatSleeptimeStartupOption(this.config.sleeptime)}`,
+    );
     log.info(`Initializing session subprocess (key=${key})...`);
     try {
       await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
@@ -333,34 +374,27 @@ export class SessionManager {
         );
         if (bootstrap.hasPendingApproval) {
           const convId = bootstrap.conversationId || session.conversationId;
-          if (!isRecoverableConversationId(convId)) {
-            log.warn(
-              `Pending approval detected at session startup (key=${key}, conv=${convId}) ` +
-              'using agent-level recovery fallback.'
-            );
-            session.close();
-            const result = await recoverPendingApprovalsForAgent(this.store.agentId);
-            if (result.recovered) {
-              log.info(`Proactive agent-level recovery succeeded: ${result.details}`);
-            } else {
-              log.warn(`Proactive agent-level recovery did not resolve approvals: ${result.details}`);
-            }
-            return this._createSessionForKey(key, true, generation);
-          } else {
-            log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
-            session.close();
-            const result = await recoverOrphanedConversationApproval(
-              this.store.agentId,
-              convId,
-              true, /* deepScan */
-            );
-            if (result.recovered) {
-              log.info(`Proactive approval recovery succeeded: ${result.details}`);
-            } else {
-              log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
-            }
+          log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
+
+          // Try SDK-level recovery first (goes through CLI control protocol)
+          const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
+          if (sdkResult.recovered) {
+            log.info('Proactive SDK approval recovery succeeded');
             return this._createSessionForKey(key, true, generation);
           }
+
+          // SDK recovery failed -- fall back to API-level recovery
+          log.warn(`SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
+          session.close();
+          const result = isRecoverableConversationId(convId)
+            ? await recoverOrphanedConversationApproval(this.store.agentId, convId, true)
+            : await recoverPendingApprovalsForAgent(this.store.agentId);
+          if (result.recovered) {
+            log.info(`Proactive API-level recovery succeeded: ${result.details}`);
+          } else {
+            log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
+          }
+          return this._createSessionForKey(key, true, generation);
         }
       } catch (err) {
         // bootstrapState failure is non-fatal -- the reactive 409 handler in
@@ -528,26 +562,35 @@ export class SessionManager {
     let session = await this.ensureSessionForKey(convKey);
 
     // Resolve the conversation ID for this key (for error recovery)
-    const convId = convKey === 'shared'
-      ? this.store.conversationId
-      : this.store.getConversationId(convKey);
+    const convId = toConcreteConversationId(
+      convKey === 'shared'
+        ? this.store.conversationId
+        : this.store.getConversationId(convKey)
+    );
 
     // Send message with fallback chain
     try {
       await this.withSessionTimeout(session.send(message), `Session send (key=${convKey})`);
     } catch (error) {
-      // 409 CONFLICT from orphaned approval
+      // 409 CONFLICT from orphaned approval -- use SDK recovery first, fall back to API
       if (!retried && isApprovalConflictError(error) && this.store.agentId) {
-        log.info('CONFLICT detected - attempting orphaned approval recovery...');
+        log.info('CONFLICT detected - attempting SDK approval recovery...');
+        const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
+        if (sdkResult.recovered) {
+          log.info('SDK approval recovery succeeded, retrying...');
+          return this.runSession(message, { retried: true, canUseTool, convKey });
+        }
+        // SDK recovery failed or unsupported -- fall back to API-level recovery
+        log.warn(`SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
         this.invalidateSession(convKey);
         const result = isRecoverableConversationId(convId)
           ? await recoverOrphanedConversationApproval(this.store.agentId, convId)
           : await recoverPendingApprovalsForAgent(this.store.agentId);
         if (result.recovered) {
-          log.info(`Recovery succeeded (${result.details}), retrying...`);
+          log.info(`API-level recovery succeeded (${result.details}), retrying...`);
           return this.runSession(message, { retried: true, canUseTool, convKey });
         }
-        log.error(`Orphaned approval recovery failed: ${result.details}`);
+        log.error(`Approval recovery failed: ${result.details}`);
         throw error;
       }
 

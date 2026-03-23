@@ -43,7 +43,15 @@ export interface TriggerContext {
 // Original Types
 // =============================================================================
 
-export type ChannelId = 'telegram' | 'telegram-mtproto' | 'slack' | 'whatsapp' | 'signal' | 'discord' | 'mock';
+export type ChannelId = 'telegram' | 'telegram-mtproto' | 'slack' | 'whatsapp' | 'signal' | 'discord' | 'bluesky' | 'mock';
+
+/**
+ * Message type indicating the context of the message.
+ * - 'dm': Direct message (private 1:1 conversation)
+ * - 'group': Group chat (multiple participants)
+ * - 'public': Public post (e.g., Bluesky feed, visible to anyone)
+ */
+export type MessageType = 'dm' | 'group' | 'public';
 
 export interface InboundAttachment {
   id?: string;
@@ -62,6 +70,26 @@ export interface InboundReaction {
 }
 
 /**
+ * Formatter hints provided by channel adapters
+ */
+export interface FormatterHints {
+  /** Custom format hint (overrides default channel format) */
+  formatHint?: string;
+
+  /** Whether this channel supports emoji reactions */
+  supportsReactions?: boolean;
+
+  /** Whether this channel supports file/image sending */
+  supportsFiles?: boolean;
+
+  /** Custom action hints replacing the standard Response Directives section */
+  actionsSection?: string[];
+
+  /** Whether to skip the standard Response Directives section entirely */
+  skipDirectives?: boolean;
+}
+
+/**
  * Inbound message from any channel
  */
 export interface InboundMessage {
@@ -74,7 +102,8 @@ export interface InboundMessage {
   text: string;
   timestamp: Date;
   threadId?: string;      // Slack thread_ts
-  isGroup?: boolean;      // Is this from a group chat?
+  messageType?: MessageType; // 'dm', 'group', or 'public' (defaults to 'dm')
+  isGroup?: boolean;      // True if group chat (convenience alias for messageType === 'group')
   groupName?: string;     // Group/channel name if applicable
   serverId?: string;      // Server/guild ID (Discord only)
   wasMentioned?: boolean; // Was bot explicitly mentioned? (groups only)
@@ -86,15 +115,7 @@ export interface InboundMessage {
   isListeningMode?: boolean;          // Listening mode: agent processes for memory but response is suppressed
   forcePerChat?: boolean;             // Force per-chat conversation routing (e.g., Discord thread-only mode)
   formatterHints?: FormatterHints;    // Channel capabilities for directive rendering
-}
-
-/**
- * Channel capability hints for per-message directive rendering
- */
-export interface FormatterHints {
-  supportsReactions?: boolean;
-  supportsFiles?: boolean;
-  formatHint?: string;
+  extraContext?: Record<string, string>; // Channel-specific key/value metadata shown in Chat Context
 }
 
 /**
@@ -104,7 +125,7 @@ export interface OutboundMessage {
   chatId: string;
   text: string;
   replyToMessageId?: string;
-  threadId?: string;  // Slack thread_ts
+  threadId?: string;  // Thread ID (Slack thread_ts / Discord thread channel)
   /** When set, tells the adapter which parse mode to use (e.g., 'MarkdownV2',
    *  'HTML') and to skip its default markdown conversion. Adapters that don't
    *  support the specified mode ignore this and fall back to default. */
@@ -128,6 +149,7 @@ export interface OutboundFile {
 export interface SkillsConfig {
   cronEnabled?: boolean;
   googleEnabled?: boolean;
+  blueskyEnabled?: boolean;
   ttsEnabled?: boolean;
   additionalSkills?: string[];
 }
@@ -170,12 +192,22 @@ export interface BotConfig {
   sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
   sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete files after send (default: false)
 
+  // Auto-voice
+  autoVoice?: boolean; // Automatically generate a TTS voice memo for every text response (no <voice> directive needed)
+
+  // Logging
+  logging?: {
+    turnLogFile?: string; // Path to JSONL file for turn logging (one record per agent turn)
+    maxTurns?: number;    // Max turns to retain in the log file (default: 1000, oldest trimmed)
+  };
+
   // Cron
   cronStorePath?: string; // Resolved cron store path (per-agent in multi-agent mode)
 
   // Conversation routing
   conversationMode?: 'disabled' | 'shared' | 'per-channel' | 'per-chat'; // Default: shared
   heartbeatConversation?: string; // "dedicated" | "last-active" | "<channel>" (default: last-active)
+  interruptHeartbeatOnUserMessage?: boolean; // Default true. Cancel in-flight heartbeat on user message.
   conversationOverrides?: string[]; // Channels that always use their own conversation (shared mode)
   maxSessions?: number; // Max concurrent sessions in per-chat mode (default: 10, LRU eviction)
   reuseSession?: boolean; // Reuse SDK subprocess across messages (default: true). Set false to eliminate stream state bleed at cost of ~5s latency per message.

@@ -93,7 +93,7 @@ function makeMessage(params: {
   };
   member: { displayName: string };
   mentions: { has: () => boolean };
-  attachments: { find: () => undefined; values: () => unknown[] };
+  attachments: { find: (_predicate?: unknown) => unknown | undefined; values: () => unknown[] };
   createdAt: Date;
   reply: ReturnType<typeof vi.fn>;
   startThread: ReturnType<typeof vi.fn>;
@@ -120,7 +120,7 @@ function makeMessage(params: {
     member: { displayName: 'Alice' },
     mentions: { has: () => false },
     attachments: {
-      find: () => undefined,
+      find: (_predicate?: unknown) => undefined,
       values: () => [],
     },
     createdAt: new Date(),
@@ -131,7 +131,118 @@ function makeMessage(params: {
 
 describe('DiscordAdapter command gating', () => {
   afterEach(async () => {
+    vi.restoreAllMocks();
     vi.clearAllMocks();
+  });
+
+  it('does not download attachments for groups outside allowlist', async () => {
+    const adapter = new DiscordAdapter({
+      token: 'token',
+      attachmentsDir: '/tmp/attachments',
+      groups: {
+        'channel-2': { mode: 'open' },
+      },
+    });
+    const onMessage = vi.fn().mockResolvedValue(undefined);
+    adapter.onMessage = onMessage;
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    await adapter.start();
+    const client = discordMock.getLatestClient();
+    expect(client).toBeTruthy();
+
+    const message = makeMessage({
+      content: 'hello',
+      isThread: false,
+      channelId: 'channel-1',
+    });
+    message.attachments = {
+      find: () => undefined,
+      values: () => [{
+        id: 'att-1',
+        name: 'image.png',
+        size: 123,
+        url: 'https://cdn.example.com/image.png',
+      }],
+    };
+
+    await client!.emit('messageCreate', message);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+    await adapter.stop();
+  });
+
+  it('does not fetch voice attachment audio for groups outside allowlist', async () => {
+    const adapter = new DiscordAdapter({
+      token: 'token',
+      groups: {
+        'channel-2': { mode: 'open' },
+      },
+    });
+    const onMessage = vi.fn().mockResolvedValue(undefined);
+    adapter.onMessage = onMessage;
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    await adapter.start();
+    const client = discordMock.getLatestClient();
+    expect(client).toBeTruthy();
+
+    const message = makeMessage({
+      content: '',
+      isThread: false,
+      channelId: 'channel-1',
+    });
+    message.attachments = {
+      find: () => ({
+        contentType: 'audio/ogg',
+        name: 'voice.ogg',
+        url: 'https://cdn.example.com/voice.ogg',
+      }),
+      values: () => [{
+        id: 'att-audio-1',
+        contentType: 'audio/ogg',
+        name: 'voice.ogg',
+        size: 321,
+        url: 'https://cdn.example.com/voice.ogg',
+      }],
+    };
+
+    await client!.emit('messageCreate', message);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(message.reply).not.toHaveBeenCalled();
+    await adapter.stop();
+  });
+
+  it('blocks managed slash commands for groups outside allowlist', async () => {
+    const adapter = new DiscordAdapter({
+      token: 'token',
+      groups: {
+        'channel-2': { mode: 'open' },
+      },
+    });
+    const onCommand = vi.fn().mockResolvedValue('ok');
+    adapter.onCommand = onCommand;
+
+    await adapter.start();
+    const client = discordMock.getLatestClient();
+    expect(client).toBeTruthy();
+
+    const message = makeMessage({
+      content: '/status',
+      isThread: false,
+      channelId: 'channel-1',
+    });
+
+    await client!.emit('messageCreate', message);
+
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(message.channel.send).not.toHaveBeenCalled();
+    await adapter.stop();
   });
 
   it('blocks top-level slash commands when threadMode is thread-only', async () => {

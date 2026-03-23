@@ -6,8 +6,9 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, renameSync, watch, type FSWatcher } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, basename } from 'node:path';
 import type { AgentSession } from '../core/interfaces.js';
+import type { TriggerContext } from '../core/types.js';
 import type { CronJob, CronJobCreate, CronSchedule, CronConfig, HeartbeatConfig } from './types.js';
 import { DEFAULT_HEARTBEAT_MESSAGES } from './types.js';
 import { getCronDataDir, getCronLogPath, getCronStorePath, getLegacyCronStorePath } from '../utils/paths.js';
@@ -101,11 +102,38 @@ export class CronService {
     if (globalPath === this.storePath || !existsSync(globalPath)) return;
 
     try {
-      mkdirSync(dirname(this.storePath), { recursive: true });
-      copyFileSync(globalPath, this.storePath);
+      // Filter jobs: only adopt those whose delivery channels exist on this agent
+      const agentChannels = new Set(this.bot.getStatus().channels);
+      const globalData: CronStoreFile = JSON.parse(readFileSync(globalPath, 'utf-8'));
+      const adopted: typeof globalData.jobs = [];
+      const skipped: string[] = [];
+
+      for (const job of globalData.jobs) {
+        const deliverChannel = job.deliver?.channel;
+        if (deliverChannel && !agentChannels.has(deliverChannel)) {
+          skipped.push(`${job.id} (channel=${deliverChannel})`);
+          continue;
+        }
+        adopted.push(job);
+      }
+
+      if (skipped.length > 0) {
+        log.warn(`Global store migration: skipped ${skipped.length} job(s) with unavailable channels: ${skipped.join(', ')}`);
+      }
+
+      if (adopted.length > 0) {
+        mkdirSync(dirname(this.storePath), { recursive: true });
+        writeFileSync(this.storePath, JSON.stringify({ ...globalData, jobs: adopted }, null, 2));
+        logEvent('store_migrated_from_global', {
+          from: globalPath,
+          to: this.storePath,
+          adopted: adopted.length,
+          skipped: skipped.length,
+        });
+      }
+
       // Rename global file so subsequent agents don't also copy it
       renameSync(globalPath, globalPath + '.migrated');
-      logEvent('store_migrated_from_global', { from: globalPath, to: this.storePath });
     } catch (e) {
       log.error('Failed to migrate from global cron store:', e);
     }
@@ -224,8 +252,9 @@ export class CronService {
     } catch {
       // File might not exist yet, watch the directory instead
       const dir = resolve(this.storePath, '..');
+      const storeBasename = basename(this.storePath);
       this.fileWatcher = watch(dir, { persistent: false }, (eventType, filename) => {
-        if (filename === 'cron-jobs.json') {
+        if (filename === storeBasename) {
           this.handleFileChange();
         }
       });
@@ -289,7 +318,8 @@ export class CronService {
       try {
         // SILENT MODE - response NOT auto-delivered
         // Agent must use `lettabot-message` CLI to send messages
-        const response = await this.bot.sendToAgent(config.message);
+        const triggerContext: TriggerContext = { type: 'heartbeat', outputMode: 'silent' };
+        const response = await this.bot.sendToAgent(config.message, triggerContext);
         
         log.info(`Heartbeat finished (SILENT MODE)`);
         log.info(`  - Response: ${response?.slice(0, 100)}${(response?.length || 0) > 100 ? '...' : ''}`);
@@ -418,7 +448,8 @@ export class CronService {
       ].join('\n');
       
       // Send message to agent
-      const response = await this.bot.sendToAgent(messageWithMetadata);
+      const triggerContext: TriggerContext = { type: 'cron', outputMode: 'silent' };
+      const response = await this.bot.sendToAgent(messageWithMetadata, triggerContext);
       
       // Resolve delivery target: explicit config > last message target fallback > silent
       let deliverTarget: { channel: string; chatId: string } | null = job.deliver ?? null;

@@ -1,11 +1,15 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, mkdirSync, unlinkSync, rmSync } from 'node:fs';
+import { writeFileSync, mkdirSync, unlinkSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
+import { execSync } from 'node:child_process';
 import { HeartbeatService, type HeartbeatConfig } from './heartbeat.js';
 import { buildCustomHeartbeatPrompt, SILENT_MODE_PREFIX } from '../core/prompts.js';
 import type { AgentSession } from '../core/interfaces.js';
 import { addTodo } from '../todo/store.js';
+import { getCronLogPath } from '../utils/paths.js';
+
+const HEARTBEAT_LOG_PATH = getCronLogPath();
 
 // ── buildCustomHeartbeatPrompt ──────────────────────────────────────────
 
@@ -247,6 +251,7 @@ describe('HeartbeatService prompt resolution', () => {
 
     const service = new HeartbeatService(bot, createConfig({
       workingDir: tmpDir,
+      skipRecentPolicy: 'fixed',
       skipRecentUserMinutes: 5,
     }));
 
@@ -263,11 +268,186 @@ describe('HeartbeatService prompt resolution', () => {
 
     const service = new HeartbeatService(bot, createConfig({
       workingDir: tmpDir,
+      skipRecentPolicy: 'fixed',
       skipRecentUserMinutes: 0,
     }));
 
     await (service as any).runHeartbeat(false);
 
+    expect(bot.sendToAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('defaults to fraction policy (0.5 of interval) when no fixed window is configured', async () => {
+    const bot = createMockBot();
+    (bot.getLastUserMessageTime as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Date(Date.now() - 10 * 60 * 1000),
+    );
+
+    const service = new HeartbeatService(bot, createConfig({
+      workingDir: tmpDir,
+      intervalMinutes: 30,
+    }));
+
+    await (service as any).runHeartbeat(false);
+
+    // 30m * 0.5 => 15m skip window; 10m ago should skip.
+    expect(bot.sendToAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not skip when skipRecentPolicy is off', async () => {
+    const bot = createMockBot();
+    (bot.getLastUserMessageTime as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Date(Date.now() - 1 * 60 * 1000),
+    );
+
+    const service = new HeartbeatService(bot, createConfig({
+      workingDir: tmpDir,
+      skipRecentPolicy: 'off',
+      skipRecentUserMinutes: 60,
+    }));
+
+    await (service as any).runHeartbeat(false);
+
+    expect(bot.sendToAgent).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Memfs health check ─────────────────────────────────────────────────
+
+describe('HeartbeatService memfs health check', () => {
+  let tmpDir: string;
+  let memDir: string | undefined;
+  let originalDataDir: string | undefined;
+  let originalHome: string | undefined;
+  let testHome: string;
+
+  beforeEach(() => {
+    tmpDir = resolve(tmpdir(), `heartbeat-memfs-test-${Date.now()}`);
+    testHome = resolve(tmpDir, 'fake-home');
+    mkdirSync(tmpDir, { recursive: true });
+    mkdirSync(testHome, { recursive: true });
+    originalDataDir = process.env.DATA_DIR;
+    originalHome = process.env.HOME;
+    process.env.DATA_DIR = tmpDir;
+    process.env.HOME = testHome;
+  });
+
+  afterEach(() => {
+    if (originalDataDir === undefined) {
+      delete process.env.DATA_DIR;
+    } else {
+      process.env.DATA_DIR = originalDataDir;
+    }
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    memDir = undefined;
+  });
+
+  it('emits heartbeat_memfs_dirty when memfs directory has untracked files', async () => {
+    // Set up a real git repo to act as the memory directory
+    const agentId = 'agent-memfs-test-' + Date.now();
+    memDir = resolve(homedir(), '.letta', 'agents', agentId, 'memory');
+    mkdirSync(memDir, { recursive: true });
+    execSync('git init', { cwd: memDir, stdio: 'ignore' });
+    // Create an untracked file
+    writeFileSync(resolve(memDir, 'untracked.md'), 'test');
+
+    const bot = createMockBot();
+    (bot.getStatus as ReturnType<typeof vi.fn>).mockReturnValue({
+      agentId,
+      conversationId: null,
+      channels: [],
+    });
+
+    const service = new HeartbeatService(bot, createConfig({
+      workingDir: tmpDir,
+      memfs: true,
+    }));
+
+    // Access private method for direct testing
+    const checkMemfsHealth = (service as any).checkMemfsHealth.bind(service);
+
+    expect(() => checkMemfsHealth()).not.toThrow();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+
+    const logContents = existsSync(HEARTBEAT_LOG_PATH)
+      ? readFileSync(HEARTBEAT_LOG_PATH, 'utf-8')
+      : '';
+    expect(logContents).toContain('heartbeat_memfs_dirty');
+    expect(logContents).toContain(agentId);
+  });
+
+  it('skips memfs check when memfs is disabled', async () => {
+    const bot = createMockBot();
+    const service = new HeartbeatService(bot, createConfig({
+      workingDir: tmpDir,
+      memfs: false,
+    }));
+
+    const getMemoryDir = (service as any).getMemoryDir.bind(service);
+    expect(getMemoryDir()).toBeNull();
+  });
+
+  it('skips memfs check when agent ID is not available', async () => {
+    const bot = createMockBot();
+    (bot.getStatus as ReturnType<typeof vi.fn>).mockReturnValue({
+      agentId: null,
+      conversationId: null,
+      channels: [],
+    });
+
+    const service = new HeartbeatService(bot, createConfig({
+      workingDir: tmpDir,
+      memfs: true,
+    }));
+
+    const getMemoryDir = (service as any).getMemoryDir.bind(service);
+    expect(getMemoryDir()).toBeNull();
+  });
+
+  it('resolves memory directory correctly when memfs is enabled', () => {
+    const bot = createMockBot();
+    (bot.getStatus as ReturnType<typeof vi.fn>).mockReturnValue({
+      agentId: 'agent-abc123',
+      conversationId: null,
+      channels: [],
+    });
+
+    const service = new HeartbeatService(bot, createConfig({
+      workingDir: tmpDir,
+      memfs: true,
+    }));
+
+    const getMemoryDir = (service as any).getMemoryDir.bind(service);
+    expect(getMemoryDir()).toBe(resolve(homedir(), '.letta', 'agents', 'agent-abc123', 'memory'));
+  });
+
+  it('still calls sendToAgent even when memfs check finds dirty files', async () => {
+    const agentId = 'agent-memfs-dirty-' + Date.now();
+    memDir = resolve(homedir(), '.letta', 'agents', agentId, 'memory');
+    mkdirSync(memDir, { recursive: true });
+    execSync('git init', { cwd: memDir, stdio: 'ignore' });
+    writeFileSync(resolve(memDir, 'dirty.md'), 'uncommitted content');
+
+    const bot = createMockBot();
+    (bot.getStatus as ReturnType<typeof vi.fn>).mockReturnValue({
+      agentId,
+      conversationId: null,
+      channels: [],
+    });
+
+    const service = new HeartbeatService(bot, createConfig({
+      workingDir: tmpDir,
+      memfs: true,
+    }));
+
+    await service.trigger();
+
+    // sendToAgent should still be called (memfs check is non-blocking)
     expect(bot.sendToAgent).toHaveBeenCalledTimes(1);
   });
 });

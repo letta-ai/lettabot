@@ -282,8 +282,38 @@ describe('recoverOrphanedConversationApproval', () => {
     expect(approvals[0].tool_call_id).toBe('tc-dup');
   });
 
-  it('continues recovery if batch denial API call fails', async () => {
-    // Two runs with approvals -- first batch fails, second should still succeed
+  it('batch-denies all parallel tool calls from the same run in a single request', async () => {
+    mockConversationsMessagesList.mockReturnValue(mockPageIterator([
+      {
+        message_type: 'approval_request_message',
+        tool_calls: [
+          { tool_call_id: 'tc-a', name: 'Bash' },
+          { tool_call_id: 'tc-b', name: 'Read' },
+          { tool_call_id: 'tc-c', name: 'Grep' },
+        ],
+        run_id: 'run-parallel',
+        id: 'msg-parallel',
+      },
+    ]));
+    mockRunsRetrieve.mockResolvedValue({ status: 'failed', stop_reason: 'error' });
+    mockConversationsMessagesCreate.mockResolvedValueOnce({});
+    mockRunsList.mockReturnValue(mockPageIterator([]));
+
+    const resultPromise = recoverOrphanedConversationApproval('agent-1', 'conv-1');
+    await vi.advanceTimersByTimeAsync(10000);
+    const result = await resultPromise;
+
+    expect(result.recovered).toBe(true);
+    expect(result.details).toContain('Denied 3 approval(s) from failed run run-parallel');
+    // All 3 tool calls sent in a single API request
+    expect(mockConversationsMessagesCreate).toHaveBeenCalledTimes(1);
+    const approvals = mockConversationsMessagesCreate.mock.calls[0][1].messages[0].approvals;
+    expect(approvals).toHaveLength(3);
+    expect(approvals.map((a: any) => a.tool_call_id)).toEqual(['tc-a', 'tc-b', 'tc-c']);
+  });
+
+  it('continues recovery if batch denial fails for one run', async () => {
+    // Two runs with approvals -- first batch denial fails, second should still succeed
     mockConversationsMessagesList.mockReturnValue(mockPageIterator([
       {
         message_type: 'approval_request_message',
@@ -305,12 +335,12 @@ describe('recoverOrphanedConversationApproval', () => {
     mockRunsList.mockReturnValue(mockPageIterator([]));
 
     const resultPromise = recoverOrphanedConversationApproval('agent-1', 'conv-1');
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(10000);
     const result = await resultPromise;
 
     // Second run still recovered despite first failing
     expect(result.recovered).toBe(true);
-    expect(result.details).toContain('Failed to deny');
+    expect(result.details).toContain('Failed to batch-deny');
     expect(result.details).toContain('Denied 1 approval(s) from failed run run-ok');
     expect(mockConversationsMessagesCreate).toHaveBeenCalledTimes(2);
   });

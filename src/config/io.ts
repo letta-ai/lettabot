@@ -21,6 +21,13 @@ import { LETTA_API_URL } from '../auth/oauth.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Config');
+
+function getInlineConfigEnvValue(): string | undefined {
+  const raw = process.env.LETTABOT_CONFIG_YAML;
+  if (raw === undefined) return undefined;
+  return raw.trim().length > 0 ? raw : undefined;
+}
+
 // Config file locations (checked in order)
 function getConfigPaths(): string[] {
   return [
@@ -40,26 +47,71 @@ const DEFAULT_CONFIG_PATH = join(homedir(), '.lettabot', 'config.yaml');
  * When set, this takes priority over all file-based config sources.
  */
 export function hasInlineConfig(): boolean {
-  return !!process.env.LETTABOT_CONFIG_YAML;
+  return getInlineConfigEnvValue() !== undefined;
 }
 
 /**
  * Decode a value that may be raw YAML or base64-encoded YAML.
- * Detection: if the value contains a colon, it's raw YAML (every valid config
- * has key: value pairs). Otherwise it's base64 (which uses only [A-Za-z0-9+/=]).
+ * Detection strategy:
+ * 1) Treat values that parse as YAML objects as raw YAML.
+ * 2) Otherwise, require strict base64 and decode to YAML object.
  */
 export function decodeYamlOrBase64(value: string): string {
-  if (value.includes(':')) {
-    return value;
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error('LETTABOT_CONFIG_YAML is empty');
   }
-  return Buffer.from(value, 'base64').toString('utf-8');
+
+  // Prefer raw YAML when it parses successfully.
+  try {
+    const parsed = YAML.parse(trimmed);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return value;
+    }
+  } catch {
+    // Fall through to base64 decoding.
+  }
+
+  const normalized = trimmed.replace(/\s+/g, '');
+  const base64Standard = normalized.replace(/-/g, '+').replace(/_/g, '/');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64Standard)) {
+    throw new Error('LETTABOT_CONFIG_YAML must be raw YAML or base64-encoded YAML');
+  }
+
+  const normalizedNoPad = base64Standard.replace(/=+$/, '');
+  if (normalizedNoPad.length === 0 || normalizedNoPad.length % 4 === 1) {
+    throw new Error('LETTABOT_CONFIG_YAML must be raw YAML or base64-encoded YAML');
+  }
+
+  const padded = normalizedNoPad + '='.repeat((4 - (normalizedNoPad.length % 4)) % 4);
+
+  const decoded = Buffer.from(padded, 'base64').toString('utf-8');
+  const roundTrip = Buffer.from(decoded, 'utf-8').toString('base64').replace(/=+$/, '');
+  if (roundTrip !== normalizedNoPad) {
+    throw new Error('LETTABOT_CONFIG_YAML is not valid base64');
+  }
+
+  try {
+    const parsed = YAML.parse(decoded);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Decoded YAML must be an object');
+    }
+  } catch {
+    throw new Error('LETTABOT_CONFIG_YAML decoded from base64 but is not valid YAML');
+  }
+
+  return decoded;
 }
 
 /**
  * Decode inline config from LETTABOT_CONFIG_YAML env var.
  */
 function decodeInlineConfig(): string {
-  return decodeYamlOrBase64(process.env.LETTABOT_CONFIG_YAML!);
+  const value = getInlineConfigEnvValue();
+  if (!value) {
+    throw new Error('LETTABOT_CONFIG_YAML is empty');
+  }
+  return decodeYamlOrBase64(value);
 }
 
 /**
@@ -379,6 +431,10 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   }
   if (config.channels.signal?.phone) {
     env.SIGNAL_PHONE_NUMBER = config.channels.signal.phone;
+    // Signal readReceipts defaults to true, so only set env if explicitly false
+    if (config.channels.signal.readReceipts === false) {
+      env.SIGNAL_READ_RECEIPTS = 'false';
+    }
     // Signal selfChat defaults to true, so only set env if explicitly false
     if (config.channels.signal.selfChat === false) {
       env.SIGNAL_SELF_CHAT_MODE = 'false';
@@ -420,6 +476,47 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.channels.discord?.listeningGroups?.length) {
     env.DISCORD_LISTENING_GROUPS = config.channels.discord.listeningGroups.join(',');
   }
+  if (config.channels.bluesky?.enabled) {
+    if (config.channels.bluesky.wantedDids?.length) {
+      env.BLUESKY_WANTED_DIDS = config.channels.bluesky.wantedDids.join(',');
+    }
+    if (config.channels.bluesky.wantedCollections?.length) {
+      env.BLUESKY_WANTED_COLLECTIONS = config.channels.bluesky.wantedCollections.join(',');
+    }
+    if (config.channels.bluesky.jetstreamUrl) {
+      env.BLUESKY_JETSTREAM_URL = config.channels.bluesky.jetstreamUrl;
+    }
+    if (config.channels.bluesky.cursor !== undefined) {
+      env.BLUESKY_CURSOR = String(config.channels.bluesky.cursor);
+    }
+    if (config.channels.bluesky.handle) {
+      env.BLUESKY_HANDLE = config.channels.bluesky.handle;
+    }
+    if (config.channels.bluesky.appPassword) {
+      env.BLUESKY_APP_PASSWORD = config.channels.bluesky.appPassword;
+    }
+    if (config.channels.bluesky.serviceUrl) {
+      env.BLUESKY_SERVICE_URL = config.channels.bluesky.serviceUrl;
+    }
+    if (config.channels.bluesky.appViewUrl) {
+      env.BLUESKY_APPVIEW_URL = config.channels.bluesky.appViewUrl;
+    }
+    if (config.channels.bluesky.notifications?.enabled) {
+      env.BLUESKY_NOTIFICATIONS_ENABLED = 'true';
+      if (config.channels.bluesky.notifications.intervalSec !== undefined) {
+        env.BLUESKY_NOTIFICATIONS_INTERVAL_SEC = String(config.channels.bluesky.notifications.intervalSec);
+      }
+      if (config.channels.bluesky.notifications.limit !== undefined) {
+        env.BLUESKY_NOTIFICATIONS_LIMIT = String(config.channels.bluesky.notifications.limit);
+      }
+      if (config.channels.bluesky.notifications.priority !== undefined) {
+        env.BLUESKY_NOTIFICATIONS_PRIORITY = config.channels.bluesky.notifications.priority ? 'true' : 'false';
+      }
+      if (config.channels.bluesky.notifications.reasons?.length) {
+        env.BLUESKY_NOTIFICATIONS_REASONS = config.channels.bluesky.notifications.reasons.join(',');
+      }
+    }
+  }
 
   // Features
   if (config.features?.cron) {
@@ -429,6 +526,15 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
     env.HEARTBEAT_INTERVAL_MIN = String(config.features.heartbeat.intervalMin || 30);
     if (config.features.heartbeat.skipRecentUserMin !== undefined) {
       env.HEARTBEAT_SKIP_RECENT_USER_MIN = String(config.features.heartbeat.skipRecentUserMin);
+    }
+    if (config.features.heartbeat.skipRecentPolicy !== undefined) {
+      env.HEARTBEAT_SKIP_RECENT_POLICY = config.features.heartbeat.skipRecentPolicy;
+    }
+    if (config.features.heartbeat.skipRecentFraction !== undefined) {
+      env.HEARTBEAT_SKIP_RECENT_FRACTION = String(config.features.heartbeat.skipRecentFraction);
+    }
+    if (config.features.heartbeat.interruptOnUserMessage !== undefined) {
+      env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE = config.features.heartbeat.interruptOnUserMessage ? 'true' : 'false';
     }
   }
   if (config.features?.sleeptime) {

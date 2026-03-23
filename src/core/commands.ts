@@ -23,6 +23,7 @@ Commands:
 /model <handle> - Switch to a different model
 /setconv <id> - Set conversation ID for this chat
 /help - Show this message
+/start - Show this message
 
 Just send a message to get started!`;
 

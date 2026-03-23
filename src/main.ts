@@ -24,6 +24,7 @@ import {
   serverModeLabel,
   wasLoadedFromFleetConfig,
 } from './config/index.js';
+import { resolveSessionMemfs } from './config/memfs.js';
 import { getCronDataDir, getDataDir, getWorkingDir, hasRailwayVolume, resolveWorkingDirPath } from './utils/paths.js';
 import { parseCsvList, parseNonNegativeNumber } from './utils/parse.js';
 import { createLogger, setLogLevel } from './logger.js';
@@ -217,6 +218,19 @@ function ensureRequiredTools(tools: string[]): string[] {
   return out;
 }
 
+function parseOptionalBoolean(raw?: string): boolean | undefined {
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  return undefined;
+}
+
+function parseHeartbeatSkipRecentPolicy(raw?: string): 'fixed' | 'fraction' | 'off' | undefined {
+  if (raw === 'fixed' || raw === 'fraction' || raw === 'off') {
+    return raw;
+  }
+  return undefined;
+}
+
 // Global config (shared across all agents)
 const globalConfig = {
   workingDir: getWorkingDir(),
@@ -231,6 +245,9 @@ const globalConfig = {
   attachmentsMaxAgeDays: resolveAttachmentsMaxAgeDays(),
   cronEnabled: process.env.CRON_ENABLED === 'true',  // Legacy env var fallback
   heartbeatSkipRecentUserMin: parseNonNegativeNumber(process.env.HEARTBEAT_SKIP_RECENT_USER_MIN),
+  heartbeatSkipRecentPolicy: parseHeartbeatSkipRecentPolicy(process.env.HEARTBEAT_SKIP_RECENT_POLICY),
+  heartbeatSkipRecentFraction: parseNonNegativeNumber(process.env.HEARTBEAT_SKIP_RECENT_FRACTION),
+  heartbeatInterruptOnUserMessage: parseOptionalBoolean(process.env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE),
 };
 
 // Validate LETTA_API_KEY is set for API mode (docker mode doesn't require it)
@@ -252,12 +269,37 @@ async function main() {
   log.info(`Data directory: ${dataDir}`);
   log.info(`Working directory: ${globalConfig.workingDir}`);
   process.env.LETTABOT_WORKING_DIR = globalConfig.workingDir;
+
+  // Propagate resolved config path so child processes (lettabot-message, lettabot-react)
+  // can find the config regardless of their working directory.
+  if (!process.env.LETTABOT_CONFIG && !hasInlineConfig()) {
+    process.env.LETTABOT_CONFIG = configPath;
+  }
   
   // Normalize config to agents array
   const agents = normalizeAgents(yamlConfig);
   const isMultiAgent = agents.length > 1;
   log.info(`${agents.length} agent(s) configured: ${agents.map(a => a.name).join(', ')}`);
   
+  // Validate agent names are unique
+  const agentNames = agents.map(a => a.name);
+  const duplicateAgentName = agentNames.find((n, i) => agentNames.indexOf(n) !== i);
+  if (duplicateAgentName) {
+    log.error(`Multiple agents share the same name: "${duplicateAgentName}". Each agent must have a unique name.`);
+    process.exit(1);
+  }
+
+  // Validate no two agents share the same turnLogFile
+  const turnLogFilePaths = agents
+    .map(a => (a.features?.logging ?? yamlConfig.features?.logging)?.turnLogFile)
+    .filter((p): p is string => !!p)
+    .map(p => resolve(p));
+  const duplicateTurnLog = turnLogFilePaths.find((p, i) => turnLogFilePaths.indexOf(p) !== i);
+  if (duplicateTurnLog) {
+    log.error(`Multiple agents share the same turnLogFile: "${duplicateTurnLog}". Each agent must use a unique log file path.`);
+    process.exit(1);
+  }
+
   // Validate at least one agent has channels
   const totalChannels = agents.reduce((sum, a) => sum + Object.keys(a.channels).length, 0);
   if (totalChannels === 0) {
@@ -281,6 +323,7 @@ async function main() {
   
   const gateway = new LettaGateway();
   const agentStores = new Map<string, Store>();
+  const agentConversationModes = new Map<string, string>();
   const sessionInvalidators = new Map<string, (key?: string) => void>();
   const agentChannelMap = new Map<string, string[]>();
   const voiceMemoEnabled = isVoiceMemoConfigured();
@@ -299,21 +342,23 @@ async function main() {
   for (const agentConfig of agents) {
     log.info(`Configuring agent: ${agentConfig.name}`);
     
-    // Resolve memfs: YAML config takes precedence, then env var, then default false.
-    // Default false prevents the SDK from auto-enabling memfs, which crashes on
-    // self-hosted Letta servers that don't have the git endpoint.
-    const resolvedMemfs = agentConfig.features?.memfs ?? (process.env.LETTABOT_MEMFS === 'true' ? true : false);
+    const resolvedMemfsResult = resolveSessionMemfs({
+      configuredMemfs: agentConfig.features?.memfs,
+      envMemfs: process.env.LETTABOT_MEMFS,
+      serverMode: yamlConfig.server.mode,
+    });
+    const resolvedMemfs = resolvedMemfsResult.value;
     const configuredSleeptime = agentConfig.features?.sleeptime;
     // Treat missing trigger as active (conservative): only `trigger: 'off'` explicitly disables.
     const sleeptimeRequiresMemfs = !!configuredSleeptime && configuredSleeptime.trigger !== 'off';
-    const effectiveSleeptime = !resolvedMemfs && sleeptimeRequiresMemfs
+    const effectiveSleeptime = resolvedMemfs === false && sleeptimeRequiresMemfs
       ? undefined
       : configuredSleeptime;
 
-    if (!resolvedMemfs && sleeptimeRequiresMemfs) {
+    if (resolvedMemfs === false && sleeptimeRequiresMemfs) {
       log.warn(
         `Agent ${agentConfig.name}: sleeptime is configured but memfs is disabled; ` +
-        `sleeptime will be ignored. Enable features.memfs (or LETTABOT_MEMFS=true) to use sleeptime.`
+        `sleeptime will be ignored. Enable features.memfs (or set LETTABOT_MEMFS=true) to use sleeptime.`
       );
     }
 
@@ -328,6 +373,7 @@ async function main() {
     const cronStorePath = cronStoreFilename
       ? resolve(getCronDataDir(), cronStoreFilename)
       : undefined;
+    const heartbeatConfig = agentConfig.features?.heartbeat;
 
     const bot = new LettaBot({
       workingDir: resolvedWorkingDir,
@@ -339,27 +385,40 @@ async function main() {
       sendFileDir: agentConfig.features?.sendFileDir,
       sendFileMaxSize: agentConfig.features?.sendFileMaxSize,
       sendFileCleanup: agentConfig.features?.sendFileCleanup,
+      autoVoice: agentConfig.features?.autoVoice,
       memfs: resolvedMemfs,
       sleeptime: effectiveSleeptime,
       display: agentConfig.features?.display,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
+      interruptHeartbeatOnUserMessage:
+        heartbeatConfig?.interruptOnUserMessage
+        ?? globalConfig.heartbeatInterruptOnUserMessage
+        ?? true,
       conversationOverrides: agentConfig.conversations?.perChannel,
       maxSessions: agentConfig.conversations?.maxSessions,
       reuseSession: agentConfig.conversations?.reuseSession,
       redaction: agentConfig.security?.redaction,
+      logging: agentConfig.features?.logging ?? yamlConfig.features?.logging,
       cronStorePath,
       skills: {
         cronEnabled: agentConfig.features?.cron ?? globalConfig.cronEnabled,
         googleEnabled: !!agentConfig.integrations?.google?.enabled || !!agentConfig.polling?.gmail?.enabled,
+        blueskyEnabled: !!agentConfig.channels?.bluesky?.enabled,
         ttsEnabled: voiceMemoEnabled,
       },
     });
     
     // Log memfs config (from either YAML or env var)
     if (resolvedMemfs !== undefined) {
-      const source = agentConfig.features?.memfs !== undefined ? '' : ' (from LETTABOT_MEMFS env)';
+      const source = resolvedMemfsResult.source === 'config'
+        ? ''
+        : resolvedMemfsResult.source === 'env'
+          ? ' (from LETTABOT_MEMFS env)'
+          : ' (default for docker/selfhosted mode)';
       log.info(`Agent ${agentConfig.name}: memfs ${resolvedMemfs ? 'enabled' : 'disabled'}${source}`);
+    } else {
+      log.info(`Agent ${agentConfig.name}: memfs unchanged (not explicitly configured)`);
     }
 
     // Apply explicit agent ID from config (before store verification)
@@ -439,12 +498,14 @@ async function main() {
     }
 
     // Per-agent heartbeat
-    const heartbeatConfig = agentConfig.features?.heartbeat;
     const heartbeatService = new HeartbeatService(bot, {
       enabled: heartbeatConfig?.enabled ?? false,
       intervalMinutes: heartbeatConfig?.intervalMin ?? 240,
       skipRecentUserMinutes: heartbeatConfig?.skipRecentUserMin ?? globalConfig.heartbeatSkipRecentUserMin,
+      skipRecentPolicy: heartbeatConfig?.skipRecentPolicy ?? globalConfig.heartbeatSkipRecentPolicy,
+      skipRecentFraction: heartbeatConfig?.skipRecentFraction ?? globalConfig.heartbeatSkipRecentFraction,
       agentKey: agentConfig.name,
+      memfs: resolvedMemfs,
       prompt: heartbeatConfig?.prompt || process.env.HEARTBEAT_PROMPT,
       promptFile: heartbeatConfig?.promptFile,
       workingDir: resolvedWorkingDir,
@@ -504,6 +565,7 @@ async function main() {
     
     gateway.addAgent(agentConfig.name, bot);
     agentStores.set(agentConfig.name, bot.store);
+    agentConversationModes.set(agentConfig.name, agentConfig.conversations?.mode || 'shared');
     sessionInvalidators.set(agentConfig.name, (key) => bot.invalidateSession(key));
     agentChannelMap.set(agentConfig.name, adapters.map(a => a.id));
   }
@@ -519,13 +581,20 @@ async function main() {
   const apiPort = parseInt(process.env.PORT || '8080', 10);
   const apiHost = process.env.API_HOST || (isContainerDeploy ? '0.0.0.0' : undefined); // Container platforms need 0.0.0.0 for health checks
   const apiCorsOrigin = process.env.API_CORS_ORIGIN; // undefined = same-origin only
+  const turnLogFiles: Record<string, string> = {};
+  for (const a of agents) {
+    const logging = a.features?.logging ?? yamlConfig.features?.logging;
+    if (logging?.turnLogFile) turnLogFiles[a.name] = logging.turnLogFile;
+  }
   const apiServer = createApiServer(gateway, {
     port: apiPort,
     apiKey: apiKey,
     host: apiHost,
     corsOrigin: apiCorsOrigin,
+    turnLogFiles: Object.keys(turnLogFiles).length > 0 ? turnLogFiles : undefined,
     stores: agentStores,
     agentChannels: agentChannelMap,
+    agentConversationModes,
     sessionInvalidators,
   });
   

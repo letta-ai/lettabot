@@ -17,10 +17,88 @@ vi.mock('../logger.js', () => ({
   }),
 }));
 
-import { saveConfig, loadConfig, loadConfigStrict, configToEnv, didLoadFail } from './io.js';
+import {
+  saveConfig,
+  loadConfig,
+  loadConfigStrict,
+  configToEnv,
+  didLoadFail,
+  decodeYamlOrBase64,
+  hasInlineConfig,
+} from './io.js';
 import { normalizeAgents, DEFAULT_CONFIG } from './types.js';
 import { wasLoadedFromFleetConfig, setLoadedFromFleetConfig } from './fleet-adapter.js';
 import type { LettaBotConfig } from './types.js';
+
+describe('inline config helpers', () => {
+  let originalInline: string | undefined;
+
+  beforeEach(() => {
+    originalInline = process.env.LETTABOT_CONFIG_YAML;
+    delete process.env.LETTABOT_CONFIG_YAML;
+  });
+
+  afterEach(() => {
+    if (originalInline === undefined) {
+      delete process.env.LETTABOT_CONFIG_YAML;
+    } else {
+      process.env.LETTABOT_CONFIG_YAML = originalInline;
+    }
+  });
+
+  it('treats empty inline env vars as unset', () => {
+    expect(hasInlineConfig()).toBe(false);
+
+    process.env.LETTABOT_CONFIG_YAML = '';
+    expect(hasInlineConfig()).toBe(false);
+
+    process.env.LETTABOT_CONFIG_YAML = '   ';
+    expect(hasInlineConfig()).toBe(false);
+  });
+
+  it('detects non-empty inline env vars', () => {
+    process.env.LETTABOT_CONFIG_YAML = 'server:\n  mode: api\n';
+    expect(hasInlineConfig()).toBe(true);
+  });
+
+  it('decodes raw yaml inline config', () => {
+    const yaml = 'server:\n  mode: api\n';
+    expect(decodeYamlOrBase64(yaml)).toBe(yaml);
+  });
+
+  it('decodes base64 inline config', () => {
+    const yaml = 'server:\n  mode: api\n';
+    const encoded = Buffer.from(yaml, 'utf-8').toString('base64');
+    expect(decodeYamlOrBase64(encoded)).toBe(yaml);
+  });
+
+  it('decodes unpadded base64 inline config', () => {
+    const yaml = 'server:\n  mode: api\n';
+    const encoded = Buffer.from(yaml, 'utf-8').toString('base64').replace(/=+$/, '');
+    expect(decodeYamlOrBase64(encoded)).toBe(yaml);
+  });
+
+  it('decodes URL-safe base64 inline config', () => {
+    const yaml = 'server:\n  mode: api\n';
+    const encoded = Buffer.from(yaml, 'utf-8')
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+    expect(decodeYamlOrBase64(encoded)).toBe(yaml);
+  });
+
+  it('throws for empty inline config values', () => {
+    expect(() => decodeYamlOrBase64('')).toThrow('LETTABOT_CONFIG_YAML is empty');
+    expect(() => decodeYamlOrBase64('   ')).toThrow('LETTABOT_CONFIG_YAML is empty');
+  });
+
+  it('throws for invalid inline config values', () => {
+    expect(() => decodeYamlOrBase64('###not-yaml-not-base64###')).toThrow(
+      'LETTABOT_CONFIG_YAML must be raw YAML or base64-encoded YAML',
+    );
+  });
+});
 
 describe('saveConfig with agents[] format', () => {
   let tmpDir: string;
@@ -184,14 +262,17 @@ describe('server.api config (canonical location)', () => {
     expect(env.API_CORS_ORIGIN).toBe('*');
   });
 
-  it('configToEnv should map heartbeat skip window env var', () => {
+  it('configToEnv should map heartbeat skip/preemption env vars', () => {
     const config: LettaBotConfig = {
       ...DEFAULT_CONFIG,
       features: {
         heartbeat: {
           enabled: true,
           intervalMin: 30,
+          skipRecentPolicy: 'fraction',
+          skipRecentFraction: 0.5,
           skipRecentUserMin: 4,
+          interruptOnUserMessage: false,
         },
       },
     };
@@ -199,6 +280,9 @@ describe('server.api config (canonical location)', () => {
     const env = configToEnv(config);
     expect(env.HEARTBEAT_INTERVAL_MIN).toBe('30');
     expect(env.HEARTBEAT_SKIP_RECENT_USER_MIN).toBe('4');
+    expect(env.HEARTBEAT_SKIP_RECENT_POLICY).toBe('fraction');
+    expect(env.HEARTBEAT_SKIP_RECENT_FRACTION).toBe('0.5');
+    expect(env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE).toBe('false');
   });
 
   it('configToEnv should fall back to top-level api (deprecated)', () => {

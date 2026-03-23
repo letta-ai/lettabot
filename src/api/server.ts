@@ -5,6 +5,8 @@
 
 import * as http from 'http';
 import * as fs from 'fs';
+import { readFile } from 'node:fs/promises';
+import * as crypto from 'node:crypto';
 import { validateApiKey } from './auth.js';
 import type { SendMessageResponse, ChatRequest, ChatResponse, AsyncChatResponse, PairingListResponse, PairingApproveRequest, PairingApproveResponse } from './types.js';
 import { listPairingRequests, approvePairingCode } from '../pairing/store.js';
@@ -18,6 +20,7 @@ import {
   buildErrorResponse, buildModelList, validateChatRequest,
 } from './openai-compat.js';
 import type { OpenAIChatRequest } from './openai-compat.js';
+import { getTurnViewerHtml } from '../core/turn-viewer.js';
 
 import { createLogger } from '../logger.js';
 
@@ -38,10 +41,12 @@ type ResolvedChatRequest = {
 interface ServerOptions {
   port: number;
   apiKey: string;
-  host?: string; // Bind address (default: 127.0.0.1 for security)
+  host?: string;       // Bind address (default: 127.0.0.1 for security)
   corsOrigin?: string; // CORS origin (default: same-origin only)
+  turnLogFiles?: Record<string, string>; // agentName -> filePath; enables GET /turns viewer
   stores?: Map<string, Store>; // Agent stores for management endpoints
   agentChannels?: Map<string, string[]>; // Channel IDs per agent name
+  agentConversationModes?: Map<string, string>; // agentName -> conversationMode (shared|per-channel|per-chat|disabled)
   sessionInvalidators?: Map<string, (key?: string) => void>; // Invalidate live sessions after store writes
 }
 
@@ -49,6 +54,155 @@ interface ServerOptions {
  * Create and start the HTTP API server
  */
 export function createApiServer(deliverer: AgentRouter, options: ServerOptions): http.Server {
+  // ── Turn viewer SSE infrastructure ──────────────────────────────────────
+  interface SSEClient {
+    res: http.ServerResponse;
+    sentCount: number;
+    lastTurnId?: string;
+  }
+  const sseClientsByAgent = new Map<string, Set<SSEClient>>();
+  const broadcastQueues = new Map<string, Promise<void>>();
+
+  function getTurnId(turn: unknown): string | undefined {
+    if (!turn || typeof turn !== 'object') return undefined;
+    const id = (turn as { turnId?: unknown }).turnId;
+    return typeof id === 'string' && id.trim() ? id : undefined;
+  }
+
+  async function readTurns(filePath: string): Promise<unknown[]> {
+    try {
+      const content = await readFile(filePath, 'utf8');
+      return content.split('\n').filter(l => l.trim()).map(l => {
+        try { return JSON.parse(l); } catch { return null; }
+      }).filter(Boolean);
+    } catch { return []; }
+  }
+
+  async function broadcastNewTurns(agentName: string, filePath: string): Promise<void> {
+    const clients = sseClientsByAgent.get(agentName);
+    if (!clients || clients.size === 0) return;
+    const allTurns = await readTurns(filePath);
+    const currentLastTurnId = getTurnId(allTurns[allTurns.length - 1]);
+
+    for (const client of clients) {
+      // If the log was cleared, reset the client snapshot and UI.
+      if (allTurns.length === 0) {
+        const shouldReset = client.sentCount !== 0 || !!client.lastTurnId;
+        client.sentCount = 0;
+        client.lastTurnId = undefined;
+        if (shouldReset) {
+          const payload = `data: ${JSON.stringify({ type: 'init', turns: [] })}\n\n`;
+          try { client.res.write(payload); } catch { clients.delete(client); }
+        }
+        continue;
+      }
+
+      if (client.lastTurnId === currentLastTurnId && client.sentCount === allTurns.length) {
+        continue;
+      }
+
+      let turnsToAppend: unknown[] | null = null;
+      if (client.lastTurnId) {
+        let previousIndex = -1;
+        for (let i = allTurns.length - 1; i >= 0; i--) {
+          if (getTurnId(allTurns[i]) === client.lastTurnId) {
+            previousIndex = i;
+            break;
+          }
+        }
+        if (previousIndex >= 0) {
+          turnsToAppend = allTurns.slice(previousIndex + 1);
+        }
+      } else if (client.sentCount < allTurns.length) {
+        // Fallback for older records without turnId.
+        turnsToAppend = allTurns.slice(client.sentCount);
+      }
+
+      const appendTurns = turnsToAppend ?? [];
+      const shouldResync = turnsToAppend === null
+        || (appendTurns.length === 0 && (client.sentCount !== allTurns.length || client.lastTurnId !== currentLastTurnId));
+
+      const payload = shouldResync
+        ? `data: ${JSON.stringify({ type: 'init', turns: allTurns })}\n\n`
+        : appendTurns.length > 0
+          ? `data: ${JSON.stringify({ type: 'append', turns: appendTurns })}\n\n`
+          : null;
+
+      if (payload) {
+        try {
+          client.res.write(payload);
+        } catch {
+          clients.delete(client);
+          continue;
+        }
+      }
+
+      client.sentCount = allTurns.length;
+      client.lastTurnId = currentLastTurnId;
+    }
+  }
+
+  function enqueueBroadcast(agentName: string, filePath: string): void {
+    const prev = broadcastQueues.get(filePath) ?? Promise.resolve();
+    const next = prev.then(() => broadcastNewTurns(agentName, filePath)).catch(() => {});
+    broadcastQueues.set(filePath, next);
+  }
+
+  const watchers = new Map<string, fs.FSWatcher>();
+
+  function ensureWatching(agentName: string, filePath: string): void {
+    if (watchers.has(filePath)) return;
+    let watcher: fs.FSWatcher;
+    try {
+      watcher = fs.watch(filePath, { persistent: false }, (eventType) => {
+        if (eventType === 'rename') {
+          // Inode replaced (trim via atomic rename on Linux). Restart watcher.
+          watcher.close();
+          watchers.delete(filePath);
+          setTimeout(() => {
+            const clients = sseClientsByAgent.get(agentName);
+            if (clients && clients.size > 0) {
+              enqueueBroadcast(agentName, filePath);
+              ensureWatching(agentName, filePath);
+            }
+          }, 200);
+          return;
+        }
+        enqueueBroadcast(agentName, filePath);
+      });
+    } catch {
+      setTimeout(() => {
+        const clients = sseClientsByAgent.get(agentName);
+        if (clients && clients.size > 0) ensureWatching(agentName, filePath);
+      }, 2000);
+      return;
+    }
+    watcher.on('error', () => {
+      watcher.close();
+      watchers.delete(filePath);
+      // Auto-restart watcher after trim (inode replacement on Linux)
+      setTimeout(() => {
+        const clients = sseClientsByAgent.get(agentName);
+        if (clients && clients.size > 0) ensureWatching(agentName, filePath);
+      }, 500);
+    });
+    watchers.set(filePath, watcher);
+  }
+
+  function maybeUnwatch(filePath: string, clients: Set<SSEClient>): void {
+    if (clients.size === 0 && watchers.has(filePath)) {
+      watchers.get(filePath)!.close();
+      watchers.delete(filePath);
+      broadcastQueues.delete(filePath);
+    }
+  }
+
+  if (options.turnLogFiles) {
+    for (const agentName of Object.keys(options.turnLogFiles)) {
+      sseClientsByAgent.set(agentName, new Set());
+    }
+  }
+
   const server = http.createServer(async (req, res) => {
     // Set CORS headers (configurable origin, defaults to same-origin for security)
     const corsOrigin = options.corsOrigin || req.headers.origin || 'null';
@@ -68,6 +222,63 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('ok');
       return;
+    }
+
+    // Turn viewer routes
+    if (options.turnLogFiles && req.method === 'GET') {
+      const agentNames = Object.keys(options.turnLogFiles);
+      const parsedUrl = new URL(req.url ?? '/', `http://localhost`);
+
+      const validateTurnAuth = (): boolean => {
+        if (validateApiKey(req.headers, options.apiKey)) return true;
+        const qKey = parsedUrl.searchParams.get('key') || '';
+        if (!qKey) return false;
+        const a = Buffer.from(qKey);
+        const b = Buffer.from(options.apiKey);
+        return a.length === b.length && crypto.timingSafeEqual(a, b);
+      };
+
+      if (parsedUrl.pathname === '/turns') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(getTurnViewerHtml(agentNames));
+        return;
+      }
+      if (parsedUrl.pathname === '/turns/data') {
+        if (!validateTurnAuth()) { sendError(res, 401, 'Unauthorized'); return; }
+        const agentName = parsedUrl.searchParams.get('agent') || agentNames[0];
+        const filePath = options.turnLogFiles[agentName];
+        if (!filePath) { res.writeHead(404); res.end('Unknown agent'); return; }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(await readTurns(filePath)));
+        return;
+      }
+      if (parsedUrl.pathname === '/turns/stream') {
+        if (!validateTurnAuth()) { sendError(res, 401, 'Unauthorized'); return; }
+        const agentName = parsedUrl.searchParams.get('agent') || agentNames[0];
+        const filePath = options.turnLogFiles[agentName];
+        if (!filePath) { res.writeHead(404); res.end('Unknown agent'); return; }
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-store',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+        const allTurns = await readTurns(filePath);
+        res.write(`data: ${JSON.stringify({ type: 'init', turns: allTurns })}\n\n`);
+        const clients = sseClientsByAgent.get(agentName)!;
+        const client: SSEClient = {
+          res,
+          sentCount: allTurns.length,
+          lastTurnId: getTurnId(allTurns[allTurns.length - 1]),
+        };
+        clients.add(client);
+        ensureWatching(agentName, filePath);
+        req.on('close', () => {
+          clients.delete(client);
+          maybeUnwatch(filePath, clients);
+        });
+        return;
+      }
     }
 
     // Route: POST /api/v1/messages (unified: supports both text and files)
@@ -239,7 +450,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     const pairingListMatch = req.url?.match(/^\/api\/v1\/pairing\/([a-z0-9-]+)$/);
     if (pairingListMatch && req.method === 'GET') {
       try {
-        if (!validateApiKey(req.headers, options.apiKey)) {
+        if (getPortalMode(options) !== 'shared' && !validateApiKey(req.headers, options.apiKey)) {
           sendError(res, 401, 'Unauthorized');
           return;
         }
@@ -496,7 +707,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     // Route: GET /api/v1/status - Agent status (conversation IDs, channels)
     if (req.url === '/api/v1/status' && req.method === 'GET') {
       try {
-        if (!validateApiKey(req.headers, options.apiKey)) {
+        if (getPortalMode(options) !== 'shared' && !validateApiKey(req.headers, options.apiKey)) {
           sendError(res, 401, 'Unauthorized');
           return;
         }
@@ -558,7 +769,23 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           return;
         }
 
-        const key = request.key || 'shared';
+        const mode = options.agentConversationModes?.get(agentName);
+        const isPerKey = mode === 'per-channel' || mode === 'per-chat';
+        const key = request.key || (isPerKey ? null : 'shared');
+        if (!key) {
+          sendError(res, 400, `Agent "${agentName}" uses ${mode} conversation mode — a key is required (e.g. "discord", "heartbeat")`);
+          return;
+        }
+        // Reject 'shared' key in per-key modes (per-channel, per-chat, disabled)
+        if (key === 'shared' && (mode === 'per-channel' || mode === 'per-chat' || mode === 'disabled')) {
+          const expectedFormat = mode === 'per-channel'
+            ? 'channel ID (e.g. "telegram", "discord")'
+            : mode === 'per-chat'
+            ? 'chat-specific key (e.g. "telegram:123456")'
+            : 'explicit key (shared mode is disabled)';
+          sendError(res, 400, `Agent "${agentName}" uses ${mode} conversation mode — key "shared" is not allowed. Expected: ${expectedFormat}`);
+          return;
+        }
         if (key === 'shared') {
           store.conversationId = request.conversationId;
         } else {
@@ -584,7 +811,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     // Route: GET /api/v1/conversations - List conversations from Letta API
     if (req.url?.startsWith('/api/v1/conversations') && req.method === 'GET') {
       try {
-        if (!validateApiKey(req.headers, options.apiKey)) {
+        if (getPortalMode(options) !== 'shared' && !validateApiKey(req.headers, options.apiKey)) {
           sendError(res, 401, 'Unauthorized');
           return;
         }
@@ -639,8 +866,14 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
 
     // Route: GET /portal - Admin portal for pairing approvals
     if ((req.url === '/portal' || req.url === '/portal/') && req.method === 'GET') {
+      const portalMode = getPortalMode(options);
+      if (portalMode === 'disabled') {
+        sendError(res, 404, 'Portal not available (conversation routing is disabled)');
+        return;
+      }
+      const modeScript = `<script>window.__PORTAL_MODE__ = '${portalMode}';</script>`;
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(PORTAL_HTML);
+      res.end(PORTAL_HTML.replace('</head>', modeScript + '</head>'));
       return;
     }
 
@@ -684,6 +917,21 @@ function readBody(req: http.IncomingMessage, maxSize: number): Promise<string> {
       reject(error);
     });
   });
+}
+
+/**
+ * Returns the effective portal mode based on agent conversation modes:
+ * - 'disabled' if ALL agents are disabled (portal not available)
+ * - 'shared' if ALL agents are in shared mode (no per-user auth)
+ * - otherwise the first non-shared mode (e.g. 'per-channel', 'per-chat')
+ */
+function getPortalMode(options: ServerOptions): string {
+  const modes = options.agentConversationModes;
+  if (!modes || modes.size === 0) return 'shared';
+  const values = [...modes.values()];
+  if (values.every(m => m === 'disabled')) return 'disabled';
+  if (values.every(m => m === 'shared')) return 'shared';
+  return values.find(m => m !== 'shared') ?? 'shared';
 }
 
 function ensureAuthorized(req: http.IncomingMessage, res: http.ServerResponse, apiKey: string): boolean {

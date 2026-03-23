@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -12,8 +12,67 @@ import {
   isVoiceMemoConfigured,
 } from './loader.js';
 
+const ORIGINAL_WORKING_DIR = process.env.WORKING_DIR;
+const ORIGINAL_RAILWAY_VOLUME_MOUNT_PATH = process.env.RAILWAY_VOLUME_MOUNT_PATH;
+
+async function importFreshLoader() {
+  vi.resetModules();
+  return import('./loader.js');
+}
+
+function restoreLoaderPathEnv() {
+  if (ORIGINAL_WORKING_DIR === undefined) {
+    delete process.env.WORKING_DIR;
+  } else {
+    process.env.WORKING_DIR = ORIGINAL_WORKING_DIR;
+  }
+
+  if (ORIGINAL_RAILWAY_VOLUME_MOUNT_PATH === undefined) {
+    delete process.env.RAILWAY_VOLUME_MOUNT_PATH;
+  } else {
+    process.env.RAILWAY_VOLUME_MOUNT_PATH = ORIGINAL_RAILWAY_VOLUME_MOUNT_PATH;
+  }
+}
+
 describe('skills loader', () => {
+  afterEach(() => {
+    restoreLoaderPathEnv();
+    vi.resetModules();
+  });
+
+  describe('working directory resolution', () => {
+    it('uses Railway volume-backed working dir when WORKING_DIR is not set', async () => {
+      process.env.RAILWAY_VOLUME_MOUNT_PATH = '/railway-volume';
+      delete process.env.WORKING_DIR;
+
+      const mod = await importFreshLoader();
+
+      expect(mod.WORKING_DIR).toBe('/railway-volume/data');
+      expect(mod.WORKING_SKILLS_DIR).toBe('/railway-volume/data/.skills');
+    });
+
+    it('prefers explicit WORKING_DIR over Railway volume mount', async () => {
+      process.env.RAILWAY_VOLUME_MOUNT_PATH = '/railway-volume';
+      process.env.WORKING_DIR = '/custom/workdir';
+
+      const mod = await importFreshLoader();
+
+      expect(mod.WORKING_DIR).toBe('/custom/workdir');
+      expect(mod.WORKING_SKILLS_DIR).toBe('/custom/workdir/.skills');
+    });
+  });
+
   describe('getAgentSkillsDir', () => {
+    it('uses Railway volume for agent-scoped skills when mounted', async () => {
+      process.env.RAILWAY_VOLUME_MOUNT_PATH = '/railway-volume';
+      delete process.env.WORKING_DIR;
+
+      const mod = await importFreshLoader();
+      const dir = mod.getAgentSkillsDir('agent-railway');
+
+      expect(dir).toBe('/railway-volume/.letta/agents/agent-railway/skills');
+    });
+
     it('returns path containing agent ID', () => {
       const agentId = 'agent-test-123';
       const dir = getAgentSkillsDir(agentId);
@@ -57,6 +116,25 @@ describe('skills loader', () => {
     it('has tts feature with voice-memo skill', () => {
       expect(FEATURE_SKILLS.tts).toBeDefined();
       expect(FEATURE_SKILLS.tts).toContain('voice-memo');
+    });
+
+    it('has bluesky feature with bluesky skill', () => {
+      expect(FEATURE_SKILLS.bluesky).toBeDefined();
+      expect(FEATURE_SKILLS.bluesky).toContain('bluesky');
+    });
+
+    it('bundled bluesky skill ships an executable helper shim', () => {
+      const shimPath = join(process.cwd(), 'skills', 'bluesky', 'lettabot-bluesky');
+      expect(existsSync(shimPath)).toBe(true);
+      expect(statSync(shimPath).mode & 0o111).not.toBe(0);
+    });
+
+    it('bundled bluesky shim prefers local CLI entrypoints', () => {
+      const shimPath = join(process.cwd(), 'skills', 'bluesky', 'lettabot-bluesky');
+      const shim = readFileSync(shimPath, 'utf-8');
+      expect(shim).toContain('node \"$REPO_ROOT/dist/cli.js\" bluesky');
+      expect(shim).toContain('npx tsx \"$REPO_ROOT/src/cli.ts\" bluesky');
+      expect(shim).toContain('exec lettabot bluesky "$@"');
     });
   });
 

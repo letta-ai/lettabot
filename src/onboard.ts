@@ -23,6 +23,15 @@ function parseOptionalCsvList(value?: string): string[] | undefined {
   return items.length > 0 ? items : undefined;
 }
 
+function parseOptionalBoolean(value?: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  return undefined;
+}
+
 function readConfigFromEnv(existingConfig: any): any {
   return {
     baseUrl: process.env.LETTA_BASE_URL || existingConfig.server?.baseUrl || 'https://api.letta.com',
@@ -34,7 +43,8 @@ function readConfigFromEnv(existingConfig: any): any {
       enabled: !!process.env.TELEGRAM_BOT_TOKEN,
       botToken: process.env.TELEGRAM_BOT_TOKEN || existingConfig.channels?.telegram?.token,
       dmPolicy: process.env.TELEGRAM_DM_POLICY || existingConfig.channels?.telegram?.dmPolicy || 'pairing',
-      allowedUsers: process.env.TELEGRAM_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.telegram?.allowedUsers,
+      allowedUsers: parseOptionalCsvList(process.env.TELEGRAM_ALLOWED_USERS)
+        ?? existingConfig.channels?.telegram?.allowedUsers,
       groupDebounceSec: parseOptionalInt(process.env.TELEGRAM_GROUP_DEBOUNCE_SEC)
         ?? existingConfig.channels?.telegram?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.TELEGRAM_GROUP_POLL_INTERVAL_MIN)
@@ -50,7 +60,8 @@ function readConfigFromEnv(existingConfig: any): any {
       botToken: process.env.SLACK_BOT_TOKEN || existingConfig.channels?.slack?.botToken,
       appToken: process.env.SLACK_APP_TOKEN || existingConfig.channels?.slack?.appToken,
       dmPolicy: process.env.SLACK_DM_POLICY || existingConfig.channels?.slack?.dmPolicy || 'pairing',
-      allowedUsers: process.env.SLACK_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.slack?.allowedUsers,
+      allowedUsers: parseOptionalCsvList(process.env.SLACK_ALLOWED_USERS)
+        ?? existingConfig.channels?.slack?.allowedUsers,
       groupDebounceSec: parseOptionalInt(process.env.SLACK_GROUP_DEBOUNCE_SEC)
         ?? existingConfig.channels?.slack?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.SLACK_GROUP_POLL_INTERVAL_MIN)
@@ -65,7 +76,8 @@ function readConfigFromEnv(existingConfig: any): any {
       enabled: !!process.env.DISCORD_BOT_TOKEN,
       botToken: process.env.DISCORD_BOT_TOKEN || existingConfig.channels?.discord?.token,
       dmPolicy: process.env.DISCORD_DM_POLICY || existingConfig.channels?.discord?.dmPolicy || 'pairing',
-      allowedUsers: process.env.DISCORD_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.discord?.allowedUsers,
+      allowedUsers: parseOptionalCsvList(process.env.DISCORD_ALLOWED_USERS)
+        ?? existingConfig.channels?.discord?.allowedUsers,
       groupDebounceSec: parseOptionalInt(process.env.DISCORD_GROUP_DEBOUNCE_SEC)
         ?? existingConfig.channels?.discord?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.DISCORD_GROUP_POLL_INTERVAL_MIN)
@@ -77,10 +89,13 @@ function readConfigFromEnv(existingConfig: any): any {
     },
     
     whatsapp: {
-      enabled: process.env.WHATSAPP_ENABLED === 'true' || !!existingConfig.channels?.whatsapp?.enabled,
-      selfChat: process.env.WHATSAPP_SELF_CHAT_MODE !== 'false' && (existingConfig.channels?.whatsapp?.selfChat !== false),
+      enabled: parseOptionalBoolean(process.env.WHATSAPP_ENABLED)
+        ?? !!existingConfig.channels?.whatsapp?.enabled,
+      selfChat: parseOptionalBoolean(process.env.WHATSAPP_SELF_CHAT_MODE)
+        ?? (existingConfig.channels?.whatsapp?.selfChat ?? true),
       dmPolicy: process.env.WHATSAPP_DM_POLICY || existingConfig.channels?.whatsapp?.dmPolicy || 'pairing',
-      allowedUsers: process.env.WHATSAPP_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.whatsapp?.allowedUsers,
+      allowedUsers: parseOptionalCsvList(process.env.WHATSAPP_ALLOWED_USERS)
+        ?? existingConfig.channels?.whatsapp?.allowedUsers,
       groupDebounceSec: parseOptionalInt(process.env.WHATSAPP_GROUP_DEBOUNCE_SEC)
         ?? existingConfig.channels?.whatsapp?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.WHATSAPP_GROUP_POLL_INTERVAL_MIN)
@@ -94,9 +109,11 @@ function readConfigFromEnv(existingConfig: any): any {
     signal: {
       enabled: !!process.env.SIGNAL_PHONE_NUMBER,
       phoneNumber: process.env.SIGNAL_PHONE_NUMBER || existingConfig.channels?.signal?.phoneNumber,
-      selfChat: process.env.SIGNAL_SELF_CHAT_MODE !== 'false' && (existingConfig.channels?.signal?.selfChat !== false),
+      selfChat: parseOptionalBoolean(process.env.SIGNAL_SELF_CHAT_MODE)
+        ?? (existingConfig.channels?.signal?.selfChat ?? true),
       dmPolicy: process.env.SIGNAL_DM_POLICY || existingConfig.channels?.signal?.dmPolicy || 'pairing',
-      allowedUsers: process.env.SIGNAL_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.signal?.allowedUsers,
+      allowedUsers: parseOptionalCsvList(process.env.SIGNAL_ALLOWED_USERS)
+        ?? existingConfig.channels?.signal?.allowedUsers,
       groupDebounceSec: parseOptionalInt(process.env.SIGNAL_GROUP_DEBOUNCE_SEC)
         ?? existingConfig.channels?.signal?.groupDebounceSec,
       groupPollIntervalMin: parseOptionalInt(process.env.SIGNAL_GROUP_POLL_INTERVAL_MIN)
@@ -997,7 +1014,7 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
         if (provider.id === 'openai') {
           const enableTranscription = await p.confirm({
             message: 'Enable voice message transcription with this OpenAI key? (uses Whisper)',
-            initialValue: true,
+            initialValue: false,
           });
           if (!p.isCancel(enableTranscription) && enableTranscription) {
             config.transcription.enabled = true;
@@ -1191,7 +1208,7 @@ async function stepTranscription(config: OnboardConfig, forcePrompt?: boolean): 
 
   const setupTranscription = await p.confirm({
     message: 'Enable voice message transcription?',
-    initialValue: config.transcription.enabled,
+    initialValue: false,
   });
   if (p.isCancel(setupTranscription)) { p.cancel('Setup cancelled'); process.exit(0); }
   config.transcription.enabled = setupTranscription;

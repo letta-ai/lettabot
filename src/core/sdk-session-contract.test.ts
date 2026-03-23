@@ -7,8 +7,7 @@ vi.mock('@letta-ai/letta-code-sdk', () => ({
   createAgent: vi.fn(),
   createSession: vi.fn(),
   resumeSession: vi.fn(),
-  imageFromFile: vi.fn(),
-  imageFromURL: vi.fn(),
+  imageFromBase64: vi.fn((_data: string, _type: string) => ({ type: 'image', source: { type: 'base64', media_type: _type, data: _data } })),
 }));
 
 vi.mock('../tools/letta-api.js', () => ({
@@ -110,6 +109,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -133,6 +133,37 @@ describe('SDK session contract', () => {
     expect(mockSession.stream).toHaveBeenCalledTimes(2);
   });
 
+  it('does not include reasoning chunks in sendToAgent responses', async () => {
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'reasoning', content: 'internal-thought-1' };
+          yield { type: 'assistant', content: 'public-response' };
+          yield { type: 'reasoning', content: 'internal-thought-2' };
+          yield { type: 'assistant', content: ' continues' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    const response = await bot.sendToAgent('test message');
+
+    expect(response).toBe('public-response continues');
+  });
+
   it('accumulates tool_call arguments when continuation chunks omit toolCallId', async () => {
     const mockSession = {
       initialize: vi.fn(async () => undefined),
@@ -146,6 +177,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -181,6 +213,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -211,6 +244,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-stale',
     };
@@ -225,6 +259,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-recreated',
       conversationId: 'conv-recreated',
     };
@@ -263,6 +298,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-keep',
     };
@@ -301,6 +337,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test-1',
     };
@@ -316,6 +353,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test-2',
     };
@@ -348,6 +386,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-old',
     };
@@ -362,6 +401,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-new',
     };
@@ -423,6 +463,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'default',
     };
@@ -438,6 +479,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'default',
     };
@@ -465,6 +507,69 @@ describe('SDK session contract', () => {
     expect(initialSession.close).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps shared conversation during proactive recovery when details include invalid tool call IDs', async () => {
+    const initialSession = {
+      initialize: vi.fn(async () => undefined),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: true, conversationId: 'conv-stuck' })),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-stuck',
+    };
+
+    const recoveredSession = {
+      initialize: vi.fn(async () => undefined),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: false, conversationId: 'conv-fresh' })),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'proactive recovered' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-fresh',
+    };
+
+    vi.mocked(recoverOrphanedConversationApproval).mockResolvedValueOnce({
+      recovered: true,
+      details: "Denied 1 approval(s) from failed run run-ok; Failed to deny 1 approval(s) from run run-stuck: Invalid tool call IDs. Expected '['call_a']', but received '['call_b']'",
+    });
+
+    vi.mocked(resumeSession)
+      .mockReturnValueOnce(initialSession as never)
+      .mockReturnValueOnce(recoveredSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+    bot.setAgentId('agent-contract-test');
+    const botInternal = bot as unknown as { store: { conversationId: string | null } };
+    botInternal.store.conversationId = 'conv-stuck';
+
+    const response = await bot.sendToAgent('hello');
+
+    expect(response).toBe('proactive recovered');
+    expect(recoverOrphanedConversationApproval).toHaveBeenCalledWith(
+      'agent-contract-test',
+      'conv-stuck',
+      true
+    );
+    expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(resumeSession).mock.calls[0][0]).toBe('conv-stuck');
+    expect(vi.mocked(resumeSession).mock.calls[1][0]).toBe('conv-stuck');
+    expect(initialSession.close).toHaveBeenCalledTimes(1);
+  });
+
   it('passes memfs: true to resumeSession when config sets memfs true', async () => {
     const mockSession = {
       initialize: vi.fn(async () => undefined),
@@ -476,6 +581,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -505,6 +611,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -534,6 +641,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -563,6 +671,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -601,6 +710,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -663,6 +773,7 @@ describe('SDK session contract', () => {
           })()
         ),
         close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
         agentId: 'agent-contract-test',
         conversationId: `${sessionName}-conversation`,
       } as never;
@@ -771,6 +882,66 @@ describe('SDK session contract', () => {
     expect(processSpy).toHaveBeenCalledWith('slack');
   });
 
+  it('preempts an in-flight heartbeat when a user message arrives on the same key', async () => {
+    const streamStarted = deferred<void>();
+    const releaseStream = deferred<void>();
+    let aborted = false;
+
+    const mockSession = {
+      initialize: vi.fn(async () => undefined),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          streamStarted.resolve();
+          await releaseStream.promise;
+          if (aborted) {
+            throw new Error('aborted');
+          }
+          yield { type: 'assistant', content: 'heartbeat reply' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      abort: vi.fn(async () => {
+        aborted = true;
+        releaseStream.resolve();
+      }),
+      close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
+      agentId: 'agent-contract-test',
+      conversationId: 'conversation-contract-test',
+    };
+
+    vi.mocked(resumeSession).mockReturnValue(mockSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+      interruptHeartbeatOnUserMessage: true,
+    });
+    const botInternal = bot as any;
+    const processQueueSpy = vi.spyOn(botInternal, 'processQueue').mockResolvedValue(undefined);
+
+    const heartbeatPromise = bot.sendToAgent('heartbeat');
+    await streamStarted.promise;
+
+    await botInternal.handleMessage({
+      userId: 'u1',
+      channel: 'telegram',
+      chatId: 'c1',
+      text: 'hi during heartbeat',
+      timestamp: new Date(),
+      isGroup: false,
+    }, {} as any);
+
+    const response = await heartbeatPromise;
+    await Promise.resolve();
+
+    expect(response).toBe('');
+    expect(mockSession.abort).toHaveBeenCalledTimes(1);
+    expect(botInternal.processing).toBe(false);
+    expect(processQueueSpy).toHaveBeenCalled();
+  });
+
   it('LRU eviction in per-chat mode does not close active keys', async () => {
     const createdSession = {
       initialize: vi.fn(async () => undefined),
@@ -781,6 +952,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-new',
     };
@@ -788,9 +960,11 @@ describe('SDK session contract', () => {
 
     const activeSession = {
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
     };
     const idleSession = {
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
     };
 
     const bot = new LettaBot({
@@ -829,6 +1003,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -855,6 +1030,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-123',
     };
@@ -887,6 +1063,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conversation-contract-test',
     };
@@ -921,6 +1098,7 @@ describe('SDK session contract', () => {
         })();
       }),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-contract-test',
       conversationId: 'conv-approval',
     };
@@ -951,7 +1129,7 @@ describe('SDK session contract', () => {
 
     let runCall = 0;
     (bot as any).sessionManager.runSession = vi.fn(async () => ({
-      session: { abort: vi.fn(async () => undefined) },
+      session: { abort: vi.fn(async () => undefined), recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })) },
       stream: async function* () {
         if (runCall++ === 0) {
           yield { type: 'result', success: false, error: 'error', conversationId: 'conv-approval' };
@@ -1009,6 +1187,81 @@ describe('SDK session contract', () => {
     expect(sentTexts).toContain('after retry');
   });
 
+  it('filters pre-foreground errors so they do not trigger false approval recovery', async () => {
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+
+    let runCall = 0;
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
+      session: { abort: vi.fn(async () => undefined), recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })) },
+      stream: async function* () {
+        if (runCall++ === 0) {
+          // Pre-foreground error is filtered by the pipeline -- it never
+          // reaches processMessage, so lastErrorDetail stays null and
+          // isApprovalConflict cannot fire.
+          yield {
+            type: 'error',
+            runId: 'run-bg',
+            message: 'CONFLICT: Cannot send a new message: waiting for approval',
+            stopReason: 'error',
+          };
+          yield { type: 'result', success: false, error: 'error', conversationId: 'conv-approval', runIds: ['run-main'] };
+          return;
+        }
+        // Retry succeeds
+        yield { type: 'assistant', content: 'after retry' };
+        yield { type: 'result', success: true, result: 'after retry', conversationId: 'conv-approval', runIds: ['run-main-2'] };
+      },
+    }));
+
+    vi.mocked(recoverOrphanedConversationApproval).mockResolvedValueOnce({
+      recovered: false,
+      details: 'No unresolved approval requests found',
+    });
+
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_payload: unknown) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    const msg = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    // The pre-foreground error is filtered, so lastErrorDetail is null.
+    // The result (success=false, nothing delivered) triggers shouldRetryForErrorResult,
+    // NOT isApprovalConflict. The retry goes through the error-result path with
+    // orphaned approval recovery, then retries and succeeds.
+    expect((bot as any).sessionManager.runSession).toHaveBeenCalledTimes(2);
+    // Approval recovery should have been attempted via the error-result path
+    expect(recoverOrphanedConversationApproval).toHaveBeenCalledWith(
+      'agent-contract-test',
+      'conv-approval',
+    );
+    const sentTexts = adapter.sendMessage.mock.calls.map((call) => {
+      const payload = call[0] as { text?: string };
+      return payload.text;
+    });
+    expect(sentTexts).toContain('after retry');
+  });
+
   it('uses agent-level recovery for default conversation alias on terminal approval conflict', async () => {
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
@@ -1017,7 +1270,7 @@ describe('SDK session contract', () => {
 
     let runCall = 0;
     (bot as any).sessionManager.runSession = vi.fn(async () => ({
-      session: { abort: vi.fn(async () => undefined) },
+      session: { abort: vi.fn(async () => undefined), recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })) },
       stream: async function* () {
         if (runCall++ === 0) {
           yield { type: 'result', success: false, error: 'error', conversationId: 'default' };
@@ -1072,6 +1325,71 @@ describe('SDK session contract', () => {
     expect(sentTexts).toContain('after default recovery');
   });
 
+  it('keeps shared conversation during reactive conflict recovery when details include invalid tool call IDs', async () => {
+    const conflictError = new Error(
+      'CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.'
+    );
+
+    const stuckSession = {
+      initialize: vi.fn(async () => undefined),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: false, conversationId: 'conv-stuck' })),
+      send: vi.fn(async () => {
+        throw conflictError;
+      }),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-stuck',
+    };
+
+    const recoveredSession = {
+      initialize: vi.fn(async () => undefined),
+      bootstrapState: vi.fn(async () => ({ hasPendingApproval: false, conversationId: 'conv-fresh' })),
+      send: vi.fn(async (_message: unknown) => undefined),
+      stream: vi.fn(() =>
+        (async function* () {
+          yield { type: 'assistant', content: 'reactive recovered' };
+          yield { type: 'result', success: true };
+        })()
+      ),
+      close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
+      agentId: 'agent-contract-test',
+      conversationId: 'conv-fresh',
+    };
+
+    vi.mocked(recoverOrphanedConversationApproval).mockResolvedValueOnce({
+      recovered: true,
+      details: "Denied 1 approval(s) from failed run run-ok; Failed to deny 1 approval(s) from run run-stuck: Invalid tool call IDs. Expected '['call_a']', but received '['call_b']'",
+    });
+
+    vi.mocked(resumeSession)
+      .mockReturnValueOnce(stuckSession as never)
+      .mockReturnValueOnce(recoveredSession as never);
+
+    const bot = new LettaBot({
+      workingDir: join(dataDir, 'working'),
+      allowedTools: [],
+    });
+    bot.setAgentId('agent-contract-test');
+    const botInternal = bot as unknown as { store: { conversationId: string | null } };
+    botInternal.store.conversationId = 'conv-stuck';
+
+    const response = await bot.sendToAgent('hello');
+
+    expect(response).toBe('reactive recovered');
+    expect(recoverOrphanedConversationApproval).toHaveBeenCalledWith('agent-contract-test', 'conv-stuck');
+    expect(vi.mocked(resumeSession)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(resumeSession).mock.calls[0][0]).toBe('conv-stuck');
+    expect(vi.mocked(resumeSession).mock.calls[1][0]).toBe('conv-stuck');
+    expect(stuckSession.close).toHaveBeenCalledTimes(1);
+  });
+
   it('passes tags: [origin:lettabot] to createAgent when creating a new agent', async () => {
     delete process.env.LETTA_AGENT_ID;
 
@@ -1087,6 +1405,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-new-tagged',
       conversationId: 'conversation-new-tagged',
     };
@@ -1142,6 +1461,7 @@ describe('SDK session contract', () => {
         })();
       }),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-runid-test',
       conversationId: 'conversation-runid-test',
     };
@@ -1180,6 +1500,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-reuse-false',
       conversationId: 'conversation-reuse-false',
     };
@@ -1213,6 +1534,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-background-directives',
       conversationId: 'conversation-background-directives',
     };
@@ -1299,6 +1621,7 @@ describe('SDK session contract', () => {
         })()
       ),
       close: vi.fn(() => undefined),
+      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
       agentId: 'agent-queue-leak-test',
       conversationId: 'conversation-queue-leak-test',
     };

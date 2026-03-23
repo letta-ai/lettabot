@@ -4,13 +4,14 @@
  * Single agent, single conversation - chat continues across all channels.
  */
 
-import { imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
+import { imageFromBase64, type ImageContent, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
 import { mkdirSync, existsSync } from 'node:fs';
-import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
+import { readFile, access, unlink, realpath, stat, constants } from 'node:fs/promises';
+import sharp from 'sharp';
 import { execFile } from 'node:child_process';
 import { extname, resolve, join } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
-import type { BotConfig, InboundMessage, TriggerContext, StreamMsg } from './types.js';
+import type { BotConfig, InboundMessage, TriggerContext, TriggerType, StreamMsg } from './types.js';
 import { formatApiErrorForUser } from './errors.js';
 import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
@@ -19,10 +20,19 @@ import { getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, re
 import { getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
+import { recoverPendingApprovalsWithSdk } from './session-sdk-compat.js';
 import { redactOutbound } from './redact.js';
-import { parseDirectives, stripActionsBlock, type Directive } from './directives.js';
+import {
+  hasIncompleteActionsTag,
+  hasUnclosedActionsBlock,
+  parseDirectives,
+  stripActionsBlock,
+  type Directive,
+} from './directives.js';
 import { resolveEmoji } from './emoji.js';
 import { SessionManager } from './session-manager.js';
+import { createDisplayPipeline, type DisplayEvent, type CompleteEvent, type ErrorEvent } from './display-pipeline.js';
+import { TurnLogger, TurnAccumulator, generateTurnId, type TurnRecord } from './turn-logger.js';
 
 
 import { createLogger } from '../logger.js';
@@ -39,6 +49,68 @@ const IMAGE_FILE_EXTENSIONS = new Set([
 const AUDIO_FILE_EXTENSIONS = new Set([
   '.ogg', '.opus', '.mp3', '.m4a', '.wav', '.aac', '.flac',
 ]);
+
+/** Anthropic recommends max 1568px on longest side; larger images waste bandwidth for no benefit. */
+const MAX_IMAGE_DIMENSION = 1568;
+
+const MIME_FROM_EXT: Record<string, ImageContent['source']['media_type']> = {
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+};
+
+/**
+ * Read, resize (if needed), and base64-encode an image for the LLM.
+ * Returns null on any failure so the caller can skip gracefully.
+ */
+async function prepareImage(
+  source: { localPath?: string; url?: string; mimeType?: string; name?: string },
+): Promise<ImageContent | null> {
+  let buffer: Buffer;
+  let mediaType: ImageContent['source']['media_type'];
+
+  // Resolve media type from attachment metadata or file extension
+  const resolveMime = (hint?: string, path?: string): ImageContent['source']['media_type'] => {
+    if (hint && SUPPORTED_IMAGE_MIMES.has(hint)) return hint as ImageContent['source']['media_type'];
+    if (path) {
+      const ext = extname(path).toLowerCase();
+      if (MIME_FROM_EXT[ext]) return MIME_FROM_EXT[ext];
+    }
+    return 'image/jpeg'; // safe default
+  };
+
+  if (source.localPath) {
+    buffer = await readFile(source.localPath);
+    mediaType = resolveMime(source.mimeType, source.localPath);
+  } else if (source.url) {
+    const response = await fetch(source.url);
+    if (!response.ok) {
+      log.warn(`Failed to fetch image from ${source.url}: HTTP ${response.status}`);
+      return null;
+    }
+    buffer = Buffer.from(await response.arrayBuffer());
+    const ct = response.headers.get('content-type') ?? undefined;
+    mediaType = resolveMime(ct ?? source.mimeType, source.url);
+  } else {
+    return null;
+  }
+
+  // Resize if the longest side exceeds the threshold
+  const metadata = await sharp(buffer).metadata();
+  const longest = Math.max(metadata.width ?? 0, metadata.height ?? 0);
+
+  if (longest > MAX_IMAGE_DIMENSION) {
+    log.info(`Resizing image ${source.name || 'unknown'} from ${metadata.width}x${metadata.height} (max side → ${MAX_IMAGE_DIMENSION}px)`);
+    buffer = await sharp(buffer)
+      .resize({ width: MAX_IMAGE_DIMENSION, height: MAX_IMAGE_DIMENSION, fit: 'inside', withoutEnlargement: true })
+      .toBuffer();
+  }
+
+  const data = buffer.toString('base64');
+  return imageFromBase64(data, mediaType);
+}
 
 type StreamErrorDetail = {
   message: string;
@@ -116,11 +188,8 @@ async function buildMultimodalMessage(
 
   for (const attachment of imageAttachments) {
     try {
-      if (attachment.localPath) {
-        content.push(imageFromFile(attachment.localPath));
-      } else if (attachment.url) {
-        content.push(await imageFromURL(attachment.url));
-      }
+      const item = await prepareImage(attachment);
+      if (item) content.push(item);
     } catch (err) {
       log.warn(`Failed to load image ${attachment.name || 'unknown'}: ${err instanceof Error ? err.message : err}`);
     }
@@ -219,6 +288,8 @@ export class LettaBot implements AgentSession {
   private processing = false; // Global lock for shared mode
   private processingKeys: Set<string> = new Set(); // Per-key locks for per-channel mode
   private cancelledKeys: Set<string> = new Set(); // Tracks keys where /cancel was issued
+  private backgroundCancelledKeys: Set<string> = new Set(); // Tracks background runs cancelled by live user activity
+  private activeBackgroundTriggerByKey: Map<string, string> = new Map();
   private sendSequence = 0; // Monotonic counter for desync diagnostics
   // Forward-looking: stale-result detection via runIds becomes active once the
   // SDK surfaces non-empty result run_ids. Until then, this map mostly stays
@@ -232,11 +303,15 @@ export class LettaBot implements AgentSession {
 
   private conversationOverrides: Set<string> = new Set();
   private readonly sessionManager: SessionManager;
+  private readonly turnLogger: TurnLogger | null;
 
   constructor(config: BotConfig) {
     this.config = config;
     mkdirSync(config.workingDir, { recursive: true });
     this.store = new Store('lettabot-agent.json', config.agentName);
+    this.turnLogger = config.logging?.turnLogFile
+      ? new TurnLogger(config.logging.turnLogFile, config.logging.maxTurns)
+      : null;
     if (config.reuseSession === false) {
       log.warn('Session reuse disabled (conversations.reuseSession=false): each foreground/background message uses a fresh SDK subprocess (~5s overhead per turn).');
     }
@@ -671,12 +746,27 @@ export class LettaBot implements AgentSession {
     switch (command) {
       case 'status': {
         const info = this.store.getInfo();
+        const memfsState = this.config.memfs === true
+          ? 'on'
+          : this.config.memfs === false
+            ? 'off'
+            : 'unknown';
+        const serverUrl = info.baseUrl || process.env.LETTA_BASE_URL || 'https://api.letta.com';
+        const conversationId = info.conversationId || '(none)';
+        const conversationKeys = info.conversations
+          ? Object.keys(info.conversations).sort()
+          : [];
+        const channels = Array.from(this.channels.keys());
         const lines = [
           `*Status*`,
           `Agent ID: \`${info.agentId || '(none)'}\``,
+          `Conversation ID: \`${conversationId}\``,
+          `Conversation keys: ${conversationKeys.length > 0 ? conversationKeys.join(', ') : '(none)'}`,
+          `Memfs: ${memfsState}`,
+          `Server: ${serverUrl}`,
           `Created: ${info.createdAt || 'N/A'}`,
           `Last used: ${info.lastUsedAt || 'N/A'}`,
-          `Channels: ${Array.from(this.channels.keys()).join(', ')}`,
+          `Channels: ${channels.length > 0 ? channels.join(', ') : '(none)'}`,
         ];
         return lines.join('\n');
       }
@@ -735,12 +825,18 @@ export class LettaBot implements AgentSession {
         // Signal the stream loop to break
         this.cancelledKeys.add(convKey);
 
-        // Abort client-side stream
+        // Abort client-side stream and kill the session subprocess.
+        // abort() sends an interrupt control_request, but the CLI may not
+        // handle it if blocked on a long-running tool (e.g., Task subagent).
+        // invalidateSession() calls session.close() which kills the subprocess,
+        // closes the transport pump, and resolves all stream waiters with null
+        // -- guaranteeing the for-await loop in processMessage breaks.
         const session = this.sessionManager.getSession(convKey);
         if (session) {
           session.abort().catch(() => {});
           log.info(`/cancel - aborted session stream (key=${convKey})`);
         }
+        this.sessionManager.invalidateSession(convKey);
 
         // Cancel server-side run (conversation-scoped)
         const convId = convKey === 'shared'
@@ -855,11 +951,19 @@ export class LettaBot implements AgentSession {
       log.info(`Found ${pendingApprovals.length} pending approval(s), attempting recovery (attempt ${attempts + 1}/${maxAttempts})...`);
       this.store.incrementRecoveryAttempts();
       
+      // Group approvals by run_id and batch-deny (server requires all parallel
+      // tool calls from the same run to be denied in a single request).
+      const byRun = new Map<string, Array<{ toolCallId: string; reason: string }>>();
       for (const approval of pendingApprovals) {
-        log.info(`Rejecting approval for ${approval.toolName} (${approval.toolCallId})`);
+        const key = approval.runId || 'unknown';
+        if (!byRun.has(key)) byRun.set(key, []);
+        byRun.get(key)!.push({ toolCallId: approval.toolCallId, reason: 'Session was interrupted - retrying request' });
+      }
+      for (const [runId, batch] of byRun) {
+        log.info(`Batch-denying ${batch.length} approval(s) from run ${runId}`);
         await rejectApproval(
           this.store.agentId,
-          { toolCallId: approval.toolCallId, reason: 'Session was interrupted - retrying request' },
+          batch,
           this.store.conversationId || undefined
         );
       }
@@ -883,6 +987,23 @@ export class LettaBot implements AgentSession {
   // =========================================================================
   // Message queue
   // =========================================================================
+
+  private maybePreemptHeartbeatForUserMessage(convKey: string): void {
+    if (this.config.interruptHeartbeatOnUserMessage === false) {
+      return;
+    }
+
+    if (this.activeBackgroundTriggerByKey.get(convKey) !== 'heartbeat') {
+      return;
+    }
+
+    this.backgroundCancelledKeys.add(convKey);
+    const session = this.sessionManager.getSession(convKey);
+    if (session) {
+      session.abort().catch(() => {});
+    }
+    log.info(`Preempted in-flight heartbeat due to user message (key=${convKey})`);
+  }
   
   private async handleMessage(msg: InboundMessage, adapter: ChannelAdapter): Promise<void> {
     // AskUserQuestion support: if the agent is waiting for a user answer,
@@ -898,6 +1019,8 @@ export class LettaBot implements AgentSession {
       this.pendingQuestionResolvers.delete(incomingConvKey);
       return;
     }
+
+    this.maybePreemptHeartbeatForUserMessage(incomingConvKey);
 
     log.info(`Message from ${msg.userId} on ${msg.channel}: ${msg.text}`);
 
@@ -1156,7 +1279,7 @@ export class LettaBot implements AgentSession {
   private async processMessage(msg: InboundMessage, adapter: ChannelAdapter, retried = false): Promise<void> {
     // Track timing and last target
     const debugTiming = !!process.env.LETTABOT_DEBUG_TIMING;
-    const t0 = debugTiming ? performance.now() : 0;
+    const t0 = performance.now();
     const lap = (label: string) => {
       log.debug(`${label}: ${(performance.now() - t0).toFixed(0)}ms`);
     };
@@ -1181,38 +1304,40 @@ export class LettaBot implements AgentSession {
       lap('session send');
       session = run.session;
 
-      // Stream response with delivery
+      // Stream response with delivery via DisplayPipeline
       let response = '';
-      let lastUpdate = 0; // Start at 0 so the first streaming edit fires immediately
-      let rateLimitedUntil = 0; // Timestamp until which we should avoid API calls (429 backoff)
+      let lastUpdate = 0;
+      let rateLimitedUntil = 0;
       let messageId: string | null = null;
-      let lastMsgType: string | null = null;
       let lastAssistantUuid: string | null = null;
       let sentAnyMessage = false;
       let receivedAnyData = false;
       let sawNonAssistantSinceLastUuid = false;
       let lastErrorDetail: StreamErrorDetail | null = null;
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
-      let reasoningBuffer = '';
-      let expectedForegroundRunId: string | null = null;
-      let expectedForegroundRunSource: 'assistant' | 'result' | null = null;
-      let sawCompetingRunEvent = false;
       let sawForegroundResult = false;
-      let filteredRunEventCount = 0;
-      let ignoredNonForegroundResultCount = 0;
-      let bufferedDisplayFlushed = false;
-      let bufferedDisplayFlushCount = 0;
-      let bufferedDisplayDropCount = 0;
-      const bufferedDisplayEvents: Array<
-        | { kind: 'reasoning'; runId: string; content: string }
-        | { kind: 'tool_call'; runId: string; msg: StreamMsg }
-      > = [];
       const msgTypeCounts: Record<string, number> = {};
+      const bashCommandByToolCallId = new Map<string, string>();
+      let lastBashCommand = '';
+      let repeatedBashFailureKey: string | null = null;
+      let repeatedBashFailureCount = 0;
+      const maxRepeatedBashFailures = 3;
+      let lastEventType: string | null = null;
+      let abortedWithMessage = false;
+      let turnError: string | undefined;
 
       const parseAndHandleDirectives = async () => {
         if (!response.trim()) return;
         const { cleanText, directives } = parseDirectives(response);
         response = cleanText;
+
+        // Auto-voice: if enabled and no explicit <voice> directive, inject one
+        if (this.config.autoVoice &&
+            cleanText.trim() &&
+            !directives.some(d => d.type === 'voice')) {
+          directives.push({ type: 'voice', text: cleanText.trim() });
+        }
+
         if (directives.length === 0) return;
 
         if (suppressDelivery) {
@@ -1225,77 +1350,9 @@ export class LettaBot implements AgentSession {
         }
       };
 
-      const sendReasoningDisplay = async (content: string) => {
-        if (!this.config.display?.showReasoning || suppressDelivery || !content.trim()) return;
-        try {
-          const reasoning = formatReasoningDisplay(content, adapter.id, this.config.display?.reasoningMaxChars);
-          await adapter.sendMessage({
-            chatId: msg.chatId,
-            text: reasoning.text,
-            threadId: msg.threadId,
-            parseMode: reasoning.parseMode,
-          });
-          // Note: display messages don't set sentAnyMessage -- they're informational,
-          // not a substitute for an assistant response.
-        } catch (err) {
-          log.warn('Failed to send reasoning display:', err instanceof Error ? err.message : err);
-        }
-      };
-
-      const sendToolCallDisplay = async (toolMsg: StreamMsg) => {
-        if (!this.config.display?.showToolCalls || suppressDelivery) return;
-        try {
-          const text = formatToolCallDisplay(toolMsg);
-          await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
-        } catch (err) {
-          log.warn('Failed to send tool call display:', err instanceof Error ? err.message : err);
-        }
-      };
-
-      const bufferRunScopedDisplayEvent = (runId: string, streamMsg: StreamMsg) => {
-        if (streamMsg.type === 'reasoning') {
-          if (!this.config.display?.showReasoning) return;
-          const chunk = typeof streamMsg.content === 'string' ? streamMsg.content : '';
-          if (!chunk) return;
-          const lastEvent = bufferedDisplayEvents[bufferedDisplayEvents.length - 1];
-          if (lastEvent && lastEvent.kind === 'reasoning' && lastEvent.runId === runId) {
-            lastEvent.content += chunk;
-          } else {
-            bufferedDisplayEvents.push({ kind: 'reasoning', runId, content: chunk });
-          }
-          return;
-        }
-
-        if (streamMsg.type === 'tool_call') {
-          if (!this.config.display?.showToolCalls) return;
-          bufferedDisplayEvents.push({ kind: 'tool_call', runId, msg: streamMsg });
-        }
-      };
-
-      const flushBufferedDisplayEventsForRun = async (runId: string) => {
-        for (const event of bufferedDisplayEvents) {
-          if (event.runId !== runId) {
-            bufferedDisplayDropCount += 1;
-            continue;
-          }
-          if (event.kind === 'reasoning') {
-            await sendReasoningDisplay(event.content);
-            bufferedDisplayFlushCount += 1;
-            continue;
-          }
-
-          this.sessionManager.syncTodoToolCall(event.msg);
-          await sendToolCallDisplay(event.msg);
-          bufferedDisplayFlushCount += 1;
-        }
-        bufferedDisplayEvents.length = 0;
-      };
-      
       const finalizeMessage = async () => {
-        // Parse and execute XML directives before sending
         await parseAndHandleDirectives();
 
-        // Check for no-reply AFTER directive parsing
         if (response.trim() === '<no-reply/>') {
           log.info('Agent chose not to reply (no-reply marker)');
           sentAnyMessage = true;
@@ -1306,7 +1363,6 @@ export class LettaBot implements AgentSession {
         }
 
         if (!suppressDelivery && response.trim()) {
-          // Wait out any active rate limit before sending
           const rlRemaining = rateLimitedUntil - Date.now();
           if (rlRemaining > 0) {
             const waitMs = Math.min(rlRemaining, 30_000);
@@ -1323,7 +1379,6 @@ export class LettaBot implements AgentSession {
             sentAnyMessage = true;
           } catch (finalizeErr) {
             if (messageId) {
-              // Edit failed but original message was already visible
               sentAnyMessage = true;
             } else {
               log.warn('finalizeMessage send failed:', finalizeErr instanceof Error ? finalizeErr.message : finalizeErr);
@@ -1334,446 +1389,406 @@ export class LettaBot implements AgentSession {
         messageId = null;
         lastUpdate = Date.now();
       };
-      
+
       const typingInterval = setInterval(() => {
         adapter.sendTypingIndicator(msg.chatId).catch(() => {});
       }, 4000);
-      
+
+      const turnId = this.turnLogger ? generateTurnId() : '';
+      const turnAcc = this.turnLogger ? new TurnAccumulator() : null;
+      let turnWritten = false;
+
       try {
         let firstChunkLogged = false;
-        let streamedAssistantText = '';
-        for await (const streamMsg of run.stream()) {
-          // Check for /cancel before processing each chunk
+        const pipeline = createDisplayPipeline(run.stream(), {
+          convKey,
+          resultFingerprints: this.lastResultRunFingerprints,
+        });
+
+        for await (const event of pipeline) {
+          turnAcc?.feed(event);
+          // Check for /cancel before processing each event
           if (this.cancelledKeys.has(convKey)) {
             log.info(`Stream cancelled by /cancel (key=${convKey})`);
             break;
           }
           if (!firstChunkLogged) { lap('first stream chunk'); firstChunkLogged = true; }
-          const eventRunIds = this.normalizeStreamRunIds(streamMsg);
-          if (expectedForegroundRunId === null && eventRunIds.length > 0) {
-            if (streamMsg.type === 'assistant' || streamMsg.type === 'result') {
-              expectedForegroundRunId = eventRunIds[0];
-              expectedForegroundRunSource = streamMsg.type === 'assistant' ? 'assistant' : 'result';
-              log.info(`Selected foreground run for stream delivery (seq=${seq}, key=${convKey}, runId=${expectedForegroundRunId}, source=${streamMsg.type})`);
-              if (!bufferedDisplayFlushed && bufferedDisplayEvents.length > 0) {
-                await flushBufferedDisplayEventsForRun(expectedForegroundRunId);
-                bufferedDisplayFlushed = true;
-              }
-            } else {
-              // Do not lock to a run based on pre-assistant non-terminal events;
-              // these can belong to a concurrent background run.
-              const runId = eventRunIds[0];
-              if (runId && (streamMsg.type === 'reasoning' || streamMsg.type === 'tool_call')) {
-                bufferRunScopedDisplayEvent(runId, streamMsg);
-                filteredRunEventCount++;
-                log.trace(`Buffering run-scoped pre-foreground display event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runId=${runId})`);
-                continue;
-              }
-              filteredRunEventCount++;
-              log.trace(`Deferring run-scoped pre-foreground event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')})`);
-              continue;
-            }
-          } else if (expectedForegroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(expectedForegroundRunId)) {
-            // After a tool call the Letta server may assign a new run ID for
-            // the continuation. Rebind on assistant events -- background Task
-            // agents run in separate sessions and don't produce assistant
-            // events in the foreground stream. Other event types (reasoning,
-            // tool_call, result) from different runs are still filtered to
-            // prevent background Task output leaking into user display (#482).
-            if (streamMsg.type === 'assistant') {
-              const newRunId = eventRunIds[0];
-              log.info(`Rebinding foreground run: ${expectedForegroundRunId} -> ${newRunId} (seq=${seq}, key=${convKey}, type=${streamMsg.type})`);
-              expectedForegroundRunId = newRunId;
-              expectedForegroundRunSource = 'assistant';
-              // Flush any buffered display events for the new run.
-              if (bufferedDisplayEvents.length > 0) {
-                await flushBufferedDisplayEventsForRun(newRunId);
-              }
-              // Fall through to normal processing
-            } else {
-              sawCompetingRunEvent = true;
-              filteredRunEventCount++;
-              if (streamMsg.type === 'result') {
-                ignoredNonForegroundResultCount++;
-                log.warn(`Ignoring non-foreground result event (seq=${seq}, key=${convKey}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
-              } else {
-                log.trace(`Skipping non-foreground stream event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
-              }
-              continue;
-            }
-          }
-
           receivedAnyData = true;
-          msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
-          
-          log.trace(`type=${streamMsg.type} ${JSON.stringify(streamMsg).slice(0, 300)}`);
-          
-          // stream_event is a low-level streaming primitive (partial deltas), not a
-          // semantic type change. Skip it for type-transition logic so it doesn't
-          // prematurely flush reasoning buffers or finalize assistant messages.
-          const isSemanticType = streamMsg.type !== 'stream_event';
+          msgTypeCounts[event.type] = (msgTypeCounts[event.type] || 0) + 1;
 
-          // Finalize on type change (avoid double-handling when result provides full response).
-          // Don't flush assistant text when transitioning to tool_call or tool_result --
-          // mid-turn assistant content (e.g. model scratch notes between tool calls)
-          // would leak to the user. Let it accumulate and deliver after the turn ends.
-          const isToolTransition = streamMsg.type === 'tool_call' || streamMsg.type === 'tool_result';
-          if (isSemanticType && lastMsgType && lastMsgType !== streamMsg.type && response.trim()
-              && streamMsg.type !== 'result' && !isToolTransition) {
-            await finalizeMessage();
-          }
-
-          // Flush reasoning buffer when type changes away from reasoning
-          if (isSemanticType && lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
-            log.info(`Reasoning: ${reasoningBuffer.trim()}`);
-            await sendReasoningDisplay(reasoningBuffer);
-            reasoningBuffer = '';
-          }
-
-          // (Tool call displays fire immediately in the tool_call handler below.)
-          
-          // Tool loop detection
-          const maxToolCalls = this.config.maxToolCalls ?? 100;
-          if (streamMsg.type === 'tool_call' && (msgTypeCounts['tool_call'] || 0) >= maxToolCalls) {
-            log.error(`Agent stuck in tool loop (${msgTypeCounts['tool_call']} calls), aborting`);
-            session.abort().catch(() => {});
-            response = '(Agent got stuck in a tool loop and was stopped. Try sending your message again.)';
-            break;
-          }
-
-          // Log meaningful events with structured summaries
-          if (streamMsg.type === 'tool_call') {
-            // Discard any unsent assistant text accumulated before this tool call.
-            // Mid-turn assistant content (model scratch notes) must not leak to the
-            // user. The real response will follow after the tool loop completes.
-            if (response.trim()) {
-              log.info(`Discarding pre-tool assistant text (${response.trim().length} chars)`);
-              response = '';
-              streamedAssistantText = '';
-              messageId = null;
-            }
-            this.sessionManager.syncTodoToolCall(streamMsg);
-            const tcName = streamMsg.toolName || 'unknown';
-            const tcId = streamMsg.toolCallId?.slice(0, 12) || '?';
-            log.info(`>>> TOOL CALL: ${tcName} (id: ${tcId})`);
-            sawNonAssistantSinceLastUuid = true;
-            // Display tool call (args are fully accumulated by dedupedStream buffer-and-flush)
-            await sendToolCallDisplay(streamMsg);
-          } else if (streamMsg.type === 'tool_result') {
-            log.info(`<<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
-            sawNonAssistantSinceLastUuid = true;
-          } else if (streamMsg.type === 'assistant' && lastMsgType !== 'assistant') {
-            log.info(`Generating response...`);
-          } else if (streamMsg.type === 'reasoning') {
-            if (lastMsgType !== 'reasoning') {
-              log.info(`Reasoning...`);
-            }
-            sawNonAssistantSinceLastUuid = true;
-            // Accumulate reasoning content for display
-            if (this.config.display?.showReasoning) {
-              reasoningBuffer += streamMsg.content || '';
-            }
-          } else if (streamMsg.type === 'error') {
-            // SDK now surfaces error detail that was previously dropped.
-            // Store for use in the user-facing error message.
-            lastErrorDetail = {
-              message: (streamMsg as any).message || 'unknown',
-              stopReason: (streamMsg as any).stopReason || 'error',
-              apiError: (streamMsg as any).apiError,
-            };
-            log.error(`Stream error detail: ${lastErrorDetail.message} [${lastErrorDetail.stopReason}]`);
-            sawNonAssistantSinceLastUuid = true;
-          } else if (streamMsg.type === 'retry') {
-            const rm = streamMsg as any;
-            retryInfo = { attempt: rm.attempt, maxAttempts: rm.maxAttempts, reason: rm.reason };
-            log.info(`Retrying (${rm.attempt}/${rm.maxAttempts}): ${rm.reason}`);
-            sawNonAssistantSinceLastUuid = true;
-          } else if (streamMsg.type !== 'assistant') {
-            sawNonAssistantSinceLastUuid = true;
-          }
-          // Don't let stream_event overwrite lastMsgType -- it's noise between
-          // semantic types and would cause false type-transition triggers.
-          if (isSemanticType) lastMsgType = streamMsg.type;
-          
-          if (streamMsg.type === 'assistant') {
-            const msgUuid = streamMsg.uuid;
-            if (msgUuid && lastAssistantUuid && msgUuid !== lastAssistantUuid) {
-              if (response.trim()) {
-                if (!sawNonAssistantSinceLastUuid) {
-                  log.warn(`WARNING: Assistant UUID changed (${lastAssistantUuid.slice(0, 8)} -> ${msgUuid.slice(0, 8)}) with no visible tool_call/reasoning events between them. Tool call events may have been dropped by SDK transformMessage().`);
-                }
+          switch (event.type) {
+            case 'reasoning': {
+              // Finalize any pending assistant text on type transition
+              if (lastEventType === 'text' && response.trim()) {
                 await finalizeMessage();
               }
-              // Start tracking tool/reasoning visibility for the new assistant UUID.
-              sawNonAssistantSinceLastUuid = false;
-            } else if (msgUuid && !lastAssistantUuid) {
-              // Clear any pre-assistant noise so the first UUID becomes a clean baseline.
-              sawNonAssistantSinceLastUuid = false;
-            }
-            lastAssistantUuid = msgUuid || lastAssistantUuid;
-            
-            const assistantChunk = streamMsg.content || '';
-            response += assistantChunk;
-            streamedAssistantText += assistantChunk;
-            
-            // Live-edit streaming for channels that support it
-            // Hold back streaming edits while response could still be <no-reply/> or <actions> block
-            const canEdit = adapter.supportsEditing?.() ?? false;
-            const trimmed = response.trim();
-            const mayBeHidden = '<no-reply/>'.startsWith(trimmed)
-              || '<actions>'.startsWith(trimmed)
-              || (trimmed.startsWith('<actions') && !trimmed.includes('</actions>'));
-            // Strip any completed <actions> block from the streaming text
-            const streamText = stripActionsBlock(response).trim();
-            if (canEdit && !mayBeHidden && !suppressDelivery && !this.cancelledKeys.has(convKey) && streamText.length > 0 && Date.now() - lastUpdate > 1500 && Date.now() > rateLimitedUntil) {
-              try {
-                const prefixedStream = this.prefixResponse(streamText);
-                if (messageId) {
-                  await adapter.editMessage(msg.chatId, messageId, prefixedStream);
-                } else {
-                  const result = await adapter.sendMessage({ chatId: msg.chatId, text: prefixedStream, threadId: msg.threadId });
-                  messageId = result.messageId;
-                  sentAnyMessage = true;
-                }
-              } catch (editErr: any) {
-                log.warn('Streaming edit failed:', editErr instanceof Error ? editErr.message : editErr);
-                // Detect 429 rate limit and suppress further streaming edits
-                const errStr = String(editErr?.message ?? editErr);
-                const retryMatch = errStr.match(/retry after (\d+)/i);
-                if (errStr.includes('429') || retryMatch) {
-                  const retryAfter = retryMatch ? Number(retryMatch[1]) : 30;
-                  rateLimitedUntil = Date.now() + retryAfter * 1000;
-                  log.warn(`Rate limited -- suppressing streaming edits for ${retryAfter}s`);
+              lastEventType = 'reasoning';
+              sawNonAssistantSinceLastUuid = true;
+              if (this.config.display?.showReasoning && !suppressDelivery && event.content.trim()) {
+                log.info(`Reasoning: ${event.content.trim().slice(0, 100)}`);
+                try {
+                  const reasoning = formatReasoningDisplay(event.content, adapter.id, this.config.display?.reasoningMaxChars);
+                  await adapter.sendMessage({
+                    chatId: msg.chatId,
+                    text: reasoning.text,
+                    threadId: msg.threadId,
+                    parseMode: reasoning.parseMode,
+                  });
+                } catch (err) {
+                  log.warn('Failed to send reasoning display:', err instanceof Error ? err.message : err);
                 }
               }
-              lastUpdate = Date.now();
+              break;
+            }
+
+            case 'tool_call': {
+              // Discard any unsent assistant text accumulated before this tool call.
+              // Mid-turn assistant content (model scratch notes) must not leak to the
+              // user. The real response will follow after the tool loop completes.
+              if (lastEventType === 'text' && response.trim()) {
+                log.info(`Discarding pre-tool assistant text (${response.trim().length} chars)`);
+                response = '';
+                messageId = null;
+              }
+              lastEventType = 'tool_call';
+              this.sessionManager.syncTodoToolCall(event.raw);
+              log.info(`>>> TOOL CALL: ${event.name} (id: ${event.id.slice(0, 12) || '?'})`);
+              sawNonAssistantSinceLastUuid = true;
+
+              // Tool loop detection
+              const maxToolCalls = this.config.maxToolCalls ?? 100;
+              if ((msgTypeCounts['tool_call'] || 0) >= maxToolCalls) {
+                log.error(`Agent stuck in tool loop (${msgTypeCounts['tool_call']} calls), aborting`);
+                session?.abort().catch(() => {});
+                response = '(Agent got stuck in a tool loop and was stopped. Try sending your message again.)';
+                turnError = `tool loop abort after ${msgTypeCounts['tool_call'] || 0} tool calls`;
+                abortedWithMessage = true;
+                break;
+              }
+
+              // Bash command tracking for repeated failure detection
+              if (event.name === 'Bash') {
+                const command = typeof event.args?.command === 'string' ? event.args.command : '';
+                if (command) {
+                  lastBashCommand = command;
+                  if (event.id) bashCommandByToolCallId.set(event.id, command);
+                }
+              }
+
+              // Display
+              if (this.config.display?.showToolCalls && !suppressDelivery) {
+                try {
+                  const text = formatToolCallDisplay(event.raw);
+                  await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+                } catch (err) {
+                  log.warn('Failed to send tool call display:', err instanceof Error ? err.message : err);
+                }
+              }
+              break;
+            }
+
+            case 'tool_result': {
+              lastEventType = 'tool_result';
+              log.info(`<<< TOOL RESULT: error=${event.isError}, len=${event.content.length}`);
+              sawNonAssistantSinceLastUuid = true;
+
+              // Repeated Bash failure detection
+              const mappedCommand = event.toolCallId ? bashCommandByToolCallId.get(event.toolCallId) : undefined;
+              if (event.toolCallId) bashCommandByToolCallId.delete(event.toolCallId);
+              const bashCommand = (mappedCommand || lastBashCommand || '').trim();
+              const lowerContent = event.content.toLowerCase();
+              const isLettabotCliCall = /^lettabot(?:-[a-z0-9-]+)?\b/i.test(bashCommand);
+              const looksCliCommandError = lowerContent.includes('unknown command')
+                || lowerContent.includes('command not found')
+                || lowerContent.includes('usage: lettabot')
+                || lowerContent.includes('usage: lettabot-bluesky')
+                || lowerContent.includes('error: --agent is required for bluesky commands');
+
+              if (event.isError && bashCommand && isLettabotCliCall && looksCliCommandError) {
+                const errorKind = lowerContent.includes('unknown command') || lowerContent.includes('command not found')
+                  ? 'unknown-command' : 'usage-error';
+                const failureKey = `${bashCommand.toLowerCase()}::${errorKind}`;
+                if (repeatedBashFailureKey === failureKey) {
+                  repeatedBashFailureCount += 1;
+                } else {
+                  repeatedBashFailureKey = failureKey;
+                  repeatedBashFailureCount = 1;
+                }
+                if (repeatedBashFailureCount >= maxRepeatedBashFailures) {
+                  log.error(`Stopping run after repeated Bash command failures (${repeatedBashFailureCount}) for: ${bashCommand}`);
+                  session?.abort().catch(() => {});
+                  response = `(I stopped after repeated CLI command failures while running: ${bashCommand}. The command path appears mismatched. Please confirm Bluesky CLI commands are available, then resend your request.)`;
+                  turnError = `repeated Bash failure abort (${repeatedBashFailureCount}x): ${bashCommand}`;
+                  abortedWithMessage = true;
+                  break;
+                }
+              } else {
+                repeatedBashFailureKey = null;
+                repeatedBashFailureCount = 0;
+              }
+              break;
+            }
+
+            case 'text': {
+              lastEventType = 'text';
+              // Detect assistant UUID change (multi-turn response boundary)
+              if (event.uuid && lastAssistantUuid && event.uuid !== lastAssistantUuid) {
+                if (response.trim()) {
+                  if (!sawNonAssistantSinceLastUuid) {
+                    log.warn(`WARNING: Assistant UUID changed (${lastAssistantUuid.slice(0, 8)} -> ${event.uuid.slice(0, 8)}) with no visible tool_call/reasoning events between them.`);
+                  }
+                  await finalizeMessage();
+                }
+                sawNonAssistantSinceLastUuid = false;
+              } else if (event.uuid && !lastAssistantUuid) {
+                sawNonAssistantSinceLastUuid = false;
+              }
+              lastAssistantUuid = event.uuid || lastAssistantUuid;
+
+              response += event.delta;
+
+              // Live-edit streaming for channels that support it
+              const canEdit = adapter.supportsEditing?.() ?? false;
+              const trimmed = response.trim();
+              const mayBeHidden = '<no-reply/>'.startsWith(trimmed)
+                || hasIncompleteActionsTag(response)
+                || hasUnclosedActionsBlock(response);
+              const streamText = stripActionsBlock(response).trim();
+              if (canEdit && !mayBeHidden && !suppressDelivery && !this.cancelledKeys.has(convKey)
+                && streamText.length > 0 && Date.now() - lastUpdate > 1500 && Date.now() > rateLimitedUntil) {
+                try {
+                  const prefixedStream = this.prefixResponse(streamText);
+                  if (messageId) {
+                    await adapter.editMessage(msg.chatId, messageId, prefixedStream);
+                  } else {
+                    const result = await adapter.sendMessage({ chatId: msg.chatId, text: prefixedStream, threadId: msg.threadId });
+                    messageId = result.messageId;
+                    sentAnyMessage = true;
+                  }
+                } catch (editErr: any) {
+                  log.warn('Streaming edit failed:', editErr instanceof Error ? editErr.message : editErr);
+                  const errStr = String(editErr?.message ?? editErr);
+                  const retryMatch = errStr.match(/retry after (\d+)/i);
+                  if (errStr.includes('429') || retryMatch) {
+                    const retryAfter = retryMatch ? Number(retryMatch[1]) : 30;
+                    rateLimitedUntil = Date.now() + retryAfter * 1000;
+                    log.warn(`Rate limited -- suppressing streaming edits for ${retryAfter}s`);
+                  }
+                }
+                lastUpdate = Date.now();
+              }
+              break;
+            }
+
+            case 'complete': {
+              sawForegroundResult = true;
+
+              // Handle cancelled results
+              if (event.cancelled) {
+                log.info(`Discarding cancelled run result (seq=${seq})`);
+                this.sessionManager.invalidateSession(convKey);
+                session = null;
+                if (!retried) {
+                  clearInterval(typingInterval);
+                  return this.processMessage(msg, adapter, true);
+                }
+                break;
+              }
+
+              // Handle stale duplicate results
+              if (event.stale) {
+                this.sessionManager.invalidateSession(convKey);
+                session = null;
+                if (!retried) {
+                  log.warn(`Retrying message after stale duplicate result (seq=${seq}, key=${convKey})`);
+                  clearInterval(typingInterval);
+                  return this.processMessage(msg, adapter, true);
+                }
+                response = '';
+                break;
+              }
+
+              // Result text handling: only use the pipeline's result text as a
+              // FALLBACK when no assistant text was streamed. If text events were
+              // already yielded and possibly finalized (sent), don't override.
+              if (event.text.trim() && !event.hadStreamedText && event.success && !event.error) {
+                response = event.text;
+              } else if (!sentAnyMessage && response.trim().length === 0 && event.success && !event.error) {
+                // Safety fallback: if nothing was delivered yet and response is empty.
+                // Prefer the raw result field when the pipeline's text came from
+                // pre-tool assistant content that was discarded (hadStreamedText is
+                // true but response was cleared by the tool_call discard logic).
+                const rawResult = typeof event.raw.result === 'string' ? event.raw.result.trim() : '';
+                if (!event.hadStreamedText && event.text.trim()) {
+                  response = event.text;
+                } else if (rawResult) {
+                  response = rawResult;
+                }
+              }
+
+              const hasResponse = response.trim().length > 0;
+              const resultText = typeof event.raw.result === 'string' ? event.raw.result : '';
+              log.info(`Stream result: seq=${seq} success=${event.success}, hasResponse=${hasResponse}, resultLen=${resultText.length}`);
+              if (event.error) {
+                const parts = [`error=${event.error}`];
+                if (event.stopReason) parts.push(`stopReason=${event.stopReason}`);
+                if (event.durationMs !== undefined) parts.push(`duration=${event.durationMs}ms`);
+                if (event.conversationId) parts.push(`conv=${event.conversationId}`);
+                log.error(`Result error: ${parts.join(', ')}`);
+              }
+
+              // Retry/recovery logic
+              const retryConvKey = this.resolveConversationKey(msg.channel, msg.chatId, msg.forcePerChat);
+              const retryConvIdFromStore = (retryConvKey === 'shared'
+                ? this.store.conversationId
+                : this.store.getConversationId(retryConvKey)) ?? undefined;
+              const retryConvIdRaw = (event.conversationId && event.conversationId.length > 0)
+                ? event.conversationId
+                : retryConvIdFromStore;
+              const retryConvId = isRecoverableConversationId(retryConvIdRaw)
+                ? retryConvIdRaw
+                : undefined;
+
+              const initialRetryDecision = this.buildResultRetryDecision(
+                event.raw, resultText, hasResponse, sentAnyMessage, lastErrorDetail,
+              );
+
+              // Enrich opaque error detail from run metadata
+              if (initialRetryDecision.isTerminalError && this.store.agentId &&
+                  (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
+                const enriched = await getLatestRunError(this.store.agentId, retryConvId);
+                if (enriched) {
+                  log.info(`Enriched error detail: ${enriched.message} [${enriched.stopReason}]`);
+                  lastErrorDetail = {
+                    message: enriched.message,
+                    stopReason: enriched.stopReason,
+                    isApprovalError: enriched.isApprovalError,
+                  };
+                }
+              }
+
+              const retryDecision = this.buildResultRetryDecision(
+                event.raw, resultText, hasResponse, sentAnyMessage, lastErrorDetail,
+              );
+
+              // Approval conflict recovery
+              if (retryDecision.isApprovalConflict && !retried && this.store.agentId) {
+                log.info('Approval conflict detected -- attempting SDK recovery...');
+                clearInterval(typingInterval);
+
+                // Try SDK-level recovery first (through CLI control protocol)
+                if (session) {
+                  const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
+                  if (sdkResult.recovered) {
+                    log.info('SDK approval recovery succeeded, retrying message...');
+                    this.sessionManager.invalidateSession(retryConvKey);
+                    session = null;
+                    return this.processMessage(msg, adapter, true);
+                  }
+                  log.warn(`SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
+                }
+
+                // Fall back to API-level recovery
+                this.sessionManager.invalidateSession(retryConvKey);
+                session = null;
+                const result = (retryConvId && isRecoverableConversationId(retryConvId))
+                  ? await recoverOrphanedConversationApproval(this.store.agentId, retryConvId, true)
+                  : await recoverPendingApprovalsForAgent(this.store.agentId);
+                if (result.recovered) {
+                  log.info(`API-level recovery succeeded (${result.details}), retrying message...`);
+                } else {
+                  log.warn(`API-level recovery failed: ${result.details}`);
+                }
+                return this.processMessage(msg, adapter, true);
+              }
+
+              // Empty/error result retry
+              if (retryDecision.shouldRetryForEmptyResult || retryDecision.shouldRetryForErrorResult) {
+                if (!retried && this.store.agentId && retryConvId) {
+                  const reason = retryDecision.shouldRetryForErrorResult ? 'error result' : 'empty result';
+                  log.info(`${reason} - attempting orphaned approval recovery...`);
+                  this.sessionManager.invalidateSession(retryConvKey);
+                  session = null;
+                  clearInterval(typingInterval);
+                  const convResult = await recoverOrphanedConversationApproval(this.store.agentId, retryConvId);
+                  if (convResult.recovered) {
+                    log.info(`Recovery succeeded (${convResult.details}), retrying message...`);
+                    return this.processMessage(msg, adapter, true);
+                  }
+                  if (retryDecision.shouldRetryForErrorResult) {
+                    log.info('Retrying once after terminal error...');
+                    return this.processMessage(msg, adapter, true);
+                  }
+                }
+              }
+
+              // Terminal error with no response
+              if (retryDecision.isTerminalError && !hasResponse && !sentAnyMessage) {
+                if (lastErrorDetail) {
+                  response = formatApiErrorForUser(lastErrorDetail);
+                } else {
+                  const err = event.error || 'unknown error';
+                  const reason = event.stopReason ? ` [${event.stopReason}]` : '';
+                  response = `(Agent run failed: ${err}${reason}. Try sending your message again.)`;
+                }
+              }
+              break;
+            }
+
+            case 'error': {
+              lastErrorDetail = {
+                message: event.message,
+                stopReason: event.stopReason || 'error',
+                apiError: event.apiError,
+              };
+              log.error(`Stream error detail: ${event.message} [${event.stopReason || 'error'}]`);
+              sawNonAssistantSinceLastUuid = true;
+              break;
+            }
+
+            case 'retry': {
+              retryInfo = { attempt: event.attempt, maxAttempts: event.maxAttempts, reason: event.reason };
+              log.info(`Retrying (${event.attempt}/${event.maxAttempts}): ${event.reason}`);
+              sawNonAssistantSinceLastUuid = true;
+              break;
             }
           }
-          
-          if (streamMsg.type === 'result') {
-            // Discard cancelled run results -- the server flushes accumulated
-            // content from a previously cancelled run as the result for the
-            // next message. Discard it and retry so the message gets processed.
-            if (streamMsg.stopReason === 'cancelled') {
-              log.info(`Discarding cancelled run result (seq=${seq}, len=${typeof streamMsg.result === 'string' ? streamMsg.result.length : 0})`);
-              this.sessionManager.invalidateSession(convKey);
-              session = null;
-              if (!retried) {
-                return this.processMessage(msg, adapter, true);
-              }
-              break;
-            }
 
-            const resultRunState = this.classifyResultRun(convKey, streamMsg);
-            if (resultRunState === 'stale') {
-              this.sessionManager.invalidateSession(convKey);
-              session = null;
-              if (!retried) {
-                log.warn(`Retrying message after stale duplicate result (seq=${seq}, key=${convKey})`);
-                return this.processMessage(msg, adapter, true);
-              }
-              response = '';
-              break;
-            }
-
-            sawForegroundResult = true;
-
-            const resultText = typeof streamMsg.result === 'string' ? streamMsg.result : '';
-            if (resultText.trim().length > 0) {
-              const streamedTextTrimmed = streamedAssistantText.trim();
-              const resultTextTrimmed = resultText.trim();
-              // Decision tree:
-              // 1) Diverged from streamed output -> prefer streamed text (active fix today)
-              // 2) No streamed assistant text -> use result text as fallback
-              // 3) Streamed text exists but nothing was delivered -> allow one result resend
-              // Compare against all streamed assistant text, not the current
-              // response buffer (which can be reset between assistant turns).
-              if (streamedTextTrimmed.length > 0 && resultTextTrimmed !== streamedTextTrimmed) {
-                log.warn(
-                  `Result text diverges from streamed content ` +
-                  `(resultLen=${resultText.length}, streamLen=${streamedAssistantText.length}). ` +
-                  `Preferring streamed content to avoid n-1 desync.`
-                );
-              } else if (streamedTextTrimmed.length === 0 && streamMsg.success !== false && !streamMsg.error) {
-                // Fallback for models/providers that only populate result text.
-                // Skip on error results -- the result field may contain reasoning
-                // text or other non-deliverable content (e.g. llm_api_error).
-                response = resultText;
-              } else if (!sentAnyMessage && response.trim().length === 0 && streamMsg.success !== false && !streamMsg.error) {
-                // Safety fallback: if we streamed text but nothing was
-                // delivered yet, allow a single result-based resend.
-                // Skip on error results for the same reason as above.
-                response = resultText;
-              }
-            }
-            const hasResponse = response.trim().length > 0;
-            log.info(`Stream result: seq=${seq} success=${streamMsg.success}, hasResponse=${hasResponse}, resultLen=${resultText.length}`);
-            if (response.trim().length > 0) {
-              log.debug(`Stream result preview: seq=${seq} responsePreview=${response.trim().slice(0, 60)}`);
-            }
-            log.info(`Stream message counts:`, msgTypeCounts);
-            if (filteredRunEventCount > 0) {
-              log.info(`Filtered ${filteredRunEventCount} non-foreground event(s) from stream (seq=${seq}, key=${convKey}, expectedRunId=${expectedForegroundRunId || 'unknown'})`);
-            }
-            if (ignoredNonForegroundResultCount > 0) {
-              log.info(`Ignored ${ignoredNonForegroundResultCount} non-foreground result event(s) (seq=${seq}, key=${convKey}, expectedRunId=${expectedForegroundRunId || 'unknown'})`);
-            }
-            if (bufferedDisplayFlushCount > 0 || bufferedDisplayDropCount > 0) {
-              log.info(`Buffered display events: flushed=${bufferedDisplayFlushCount}, dropped=${bufferedDisplayDropCount} (seq=${seq}, key=${convKey}, expectedRunId=${expectedForegroundRunId || 'unknown'})`);
-            }
-            if (streamMsg.error) {
-              const detail = resultText.trim();
-              const parts = [`error=${streamMsg.error}`];
-              if (streamMsg.stopReason) parts.push(`stopReason=${streamMsg.stopReason}`);
-              if (streamMsg.durationMs !== undefined) parts.push(`duration=${streamMsg.durationMs}ms`);
-              if (streamMsg.conversationId) parts.push(`conv=${streamMsg.conversationId}`);
-              if (detail) parts.push(`detail=${detail.slice(0, 300)}`);
-              log.error(`Result error: ${parts.join(', ')}`);
-            }
-
-            // Retry once when stream ends without any assistant text.
-            // This catches both empty-success and terminal-error runs.
-            // TODO(letta-code-sdk#31): Remove once SDK handles HITL approvals in bypassPermissions mode.
-            // Only retry if we never sent anything to the user. hasResponse tracks
-            // the current buffer, but finalizeMessage() clears it on type changes.
-            // sentAnyMessage is the authoritative "did we deliver output" flag.
-            const retryConvKey = this.resolveConversationKey(msg.channel, msg.chatId, msg.forcePerChat);
-            const retryConvIdFromStore = (retryConvKey === 'shared'
-              ? this.store.conversationId
-              : this.store.getConversationId(retryConvKey)) ?? undefined;
-            const retryConvIdRaw = (typeof streamMsg.conversationId === 'string' && streamMsg.conversationId.length > 0)
-              ? streamMsg.conversationId
-              : retryConvIdFromStore;
-            const retryConvId = isRecoverableConversationId(retryConvIdRaw)
-              ? retryConvIdRaw
-              : undefined;
-            if (!retryConvId && retryConvIdRaw) {
-              log.info(`Skipping approval recovery for non-recoverable conversation id: ${retryConvIdRaw}`);
-            }
-            const initialRetryDecision = this.buildResultRetryDecision(
-              streamMsg,
-              resultText,
-              hasResponse,
-              sentAnyMessage,
-              lastErrorDetail,
-            );
-
-            // Enrich opaque error detail from run metadata (single fast API call).
-            // The wire protocol's stop_reason often just says "error" -- the run
-            // metadata has the actual detail (e.g. "waiting for approval on a tool call").
-            if (initialRetryDecision.isTerminalError && this.store.agentId &&
-                (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
-              const enriched = await getLatestRunError(this.store.agentId, retryConvId);
-              if (enriched) {
-                lastErrorDetail = {
-                  message: enriched.message,
-                  stopReason: enriched.stopReason,
-                  isApprovalError: enriched.isApprovalError,
-                };
-              }
-            }
-
-            const retryDecision = this.buildResultRetryDecision(
-              streamMsg,
-              resultText,
-              hasResponse,
-              sentAnyMessage,
-              lastErrorDetail,
-            );
-
-            // For approval-specific conflicts, attempt recovery directly (don't
-            // enter the generic retry path which would just get another CONFLICT).
-            // Use isApprovalError from run metadata as a fallback when the
-            // error message doesn't contain the expected strings (e.g. when
-            // the type=error event was lost and enrichment detected a stuck run).
-            if (retryDecision.isApprovalConflict && !retried && this.store.agentId) {
-              if (retryConvId) {
-                log.info('Approval conflict detected -- attempting targeted recovery...');
-                this.sessionManager.invalidateSession(retryConvKey);
-                session = null;
-                clearInterval(typingInterval);
-                const convResult = await recoverOrphanedConversationApproval(
-                  this.store.agentId, retryConvId, true /* deepScan */
-                );
-                if (convResult.recovered) {
-                  log.info(`Approval recovery succeeded (${convResult.details}), retrying message...`);
-                  return this.processMessage(msg, adapter, true);
-                }
-                log.warn(`Approval recovery failed: ${convResult.details}`);
-                log.info('Retrying once with a fresh session after approval conflict...');
-                return this.processMessage(msg, adapter, true);
-              } else {
-                log.info('Approval conflict detected in default/alias conversation -- attempting agent-level recovery...');
-                this.sessionManager.invalidateSession(retryConvKey);
-                session = null;
-                clearInterval(typingInterval);
-                const agentResult = await recoverPendingApprovalsForAgent(this.store.agentId);
-                if (agentResult.recovered) {
-                  log.info(`Agent-level recovery succeeded (${agentResult.details}), retrying message...`);
-                  return this.processMessage(msg, adapter, true);
-                }
-                log.warn(`Agent-level recovery failed: ${agentResult.details}`);
-                log.info('Retrying once with a fresh session after approval conflict...');
-                return this.processMessage(msg, adapter, true);
-              }
-            }
-
-            if (retryDecision.shouldRetryForEmptyResult || retryDecision.shouldRetryForErrorResult) {
-              if (retryDecision.shouldRetryForEmptyResult) {
-                log.error(`Warning: Agent returned empty result with no response. stopReason=${streamMsg.stopReason || 'N/A'}, conv=${streamMsg.conversationId || 'N/A'}`);
-              }
-              if (retryDecision.shouldRetryForErrorResult) {
-                log.error(`Warning: Agent returned terminal error (error=${streamMsg.error}, stopReason=${streamMsg.stopReason || 'N/A'}) with no response.`);
-              }
-
-              if (!retried && this.store.agentId && retryConvId) {
-                const reason = retryDecision.shouldRetryForErrorResult ? 'error result' : 'empty result';
-                log.info(`${reason} - attempting orphaned approval recovery...`);
-                this.sessionManager.invalidateSession(retryConvKey);
-                session = null;
-                clearInterval(typingInterval);
-                const convResult = await recoverOrphanedConversationApproval(
-                  this.store.agentId,
-                  retryConvId
-                );
-                if (convResult.recovered) {
-                  log.info(`Recovery succeeded (${convResult.details}), retrying message...`);
-                  return this.processMessage(msg, adapter, true);
-                }
-                log.warn(`No orphaned approvals found: ${convResult.details}`);
-
-                // Some client-side approval failures do not surface as pending approvals.
-                // Retry once anyway in case the previous run terminated mid-tool cycle.
-                if (retryDecision.shouldRetryForErrorResult) {
-                  log.info('Retrying once after terminal error (no orphaned approvals detected)...');
-                  return this.processMessage(msg, adapter, true);
-                }
-              } else if (!retried && retryDecision.shouldRetryForErrorResult && !retryConvId) {
-                log.warn('Skipping terminal-error retry because no recoverable conversation id is available.');
-              }
-            }
-
-            if (retryDecision.isTerminalError && !hasResponse && !sentAnyMessage) {
-              if (lastErrorDetail) {
-                response = formatApiErrorForUser(lastErrorDetail);
-              } else {
-                const err = streamMsg.error || 'unknown error';
-                const reason = streamMsg.stopReason ? ` [${streamMsg.stopReason}]` : '';
-                response = `(Agent run failed: ${err}${reason}. Try sending your message again.)`;
-              }
-            }
-            
+          if (abortedWithMessage) {
+            log.info(`Stopping stream consumption after explicit abort (seq=${seq}, key=${convKey})`);
             break;
           }
         }
       } finally {
         clearInterval(typingInterval);
         adapter.stopTypingIndicator?.(msg.chatId)?.catch(() => {});
+        // Write turn record (even partial turns on cancel/error)
+        if (this.turnLogger && turnAcc && !turnWritten) {
+          turnWritten = true;
+          const { events, output } = turnAcc.finalize();
+          this.turnLogger.write({
+            ts: new Date().toISOString(),
+            turnId,
+            trigger: 'user_message' as const,
+            channel: msg.channel,
+            chatId: msg.chatId,
+            userId: msg.userId,
+            input: typeof messageToSend === 'string' ? messageToSend : '[multimodal]',
+            events,
+            output: output || response,
+            durationMs: Math.round(performance.now() - t0),
+            error: turnError ?? lastErrorDetail?.message,
+          }).catch(() => {});
+        }
       }
       lap('stream complete');
 
-      // If cancelled, clean up partial state and return early
+      // If cancelled, clean up partial state and return early.
+      // Invalidate defensively in case the cancel handler's invalidation
+      // didn't fire (e.g., race with command dispatch).
       if (this.cancelledKeys.has(convKey)) {
+        this.sessionManager.invalidateSession(convKey);
+        session = null;
         if (messageId) {
           try {
             await adapter.editMessage(msg.chatId, messageId, '(Run cancelled.)');
@@ -1783,22 +1798,18 @@ export class LettaBot implements AgentSession {
         return;
       }
 
-      const missingForegroundTerminalResult =
-        expectedForegroundRunId !== null &&
-        !sawForegroundResult &&
-        sawCompetingRunEvent &&
-        !sentAnyMessage;
-
-      if (missingForegroundTerminalResult) {
-        log.warn(`Foreground run ended without terminal result after competing run activity (seq=${seq}, key=${convKey}, expectedRunId=${expectedForegroundRunId})`);
+      // If pipeline ended without a complete event, something went wrong.
+      // Exception: if we aborted with an explicit message (tool loop, bash failure),
+      // just deliver that message.
+      if (!sawForegroundResult && !sentAnyMessage && !abortedWithMessage) {
+        log.warn(`Stream ended without result (seq=${seq}, key=${convKey})`);
         this.sessionManager.invalidateSession(convKey);
         session = null;
         response = '';
-        reasoningBuffer = '';
         if (!retried) {
           return this.processMessage(msg, adapter, true);
         }
-        response = '(The agent stream ended before a foreground result was received. Please try again.)';
+        response = '(The agent stream ended before a result was received. Please try again.)';
       }
 
       // Parse and execute XML directives (e.g. <actions><react emoji="eyes" /></actions>)
@@ -1824,10 +1835,9 @@ export class LettaBot implements AgentSession {
       lap('directives done');
       // Send final response
       if (response.trim()) {
-        // Wait out any active rate limit before sending the final message
         const rateLimitRemaining = rateLimitedUntil - Date.now();
         if (rateLimitRemaining > 0) {
-          const waitMs = Math.min(rateLimitRemaining, 30_000); // Cap at 30s
+          const waitMs = Math.min(rateLimitRemaining, 30_000);
           log.info(`Waiting ${(waitMs / 1000).toFixed(1)}s for rate limit before final send`);
           await new Promise(resolve => setTimeout(resolve, waitMs));
         }
@@ -1841,7 +1851,6 @@ export class LettaBot implements AgentSession {
           sentAnyMessage = true;
           this.store.resetRecoveryAttempts();
         } catch (sendErr) {
-          // Edit failed -- send as new message so user isn't left with truncated text
           log.warn('Final message delivery failed:', sendErr instanceof Error ? sendErr.message : sendErr);
           try {
             await adapter.sendMessage({ chatId: msg.chatId, text: prefixedFinal, threadId: msg.threadId });
@@ -1852,7 +1861,7 @@ export class LettaBot implements AgentSession {
           }
         }
       }
-      
+
       lap('message delivered');
       await this.deliverNoVisibleResponseIfNeeded(msg, adapter, sentAnyMessage, receivedAnyData, msgTypeCounts);
       
@@ -1930,20 +1939,43 @@ export class LettaBot implements AgentSession {
   ): Promise<string> {
     const isSilent = context?.outputMode === 'silent';
     const convKey = this.resolveHeartbeatConversationKey();
+    const triggerType = context?.type ?? 'heartbeat';
     const acquired = await this.acquireLock(convKey);
+    this.activeBackgroundTriggerByKey.set(convKey, triggerType);
     
+    const sendT0 = performance.now();
+    const sendTurnId = this.turnLogger ? generateTurnId() : '';
+    const sendTurnAcc = this.turnLogger ? new TurnAccumulator() : null;
+    let sendTurnWritten = false;
+
     try {
       let retried = false;
+
       while (true) {
-        const { stream } = await this.sessionManager.runSession(text, { convKey, retried });
+        if (this.backgroundCancelledKeys.has(convKey)) {
+          log.info(`sendToAgent: background run pre-cancelled by live user activity (key=${convKey})`);
+          return '';
+        }
+        const { session, stream } = await this.sessionManager.runSession(text, { convKey, retried });
 
         try {
+          if (this.backgroundCancelledKeys.has(convKey)) {
+            session.abort().catch(() => {});
+            log.info(`sendToAgent: background run cancelled before stream start (key=${convKey})`);
+            return '';
+          }
           let response = '';
           let sawStaleDuplicateResult = false;
           let approvalRetryPending = false;
           let usedMessageCli = false;
           let lastErrorDetail: StreamErrorDetail | undefined;
           for await (const msg of stream()) {
+            if (this.backgroundCancelledKeys.has(convKey)) {
+              session.abort().catch(() => {});
+              log.info(`sendToAgent: cancelled in-flight background stream (key=${convKey})`);
+              return '';
+            }
+            sendTurnAcc?.feedRaw(msg);
             if (msg.type === 'tool_call') {
               this.sessionManager.syncTodoToolCall(msg);
               if (isSilent && msg.toolName === 'Bash') {
@@ -1958,7 +1990,9 @@ export class LettaBot implements AgentSession {
                 apiError: (msg as any).apiError,
               };
             }
-            if (msg.type === 'assistant') {
+            if (msg.type === 'reasoning') {
+              // Skip reasoning -- internal thinking should not leak into delivery
+            } else if (msg.type === 'assistant') {
               response += msg.content || '';
             }
             if (msg.type === 'result') {
@@ -1970,12 +2004,17 @@ export class LettaBot implements AgentSession {
 
               // TODO(letta-code-sdk#31): Remove once SDK handles HITL approvals in bypassPermissions mode.
               if (msg.success === false || msg.error) {
+                if (this.backgroundCancelledKeys.has(convKey)) {
+                  log.info(`sendToAgent: cancelled heartbeat produced terminal error result; suppressing (key=${convKey})`);
+                  return '';
+                }
                 // Enrich opaque errors from run metadata (mirrors processMessage logic).
                 const convId = typeof msg.conversationId === 'string' ? msg.conversationId : undefined;
                 if (this.store.agentId &&
                     (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
                   const enriched = await getLatestRunError(this.store.agentId, convId);
                   if (enriched) {
+                    log.info(`Enriched error detail: ${enriched.message} [${enriched.stopReason}]`);
                     lastErrorDetail = {
                       message: enriched.message,
                       stopReason: enriched.stopReason,
@@ -1987,15 +2026,21 @@ export class LettaBot implements AgentSession {
                   || ((lastErrorDetail?.message?.toLowerCase().includes('conflict') || false)
                   && (lastErrorDetail?.message?.toLowerCase().includes('waiting for approval') || false));
                 if (isApprovalIssue && !retried) {
-                  if (this.store.agentId) {
-                    const recovery = await recoverPendingApprovalsForAgent(this.store.agentId);
-                    if (recovery.recovered) {
-                      log.info(`sendToAgent: agent-level approval recovery succeeded (${recovery.details})`);
-                    } else {
-                      log.warn(`sendToAgent: agent-level approval recovery did not resolve approvals (${recovery.details})`);
+                  log.info('sendToAgent: approval conflict detected -- attempting SDK recovery...');
+                  const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
+                  if (sdkResult.recovered) {
+                    log.info('sendToAgent: SDK approval recovery succeeded');
+                  } else {
+                    log.warn(`sendToAgent: SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
+                    if (this.store.agentId) {
+                      const recovery = await recoverPendingApprovalsForAgent(this.store.agentId);
+                      if (recovery.recovered) {
+                        log.info(`sendToAgent: API-level recovery succeeded (${recovery.details})`);
+                      } else {
+                        log.warn(`sendToAgent: API-level recovery failed (${recovery.details})`);
+                      }
                     }
                   }
-                  log.info('sendToAgent: approval issue detected -- retrying once with fresh session...');
                   this.sessionManager.invalidateSession(convKey);
                   retried = true;
                   approvalRetryPending = true;
@@ -2057,6 +2102,12 @@ export class LettaBot implements AgentSession {
             }
           }
 
+          // Strip <no-reply/> marker so callers (cron, webhooks) see empty string
+          if (response.trim() === '<no-reply/>') {
+            log.info('sendToAgent: agent responded with <no-reply/> marker, suppressing');
+            response = '';
+          }
+
           if (isSilent && response.trim()) {
             if (usedMessageCli || executedDirectives) {
               log.info(`Silent mode: agent delivered via ${[usedMessageCli && 'CLI', executedDirectives && 'directives'].filter(Boolean).join(' + ')}, remaining text (${response.length} chars) not delivered`);
@@ -2068,13 +2119,34 @@ export class LettaBot implements AgentSession {
         } catch (error) {
           // Invalidate on stream errors so next call gets a fresh subprocess
           this.sessionManager.invalidateSession(convKey);
+          if (this.backgroundCancelledKeys.has(convKey)) {
+            log.info(`sendToAgent: background run ended after cancellation (key=${convKey})`);
+            return '';
+          }
           throw error;
         }
 
       }
     } finally {
+      this.activeBackgroundTriggerByKey.delete(convKey);
+      this.backgroundCancelledKeys.delete(convKey);
       if (this.config.reuseSession === false) {
         this.sessionManager.invalidateSession(convKey);
+      }
+      // Write turn record
+      if (this.turnLogger && sendTurnAcc && !sendTurnWritten) {
+        sendTurnWritten = true;
+        const { events, output } = sendTurnAcc.finalize();
+        this.turnLogger.write({
+          ts: new Date().toISOString(),
+          turnId: sendTurnId,
+          trigger: context?.type ?? 'heartbeat',
+          channel: context?.sourceChannel,
+          input: text,
+          events,
+          output,
+          durationMs: Math.round(performance.now() - sendT0),
+        }).catch(() => {});
       }
       this.releaseLock(convKey, acquired);
     }
@@ -2090,19 +2162,41 @@ export class LettaBot implements AgentSession {
   ): AsyncGenerator<StreamMsg> {
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
+    const streamT0 = performance.now();
+    const streamTurnId = this.turnLogger ? generateTurnId() : '';
+    const streamTurnAcc = this.turnLogger ? new TurnAccumulator() : null;
+    let streamTurnError: string | undefined;
 
     try {
       const { stream } = await this.sessionManager.runSession(text, { convKey });
 
       try {
-        yield* stream();
+        for await (const msg of stream()) {
+          streamTurnAcc?.feedRaw(msg);
+          yield msg;
+        }
       } catch (error) {
         this.sessionManager.invalidateSession(convKey);
+        streamTurnError = error instanceof Error ? error.message : String(error);
         throw error;
       }
     } finally {
       if (this.config.reuseSession === false) {
         this.sessionManager.invalidateSession(convKey);
+      }
+      if (this.turnLogger && streamTurnAcc) {
+        const { events, output } = streamTurnAcc.finalize();
+        this.turnLogger.write({
+          ts: new Date().toISOString(),
+          turnId: streamTurnId,
+          trigger: context?.type ?? 'heartbeat',
+          channel: context?.sourceChannel,
+          input: text,
+          events,
+          output,
+          durationMs: Math.round(performance.now() - streamT0),
+          error: streamTurnError,
+        }).catch(() => {});
       }
       this.releaseLock(convKey, acquired);
     }

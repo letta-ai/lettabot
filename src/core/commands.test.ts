@@ -106,8 +106,12 @@ describe('HELP_TEXT', () => {
   it('contains command descriptions', () => {
     expect(HELP_TEXT).toContain('/status');
     expect(HELP_TEXT).toContain('/heartbeat');
+    expect(HELP_TEXT).toContain('/reset');
+    expect(HELP_TEXT).toContain('/cancel');
     expect(HELP_TEXT).toContain('/help');
+    expect(HELP_TEXT).toContain('/start');
     expect(HELP_TEXT).toContain('/model');
+    expect(HELP_TEXT).toContain('/setconv');
   });
 
   it('contains LettaBot branding', () => {

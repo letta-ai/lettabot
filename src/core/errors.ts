@@ -60,6 +60,20 @@ export function isAgentMissingFromInitError(error: unknown): boolean {
 }
 
 /**
+ * Detect if a recovery details string indicates mismatched tool call IDs.
+ * When this happens, the conversation is permanently stuck -- the pending
+ * approval can never be resolved because the server expects different IDs.
+ * The conversation must be cleared and recreated.
+ *
+ * TEMP(letta-code-sdk): remove once the SDK emits stable typed approval
+ * terminalization (for example, approval_conflict_terminal) so callers do not
+ * need to parse detail strings.
+ */
+export function isInvalidToolCallIdsError(details: string): boolean {
+  return details.toLowerCase().includes('invalid tool call id');
+}
+
+/**
  * Map a structured API error into a clear, user-facing message.
  * The `error` object comes from the SDK's new SDKErrorMessage type.
  */
@@ -98,7 +112,7 @@ export function formatApiErrorForUser(error: { message: string; stopReason: stri
     || apiMsg.includes('409')
     || stopReason === 'requires_approval';
   if (hasApprovalSignal && hasConflictSignal) {
-    return '(A stuck tool approval is blocking this conversation. Run `lettabot reset-conversation` to clear it, or approve/deny the pending request at app.letta.com.)';
+    return '(A stuck tool approval is blocking this conversation. Send /reset to start a new conversation, or approve/deny the pending request at app.letta.com. Note: /reset creates a fresh conversation -- previous context will no longer be active.)';
   }
 
   // 409 CONFLICT (concurrent request on same conversation)
