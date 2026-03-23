@@ -90,18 +90,22 @@ export async function recoverPendingApprovalsForAgent(
       };
     }
 
-    // Deduplicate by tool_call_id defensively (getPendingApprovals should
-    // already dedup, but this guards against any upstream regression).
-    const rejectedIds = new Set<string>();
-    let rejectedCount = 0;
+    // Group approvals by run_id so we can batch-deny parallel tool calls
+    // from the same run in a single API request (server requirement).
+    const byRun = new Map<string, Array<{ toolCallId: string; reason?: string }>>();
+    const seen = new Set<string>();
     for (const approval of pending) {
-      if (rejectedIds.has(approval.toolCallId)) continue;
-      rejectedIds.add(approval.toolCallId);
-      const ok = await rejectApproval(agentId, {
-        toolCallId: approval.toolCallId,
-        reason,
-      });
-      if (ok) rejectedCount += 1;
+      if (seen.has(approval.toolCallId)) continue;
+      seen.add(approval.toolCallId);
+      const key = approval.runId || 'unknown';
+      if (!byRun.has(key)) byRun.set(key, []);
+      byRun.get(key)!.push({ toolCallId: approval.toolCallId, reason });
+    }
+
+    let rejectedCount = 0;
+    for (const [, batch] of byRun) {
+      const ok = await rejectApproval(agentId, batch);
+      if (ok) rejectedCount += batch.length;
     }
 
     const runIds = [...new Set(
@@ -516,42 +520,52 @@ export async function getPendingApprovals(
  * Reject a pending tool approval request.
  * Sends an approval response with approve: false.
  */
+/**
+ * Reject one or more pending tool call approvals in a single API request.
+ * The Letta API requires ALL parallel tool call IDs from the same run to be
+ * denied together; sending them individually returns 400.
+ */
 export async function rejectApproval(
   agentId: string,
-  approval: {
+  approvals: {
     toolCallId: string;
     reason?: string;
-  },
+  } | Array<{
+    toolCallId: string;
+    reason?: string;
+  }>,
   conversationId?: string
 ): Promise<boolean> {
+  const approvalList = Array.isArray(approvals) ? approvals : [approvals];
+  if (approvalList.length === 0) return true;
+
   try {
     const client = getClient();
+    const defaultReason = 'Session was interrupted - please retry your request';
     
-    // Send approval response via messages.create
     await client.agents.messages.create(agentId, {
       messages: [{
         type: 'approval',
-        approvals: [{
+        approvals: approvalList.map(a => ({
           approve: false,
-          tool_call_id: approval.toolCallId,
-          type: 'approval',
-          reason: approval.reason || 'Session was interrupted - please retry your request',
-        }],
+          tool_call_id: a.toolCallId,
+          type: 'approval' as const,
+          reason: a.reason || defaultReason,
+        })),
       }],
       streaming: false,
     });
     
-    log.info(`Rejected approval for tool call ${approval.toolCallId}`);
+    const ids = approvalList.map(a => a.toolCallId).join(', ');
+    log.info(`Rejected ${approvalList.length} approval(s): ${ids}`);
     return true;
   } catch (e) {
     const err = e as { status?: number; error?: { detail?: string } };
     const detail = err?.error?.detail || '';
     if (err?.status === 400 && detail.includes('No tool call is currently awaiting approval')) {
-      log.warn(`Approval already resolved for tool call ${approval.toolCallId}`);
+      log.warn(`Approval(s) already resolved`);
       return true;
     }
-    // Re-throw rate limit errors so callers can bail out early instead of
-    // hammering the API in a tight loop.
     if (err?.status === 429) {
       log.error('Failed to reject approval:', e);
       throw e;
@@ -892,7 +906,9 @@ export async function recoverOrphanedConversationApproval(
         if (isTerminated || isAbandonedApproval || isStuckApproval || isCreatedWithApproval) {
           log.info(`Found ${approvals.length} blocking approval(s) from ${status}/${stopReason} run ${runId}`);
           
-          // Send denial for each unresolved tool call
+          // Send denial for all unresolved tool calls in this run as a single batch.
+          // The Letta API requires all parallel tool call IDs from the same run
+          // to be denied together; sending them individually returns 400.
           const approvalResponses = approvals.map(a => ({
             approve: false as const,
             tool_call_id: a.toolCallId,
@@ -900,36 +916,22 @@ export async function recoverOrphanedConversationApproval(
             reason: `Auto-denied: originating run was ${status}/${stopReason}`,
           }));
           
-          let deniedForRun = 0;
-          for (let i = 0; i < approvalResponses.length; i++) {
-            const approvalResponse = approvalResponses[i];
-            try {
-              // Letta surfaces one pending approval at a time for parallel tool calls,
-              // so submit denials sequentially instead of as a single multi-ID batch.
-              await client.conversations.messages.create(conversationId, {
-                messages: [{
-                  type: 'approval',
-                  approvals: [approvalResponse],
-                }],
-                streaming: false,
-              });
-              deniedForRun += 1;
-            } catch (approvalError) {
-              const approvalErrMsg = approvalError instanceof Error ? approvalError.message : String(approvalError);
-              log.warn(
-                `Failed to submit approval denial for run ${runId} (tool_call_id=${approvalResponse.tool_call_id}):`,
-                approvalError,
-              );
-              details.push(`Failed to deny approval ${approvalResponse.tool_call_id} from run ${runId}: ${approvalErrMsg}`);
-              continue;
-            }
-
-            if (i < approvalResponses.length - 1) {
-              await new Promise(resolve => setTimeout(resolve, 1500));
-            }
-          }
-
-          if (deniedForRun === 0) {
+          try {
+            await client.conversations.messages.create(conversationId, {
+              messages: [{
+                type: 'approval',
+                approvals: approvalResponses,
+              }],
+              streaming: false,
+            });
+          } catch (approvalError) {
+            const approvalErrMsg = approvalError instanceof Error ? approvalError.message : String(approvalError);
+            const toolCallIds = approvals.map(a => a.toolCallId).join(', ');
+            log.warn(
+              `Failed to batch-deny ${approvals.length} approval(s) for run ${runId} (${toolCallIds}):`,
+              approvalError,
+            );
+            details.push(`Failed to batch-deny approvals from run ${runId}: ${approvalErrMsg}`);
             continue;
           }
           
@@ -951,9 +953,9 @@ export async function recoverOrphanedConversationApproval(
             log.info(`No active runs to cancel for conversation ${conversationId}`);
           }
           
-          recoveredCount += deniedForRun;
+          recoveredCount += approvals.length;
           const suffix = cancelled ? ' (runs cancelled)' : '';
-          details.push(`Denied ${deniedForRun} approval(s) from ${status} run ${runId}${suffix}`);
+          details.push(`Denied ${approvals.length} approval(s) from ${status} run ${runId}${suffix}`);
         } else {
           details.push(`Run ${runId} is ${status}/${stopReason} - not orphaned`);
         }

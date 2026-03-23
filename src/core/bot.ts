@@ -951,11 +951,19 @@ export class LettaBot implements AgentSession {
       log.info(`Found ${pendingApprovals.length} pending approval(s), attempting recovery (attempt ${attempts + 1}/${maxAttempts})...`);
       this.store.incrementRecoveryAttempts();
       
+      // Group approvals by run_id and batch-deny (server requires all parallel
+      // tool calls from the same run to be denied in a single request).
+      const byRun = new Map<string, Array<{ toolCallId: string; reason: string }>>();
       for (const approval of pendingApprovals) {
-        log.info(`Rejecting approval for ${approval.toolName} (${approval.toolCallId})`);
+        const key = approval.runId || 'unknown';
+        if (!byRun.has(key)) byRun.set(key, []);
+        byRun.get(key)!.push({ toolCallId: approval.toolCallId, reason: 'Session was interrupted - retrying request' });
+      }
+      for (const [runId, batch] of byRun) {
+        log.info(`Batch-denying ${batch.length} approval(s) from run ${runId}`);
         await rejectApproval(
           this.store.agentId,
-          { toolCallId: approval.toolCallId, reason: 'Session was interrupted - retrying request' },
+          batch,
           this.store.conversationId || undefined
         );
       }
