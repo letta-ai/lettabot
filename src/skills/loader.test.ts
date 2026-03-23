@@ -132,8 +132,8 @@ describe('skills loader', () => {
     it('bundled bluesky shim prefers local CLI entrypoints', () => {
       const shimPath = join(process.cwd(), 'skills', 'bluesky', 'lettabot-bluesky');
       const shim = readFileSync(shimPath, 'utf-8');
-      expect(shim).toContain('node "./dist/cli.js" bluesky');
-      expect(shim).toContain('npx tsx "./src/cli.ts" bluesky');
+      expect(shim).toContain('node \"$REPO_ROOT/dist/cli.js\" bluesky');
+      expect(shim).toContain('npx tsx \"$REPO_ROOT/src/cli.ts\" bluesky');
       expect(shim).toContain('exec lettabot bluesky "$@"');
     });
   });
