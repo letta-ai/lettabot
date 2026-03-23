@@ -150,6 +150,32 @@ describe('skills loader', () => {
     });
   });
 
+  describe('working directory resolution', () => {
+    it('uses Railway volume path when WORKING_DIR is unset', async () => {
+      const originalWorkingDir = process.env.WORKING_DIR;
+      const originalRailwayVolume = process.env.RAILWAY_VOLUME_MOUNT_PATH;
+
+      try {
+        delete process.env.WORKING_DIR;
+        process.env.RAILWAY_VOLUME_MOUNT_PATH = '/railway-volume';
+
+        vi.resetModules();
+        const mod = await import('./loader.js');
+
+        expect(mod.WORKING_DIR).toBe('/railway-volume/data');
+        expect(mod.WORKING_SKILLS_DIR).toBe('/railway-volume/data/.skills');
+      } finally {
+        if (originalWorkingDir === undefined) delete process.env.WORKING_DIR;
+        else process.env.WORKING_DIR = originalWorkingDir;
+
+        if (originalRailwayVolume === undefined) delete process.env.RAILWAY_VOLUME_MOUNT_PATH;
+        else process.env.RAILWAY_VOLUME_MOUNT_PATH = originalRailwayVolume;
+
+        vi.resetModules();
+      }
+    });
+  });
+
   describe('installSkillsToAgent', () => {
     let tempDir: string;
     let testAgentId: string;
