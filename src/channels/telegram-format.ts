@@ -16,6 +16,13 @@ export async function markdownToTelegramV2(markdown: string): Promise<string> {
   try {
     // Dynamic import to handle ESM module
     const telegramifyMarkdown = (await import('telegramify-markdown')).default;
+    // Strip leading spaces from non-code lines to prevent accidental code blocks.
+    // Models sometimes output indented text which telegramify-markdown treats as code.
+    let inCodeBlock = false;
+    markdown = markdown.split('\n').map(line => {
+      if (line.startsWith('```')) inCodeBlock = !inCodeBlock;
+      return inCodeBlock ? line : line.replace(/^ +/, '');
+    }).join('\n');
     // Use 'keep' strategy for broad markdown support, including blockquotes.
     let result = telegramifyMarkdown(markdown, 'keep');
     // telegramify-markdown passes horizontal rules (---) through unescaped.
