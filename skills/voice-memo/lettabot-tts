@@ -12,9 +12,20 @@
 #     ELEVENLABS_MODEL_ID  - Optional. Model ID (default: eleven_multilingual_v2).
 #
 #   OpenAI:
-#     OPENAI_API_KEY       - Required. API key.
-#     OPENAI_TTS_VOICE     - Optional. Voice name (default: alloy).
-#     OPENAI_TTS_MODEL     - Optional. Model (default: tts-1).
+#     OPENAI_API_KEY           - Required. API key.
+#     OPENAI_TTS_VOICE         - Optional. Voice name (default: alloy).
+#     OPENAI_TTS_MODEL         - Optional. Model (default: tts-1).
+#     OPENAI_TTS_BASE_URL      - Optional. Base URL for OpenAI-compatible TTS API
+#                                (default: https://api.openai.com). Use this to
+#                                point at a local server such as Kokoro or Piper.
+#     OPENAI_TTS_FORMAT        - Optional. Response format (default: omitted,
+#                                letting the server choose). Set to "opus", "mp3",
+#                                "wav", etc. when the server requires an explicit
+#                                format. Note: some compatible servers ignore or
+#                                error on this field.
+#     LETTABOT_TTS_PAD_SECONDS - Optional. Seconds of silence to append via ffmpeg
+#                                to prevent audio cutoff in some clients (e.g. 0.5).
+#                                Requires ffmpeg. Skipped silently if not set.
 
 set -euo pipefail
 
@@ -37,6 +48,9 @@ require_cmd() {
 preflight() {
   require_cmd curl
   require_cmd jq
+  if [ -n "${LETTABOT_TTS_PAD_SECONDS:-}" ]; then
+    require_cmd ffmpeg
+  fi
 }
 
 preflight
@@ -109,23 +123,26 @@ tts_openai() {
 
   local voice="${OPENAI_TTS_VOICE:-alloy}"
   local model="${OPENAI_TTS_MODEL:-tts-1}"
+  local base_url="${OPENAI_TTS_BASE_URL:-https://api.openai.com}"
+  local fmt="${OPENAI_TTS_FORMAT:-}"
+
+  # Build JSON body; omit response_format when not set so OpenAI-compatible
+  # servers that don't support the field (e.g. Kokoro, Piper) work correctly.
+  local body
+  body=$(jq -n \
+    --arg text "$TEXT" \
+    --arg model "$model" \
+    --arg voice "$voice" \
+    --arg fmt "$fmt" \
+    'if $fmt != "" then {model: $model, input: $text, voice: $voice, response_format: $fmt}
+     else              {model: $model, input: $text, voice: $voice} end')
 
   local http_code
   http_code=$(curl -sS -w "%{http_code}" -o "$OUTPUT" \
-    "https://api.openai.com/v1/audio/speech" \
+    "${base_url}/v1/audio/speech" \
     -H "Authorization: Bearer ${OPENAI_API_KEY}" \
     -H "Content-Type: application/json" \
-    -d "$(jq -n \
-      --arg text "$TEXT" \
-      --arg model "$model" \
-      --arg voice "$voice" \
-      '{
-        model: $model,
-        input: $text,
-        voice: $voice,
-        response_format: "opus"
-      }'
-    )")
+    -d "$body")
 
   if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
     echo "Error: OpenAI TTS API returned HTTP $http_code (model=$model voice=$voice)" >&2
@@ -156,5 +173,20 @@ case "$PROVIDER" in
     exit 1
     ;;
 esac
+
+# ---------------------------------------------------------------------------
+# Optional: pad trailing silence to prevent audio cutoff in some clients.
+# Set LETTABOT_TTS_PAD_SECONDS (e.g. "0.5") to enable. Requires ffmpeg.
+# ---------------------------------------------------------------------------
+if [ -n "${LETTABOT_TTS_PAD_SECONDS:-}" ]; then
+  PAD_TMP=$(mktemp "${OUTPUT%.ogg}_pad_XXXXXX.ogg")
+  if ffmpeg -y -i "$OUTPUT" -af "apad=pad_dur=${LETTABOT_TTS_PAD_SECONDS}" \
+       -c:a libopus -b:a 64k "$PAD_TMP" 2>/dev/null; then
+    mv "$PAD_TMP" "$OUTPUT"
+  else
+    rm -f "$PAD_TMP"
+    echo "Warning: ffmpeg padding failed, using unpadded audio" >&2
+  fi
+fi
 
 echo "$OUTPUT"

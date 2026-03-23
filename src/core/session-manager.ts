@@ -10,7 +10,7 @@ import { createAgent, createSession, resumeSession, type Session, type SendMessa
 import type { BotConfig, StreamMsg } from './types.js';
 import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError } from './errors.js';
 import { Store } from './store.js';
-import { updateAgentName, ensureDirectivesBlockOnAgent } from '../tools/letta-api.js';
+import { updateAgentName, ensureDirectivesBlockOnAgent, recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { installSkillsToAgent, prependSkillDirsToPath } from '../skills/loader.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
@@ -381,13 +381,24 @@ export class SessionManager {
           const convId = bootstrap.conversationId || session.conversationId;
           log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
 
+          // Try SDK-level recovery first (goes through CLI control protocol)
           const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
           if (sdkResult.recovered) {
             log.info('Proactive SDK approval recovery succeeded');
-          } else {
-            log.warn(`SDK approval recovery did not resolve (${sdkResult.detail ?? 'unknown'})`);
+            return this._createSessionForKey(key, true, generation);
           }
+
+          // SDK recovery failed -- fall back to API-level recovery
+          log.warn(`SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
           session.close();
+          const result = isRecoverableConversationId(convId)
+            ? await recoverOrphanedConversationApproval(this.store.agentId, convId, true)
+            : await recoverPendingApprovalsForAgent(this.store.agentId);
+          if (result.recovered) {
+            log.info(`Proactive API-level recovery succeeded: ${result.details}`);
+          } else {
+            log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
+          }
           return this._createSessionForKey(key, true, generation);
         }
       } catch (err) {
@@ -566,17 +577,25 @@ export class SessionManager {
     try {
       await this.withSessionTimeout(session.send(message), `Session send (key=${convKey})`);
     } catch (error) {
-      // 409 CONFLICT from orphaned approval -- use SDK recovery
+      // 409 CONFLICT from orphaned approval -- use SDK recovery first, fall back to API
       if (!retried && isApprovalConflictError(error) && this.store.agentId) {
         log.info('CONFLICT detected - attempting SDK approval recovery...');
         const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
         if (sdkResult.recovered) {
           log.info('SDK approval recovery succeeded, retrying...');
-          this.invalidateSession(convKey);
           return this.runSession(message, { retried: true, canUseTool, convKey });
         }
-        log.error(`SDK approval recovery failed (${sdkResult.detail ?? 'unknown'})`);
+        // SDK recovery failed or unsupported -- fall back to API-level recovery
+        log.warn(`SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
         this.invalidateSession(convKey);
+        const result = isRecoverableConversationId(convId)
+          ? await recoverOrphanedConversationApproval(this.store.agentId, convId)
+          : await recoverPendingApprovalsForAgent(this.store.agentId);
+        if (result.recovered) {
+          log.info(`API-level recovery succeeded (${result.details}), retrying...`);
+          return this.runSession(message, { retried: true, canUseTool, convKey });
+        }
+        log.error(`Approval recovery failed: ${result.details}`);
         throw error;
       }
 

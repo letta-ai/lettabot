@@ -132,8 +132,8 @@ describe('skills loader', () => {
     it('bundled bluesky shim prefers local CLI entrypoints', () => {
       const shimPath = join(process.cwd(), 'skills', 'bluesky', 'lettabot-bluesky');
       const shim = readFileSync(shimPath, 'utf-8');
-      expect(shim).toContain('node "./dist/cli.js" bluesky');
-      expect(shim).toContain('npx tsx "./src/cli.ts" bluesky');
+      expect(shim).toContain('node \"$REPO_ROOT/dist/cli.js\" bluesky');
+      expect(shim).toContain('npx tsx \"$REPO_ROOT/src/cli.ts\" bluesky');
       expect(shim).toContain('exec lettabot bluesky "$@"');
     });
   });
@@ -147,6 +147,32 @@ describe('skills loader', () => {
     it('supports openai provider and requires OPENAI_API_KEY', () => {
       expect(isVoiceMemoConfigured({ TTS_PROVIDER: 'openai' })).toBe(false);
       expect(isVoiceMemoConfigured({ TTS_PROVIDER: 'openai', OPENAI_API_KEY: 'test' })).toBe(true);
+    });
+  });
+
+  describe('working directory resolution', () => {
+    it('uses Railway volume path when WORKING_DIR is unset', async () => {
+      const originalWorkingDir = process.env.WORKING_DIR;
+      const originalRailwayVolume = process.env.RAILWAY_VOLUME_MOUNT_PATH;
+
+      try {
+        delete process.env.WORKING_DIR;
+        process.env.RAILWAY_VOLUME_MOUNT_PATH = '/railway-volume';
+
+        vi.resetModules();
+        const mod = await import('./loader.js');
+
+        expect(mod.WORKING_DIR).toBe('/railway-volume/data');
+        expect(mod.WORKING_SKILLS_DIR).toBe('/railway-volume/data/.skills');
+      } finally {
+        if (originalWorkingDir === undefined) delete process.env.WORKING_DIR;
+        else process.env.WORKING_DIR = originalWorkingDir;
+
+        if (originalRailwayVolume === undefined) delete process.env.RAILWAY_VOLUME_MOUNT_PATH;
+        else process.env.RAILWAY_VOLUME_MOUNT_PATH = originalRailwayVolume;
+
+        vi.resetModules();
+      }
     });
   });
 

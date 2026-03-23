@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { resolveConversationKey, resolveHeartbeatConversationKey } from './bot.js';
+import { resolveConversationKey, resolveHeartbeatConversationKey, combinePendingMessages } from './bot.js';
+import type { InboundMessage } from './types.js';
 
 // ---------------------------------------------------------------------------
 // resolveConversationKey
@@ -208,5 +209,80 @@ describe('resolveHeartbeatConversationKey', () => {
     expect(resolveHeartbeatConversationKey('disabled', 'last-active', new Set(), 'telegram')).toBe('default');
     expect(resolveHeartbeatConversationKey('disabled', 'dedicated', new Set(), 'telegram')).toBe('default');
     expect(resolveHeartbeatConversationKey('disabled', undefined, new Set())).toBe('default');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// combinePendingMessages
+// ---------------------------------------------------------------------------
+function makeMsg(overrides: Partial<InboundMessage> = {}): InboundMessage {
+  return {
+    channel: 'telegram',
+    chatId: 'chat-1',
+    userId: 'user-1',
+    text: '',
+    timestamp: new Date(),
+    ...overrides,
+  };
+}
+
+describe('combinePendingMessages', () => {
+  it('returns single message unchanged', () => {
+    const msg = makeMsg({ text: 'hello' });
+    expect(combinePendingMessages([msg])).toBe(msg);
+  });
+
+  it('joins text with newlines', () => {
+    const combined = combinePendingMessages([
+      makeMsg({ text: 'first' }),
+      makeMsg({ text: 'second' }),
+      makeMsg({ text: 'third' }),
+    ]);
+    expect(combined.text).toBe('first\nsecond\nthird');
+  });
+
+  it('skips empty text entries', () => {
+    const combined = combinePendingMessages([
+      makeMsg({ text: 'hello' }),
+      makeMsg({ text: '' }),
+      makeMsg({ text: 'world' }),
+    ]);
+    expect(combined.text).toBe('hello\nworld');
+  });
+
+  it('uses metadata from the last message', () => {
+    const combined = combinePendingMessages([
+      makeMsg({ text: 'first', userName: 'Alice', messageId: 'msg-1' }),
+      makeMsg({ text: 'second', userName: 'Alice', messageId: 'msg-2' }),
+    ]);
+    expect(combined.messageId).toBe('msg-2');
+  });
+
+  it('sets isBatch and batchedMessages', () => {
+    const msgs = [makeMsg({ text: 'a' }), makeMsg({ text: 'b' })];
+    const combined = combinePendingMessages(msgs);
+    expect(combined.isBatch).toBe(true);
+    expect(combined.batchedMessages).toHaveLength(2);
+    expect(combined.batchedMessages![0].text).toBe('a');
+    expect(combined.batchedMessages![1].text).toBe('b');
+  });
+
+  it('collects attachments from all messages', () => {
+    const combined = combinePendingMessages([
+      makeMsg({ text: 'a', attachments: [{ id: '1', name: 'file1.png', kind: 'image', url: 'http://x' }] }),
+      makeMsg({ text: 'b' }),
+      makeMsg({ text: 'c', attachments: [{ id: '2', name: 'file2.pdf', kind: 'file', url: 'http://y' }] }),
+    ]);
+    expect(combined.attachments).toHaveLength(2);
+    expect(combined.attachments![0].name).toBe('file1.png');
+    expect(combined.attachments![1].name).toBe('file2.pdf');
+  });
+
+  it('omits attachments when none present', () => {
+    const combined = combinePendingMessages([
+      makeMsg({ text: 'a' }),
+      makeMsg({ text: 'b' }),
+    ]);
+    expect(combined.attachments).toBeUndefined();
   });
 });

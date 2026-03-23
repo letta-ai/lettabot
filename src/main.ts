@@ -269,6 +269,12 @@ async function main() {
   log.info(`Data directory: ${dataDir}`);
   log.info(`Working directory: ${globalConfig.workingDir}`);
   process.env.LETTABOT_WORKING_DIR = globalConfig.workingDir;
+
+  // Propagate resolved config path so child processes (lettabot-message, lettabot-react)
+  // can find the config regardless of their working directory.
+  if (!process.env.LETTABOT_CONFIG && !hasInlineConfig()) {
+    process.env.LETTABOT_CONFIG = configPath;
+  }
   
   // Normalize config to agents array
   const agents = normalizeAgents(yamlConfig);
@@ -317,6 +323,7 @@ async function main() {
   
   const gateway = new LettaGateway();
   const agentStores = new Map<string, Store>();
+  const agentConversationModes = new Map<string, string>();
   const sessionInvalidators = new Map<string, (key?: string) => void>();
   const agentChannelMap = new Map<string, string[]>();
   const voiceMemoEnabled = isVoiceMemoConfigured();
@@ -378,6 +385,7 @@ async function main() {
       sendFileDir: agentConfig.features?.sendFileDir,
       sendFileMaxSize: agentConfig.features?.sendFileMaxSize,
       sendFileCleanup: agentConfig.features?.sendFileCleanup,
+      autoVoice: agentConfig.features?.autoVoice,
       memfs: resolvedMemfs,
       sleeptime: effectiveSleeptime,
       display: agentConfig.features?.display,
@@ -562,6 +570,7 @@ async function main() {
     
     gateway.addAgent(agentConfig.name, bot);
     agentStores.set(agentConfig.name, bot.store);
+    agentConversationModes.set(agentConfig.name, agentConfig.conversations?.mode || 'shared');
     sessionInvalidators.set(agentConfig.name, (key) => bot.invalidateSession(key));
     agentChannelMap.set(agentConfig.name, adapters.map(a => a.id));
   }
@@ -590,6 +599,7 @@ async function main() {
     turnLogFiles: Object.keys(turnLogFiles).length > 0 ? turnLogFiles : undefined,
     stores: agentStores,
     agentChannels: agentChannelMap,
+    agentConversationModes,
     sessionInvalidators,
   });
   
