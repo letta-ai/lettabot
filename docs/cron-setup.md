@@ -116,11 +116,16 @@ features:
   heartbeat:
     enabled: true
     intervalMin: 60    # Default: 60 minutes
-    skipRecentUserMin: 5  # Skip auto-heartbeats for N minutes after user messages (0 disables)
+    skipRecentPolicy: fraction   # fixed | fraction | off
+    skipRecentFraction: 0.5      # Used when policy=fraction (0-1)
+    # skipRecentUserMin: 5       # Used when policy=fixed (0 disables)
+    interruptOnUserMessage: true # Cancel in-flight heartbeat when user messages arrive
 ```
 
-By default, automatic heartbeats are skipped for 5 minutes after a user message to avoid immediate follow-up noise.
-- Set `skipRecentUserMin: 0` to disable this skip behavior.
+By default, automatic heartbeats are skipped for half the heartbeat interval (`skipRecentPolicy: fraction`, `skipRecentFraction: 0.5`).
+- Use `skipRecentPolicy: fixed` + `skipRecentUserMin` for a fixed window.
+- Use `skipRecentPolicy: off` to disable recent-user skipping.
+- `interruptOnUserMessage: true` prioritizes live user messages by cancelling in-flight heartbeat runs on the same key.
 - Manual `/heartbeat` always bypasses the skip check.
 
 ### Manual Trigger

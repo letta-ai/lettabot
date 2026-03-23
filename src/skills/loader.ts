@@ -7,13 +7,17 @@ import { execSync } from 'node:child_process';
 import { join, resolve, delimiter } from 'node:path';
 import matter from 'gray-matter';
 import type { SkillEntry, ClawdbotMetadata } from './types.js';
+import { getWorkingDir } from '../utils/paths.js';
 
 // Skills directories (in priority order: project > agent > global > bundled > skills.sh)
 const HOME = process.env.HOME || process.env.USERPROFILE || '';
-export const WORKING_DIR = process.env.WORKING_DIR || '/tmp/lettabot';
+const LETTA_HOME = process.env.RAILWAY_VOLUME_MOUNT_PATH
+  ? join(process.env.RAILWAY_VOLUME_MOUNT_PATH, '.letta')
+  : join(HOME, '.letta');
+export const WORKING_DIR = getWorkingDir();
 export const PROJECT_SKILLS_DIR = resolve(process.cwd(), '.skills');
 export const WORKING_SKILLS_DIR = join(WORKING_DIR, '.skills'); // skills enabled via CLI
-export const GLOBAL_SKILLS_DIR = join(HOME, '.letta', 'skills');
+export const GLOBAL_SKILLS_DIR = join(LETTA_HOME, 'skills');
 export const SKILLS_SH_DIR = join(HOME, '.agents', 'skills'); // skills.sh global installs
 
 // Bundled skills from the lettabot repo itself
@@ -29,7 +33,7 @@ export const BUNDLED_SKILLS_DIR = resolve(__dirname, '../../skills'); // lettabo
  * Get the agent-scoped skills directory for a specific agent
  */
 export function getAgentSkillsDir(agentId: string): string {
-  return join(HOME, '.letta', 'agents', agentId, 'skills');
+  return join(LETTA_HOME, 'agents', agentId, 'skills');
 }
 
 /**
@@ -69,7 +73,7 @@ export function getWorkingSkillExecutableDirs(): string[] {
  * Permanently prepend skill directories to PATH so that subprocesses
  * spawned subsequently inherit them.
  *
- * Includes both agent-scoped skills (~/.letta/agents/{id}/skills/) and
+ * Includes both agent-scoped skills (.letta/agents/{id}/skills) and
  * working-dir skills (WORKING_DIR/.skills/) so that skills enabled via
  * `lettabot skills enable` are available without needing a feature-gate.
  *
@@ -411,7 +415,7 @@ export function installSkillsToWorkingDir(workingDir: string, config: SkillsInst
 
 /**
  * Install feature-gated skills to the agent-scoped skills directory
- * (~/.letta/agents/{agentId}/skills/)
+ * (.letta/agents/{agentId}/skills)
  * 
  * This aligns with Letta Code CLI which uses agent-scoped skills.
  * Called after agent creation in bot.ts.

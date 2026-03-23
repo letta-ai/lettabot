@@ -1,6 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SignalAdapter } from './signal.js';
 
+type SignalAdapterWithInternals = {
+  config: {
+    readReceipts?: boolean;
+  };
+  buildDaemonArgs: () => string[];
+};
+
 describe('SignalAdapter sendFile', () => {
   function createAdapter(phone = '+15555555555') {
     return new SignalAdapter({ phoneNumber: phone });
@@ -85,5 +92,24 @@ describe('SignalAdapter sendFile', () => {
     });
 
     expect(result.messageId).toBe('unknown');
+  });
+});
+
+describe('SignalAdapter read receipts', () => {
+  it('defaults readReceipts to true', () => {
+    const adapter = new SignalAdapter({ phoneNumber: '+15555555555' });
+    const internal = adapter as unknown as SignalAdapterWithInternals;
+    expect(internal.config.readReceipts).toBe(true);
+    expect(internal.buildDaemonArgs()).toContain('--send-read-receipts');
+  });
+
+  it('omits daemon read receipts flag when disabled', () => {
+    const adapter = new SignalAdapter({
+      phoneNumber: '+15555555555',
+      readReceipts: false,
+    });
+    const internal = adapter as unknown as SignalAdapterWithInternals;
+    expect(internal.config.readReceipts).toBe(false);
+    expect(internal.buildDaemonArgs()).not.toContain('--send-read-receipts');
   });
 });

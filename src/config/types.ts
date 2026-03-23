@@ -11,6 +11,7 @@ import { createLogger } from '../logger.js';
 const log = createLogger('Config');
 export type ServerMode = 'api' | 'docker' | 'cloud' | 'selfhosted';
 export type CanonicalServerMode = 'api' | 'docker';
+export type HeartbeatSkipRecentPolicy = 'fixed' | 'fraction' | 'off';
 
 export function canonicalizeServerMode(mode?: ServerMode): CanonicalServerMode {
   return mode === 'docker' || mode === 'selfhosted' ? 'docker' : 'api';
@@ -89,6 +90,9 @@ export interface AgentConfig {
       enabled: boolean;
       intervalMin?: number;
       skipRecentUserMin?: number; // Skip auto-heartbeats for N minutes after user message (0 disables)
+      skipRecentPolicy?: HeartbeatSkipRecentPolicy; // 'fixed' | 'fraction' | 'off'
+      skipRecentFraction?: number; // Fraction of intervalMin when policy=fraction (0-1)
+      interruptOnUserMessage?: boolean; // Cancel in-flight heartbeat when user messages arrive
       prompt?: string;       // Custom heartbeat prompt (replaces default body)
       promptFile?: string;   // Path to prompt file (re-read each tick for live editing)
       target?: string;       // Delivery target ("telegram:123", "slack:C123", etc.)
@@ -100,6 +104,7 @@ export interface AgentConfig {
     sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
     sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete after send (default: false)
     display?: DisplayConfig;
+    autoVoice?: boolean;           // Automatically generate TTS voice memo for every text response
     allowedTools?: string[];       // Per-agent tool whitelist (overrides global/env ALLOWED_TOOLS)
     disallowedTools?: string[];    // Per-agent tool blocklist (overrides global/env DISALLOWED_TOOLS)
     logging?: {
@@ -185,6 +190,9 @@ export interface LettaBotConfig {
       enabled: boolean;
       intervalMin?: number;
       skipRecentUserMin?: number; // Skip auto-heartbeats for N minutes after user message (0 disables)
+      skipRecentPolicy?: HeartbeatSkipRecentPolicy; // 'fixed' | 'fraction' | 'off'
+      skipRecentFraction?: number; // Fraction of intervalMin when policy=fraction (0-1)
+      interruptOnUserMessage?: boolean; // Cancel in-flight heartbeat when user messages arrive
       prompt?: string;       // Custom heartbeat prompt (replaces default body)
       promptFile?: string;   // Path to prompt file (re-read each tick for live editing)
       target?: string;       // Delivery target ("telegram:123", "slack:C123", etc.)
@@ -374,6 +382,7 @@ export interface SignalConfig {
   cliPath?: string;     // Path to signal-cli binary (default: "signal-cli")
   httpHost?: string;    // Daemon HTTP host (default: "127.0.0.1")
   httpPort?: number;    // Daemon HTTP port (default: 8090)
+  readReceipts?: boolean; // Send read receipts for incoming messages (default: true)
   selfChat?: boolean;
   dmPolicy?: 'pairing' | 'allowlist' | 'open';
   allowedUsers?: string[];
@@ -567,6 +576,9 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     const normalized: AgentConfig['channels'] = {};
     if (!channels) return normalized;
 
+    const hasValidMtprotoApiId = (value: unknown): value is number =>
+      typeof value === 'number' && Number.isInteger(value) && value > 0;
+
     // Merge env vars into YAML blocks that are missing their key credential.
     // Without this, `signal: enabled: true` + SIGNAL_PHONE_NUMBER env var
     // silently fails because the env-var-only fallback (below) only fires
@@ -584,14 +596,32 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     if (channels.discord && !channels.discord.token && process.env.DISCORD_BOT_TOKEN) {
       channels.discord.token = process.env.DISCORD_BOT_TOKEN;
     }
+    if (channels['telegram-mtproto']) {
+      if (channels['telegram-mtproto'].apiId === undefined && process.env.TELEGRAM_API_ID) {
+        const parsedApiId = parseInt(process.env.TELEGRAM_API_ID, 10);
+        if (hasValidMtprotoApiId(parsedApiId)) {
+          channels['telegram-mtproto'].apiId = parsedApiId;
+        }
+      }
+      if (!channels['telegram-mtproto'].apiHash && process.env.TELEGRAM_API_HASH) {
+        channels['telegram-mtproto'].apiHash = process.env.TELEGRAM_API_HASH;
+      }
+      if (!channels['telegram-mtproto'].phoneNumber && process.env.TELEGRAM_PHONE_NUMBER) {
+        channels['telegram-mtproto'].phoneNumber = process.env.TELEGRAM_PHONE_NUMBER;
+      }
+    }
 
     if (channels.telegram?.enabled !== false && channels.telegram?.token) {
       const telegram = { ...channels.telegram };
       normalizeLegacyGroupFields(telegram, `${sourcePath}.telegram`);
       normalized.telegram = telegram;
     }
-    // telegram-mtproto: check apiId as the key credential
-    if (channels['telegram-mtproto']?.enabled !== false && channels['telegram-mtproto']?.apiId) {
+    if (
+      channels['telegram-mtproto']?.enabled !== false
+      && hasValidMtprotoApiId(channels['telegram-mtproto']?.apiId)
+      && !!channels['telegram-mtproto']?.apiHash
+      && !!channels['telegram-mtproto']?.phoneNumber
+    ) {
       normalized['telegram-mtproto'] = channels['telegram-mtproto'];
     }
     if (channels.slack?.enabled !== false && channels.slack?.botToken && channels.slack?.appToken) {
@@ -626,17 +656,23 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       }
     }
 
-    // Warn when a channel block exists but was dropped due to missing credentials
-    const channelCredentials: Array<[string, unknown, boolean]> = [
-      ['telegram', channels.telegram, !!normalized.telegram],
-      ['slack', channels.slack, !!normalized.slack],
-      ['signal', channels.signal, !!normalized.signal],
-      ['discord', channels.discord, !!normalized.discord],
+    const channelCredentials: Array<{ name: string; raw: unknown; included: boolean; required: string }> = [
+      { name: 'telegram', raw: channels.telegram, included: !!normalized.telegram, required: 'token' },
+      { name: 'telegram-mtproto', raw: channels['telegram-mtproto'], included: !!normalized['telegram-mtproto'], required: 'apiId, apiHash, phoneNumber' },
+      { name: 'slack', raw: channels.slack, included: !!normalized.slack, required: 'botToken, appToken' },
+      { name: 'signal', raw: channels.signal, included: !!normalized.signal, required: 'phone' },
+      { name: 'discord', raw: channels.discord, included: !!normalized.discord, required: 'token' },
     ];
-    for (const [name, raw, included] of channelCredentials) {
-      if (raw && (raw as Record<string, unknown>).enabled !== false && !included) {
-        log.warn(`Channel '${name}' is in ${sourcePath} but missing required credentials -- skipping. Check your lettabot.yaml or environment variables.`);
-      }
+
+    const invalidChannels = channelCredentials
+      .filter(({ raw, included }) => !!raw && (raw as Record<string, unknown>).enabled !== false && !included)
+      .map(({ name, required }) => `- ${sourcePath}.${name}: missing required field(s): ${required}`);
+
+    if (invalidChannels.length > 0) {
+      throw new Error(
+        `Invalid channel configuration:\n${invalidChannels.join('\n')}\n` +
+        'Set required credentials in lettabot.yaml or environment variables, or set enabled: false.'
+      );
     }
 
     return normalized;
@@ -661,8 +697,20 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
 
   // Env var fallback for container deploys without lettabot.yaml (e.g. Railway)
   // Helper: parse comma-separated env var into string array (or undefined)
-  const parseList = (envVar?: string): string[] | undefined =>
-    envVar ? envVar.split(',').map(s => s.trim()).filter(Boolean) : undefined;
+  const parseList = (envVar?: string): string[] | undefined => {
+    if (envVar === undefined) return undefined;
+    const values = envVar.split(',').map(s => s.trim()).filter(Boolean);
+    return values.length > 0 ? values : undefined;
+  };
+
+  const parseOptionalBooleanEnv = (envVar?: string): boolean | undefined => {
+    if (envVar === undefined) return undefined;
+    const normalized = envVar.trim().toLowerCase();
+    if (!normalized) return undefined;
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+    return undefined;
+  };
 
   if (!channels.telegram && process.env.TELEGRAM_BOT_TOKEN) {
     channels.telegram = {
@@ -698,7 +746,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
   if (!channels.whatsapp && process.env.WHATSAPP_ENABLED === 'true') {
     channels.whatsapp = {
       enabled: true,
-      selfChat: process.env.WHATSAPP_SELF_CHAT_MODE !== 'false',
+      selfChat: parseOptionalBooleanEnv(process.env.WHATSAPP_SELF_CHAT_MODE) ?? true,
       dmPolicy: (process.env.WHATSAPP_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
       allowedUsers: parseList(process.env.WHATSAPP_ALLOWED_USERS),
     };
@@ -707,7 +755,8 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     channels.signal = {
       enabled: true,
       phone: process.env.SIGNAL_PHONE_NUMBER,
-      selfChat: process.env.SIGNAL_SELF_CHAT_MODE !== 'false',
+      readReceipts: parseOptionalBooleanEnv(process.env.SIGNAL_READ_RECEIPTS) ?? true,
+      selfChat: parseOptionalBooleanEnv(process.env.SIGNAL_SELF_CHAT_MODE) ?? true,
       dmPolicy: (process.env.SIGNAL_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
       allowedUsers: parseList(process.env.SIGNAL_ALLOWED_USERS),
     };
@@ -763,11 +812,29 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     const skipRecentUserMin = process.env.HEARTBEAT_SKIP_RECENT_USER_MIN
       ? parseInt(process.env.HEARTBEAT_SKIP_RECENT_USER_MIN, 10)
       : undefined;
+    const skipRecentPolicyRaw = process.env.HEARTBEAT_SKIP_RECENT_POLICY;
+    const skipRecentPolicy = skipRecentPolicyRaw === 'fixed'
+      || skipRecentPolicyRaw === 'fraction'
+      || skipRecentPolicyRaw === 'off'
+      ? skipRecentPolicyRaw
+      : undefined;
+    const skipRecentFraction = process.env.HEARTBEAT_SKIP_RECENT_FRACTION
+      ? Number(process.env.HEARTBEAT_SKIP_RECENT_FRACTION)
+      : undefined;
+    const interruptOnUserMessageRaw = process.env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE;
+    const interruptOnUserMessage = interruptOnUserMessageRaw === 'true'
+      ? true
+      : interruptOnUserMessageRaw === 'false'
+        ? false
+        : undefined;
 
     features.heartbeat = {
       enabled: true,
       ...(Number.isFinite(intervalMin) ? { intervalMin } : {}),
       ...(Number.isFinite(skipRecentUserMin) ? { skipRecentUserMin } : {}),
+      ...(skipRecentPolicy ? { skipRecentPolicy } : {}),
+      ...(Number.isFinite(skipRecentFraction) ? { skipRecentFraction } : {}),
+      ...(interruptOnUserMessage !== undefined ? { interruptOnUserMessage } : {}),
     };
   }
 

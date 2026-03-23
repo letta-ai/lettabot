@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { parseDirectives, stripActionsBlock } from './directives.js';
+import {
+  hasIncompleteActionsTag,
+  hasUnclosedActionsBlock,
+  parseDirectives,
+  stripActionsBlock,
+} from './directives.js';
 
 describe('parseDirectives', () => {
   it('returns text unchanged when no actions block present', () => {
@@ -113,11 +118,34 @@ describe('parseDirectives', () => {
     expect(result.directives).toEqual([]);
   });
 
-  it('ignores actions block NOT at start of response', () => {
+  it('parses actions block in middle of response', () => {
     const input = 'Some text first <actions><react emoji="eyes" /></actions>';
     const result = parseDirectives(input);
-    expect(result.cleanText).toBe(input);
-    expect(result.directives).toEqual([]);
+    expect(result.cleanText).toBe('Some text first');
+    expect(result.directives).toEqual([{ type: 'react', emoji: 'eyes' }]);
+  });
+
+  it('parses trailing actions block after visible text', () => {
+    const input = 'Message complete. <actions><react emoji="thumbsup" /></actions>';
+    const result = parseDirectives(input);
+    expect(result.cleanText).toBe('Message complete.');
+    expect(result.directives).toEqual([{ type: 'react', emoji: 'thumbsup' }]);
+  });
+
+  it('parses and executes directives across multiple actions blocks in source order', () => {
+    const input = [
+      'Start',
+      '<actions><react emoji="eyes" /></actions>',
+      'Middle',
+      '<actions><voice>Hello</voice></actions>',
+      'End',
+    ].join(' ');
+    const result = parseDirectives(input);
+    expect(result.cleanText).toBe('Start  Middle  End');
+    expect(result.directives).toEqual([
+      { type: 'react', emoji: 'eyes' },
+      { type: 'voice', text: 'Hello' },
+    ]);
   });
 
   it('handles leading whitespace before actions block', () => {
@@ -339,8 +367,37 @@ describe('stripActionsBlock', () => {
     expect(stripActionsBlock('<actions><react emoji="eyes" /></actions>')).toBe('');
   });
 
-  it('does not strip actions block in middle of text', () => {
+  it('strips actions block in middle of text', () => {
     const input = 'Before <actions><react emoji="eyes" /></actions> After';
-    expect(stripActionsBlock(input)).toBe(input);
+    expect(stripActionsBlock(input)).toBe('Before  After');
+  });
+
+  it('strips multiple actions blocks in one response', () => {
+    const input = 'A <actions><react emoji="eyes" /></actions> B <actions><voice>Hello</voice></actions> C';
+    expect(stripActionsBlock(input)).toBe('A  B  C');
+  });
+});
+
+describe('hasUnclosedActionsBlock', () => {
+  it('detects unmatched opening actions tag', () => {
+    expect(hasUnclosedActionsBlock('Before <actions><react emoji="eyes" />')).toBe(true);
+  });
+
+  it('returns false for complete actions block', () => {
+    expect(hasUnclosedActionsBlock('Before <actions><react emoji="eyes" /></actions> After')).toBe(false);
+  });
+});
+
+describe('hasIncompleteActionsTag', () => {
+  it('detects partial opening actions tag while streaming', () => {
+    expect(hasIncompleteActionsTag('Before <act')).toBe(true);
+  });
+
+  it('detects partial closing actions tag while streaming', () => {
+    expect(hasIncompleteActionsTag('Before </act')).toBe(true);
+  });
+
+  it('returns false when no partial actions tag is present', () => {
+    expect(hasIncompleteActionsTag('Before <code>ok</code>')).toBe(false);
   });
 });
