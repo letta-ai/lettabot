@@ -67,6 +67,7 @@ const MIME_FROM_EXT: Record<string, ImageContent['source']['media_type']> = {
  */
 async function prepareImage(
   source: { localPath?: string; url?: string; mimeType?: string; name?: string },
+  logger: Logger,
 ): Promise<ImageContent | null> {
   let buffer: Buffer;
   let mediaType: ImageContent['source']['media_type'];
@@ -87,7 +88,7 @@ async function prepareImage(
   } else if (source.url) {
     const response = await fetch(source.url);
     if (!response.ok) {
-      log.warn(`Failed to fetch image from ${source.url}: HTTP ${response.status}`);
+      logger.warn(`Failed to fetch image from ${source.url}: HTTP ${response.status}`);
       return null;
     }
     buffer = Buffer.from(await response.arrayBuffer());
@@ -102,7 +103,7 @@ async function prepareImage(
   const longest = Math.max(metadata.width ?? 0, metadata.height ?? 0);
 
   if (longest > MAX_IMAGE_DIMENSION) {
-    log.info(`Resizing image ${source.name || 'unknown'} from ${metadata.width}x${metadata.height} (max side → ${MAX_IMAGE_DIMENSION}px)`);
+    logger.info(`Resizing image ${source.name || 'unknown'} from ${metadata.width}x${metadata.height} (max side → ${MAX_IMAGE_DIMENSION}px)`);
     buffer = await sharp(buffer)
       .resize({ width: MAX_IMAGE_DIMENSION, height: MAX_IMAGE_DIMENSION, fit: 'inside', withoutEnlargement: true })
       .toBuffer();
@@ -167,6 +168,7 @@ export async function isPathAllowed(filePath: string, allowedDir: string): Promi
 async function buildMultimodalMessage(
   formattedText: string,
   msg: InboundMessage,
+  logger: Logger,
 ): Promise<SendMessage> {
   if (process.env.INLINE_IMAGES === 'false') {
     return formattedText;
@@ -188,15 +190,15 @@ async function buildMultimodalMessage(
 
   for (const attachment of imageAttachments) {
     try {
-      const item = await prepareImage(attachment);
+      const item = await prepareImage(attachment, logger);
       if (item) content.push(item);
     } catch (err) {
-      log.warn(`Failed to load image ${attachment.name || 'unknown'}: ${err instanceof Error ? err.message : err}`);
+      logger.warn(`Failed to load image ${attachment.name || 'unknown'}: ${err instanceof Error ? err.message : err}`);
     }
   }
 
   if (content.length > 1) {
-    log.info(`Sending ${content.length - 1} inline image(s) to LLM`);
+    logger.info(`Sending ${content.length - 1} inline image(s) to LLM`);
   }
 
   return content.length > 1 ? content : formattedText;
@@ -1228,7 +1230,7 @@ export class LettaBot implements AgentSession {
     const formattedText = msg.isBatch && msg.batchedMessages && msg.isGroup
       ? formatGroupBatchEnvelope(msg.batchedMessages, {}, msg.isListeningMode)
       : formatMessageEnvelope(msg, {}, sessionContext);
-    const messageToSend = await buildMultimodalMessage(formattedText, msg);
+    const messageToSend = await buildMultimodalMessage(formattedText, msg, this.log);
     lap('format message');
 
     const canUseTool = this.buildCanUseToolCallback(msg, adapter);

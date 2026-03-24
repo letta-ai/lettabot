@@ -18,13 +18,13 @@ import { getCronLogPath } from '../utils/paths.js';
 import { listActionableTodos } from '../todo/store.js';
 
 
-import { createLogger } from '../logger.js';
+import { createLogger, type Logger } from '../logger.js';
 
 const log = createLogger('Heartbeat');
 // Log file
 const LOG_PATH = getCronLogPath();
 
-function logEvent(event: string, data: Record<string, unknown>): void {
+function logEvent(event: string, data: Record<string, unknown>, logger: Logger = log): void {
   const entry = {
     timestamp: new Date().toISOString(),
     event,
@@ -38,7 +38,7 @@ function logEvent(event: string, data: Record<string, unknown>): void {
     // Ignore
   }
   
-  log.info(`${event}:`, JSON.stringify(data));
+  logger.info(`${event}:`, JSON.stringify(data));
 }
 
 /**
@@ -176,7 +176,7 @@ export class HeartbeatService {
           memoryDir,
           fileCount: lines.length,
           files: lines.slice(0, 10),
-        });
+        }, this.log);
       }
     } catch (err) {
       this.log.warn(
@@ -211,7 +211,7 @@ export class HeartbeatService {
       intervalMinutes: this.config.intervalMinutes,
       mode: 'silent',
       note: 'Agent must use lettabot-message CLI to contact user',
-    });
+    }, this.log);
   }
   
   /**
@@ -266,7 +266,7 @@ export class HeartbeatService {
             minutesAgo,
             skipPolicy: policy,
             skipWindowMin,
-          });
+          }, this.log);
           return;
         }
       }
@@ -280,7 +280,7 @@ export class HeartbeatService {
     logEvent('heartbeat_running', { 
       time: now.toISOString(),
       mode: 'silent',
-    });
+    }, this.log);
     
     // Build trigger context for silent mode
     const triggerContext: TriggerContext = {
@@ -327,7 +327,7 @@ export class HeartbeatService {
       logEvent('heartbeat_completed', {
         mode: 'silent',
         responseLength: response?.length || 0,
-      });
+      }, this.log);
       
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -345,7 +345,7 @@ export class HeartbeatService {
         );
       }
 
-      logEvent('heartbeat_error', { error: errorMsg });
+      logEvent('heartbeat_error', { error: errorMsg }, this.log);
     }
   }
 }

@@ -12,7 +12,7 @@
  */
 
 import type { StreamMsg } from './types.js';
-import { createLogger } from '../logger.js';
+import { createLogger, type Logger } from '../logger.js';
 
 const log = createLogger('DisplayPipeline');
 
@@ -102,12 +102,13 @@ function classifyResult(
   convKey: string,
   runIds: string[],
   fingerprints: Map<string, string>,
+  logger: Logger,
 ): 'fresh' | 'stale' | 'unknown' {
   if (runIds.length === 0) return 'unknown';
   const fingerprint = [...new Set(runIds)].sort().join(',');
   const previous = fingerprints.get(convKey);
   if (previous === fingerprint) {
-    log.warn(`Stale duplicate result detected (key=${convKey}, runIds=${fingerprint})`);
+    logger.warn(`Stale duplicate result detected (key=${convKey}, runIds=${fingerprint})`);
     return 'stale';
   }
   fingerprints.set(convKey, fingerprint);
@@ -316,7 +317,7 @@ export async function* createDisplayPipeline(
 
         // Classify
         const cancelled = (msg as any).stopReason === 'cancelled';
-        const staleState = classifyResult(convKey, runIds.length > 0 ? runIds : [...allRunIds], resultFingerprints);
+        const staleState = classifyResult(convKey, runIds.length > 0 ? runIds : [...allRunIds], resultFingerprints, pipeLog);
         const stale = staleState === 'stale';
 
         if (filteredCount > 0) {
