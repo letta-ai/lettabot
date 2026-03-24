@@ -67,12 +67,16 @@ export interface HeartbeatConfig {
     channel: string;
     chatId: string;
   };
+
+  // Bot name for log context
+  botName?: string;
 }
 
 /**
  * Heartbeat Service
  */
 export class HeartbeatService {
+  private readonly log;
   private bot: AgentSession;
   private config: HeartbeatConfig;
   private intervalId: NodeJS.Timeout | null = null;
@@ -80,6 +84,7 @@ export class HeartbeatService {
   constructor(bot: AgentSession, config: HeartbeatConfig) {
     this.bot = bot;
     this.config = config;
+    this.log = createLogger('Heartbeat', config.botName);
   }
 
   private getSkipRecentPolicy(): 'fixed' | 'fraction' | 'off' {
@@ -149,7 +154,7 @@ export class HeartbeatService {
     if (!memoryDir) return;
 
     if (!existsSync(memoryDir)) {
-      log.debug(`Memory directory does not exist yet: ${memoryDir}`);
+      this.log.debug(`Memory directory does not exist yet: ${memoryDir}`);
       return;
     }
 
@@ -162,7 +167,7 @@ export class HeartbeatService {
 
       if (output) {
         const lines = output.split('\n');
-        log.warn(
+        this.log.warn(
           `Memory directory has ${lines.length} uncommitted/untracked file(s). ` +
           `This may cause heartbeat failures. Run "cd ${memoryDir} && git add -A && git commit -m 'sync'" to fix. ` +
           `Files: ${lines.slice(0, 5).join(', ')}${lines.length > 5 ? ` (and ${lines.length - 5} more)` : ''}`,
@@ -174,7 +179,7 @@ export class HeartbeatService {
         });
       }
     } catch (err) {
-      log.warn(
+      this.log.warn(
         `Failed to check memfs health in ${memoryDir}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
@@ -185,19 +190,19 @@ export class HeartbeatService {
    */
   start(): void {
     if (!this.config.enabled) {
-      log.info('Disabled');
+      this.log.info('Disabled');
       return;
     }
     
     if (this.intervalId) {
-      log.info('Already running');
+      this.log.info('Already running');
       return;
     }
     
     const intervalMs = this.config.intervalMinutes * 60 * 1000;
     
-    log.info(`Starting in SILENT MODE (every ${this.config.intervalMinutes} minutes)`);
-    log.info(`First heartbeat in ${this.config.intervalMinutes} minutes`);
+    this.log.info(`Starting in SILENT MODE (every ${this.config.intervalMinutes} minutes)`);
+    this.log.info(`First heartbeat in ${this.config.intervalMinutes} minutes`);
     
     // Wait full interval before first heartbeat (don't fire on startup)
     this.intervalId = setInterval(() => this.runHeartbeat(), intervalMs);
@@ -216,7 +221,7 @@ export class HeartbeatService {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
-      log.info('Stopped');
+      this.log.info('Stopped');
     }
   }
   
@@ -225,7 +230,7 @@ export class HeartbeatService {
    * Bypasses the "recently messaged" check since user explicitly requested it
    */
   async trigger(): Promise<void> {
-    log.info('Manual trigger requested');
+    this.log.info('Manual trigger requested');
     await this.runHeartbeat(true); // skipRecentCheck = true
   }
   
@@ -242,9 +247,9 @@ export class HeartbeatService {
     const formattedTime = now.toLocaleString();
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     
-    log.info(`${'='.repeat(60)}`);
-    log.info(`⏰ RUNNING at ${formattedTime} [SILENT MODE]`);
-    log.info(`${'='.repeat(60)}`);
+    this.log.info(`${'='.repeat(60)}`);
+    this.log.info(`⏰ RUNNING at ${formattedTime} [SILENT MODE]`);
+    this.log.info(`${'='.repeat(60)}`);
     
     // Skip if user sent a message in the configured window (unless manual trigger)
     if (!skipRecentCheck) {
@@ -255,7 +260,7 @@ export class HeartbeatService {
         
         if (msSinceLastMessage < skipWindowMs) {
           const minutesAgo = Math.round(msSinceLastMessage / 60000);
-          log.info(`User messaged ${minutesAgo}m ago - skipping heartbeat (policy=${policy}, window=${skipWindowMin}m)`);
+          this.log.info(`User messaged ${minutesAgo}m ago - skipping heartbeat (policy=${policy}, window=${skipWindowMin}m)`);
           logEvent('heartbeat_skipped_recent_user', {
             lastUserMessage: lastUserMessage.toISOString(),
             minutesAgo,
@@ -270,7 +275,7 @@ export class HeartbeatService {
     // Pre-flight: check for dirty memfs state that could cause session init failures
     this.checkMemfsHealth();
 
-    log.info(`Sending heartbeat to agent...`);
+    this.log.info(`Sending heartbeat to agent...`);
     
     logEvent('heartbeat_running', { 
       time: now.toISOString(),
@@ -287,7 +292,7 @@ export class HeartbeatService {
       const todoAgentKey = this.bot.getStatus().agentId || this.config.agentKey;
       const actionableTodos = listActionableTodos(todoAgentKey, now);
       if (actionableTodos.length > 0) {
-        log.info(`Loaded ${actionableTodos.length} actionable to-do(s).`);
+        this.log.info(`Loaded ${actionableTodos.length} actionable to-do(s).`);
       }
 
       // Resolve custom prompt: inline config > promptFile (re-read each tick) > default
@@ -297,7 +302,7 @@ export class HeartbeatService {
           const promptPath = resolve(this.config.workingDir, this.config.promptFile);
           customPrompt = readFileSync(promptPath, 'utf-8').trim();
         } catch (err) {
-          log.error(`Failed to read promptFile "${this.config.promptFile}":`, err);
+          this.log.error(`Failed to read promptFile "${this.config.promptFile}":`, err);
         }
       }
 
@@ -305,18 +310,18 @@ export class HeartbeatService {
         ? buildCustomHeartbeatPrompt(customPrompt, formattedTime, timezone, this.config.intervalMinutes, actionableTodos, now)
         : buildHeartbeatPrompt(formattedTime, timezone, this.config.intervalMinutes, actionableTodos, now);
       
-      log.info(`Sending prompt (SILENT MODE):\n${'─'.repeat(50)}\n${message}\n${'─'.repeat(50)}\n`);
+      this.log.info(`Sending prompt (SILENT MODE):\n${'─'.repeat(50)}\n${message}\n${'─'.repeat(50)}\n`);
       
       // Send to agent - response text is NOT delivered (silent mode)
       // Agent must use `lettabot-message` CLI via Bash to send messages
       const response = await this.bot.sendToAgent(message, triggerContext);
       
       // Log results
-      log.info(`Agent finished.`);
-      log.info(`  - Response text: ${response?.length || 0} chars (NOT delivered - silent mode)`);
+      this.log.info(`Agent finished.`);
+      this.log.info(`  - Response text: ${response?.length || 0} chars (NOT delivered - silent mode)`);
       
       if (response && response.trim()) {
-        log.info(`  - Response preview: "${response.slice(0, 100)}${response.length > 100 ? '...' : ''}"`);
+        this.log.info(`  - Response preview: "${response.slice(0, 100)}${response.length > 100 ? '...' : ''}"`);
       }
       
       logEvent('heartbeat_completed', {
@@ -326,12 +331,12 @@ export class HeartbeatService {
       
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      log.error('Error:', error);
+      this.log.error('Error:', error);
 
       // Surface git/memfs-related errors with actionable diagnostics
       if (/\b(git|memfs|memory)\b/i.test(errorMsg)) {
         const memoryDir = this.getMemoryDir();
-        log.warn(
+        this.log.warn(
           `Heartbeat failed due to a git/memfs error. ` +
           `This often happens when the memory directory has untracked or uncommitted files. ` +
           (memoryDir

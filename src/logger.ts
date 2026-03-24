@@ -149,8 +149,9 @@ function wrapChild(child: pino.Logger): Logger {
  *   log.error('Failed:', err);              // [ERROR] [Bot] Failed: { err: ... }
  *   log.debug({ key: 'abc' }, 'Queue tick'); // native pino style also works
  */
-export function createLogger(module: string): Logger {
-  return wrapChild(rootLogger.child({ module }));
+export function createLogger(module: string, botName?: string): Logger {
+  const label = botName ? `${module}/${botName}` : module;
+  return wrapChild(rootLogger.child({ module: label }));
 }
 
 /**

@@ -510,6 +510,7 @@ async function main() {
       promptFile: heartbeatConfig?.promptFile,
       workingDir: resolvedWorkingDir,
       target: parseHeartbeatTarget(heartbeatConfig?.target) || parseHeartbeatTarget(process.env.HEARTBEAT_TARGET),
+      botName: agentConfig.name,
     });
     if (heartbeatConfig?.enabled) {
       heartbeatService.start();
