@@ -995,3 +995,36 @@ export async function disableAllToolApprovals(agentId: string): Promise<number> 
     return 0;
   }
 }
+
+/**
+ * Delete a conversation for an agent.
+ */
+export async function deleteConversation(agentId: string, conversationId: string): Promise<boolean> {
+  try {
+    const client = getClient();
+    await client.conversations.delete(conversationId);
+    log.info(`Deleted conversation ${conversationId} for agent ${agentId}`);
+    return true;
+  } catch (e) {
+    log.warn(`Failed to delete conversation ${conversationId} for agent ${agentId}:`, e);
+    return false;
+  }
+}
+
+/**
+ * Create a new conversation for an agent. Returns the new conversation ID.
+ */
+export async function createConversation(agentId: string): Promise<string | null> {
+  try {
+    const client = getClient();
+    const conversation = await client.conversations.create({ agent_id: agentId });
+    const convId = conversation.id ?? null;
+    if (convId) {
+      log.info(`Created new conversation ${convId} for agent ${agentId}`);
+    }
+    return convId;
+  } catch (e) {
+    log.error(`Failed to create conversation for agent ${agentId}:`, e);
+    return null;
+  }
+}
