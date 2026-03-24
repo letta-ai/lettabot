@@ -853,7 +853,7 @@ export class BlueskyAdapter implements ChannelAdapter {
         params.append('reasons', reason);
       }
 
-      const res = await fetchWithTimeout(`${getAppViewUrl(this.config.appViewUrl)}/xrpc/app.bsky.notification.listNotifications?${params}`, {
+      const res = await fetchWithTimeout(`${this.getServiceUrl()}/xrpc/app.bsky.notification.listNotifications?${params}`, {
         headers: { Authorization: `Bearer ${this.accessJwt}` },
       });
 
