@@ -1353,7 +1353,8 @@ export class LettaBot implements AgentSession {
       const convKey = this.resolveConversationKey(msg.channel, msg.chatId, msg.forcePerChat);
       const seq = ++this.sendSequence;
       const userText = msg.text || '';
-      this.log.info(`processMessage seq=${seq} key=${convKey} retried=${retried} user=${msg.userId} textLen=${userText.length}`);
+      const convId = this.store.getConversationId(convKey);
+      this.log.info(`processMessage seq=${seq} key=${convKey} conv=${convId ?? '(new)'} retried=${retried} user=${msg.userId} textLen=${userText.length}`);
       if (userText.length > 0) {
         this.log.debug(`processMessage seq=${seq} textPreview=${userText.slice(0, 80)}`);
       }
