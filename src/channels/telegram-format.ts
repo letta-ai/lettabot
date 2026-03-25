@@ -18,9 +18,9 @@ export async function markdownToTelegramV2(markdown: string): Promise<string> {
     const telegramifyMarkdown = (await import('telegramify-markdown')).default;
     // Use 'keep' strategy for broad markdown support, including blockquotes.
     let result = telegramifyMarkdown(markdown, 'keep');
-    // telegramify-markdown passes horizontal rules (---) through unescaped.
-    // '-' is reserved in MarkdownV2 and must be escaped.
-    result = result.replace(/^-{3,}$/gm, '\\-\\-\\-');
+    // telegramify-markdown doesn't escape '-' in regular text.
+    // '-' is reserved in MarkdownV2 and must be escaped outside code blocks.
+    result = escapeUnescapedHyphens(result);
     return result;
   } catch (e) {
     log.error('Markdown conversion failed, using escape fallback:', e);
@@ -30,13 +30,28 @@ export async function markdownToTelegramV2(markdown: string): Promise<string> {
 }
 
 /**
+ * Escape unescaped '-' characters outside code blocks/inline code.
+ * telegramify-markdown handles most MarkdownV2 escaping but misses '-'.
+ */
+function escapeUnescapedHyphens(text: string): string {
+  // Split on code blocks and inline code to avoid escaping inside them
+  const parts = text.split(/(```[\s\S]*?```|`[^`]+`)/);
+  return parts.map((part, i) => {
+    // Odd indices are code blocks/inline code — leave them alone
+    if (i % 2 === 1) return part;
+    // Escape unescaped hyphens (not preceded by \)
+    return part.replace(/(?<!\\)-/g, '\\-');
+  }).join('');
+}
+
+/**
  * Escape MarkdownV2 special characters (fallback)
  */
 function escapeMarkdownV2(text: string): string {
   const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
   let escaped = text;
   for (const char of specialChars) {
-    escaped = escaped.replace(new RegExp(`\\${char}`, 'g'), `\\${char}`);
+    escaped = escaped.replace(new RegExp(`\\\\${char}`, 'g'), `\\\\${char}`);
   }
   return escaped;
 }

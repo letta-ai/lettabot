@@ -83,4 +83,27 @@ describe('markdownToTelegramV2', () => {
     const result = await markdownToTelegramV2('Use `a > b` inline');
     expect(result).toContain('`a > b`');
   });
+
+  it('escapes hyphens in regular text', async () => {
+    const result = await markdownToTelegramV2('no-reply check-in');
+    expect(result).toContain('no\\-reply');
+    expect(result).toContain('check\\-in');
+  });
+
+  it('does not escape hyphens inside inline code', async () => {
+    const result = await markdownToTelegramV2('use `no-reply` tag');
+    expect(result).toContain('`no-reply`');
+  });
+
+  it('does not escape hyphens inside code blocks', async () => {
+    const result = await markdownToTelegramV2('```\nno-reply\n```');
+    expect(result).toContain('no-reply');
+  });
+
+  it('escapes horizontal rules', async () => {
+    const result = await markdownToTelegramV2('---');
+    expect(result).not.toContain('\n---\n');
+    // Should be escaped
+    expect(result).toContain('\\-');
+  });
 });
