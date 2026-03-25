@@ -776,7 +776,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       .filter(([, mode]) => mode !== 'disabled')
       .map(([did]) => did);
     const combined = uniqueList([...configured, ...explicitAllowed, ...listAllowed]);
-    return combined.filter(did => !disabledDids.has(did));
+    return combined.filter(did => !disabledDids.has(did) && did !== '*');
   }
 
   private getNotificationsConfig(): {
