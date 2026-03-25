@@ -174,6 +174,12 @@ export interface BotConfig {
     showReasoning?: boolean;      // Show agent reasoning/thinking in channel output
     reasoningMaxChars?: number;   // Truncate reasoning to N chars (default: 0 = no limit)
   };
+  /** Per-channel display overrides. Keys are channel IDs (e.g. 'bluesky', 'telegram'). */
+  channelDisplay?: Record<string, {
+    showToolCalls?: boolean;
+    showReasoning?: boolean;
+    reasoningMaxChars?: number;
+  }>;
 
   // Skills
   skills?: SkillsConfig;

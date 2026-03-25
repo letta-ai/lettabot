@@ -389,6 +389,7 @@ async function main() {
       memfs: resolvedMemfs,
       sleeptime: effectiveSleeptime,
       display: agentConfig.features?.display,
+      channelDisplay: agentConfig.features?.channelDisplay,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
       interruptHeartbeatOnUserMessage:

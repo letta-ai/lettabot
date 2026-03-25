@@ -346,6 +346,24 @@ export class LettaBot implements AgentSession {
   }
 
   // =========================================================================
+  // Per-channel display resolution
+  // =========================================================================
+
+  /**
+   * Resolve display settings for a channel, with per-channel overrides.
+   * channelDisplay overrides take precedence over agent-level display.
+   */
+  private getDisplayConfig(channelId: string): { showToolCalls: boolean; showReasoning: boolean; reasoningMaxChars?: number } {
+    const base = this.config.display;
+    const override = this.config.channelDisplay?.[channelId];
+    return {
+      showToolCalls: override?.showToolCalls ?? base?.showToolCalls ?? false,
+      showReasoning: override?.showReasoning ?? base?.showReasoning ?? false,
+      reasoningMaxChars: override?.reasoningMaxChars ?? base?.reasoningMaxChars,
+    };
+  }
+
+  // =========================================================================
   // Response prefix (for multi-agent group chat identification)
   // =========================================================================
 
@@ -1322,6 +1340,7 @@ export class LettaBot implements AgentSession {
       this.log.debug(`${label}: ${(performance.now() - t0).toFixed(0)}ms`);
     };
     const suppressDelivery = isResponseDeliverySuppressed(msg);
+    const displayConfig = this.getDisplayConfig(adapter.id);
     const prepared = await this.prepareMessageForRun(msg, adapter, suppressDelivery, lap);
     if (!prepared) {
       return;
@@ -1463,10 +1482,10 @@ export class LettaBot implements AgentSession {
               }
               lastEventType = 'reasoning';
               sawNonAssistantSinceLastUuid = true;
-              if (this.config.display?.showReasoning && !suppressDelivery && event.content.trim()) {
+              if (displayConfig.showReasoning && !suppressDelivery && event.content.trim()) {
                 this.log.info(`Reasoning: ${event.content.trim().slice(0, 100)}`);
                 try {
-                  const reasoning = formatReasoningDisplay(event.content, adapter.id, this.config.display?.reasoningMaxChars);
+                  const reasoning = formatReasoningDisplay(event.content, adapter.id, displayConfig.reasoningMaxChars);
                   await adapter.sendMessage({
                     chatId: msg.chatId,
                     text: reasoning.text,
@@ -1515,7 +1534,7 @@ export class LettaBot implements AgentSession {
               }
 
               // Display
-              if (this.config.display?.showToolCalls && !suppressDelivery) {
+              if (displayConfig.showToolCalls && !suppressDelivery) {
                 try {
                   const text = formatToolCallDisplay(event.raw);
                   await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });

@@ -104,6 +104,8 @@ export interface AgentConfig {
     sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
     sendFileCleanup?: boolean; // Allow <send-file cleanup="true"> to delete after send (default: false)
     display?: DisplayConfig;
+    /** Per-channel display overrides (keys are channel IDs: telegram, bluesky, etc.) */
+    channelDisplay?: Record<string, DisplayConfig>;
     autoVoice?: boolean;           // Automatically generate TTS voice memo for every text response
     allowedTools?: string[];       // Per-agent tool whitelist (overrides global/env ALLOWED_TOOLS)
     disallowedTools?: string[];    // Per-agent tool blocklist (overrides global/env DISALLOWED_TOOLS)
