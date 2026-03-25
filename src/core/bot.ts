@@ -1764,7 +1764,9 @@ export class LettaBot implements AgentSession {
               // Terminal error with no response
               if (retryDecision.isTerminalError && !hasResponse && !sentAnyMessage) {
                 if (lastErrorDetail) {
-                  response = formatApiErrorForUser(lastErrorDetail);
+                  const formatted = formatApiErrorForUser(lastErrorDetail);
+                  if (formatted) response = formatted;
+                  // null = suppressed error (e.g. 409 conflict) — no visible response
                 } else {
                   const err = event.error || 'unknown error';
                   const reason = event.stopReason ? ` [${event.stopReason}]` : '';

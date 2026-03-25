@@ -77,7 +77,7 @@ export function isInvalidToolCallIdsError(details: string): boolean {
  * Map a structured API error into a clear, user-facing message.
  * The `error` object comes from the SDK's new SDKErrorMessage type.
  */
-export function formatApiErrorForUser(error: { message: string; stopReason: string; apiError?: Record<string, unknown> }): string {
+export function formatApiErrorForUser(error: { message: string; stopReason: string; apiError?: Record<string, unknown> }): string | null {
   const msg = error.message.toLowerCase();
   const stopReason = error.stopReason.toLowerCase();
   const apiError = error.apiError || {};
@@ -116,8 +116,11 @@ export function formatApiErrorForUser(error: { message: string; stopReason: stri
   }
 
   // 409 CONFLICT (concurrent request on same conversation)
+  // Suppressed -- transient contention that resolves on its own. Posting this
+  // as a visible response (especially on public channels like Bluesky) is worse
+  // than staying silent. The message will be retried or the user can resend.
   if (msg.includes('conflict') || msg.includes('409') || msg.includes('another request is currently being processed')) {
-    return '(Another request is still processing on this conversation. Wait a moment and try again.)';
+    return null;
   }
 
   // Authentication

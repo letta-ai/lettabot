@@ -90,7 +90,7 @@ describe('formatApiErrorForUser', () => {
     expect(formatApiErrorForUser({ message: '404 not found', stopReason: 'error' }))
       .toContain('not found');
     expect(formatApiErrorForUser({ message: '409 conflict', stopReason: 'error' }))
-      .toContain('Another request is still processing');
+      .toBeNull();
     expect(formatApiErrorForUser({ message: '503 internal server error', stopReason: 'error' }))
       .toContain('server error');
   });
@@ -128,7 +128,7 @@ describe('formatApiErrorForUser', () => {
       message: `${'x'.repeat(205)}.   `,
       stopReason: 'error',
     });
-    const match = msg.match(/^\(Agent error: (.+)\. Try sending your message again\.\)$/);
+    const match = msg?.match(/^\(Agent error: (.+)\. Try sending your message again\.\)$/);
     expect(match).not.toBeNull();
     expect(match?.[1]).toBe('x'.repeat(200));
   });
