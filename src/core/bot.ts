@@ -395,6 +395,12 @@ export class LettaBot implements AgentSession {
       ? this.store.conversationId || undefined
       : this.store.getConversationId(convKey) || undefined;
 
+    // If this is a non-shared conversation but we have no conversation ID yet,
+    // refuse to scan agent-wide (would leak approvals from other conversations).
+    if (convKey !== 'shared' && !convId) {
+      return '(No conversation found for this chat yet.)';
+    }
+
     const pending = await getPendingApprovals(agentId, convId);
     if (pending.length === 0) {
       return '(No pending approvals found for this conversation.)';
