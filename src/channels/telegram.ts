@@ -33,6 +33,8 @@ const KNOWN_TELEGRAM_COMMANDS = new Set([
   'heartbeat',
   'reset',
   'cancel',
+  'approve',
+  'disapprove',
   'setconv',
   'models',
   'breakglass',
@@ -371,6 +373,26 @@ export class TelegramAdapter implements ChannelAdapter {
       }
     });
     
+    // Handle /approve and /disapprove
+    for (const cmd of ['approve', 'disapprove'] as const) {
+      this.bot.command(cmd, async (ctx) => {
+        if (!this.onCommand) return;
+        const args = ctx.match?.trim() || undefined;
+        const result = await this.onCommand(cmd, String(ctx.chat.id), args);
+        if (result) {
+          const replyToMessageId =
+            'message' in ctx && ctx.message
+              ? String(ctx.message.message_id)
+              : undefined;
+          await this.sendMessage({
+            chatId: String(ctx.chat.id),
+            text: result,
+            replyToMessageId,
+          });
+        }
+      });
+    }
+
     // Handle /breakglass [agent]
     this.bot.command('breakglass', async (ctx) => {
       if (this.onCommand) {

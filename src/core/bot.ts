@@ -16,7 +16,7 @@ import { formatApiErrorForUser } from './errors.js';
 import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
-import { getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
+import { getPendingApprovals, rejectApproval, approvePendingApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
@@ -374,6 +374,64 @@ export class LettaBot implements AgentSession {
   private prefixResponse(text: string): string {
     if (!this.config.displayName) return text;
     return `${this.config.displayName}: ${text}`;
+  }
+
+  // =========================================================================
+  // Approval resolution (shared by /approve and /disapprove)
+  // =========================================================================
+
+  private async resolveApprovals(
+    approve: boolean,
+    channelId?: string,
+    chatId?: string,
+    forcePerChat?: boolean,
+    args?: string,
+  ): Promise<string> {
+    const agentId = this.store.agentId;
+    if (!agentId) return '(No agent configured.)';
+
+    const convKey = channelId ? this.resolveConversationKey(channelId, chatId, forcePerChat) : 'shared';
+    const convId = convKey === 'shared'
+      ? this.store.conversationId || undefined
+      : this.store.getConversationId(convKey) || undefined;
+
+    // If this is a non-shared conversation but we have no conversation ID yet,
+    // refuse to scan agent-wide (would leak approvals from other conversations).
+    if (convKey !== 'shared' && !convId) {
+      return '(No conversation found for this chat yet.)';
+    }
+
+    const pending = await getPendingApprovals(agentId, convId);
+    if (pending.length === 0) {
+      return '(No pending approvals found for this conversation.)';
+    }
+
+    const reason = approve
+      ? 'Approved by user from chat command'
+      : (args?.trim() || 'Denied by user from chat command');
+    const action = approve ? 'Approved' : 'Denied';
+    const handler = approve ? approvePendingApproval : rejectApproval;
+
+    // Batch by run to support parallel tool calls safely
+    const byRun = new Map<string, Array<{ toolCallId: string; reason?: string }>>();
+    for (const approval of pending) {
+      const key = approval.runId || 'unknown';
+      if (!byRun.has(key)) byRun.set(key, []);
+      byRun.get(key)!.push({ toolCallId: approval.toolCallId, reason });
+    }
+
+    let count = 0;
+    const failedRuns: string[] = [];
+    for (const [runId, batch] of byRun) {
+      const ok = await handler(agentId, batch, convId);
+      if (ok) count += batch.length;
+      else failedRuns.push(runId);
+    }
+
+    if (failedRuns.length > 0) {
+      return `(${action} ${count}/${pending.length} pending tool call(s). Failed runs: ${failedRuns.join(', ')})`;
+    }
+    return `(${action} ${count} pending tool call(s).)`;
   }
 
   private normalizeStreamRunIds(msg: StreamMsg): string[] {
@@ -892,6 +950,10 @@ export class LettaBot implements AgentSession {
 
         this.log.info(`/cancel - run cancelled (key=${convKey})`);
         return '(Run cancelled.)';
+      }
+      case 'approve':
+      case 'disapprove': {
+        return this.resolveApprovals(command === 'approve', channelId, chatId, forcePerChat, args);
       }
       case 'model': {
         const agentId = this.store.agentId;
