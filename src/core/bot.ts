@@ -376,6 +376,58 @@ export class LettaBot implements AgentSession {
     return `${this.config.displayName}: ${text}`;
   }
 
+  // =========================================================================
+  // Approval resolution (shared by /approve and /disapprove)
+  // =========================================================================
+
+  private async resolveApprovals(
+    approve: boolean,
+    channelId?: string,
+    chatId?: string,
+    forcePerChat?: boolean,
+    args?: string,
+  ): Promise<string> {
+    const agentId = this.store.agentId;
+    if (!agentId) return '(No agent configured.)';
+
+    const convKey = channelId ? this.resolveConversationKey(channelId, chatId, forcePerChat) : 'shared';
+    const convId = convKey === 'shared'
+      ? this.store.conversationId || undefined
+      : this.store.getConversationId(convKey) || undefined;
+
+    const pending = await getPendingApprovals(agentId, convId);
+    if (pending.length === 0) {
+      return '(No pending approvals found for this conversation.)';
+    }
+
+    const reason = approve
+      ? 'Approved by user from chat command'
+      : (args?.trim() || 'Denied by user from chat command');
+    const action = approve ? 'Approved' : 'Denied';
+    const handler = approve ? approvePendingApproval : rejectApproval;
+
+    // Batch by run to support parallel tool calls safely
+    const byRun = new Map<string, Array<{ toolCallId: string; reason?: string }>>();
+    for (const approval of pending) {
+      const key = approval.runId || 'unknown';
+      if (!byRun.has(key)) byRun.set(key, []);
+      byRun.get(key)!.push({ toolCallId: approval.toolCallId, reason });
+    }
+
+    let count = 0;
+    const failedRuns: string[] = [];
+    for (const [runId, batch] of byRun) {
+      const ok = await handler(agentId, batch, convId);
+      if (ok) count += batch.length;
+      else failedRuns.push(runId);
+    }
+
+    if (failedRuns.length > 0) {
+      return `(${action} ${count}/${pending.length} pending tool call(s). Failed runs: ${failedRuns.join(', ')})`;
+    }
+    return `(${action} ${count} pending tool call(s).)`;
+  }
+
   private normalizeStreamRunIds(msg: StreamMsg): string[] {
     const ids: string[] = [];
 
@@ -893,74 +945,9 @@ export class LettaBot implements AgentSession {
         this.log.info(`/cancel - run cancelled (key=${convKey})`);
         return '(Run cancelled.)';
       }
-      case 'approve': {
-        const agentId = this.store.agentId;
-        if (!agentId) return '(No agent configured.)';
-
-        const convKey = channelId ? this.resolveConversationKey(channelId, chatId, forcePerChat) : 'shared';
-        const convId = convKey === 'shared'
-          ? this.store.conversationId || undefined
-          : this.store.getConversationId(convKey) || undefined;
-
-        const pendingApprovals = await getPendingApprovals(agentId, convId);
-        if (pendingApprovals.length === 0) {
-          return '(No pending approvals found for this conversation.)';
-        }
-
-        const byRun = new Map<string, Array<{ toolCallId: string; reason?: string }>>();
-        for (const approval of pendingApprovals) {
-          const key = approval.runId || 'unknown';
-          if (!byRun.has(key)) byRun.set(key, []);
-          byRun.get(key)!.push({ toolCallId: approval.toolCallId });
-        }
-
-        let approvedCount = 0;
-        const failedRuns: string[] = [];
-        for (const [runId, batch] of byRun) {
-          const ok = await approvePendingApproval(agentId, batch, convId);
-          if (ok) approvedCount += batch.length;
-          else failedRuns.push(runId);
-        }
-
-        if (failedRuns.length > 0) {
-          return `(Approved ${approvedCount}/${pendingApprovals.length} pending tool call(s). Failed runs: ${failedRuns.join(', ')})`;
-        }
-        return `(Approved ${approvedCount} pending tool call(s).)`;
-      }
+      case 'approve':
       case 'disapprove': {
-        const agentId = this.store.agentId;
-        if (!agentId) return '(No agent configured.)';
-
-        const convKey = channelId ? this.resolveConversationKey(channelId, chatId, forcePerChat) : 'shared';
-        const convId = convKey === 'shared'
-          ? this.store.conversationId || undefined
-          : this.store.getConversationId(convKey) || undefined;
-
-        const pendingApprovals = await getPendingApprovals(agentId, convId);
-        if (pendingApprovals.length === 0) {
-          return '(No pending approvals found for this conversation.)';
-        }
-
-        const reason = args?.trim() || 'Denied by user from chat command';
-        const byRun = new Map<string, Array<{ toolCallId: string; reason?: string }>>();
-        for (const approval of pendingApprovals) {
-          const key = approval.runId || 'unknown';
-          if (!byRun.has(key)) byRun.set(key, []);
-          byRun.get(key)!.push({ toolCallId: approval.toolCallId, reason });
-        }
-
-        let deniedCount = 0;
-        const failedRuns: string[] = [];
-        for (const [runId, batch] of byRun) {
-          const ok = await rejectApproval(agentId, batch, convId);
-          if (ok) deniedCount += batch.length;
-          else failedRuns.push(runId);
-        }
-
-        if (failedRuns.length > 0) {
-          return `(Denied ${deniedCount}/${pendingApprovals.length} pending tool call(s). Failed runs: ${failedRuns.join(', ')})`;
-        }
-        return `(Denied ${deniedCount} pending tool call(s).)`;
+        return this.resolveApprovals(command === 'approve', channelId, chatId, forcePerChat, args);
       }
       case 'model': {
         const agentId = this.store.agentId;

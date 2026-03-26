@@ -193,27 +193,11 @@ export class TelegramAdapter implements ChannelAdapter {
       }
     });
 
-    this.bot.command('approve', async (ctx) => {
-      if (this.onCommand) {
-        const result = await this.onCommand('approve', String(ctx.chat.id));
-        if (result) {
-          const replyToMessageId =
-            'message' in ctx && ctx.message
-              ? String(ctx.message.message_id)
-              : undefined;
-          await this.sendMessage({
-            chatId: String(ctx.chat.id),
-            text: result,
-            replyToMessageId,
-          });
-        }
-      }
-    });
-
-    this.bot.command('disapprove', async (ctx) => {
-      if (this.onCommand) {
+    for (const cmd of ['approve', 'disapprove'] as const) {
+      this.bot.command(cmd, async (ctx) => {
+        if (!this.onCommand) return;
         const args = ctx.match?.trim() || undefined;
-        const result = await this.onCommand('disapprove', String(ctx.chat.id), args);
+        const result = await this.onCommand(cmd, String(ctx.chat.id), args);
         if (result) {
           const replyToMessageId =
             'message' in ctx && ctx.message
@@ -225,8 +209,8 @@ export class TelegramAdapter implements ChannelAdapter {
             replyToMessageId,
           });
         }
-      }
-    });
+      });
+    }
 
     // Middleware: Check access based on dmPolicy (bypass for groups)
     this.bot.use(async (ctx, next) => {
