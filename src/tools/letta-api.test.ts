@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getLatestRunError, recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent, approvePendingApproval } from './letta-api.js';
+import { getLatestRunError, recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent, approvePendingApproval, getPendingApprovals } from './letta-api.js';
 
 // Mock the Letta client before importing the module under test
 const mockConversationsMessagesList = vi.fn();
@@ -124,6 +124,52 @@ describe('approvePendingApproval', () => {
 
     const ok = await approvePendingApproval('agent-1', { toolCallId: 'call-1' });
     expect(ok).toBe(true);
+  });
+});
+
+describe('getPendingApprovals', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAgentsRetrieve.mockResolvedValue({ pending_approval: null });
+    mockRunsList.mockReturnValue(mockPageIterator([]));
+    mockAgentsMessagesList.mockReturnValue(mockPageIterator([]));
+  });
+
+  it('skips agent-level fast path when conversationId is provided', async () => {
+    // Set up agent-level pending approval (would be returned by fast path)
+    mockAgentsRetrieve.mockResolvedValue({
+      pending_approval: {
+        id: 'msg-1',
+        run_id: 'run-1',
+        tool_calls: [{ tool_call_id: 'tc-1', name: 'bash' }],
+      },
+    });
+    // Run scan returns nothing for this conversation
+    mockRunsList.mockReturnValue(mockPageIterator([]));
+
+    const result = await getPendingApprovals('agent-1', 'conv-other');
+
+    // Should NOT use the agent-level fast path when conversation-scoped
+    expect(mockAgentsRetrieve).not.toHaveBeenCalled();
+    expect(result).toEqual([]);
+  });
+
+  it('uses agent-level fast path when no conversationId is provided', async () => {
+    mockAgentsRetrieve.mockResolvedValue({
+      pending_approval: {
+        id: 'msg-1',
+        run_id: 'run-1',
+        tool_calls: [{ tool_call_id: 'tc-1', name: 'bash' }],
+      },
+    });
+
+    const result = await getPendingApprovals('agent-1');
+
+    expect(mockAgentsRetrieve).toHaveBeenCalledWith('agent-1', {
+      include: ['agent.pending_approval'],
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0].toolCallId).toBe('tc-1');
   });
 });
 

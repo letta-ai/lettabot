@@ -377,8 +377,11 @@ export async function getPendingApprovals(
     const client = getClient();
 
     // Prefer agent-level pending approval to avoid scanning stale history.
+    // Skip this fast path when a conversationId is provided, since the agent-level
+    // pending_approval is not conversation-scoped and could return approvals from
+    // a different conversation.
     // IMPORTANT: Must include 'agent.pending_approval' or the field won't be returned.
-    try {
+    if (!conversationId) try {
       const agentState = await client.agents.retrieve(agentId, {
         include: ['agent.pending_approval'],
       });
