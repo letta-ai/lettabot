@@ -33,6 +33,8 @@ const KNOWN_TELEGRAM_COMMANDS = new Set([
   'heartbeat',
   'reset',
   'cancel',
+  'approve',
+  'disapprove',
   'setconv',
   'help',
   'start',
@@ -187,6 +189,41 @@ export class TelegramAdapter implements ChannelAdapter {
           await ctx.api.leaveChat(chatId);
         } catch (err) {
           log.error('Failed to leave group:', err);
+        }
+      }
+    });
+
+    this.bot.command('approve', async (ctx) => {
+      if (this.onCommand) {
+        const result = await this.onCommand('approve', String(ctx.chat.id));
+        if (result) {
+          const replyToMessageId =
+            'message' in ctx && ctx.message
+              ? String(ctx.message.message_id)
+              : undefined;
+          await this.sendMessage({
+            chatId: String(ctx.chat.id),
+            text: result,
+            replyToMessageId,
+          });
+        }
+      }
+    });
+
+    this.bot.command('disapprove', async (ctx) => {
+      if (this.onCommand) {
+        const args = ctx.match?.trim() || undefined;
+        const result = await this.onCommand('disapprove', String(ctx.chat.id), args);
+        if (result) {
+          const replyToMessageId =
+            'message' in ctx && ctx.message
+              ? String(ctx.message.message_id)
+              : undefined;
+          await this.sendMessage({
+            chatId: String(ctx.chat.id),
+            text: result,
+            replyToMessageId,
+          });
         }
       }
     });

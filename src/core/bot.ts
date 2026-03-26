@@ -16,7 +16,7 @@ import { formatApiErrorForUser } from './errors.js';
 import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
-import { getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
+import { getPendingApprovals, rejectApproval, approvePendingApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
@@ -892,6 +892,75 @@ export class LettaBot implements AgentSession {
 
         this.log.info(`/cancel - run cancelled (key=${convKey})`);
         return '(Run cancelled.)';
+      }
+      case 'approve': {
+        const agentId = this.store.agentId;
+        if (!agentId) return '(No agent configured.)';
+
+        const convKey = channelId ? this.resolveConversationKey(channelId, chatId, forcePerChat) : 'shared';
+        const convId = convKey === 'shared'
+          ? this.store.conversationId || undefined
+          : this.store.getConversationId(convKey) || undefined;
+
+        const pendingApprovals = await getPendingApprovals(agentId, convId);
+        if (pendingApprovals.length === 0) {
+          return '(No pending approvals found for this conversation.)';
+        }
+
+        const byRun = new Map<string, Array<{ toolCallId: string; reason?: string }>>();
+        for (const approval of pendingApprovals) {
+          const key = approval.runId || 'unknown';
+          if (!byRun.has(key)) byRun.set(key, []);
+          byRun.get(key)!.push({ toolCallId: approval.toolCallId });
+        }
+
+        let approvedCount = 0;
+        const failedRuns: string[] = [];
+        for (const [runId, batch] of byRun) {
+          const ok = await approvePendingApproval(agentId, batch, convId);
+          if (ok) approvedCount += batch.length;
+          else failedRuns.push(runId);
+        }
+
+        if (failedRuns.length > 0) {
+          return `(Approved ${approvedCount}/${pendingApprovals.length} pending tool call(s). Failed runs: ${failedRuns.join(', ')})`;
+        }
+        return `(Approved ${approvedCount} pending tool call(s).)`;
+      }
+      case 'disapprove': {
+        const agentId = this.store.agentId;
+        if (!agentId) return '(No agent configured.)';
+
+        const convKey = channelId ? this.resolveConversationKey(channelId, chatId, forcePerChat) : 'shared';
+        const convId = convKey === 'shared'
+          ? this.store.conversationId || undefined
+          : this.store.getConversationId(convKey) || undefined;
+
+        const pendingApprovals = await getPendingApprovals(agentId, convId);
+        if (pendingApprovals.length === 0) {
+          return '(No pending approvals found for this conversation.)';
+        }
+
+        const reason = args?.trim() || 'Denied by user from chat command';
+        const byRun = new Map<string, Array<{ toolCallId: string; reason?: string }>>();
+        for (const approval of pendingApprovals) {
+          const key = approval.runId || 'unknown';
+          if (!byRun.has(key)) byRun.set(key, []);
+          byRun.get(key)!.push({ toolCallId: approval.toolCallId, reason });
+        }
+
+        let deniedCount = 0;
+        const failedRuns: string[] = [];
+        for (const [runId, batch] of byRun) {
+          const ok = await rejectApproval(agentId, batch, convId);
+          if (ok) deniedCount += batch.length;
+          else failedRuns.push(runId);
+        }
+
+        if (failedRuns.length > 0) {
+          return `(Denied ${deniedCount}/${pendingApprovals.length} pending tool call(s). Failed runs: ${failedRuns.join(', ')})`;
+        }
+        return `(Denied ${deniedCount} pending tool call(s).)`;
       }
       case 'model': {
         const agentId = this.store.agentId;

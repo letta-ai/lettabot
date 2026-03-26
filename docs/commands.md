@@ -43,6 +43,24 @@ Heartbeats are background tasks where the agent can:
 
 **Note:** This command runs silently - the agent won't automatically reply. If the agent wants to message you during a heartbeat, it will use the `lettabot-message` CLI.
 
+### `/approve`
+
+Approves all currently pending tool approvals for your current conversation scope.
+
+- In shared mode, this applies to the shared conversation.
+- In per-channel/per-chat modes, this applies only to that channel/chat conversation.
+
+Useful when a run is blocked waiting on tool approval and you want to continue directly from chat.
+
+### `/disapprove [reason]`
+
+Denies all currently pending tool approvals for your current conversation scope.
+
+- You can provide an optional reason, e.g. `/disapprove not safe to run`.
+- Without a reason, LettaBot sends a default denial reason.
+
+Use this to quickly reject pending tool calls without leaving your chat client.
+
 ## Sending Messages
 
 Just type any message to chat with your agent. The agent has:

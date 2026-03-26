@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { getLatestRunError, recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent, approvePendingApproval } from './letta-api.js';
 
 // Mock the Letta client before importing the module under test
 const mockConversationsMessagesList = vi.fn();
@@ -6,6 +7,7 @@ const mockConversationsMessagesCreate = vi.fn();
 const mockRunsRetrieve = vi.fn();
 const mockRunsList = vi.fn();
 const mockAgentsMessagesCancel = vi.fn();
+const mockAgentsMessagesCreate = vi.fn();
 const mockAgentsRetrieve = vi.fn();
 const mockAgentsMessagesList = vi.fn();
 
@@ -26,6 +28,7 @@ vi.mock('@letta-ai/letta-client', () => {
         retrieve: mockAgentsRetrieve,
         messages: {
           cancel: mockAgentsMessagesCancel,
+          create: mockAgentsMessagesCreate,
           list: mockAgentsMessagesList,
         },
       };
@@ -39,6 +42,7 @@ describe('recoverPendingApprovalsForAgent', () => {
     mockAgentsRetrieve.mockResolvedValue({ pending_approval: null });
     mockAgentsMessagesList.mockReturnValue(mockPageIterator([]));
     mockAgentsMessagesCancel.mockResolvedValue(undefined);
+    mockAgentsMessagesCreate.mockResolvedValue({});
   });
 
   it('cancels approval-blocked runs when pending approval payload is unavailable', async () => {
@@ -74,7 +78,54 @@ describe('recoverPendingApprovalsForAgent', () => {
   });
 });
 
-import { getLatestRunError, recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent } from './letta-api.js';
+describe('approvePendingApproval', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAgentsMessagesCreate.mockResolvedValue({});
+  });
+
+  it('approves a single tool call', async () => {
+    const ok = await approvePendingApproval('agent-1', { toolCallId: 'call-1' });
+
+    expect(ok).toBe(true);
+    expect(mockAgentsMessagesCreate).toHaveBeenCalledOnce();
+    expect(mockAgentsMessagesCreate).toHaveBeenCalledWith('agent-1', {
+      messages: [{
+        type: 'approval',
+        approvals: [{
+          approve: true,
+          tool_call_id: 'call-1',
+          type: 'approval',
+          reason: 'Approved by user from chat command',
+        }],
+      }],
+      streaming: false,
+    });
+  });
+
+  it('approves multiple tool calls in one request', async () => {
+    const ok = await approvePendingApproval('agent-1', [
+      { toolCallId: 'call-a' },
+      { toolCallId: 'call-b', reason: 'Approved by moderator' },
+    ]);
+
+    expect(ok).toBe(true);
+    const payload = mockAgentsMessagesCreate.mock.calls[0][1];
+    expect(payload.messages[0].approvals).toHaveLength(2);
+    expect(payload.messages[0].approvals.map((a: any) => a.tool_call_id)).toEqual(['call-a', 'call-b']);
+    expect(payload.messages[0].approvals[1].reason).toBe('Approved by moderator');
+  });
+
+  it('returns true when approval is already resolved', async () => {
+    mockAgentsMessagesCreate.mockRejectedValue({
+      status: 400,
+      error: { detail: 'No tool call is currently awaiting approval' },
+    });
+
+    const ok = await approvePendingApproval('agent-1', { toolCallId: 'call-1' });
+    expect(ok).toBe(true);
+  });
+});
 
 describe('isRecoverableConversationId', () => {
   it('returns false for aliases and empty values', () => {

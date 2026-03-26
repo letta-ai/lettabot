@@ -30,6 +30,14 @@ describe('parseCommand', () => {
     it('returns { command, args } for /cancel', () => {
       expect(parseCommand('/cancel')).toEqual({ command: 'cancel', args: '' });
     });
+
+    it('returns { command, args } for /approve', () => {
+      expect(parseCommand('/approve')).toEqual({ command: 'approve', args: '' });
+    });
+
+    it('returns { command, args } for /disapprove', () => {
+      expect(parseCommand('/disapprove')).toEqual({ command: 'disapprove', args: '' });
+    });
   });
 
   describe('invalid input', () => {
@@ -91,14 +99,16 @@ describe('COMMANDS', () => {
     expect(COMMANDS).toContain('status');
     expect(COMMANDS).toContain('heartbeat');
     expect(COMMANDS).toContain('reset');
+    expect(COMMANDS).toContain('approve');
+    expect(COMMANDS).toContain('disapprove');
     expect(COMMANDS).toContain('help');
     expect(COMMANDS).toContain('start');
     expect(COMMANDS).toContain('model');
     expect(COMMANDS).toContain('setconv');
   });
 
-  it('has exactly 8 commands', () => {
-    expect(COMMANDS).toHaveLength(8);
+  it('has exactly 10 commands', () => {
+    expect(COMMANDS).toHaveLength(10);
   });
 });
 
@@ -108,6 +118,8 @@ describe('HELP_TEXT', () => {
     expect(HELP_TEXT).toContain('/heartbeat');
     expect(HELP_TEXT).toContain('/reset');
     expect(HELP_TEXT).toContain('/cancel');
+    expect(HELP_TEXT).toContain('/approve');
+    expect(HELP_TEXT).toContain('/disapprove');
     expect(HELP_TEXT).toContain('/help');
     expect(HELP_TEXT).toContain('/start');
     expect(HELP_TEXT).toContain('/model');

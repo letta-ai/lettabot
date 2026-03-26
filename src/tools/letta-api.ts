@@ -576,6 +576,60 @@ export async function rejectApproval(
 }
 
 /**
+ * Approve one or more pending tool call approvals in a single API request.
+ * The Letta API expects all parallel tool_call_ids for a run together.
+ */
+export async function approvePendingApproval(
+  agentId: string,
+  approvals: {
+    toolCallId: string;
+    reason?: string;
+  } | Array<{
+    toolCallId: string;
+    reason?: string;
+  }>,
+  conversationId?: string
+): Promise<boolean> {
+  const approvalList = Array.isArray(approvals) ? approvals : [approvals];
+  if (approvalList.length === 0) return true;
+
+  try {
+    const client = getClient();
+    const defaultReason = 'Approved by user from chat command';
+
+    await client.agents.messages.create(agentId, {
+      messages: [{
+        type: 'approval',
+        approvals: approvalList.map(a => ({
+          approve: true,
+          tool_call_id: a.toolCallId,
+          type: 'approval' as const,
+          reason: a.reason || defaultReason,
+        })),
+      }],
+      streaming: false,
+    });
+
+    const ids = approvalList.map(a => a.toolCallId).join(', ');
+    log.info(`Approved ${approvalList.length} approval(s): ${ids}`);
+    return true;
+  } catch (e) {
+    const err = e as { status?: number; error?: { detail?: string } };
+    const detail = err?.error?.detail || '';
+    if (err?.status === 400 && detail.includes('No tool call is currently awaiting approval')) {
+      log.warn('Approval(s) already resolved');
+      return true;
+    }
+    if (err?.status === 429) {
+      log.error('Failed to approve approval:', e);
+      throw e;
+    }
+    log.error('Failed to approve approval:', e);
+    return false;
+  }
+}
+
+/**
  * Cancel active runs for an agent.
  * Optionally specify specific run IDs to cancel.
  * Note: Requires Redis on the server for canceling active runs.
