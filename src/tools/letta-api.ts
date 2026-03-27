@@ -458,10 +458,12 @@ export async function getPendingApprovals(
       return [];
     }
 
-    // Fetch messages ONCE and scan for resolved + pending approvals
+    // Fetch messages ONCE and scan for resolved + pending approvals.
+    // Use desc order to get newest messages first -- approvals are at the tail.
     const messagesPage = await client.agents.messages.list(agentId, {
       conversation_id: conversationId,
       limit: 100,
+      order: 'desc',
     });
 
     const messages: Array<{ message_type?: string }> = [];
@@ -872,11 +874,11 @@ export async function recoverOrphanedConversationApproval(
 
     const client = getClient();
     
-    // List recent messages from the conversation to find orphaned approvals.
-    // Default: 50 (fast path). Deep scan: 500 (for conversations with many approvals).
-    const scanLimit = deepScan ? 500 : 50;
-    log.info(`Scanning ${scanLimit} messages for orphaned approvals...`);
-    const messagesPage = await client.conversations.messages.list(conversationId, { limit: scanLimit });
+    // List recent messages (newest first) to find orphaned approvals.
+    // Pending approvals are always near the tail of the conversation.
+    const scanLimit = deepScan ? 100 : 30;
+    log.info(`Scanning ${scanLimit} most recent messages for orphaned approvals...`);
+    const messagesPage = await client.conversations.messages.list(conversationId, { limit: scanLimit, order: 'desc' });
     const messages: Array<Record<string, unknown>> = [];
     for await (const msg of messagesPage) {
       messages.push(msg as unknown as Record<string, unknown>);
