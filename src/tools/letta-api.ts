@@ -982,6 +982,38 @@ export async function recoverOrphanedConversationApproval(
               streaming: false,
             });
           } catch (approvalError) {
+            // The message scan can find stale tool call IDs from earlier approval
+            // rounds on the same run (when approval responses fall outside the scan
+            // window). The server returns 400 with the expected IDs -- retry with those.
+            const errDetail = (approvalError as { error?: { detail?: string } })?.error?.detail || '';
+            const expectedMatch = errDetail.match(/Expected '\[([^\]]+)\]'/);
+            if (expectedMatch) {
+              const expectedIds = expectedMatch[1]
+                .split(',')
+                .map(s => s.trim().replace(/^'|'$/g, ''));
+              if (expectedIds.length > 0 && expectedIds[0]) {
+                log.info(`Retrying denial with server-expected IDs: ${expectedIds.join(', ')}`);
+                const retryResponses = expectedIds.map(id => ({
+                  approve: false as const,
+                  tool_call_id: id,
+                  type: 'approval' as const,
+                  reason: `Auto-denied: originating run was ${status}/${stopReason}`,
+                }));
+                try {
+                  await client.conversations.messages.create(conversationId, {
+                    messages: [{ type: 'approval', approvals: retryResponses }],
+                    streaming: false,
+                  });
+                  log.info(`Retry succeeded: denied ${expectedIds.length} approval(s) for run ${runId}`);
+                  recoveredCount += expectedIds.length;
+                  details.push(`Denied ${expectedIds.length} approval(s) from ${status} run ${runId} (retried with correct IDs)`);
+                  // Skip the original recovery count below
+                  continue;
+                } catch (retryError) {
+                  log.warn(`Retry also failed for run ${runId}:`, retryError);
+                }
+              }
+            }
             const approvalErrMsg = approvalError instanceof Error ? approvalError.message : String(approvalError);
             const toolCallIds = approvals.map(a => a.toolCallId).join(', ');
             log.warn(
