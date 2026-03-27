@@ -1735,14 +1735,20 @@ export class LettaBot implements AgentSession {
                 response = event.text;
               } else if (!sentAnyMessage && response.trim().length === 0 && event.success && !event.error) {
                 // Safety fallback: if nothing was delivered yet and response is empty.
-                // Prefer the raw result field when the pipeline's text came from
-                // pre-tool assistant content that was discarded (hadStreamedText is
-                // true but response was cleared by the tool_call discard logic).
+                // This covers two cases:
+                // 1. No text was streamed at all -- use pipeline text or raw result
+                // 2. Pre-tool text was streamed then discarded by the tool_call handler,
+                //    but the agent's post-tool response is in the result field (e.g. after
+                //    skill loading where the model doesn't re-stream text after the tool)
                 const rawResult = typeof event.raw.result === 'string' ? event.raw.result.trim() : '';
                 if (!event.hadStreamedText && event.text.trim()) {
                   response = event.text;
                 } else if (rawResult) {
                   response = rawResult;
+                } else if (event.text.trim()) {
+                  // Last resort: pipeline accumulated text (may include pre-tool content,
+                  // but better to deliver something than drop the response entirely)
+                  response = event.text;
                 }
               }
 
