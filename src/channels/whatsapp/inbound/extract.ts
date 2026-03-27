@@ -283,9 +283,13 @@ export async function extractInboundMessage(
   // Check if sender mentioned the bot
   const wasMentioned = mentionedJids?.includes(selfJid) ?? false;
 
-  // Detect self-chat (including LID-based self-chat on newer WhatsApp versions)
-  const isLidChat = remoteJid.includes('@lid');
-  const isSelfChat = !isGroup && (from === selfE164 || isLidChat);
+  // Detect self-chat (including LID-based self-chat on newer WhatsApp versions).
+  // IMPORTANT: Not all @lid DMs are self-chat. Only match if the remoteJid
+  // is the bot's own LID (strip device suffix :XX before comparing).
+  const selfLid = sock.user?.lid || '';
+  const isLidSelfChat = !!(selfLid && remoteJid.includes('@lid')
+    && remoteJid.replace(/:\d+(@|$)/, '$1') === selfLid.replace(/:\d+(@|$)/, '$1'));
+  const isSelfChat = !isGroup && (from === selfE164 || isLidSelfChat);
 
   // Build normalized message (convert all nulls to undefined for type safety)
   const inboundMessage: WebInboundMessage = {

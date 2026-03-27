@@ -30,9 +30,9 @@ function createMessage(
   };
 }
 
-function createSocket(options: { lidMapping?: Map<string, string> } = {}): Record<string, unknown> {
+function createSocket(options: { lidMapping?: Map<string, string>; lid?: string } = {}): Record<string, unknown> {
   return {
-    user: { id: '19998887777@s.whatsapp.net' },
+    user: { id: '19998887777@s.whatsapp.net', lid: options.lid },
     signalRepository: options.lidMapping ? { lidMapping: options.lidMapping } : {},
     groupMetadata: vi.fn(),
   };
@@ -95,6 +95,51 @@ describe('extractInboundMessage (LID DM resolution)', () => {
     expect(extracted?.chatId).toBe(REMOTE_LID);
     expect(extracted?.from).toBe('210501234567890');
     expect(extracted?.senderE164).toBe('210501234567890');
+  });
+
+  it('does NOT mark foreign @lid DMs as self-chat', async () => {
+    const msg = createMessage();
+    // Bot's own LID is different from REMOTE_LID
+    const sock = createSocket({ lid: '999999999@lid' });
+
+    const extracted = await extractInboundMessage(
+      msg as any,
+      sock as any,
+      createGroupMetaCache()
+    );
+
+    expect(extracted?.isSelfChat).toBe(false);
+  });
+
+  it('marks @lid DM as self-chat only when LID matches bot', async () => {
+    const msg = createMessage();
+    // Bot's own LID matches the remote JID
+    const sock = createSocket({ lid: REMOTE_LID });
+
+    const extracted = await extractInboundMessage(
+      msg as any,
+      sock as any,
+      createGroupMetaCache()
+    );
+
+    expect(extracted?.isSelfChat).toBe(true);
+  });
+
+  it('matches self-chat LID with device suffix stripped', async () => {
+    // Remote has device suffix :25
+    const msg = createMessage({
+      key: { remoteJid: '210501234567890:25@lid' },
+    });
+    // Bot LID has no suffix
+    const sock = createSocket({ lid: REMOTE_LID });
+
+    const extracted = await extractInboundMessage(
+      msg as any,
+      sock as any,
+      createGroupMetaCache()
+    );
+
+    expect(extracted?.isSelfChat).toBe(true);
   });
 
   it('accepts plain phone-number senderPn values by converting them to PN JIDs', async () => {
