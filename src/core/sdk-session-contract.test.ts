@@ -230,9 +230,7 @@ describe('SDK session contract', () => {
     expect(mockSession.close).toHaveBeenCalledTimes(1);
   });
 
-  it('recreates agent after explicit agent-not-found initialize error', async () => {
-    delete process.env.LETTA_AGENT_ID;
-
+  it('rejects with error on agent-not-found without clearing agent ID', async () => {
     const staleSession = {
       initialize: vi.fn(async () => {
         throw new Error('No init message received from subprocess. stderr: {"detail":"Agent agent-contract-test not found"}');
@@ -249,26 +247,7 @@ describe('SDK session contract', () => {
       conversationId: 'conv-stale',
     };
 
-    const recoveredSession = {
-      initialize: vi.fn(async () => undefined),
-      send: vi.fn(async (_message: unknown) => undefined),
-      stream: vi.fn(() =>
-        (async function* () {
-          yield { type: 'assistant', content: 'fresh response' };
-          yield { type: 'result', success: true };
-        })()
-      ),
-      close: vi.fn(() => undefined),
-      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
-      agentId: 'agent-recreated',
-      conversationId: 'conv-recreated',
-    };
-
-    vi.mocked(createAgent).mockResolvedValue('agent-recreated');
-    // First call: agentId exists, no convId → resumeSession(agentId)
     vi.mocked(resumeSession).mockReturnValueOnce(staleSession as never);
-    // After clearAgent + createAgent → createSession(newAgentId)
-    vi.mocked(createSession).mockReturnValueOnce(recoveredSession as never);
 
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
@@ -277,12 +256,11 @@ describe('SDK session contract', () => {
     });
     bot.setAgentId('agent-contract-test');
 
-    const response = await bot.sendToAgent('recover me');
-    expect(response).toBe('fresh response');
+    // Should reject without auto-creating a replacement agent
+    await expect(bot.sendToAgent('recover me')).rejects.toThrow('not found');
     expect(staleSession.close).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(createAgent)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(resumeSession).mock.calls[0][0]).toBe('agent-contract-test');
-    expect(vi.mocked(createSession).mock.calls[0][0]).toBe('agent-recreated');
+    // Agent ID should NOT be cleared -- the 404 may be transient
+    expect(bot.getStatus().agentId).toBe('agent-contract-test');
   });
 
   it('does not clear agent state on generic initialize failures', async () => {
@@ -1390,50 +1368,18 @@ describe('SDK session contract', () => {
     expect(stuckSession.close).toHaveBeenCalledTimes(1);
   });
 
-  it('passes tags: [origin:lettabot] to createAgent when creating a new agent', async () => {
+  it('throws when no agent ID is configured instead of auto-creating', async () => {
     delete process.env.LETTA_AGENT_ID;
-
-    vi.mocked(createAgent).mockResolvedValue('agent-new-tagged');
-
-    const mockSession = {
-      initialize: vi.fn(async () => undefined),
-      send: vi.fn(async (_message: unknown) => undefined),
-      stream: vi.fn(() =>
-        (async function* () {
-          yield { type: 'assistant', content: 'hello' };
-          yield { type: 'result', success: true };
-        })()
-      ),
-      close: vi.fn(() => undefined),
-      recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
-      agentId: 'agent-new-tagged',
-      conversationId: 'conversation-new-tagged',
-    };
-
-    vi.mocked(createSession).mockReturnValue(mockSession as never);
 
     const bot = new LettaBot({
       workingDir: join(dataDir, 'working'),
       allowedTools: [],
-      memfs: true,
-      sleeptime: {
-        trigger: 'compaction-event',
-        behavior: 'auto-launch',
-      },
     });
 
-    await bot.sendToAgent('first message');
-
-    expect(vi.mocked(createAgent)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(createAgent)).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tags: ['origin:lettabot'],
-        sleeptime: {
-          trigger: 'compaction-event',
-          behavior: 'auto-launch',
-        },
-      })
+    await expect(bot.sendToAgent('first message')).rejects.toThrow(
+      'No agent ID configured',
     );
+    expect(vi.mocked(createAgent)).not.toHaveBeenCalled();
   });
 
   it('retries sendToAgent when SDK result runIds repeat the previous run', async () => {

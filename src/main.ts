@@ -433,13 +433,15 @@ async function main() {
       initialStatus = bot.getStatus();
     }
     
-    // Verify agent exists (clear stale ID if deleted)
+    // Verify agent exists on server. If not found, warn but keep the ID --
+    // the 404 may be transient (server restart, network blip, etc.).
     if (initialStatus.agentId) {
       const exists = await agentExists(initialStatus.agentId);
       if (!exists) {
-        log.info(`Stored agent ${initialStatus.agentId} not found on server`);
-        bot.reset();
-        initialStatus = bot.getStatus();
+        log.warn(
+          `Agent ${initialStatus.agentId} not found on server. ` +
+          `Keeping config -- the agent may reappear if this was transient.`,
+        );
       }
     }
 
@@ -468,7 +470,10 @@ async function main() {
     }
 
     if (!initialStatus.agentId) {
-      log.info(`No agent found - will create on first message`);
+      log.error(
+        `No agent ID configured. Set agent.id in lettabot.yaml, ` +
+        `LETTA_AGENT_ID env var, or run lettabot onboard.`,
+      );
     }
     
     // Disable tool approvals

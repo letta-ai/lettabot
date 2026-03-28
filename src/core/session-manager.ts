@@ -6,14 +6,13 @@
  * routing, channel management, and directive execution.
  */
 
-import { createAgent, createSession, resumeSession, type Session, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
+import { createSession, resumeSession, type Session, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
 import type { BotConfig, StreamMsg } from './types.js';
 import { isApprovalConflictError, isConversationMissingError, isAgentMissingFromInitError } from './errors.js';
 import { Store } from './store.js';
-import { updateAgentName, recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
+import { recoverOrphanedConversationApproval, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { installSkillsToAgent, prependSkillDirsToPath } from '../skills/loader.js';
-import { loadMemoryBlocks } from './memory.js';
-import { SYSTEM_PROMPT } from './system-prompt.js';
+
 import { createManageTodoTool } from '../tools/todo.js';
 import { syncTodosFromTool } from '../todo/store.js';
 import { recoverPendingApprovalsWithSdk } from './session-sdk-compat.js';
@@ -305,31 +304,10 @@ export class SessionManager {
         ? resumeSession(this.store.agentId, opts)
         : createSession(this.store.agentId, opts);
     } else {
-      // Create new agent -- persist immediately so we don't orphan it on later failures
-      this.log.info('Creating new agent');
-      const newAgentId = await createAgent({
-        systemPrompt: SYSTEM_PROMPT,
-        memory: loadMemoryBlocks(this.config.agentName),
-        tags: ['origin:lettabot'],
-        ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
-        ...(this.config.sleeptime ? { sleeptime: this.config.sleeptime } : {}),
-      });
-      const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
-      this.store.setAgent(newAgentId, currentBaseUrl);
-      this.log.info('Saved new agent ID:', newAgentId);
-
-      if (this.config.agentName) {
-        updateAgentName(newAgentId, this.config.agentName).catch(() => {});
-      }
-      installSkillsToAgent(newAgentId, this.config.skills);
-      sessionAgentId = newAgentId;
-      prependSkillDirsToPath(sessionAgentId); // must be before createSession spawns subprocess
-
-      // In disabled mode, resume the built-in default conversation instead of
-      // creating a new one.  Other modes create a fresh conversation per key.
-      session = key === 'default'
-        ? resumeSession('default', opts)
-        : createSession(newAgentId, opts);
+      throw new Error(
+        'No agent ID configured. Set agent.id in lettabot.yaml, ' +
+        'LETTA_AGENT_ID env var, or run lettabot onboard.',
+      );
     }
 
     // Initialize eagerly so the subprocess is ready before the first send()
@@ -346,15 +324,15 @@ export class SessionManager {
       // Close immediately so failed initialization cannot leak a subprocess.
       session.close();
 
-      // If the stored agent ID doesn't exist on the server (deleted externally,
-      // ghost agent from failed pairing, etc.), clear the stale ID and retry.
-      if (this.store.agentId && !bootstrapRetried && isAgentMissingFromInitError(error)) {
-        this.log.warn(
-          `Agent ${this.store.agentId} appears missing from server, ` +
-          `clearing stale agent ID and recreating...`,
+      // If the stored agent ID doesn't exist on the server, log an error but
+      // DON'T clear the stored ID or auto-create a replacement. The 404 may be
+      // transient; the next message will retry with the same agent ID.
+      if (this.store.agentId && isAgentMissingFromInitError(error)) {
+        this.log.error(
+          `Agent ${this.store.agentId} not found on server (404). ` +
+          `This may be transient -- will retry on next message. ` +
+          `If the agent was deleted, reconfigure agent.id in lettabot.yaml.`,
         );
-        this.store.clearAgent();
-        return this._createSessionForKey(key, /* bootstrapRetried */ true, generation);
       }
 
       throw error;
