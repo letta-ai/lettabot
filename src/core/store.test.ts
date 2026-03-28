@@ -221,13 +221,23 @@ describe('Store', () => {
     expect(store.isServerMismatch('https://api.letta.com')).toBe(true);
   });
 
-  it('should not apply LETTA_AGENT_ID override to non-default agent keys', () => {
+  it('should apply LETTA_AGENT_ID as fallback for all agent names', () => {
     process.env.LETTA_AGENT_ID = 'global-agent';
     const defaultStore = new Store(testStorePath, 'LettaBot');
     const namedStore = new Store(testStorePath, 'Bot2');
 
     expect(defaultStore.agentId).toBe('global-agent');
-    expect(namedStore.agentId).toBeNull();
+    expect(namedStore.agentId).toBe('global-agent');
+  });
+
+  it('should not fall back to LETTA_AGENT_ID after clearAgent', () => {
+    process.env.LETTA_AGENT_ID = 'global-agent';
+    const store = new Store(testStorePath, 'LettaBot');
+    store.agentId = 'agent-1';
+    expect(store.agentId).toBe('agent-1');
+
+    store.clearAgent();
+    expect(store.agentId).toBeNull(); // cleared, don't fall back to env var
   });
 
   // Per-key conversation management

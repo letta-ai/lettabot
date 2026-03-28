@@ -290,17 +290,17 @@ export class Store {
   }
 
   get agentId(): string | null {
-    // Keep legacy env var override only for default single-agent key.
-    // In multi-agent mode, a global LETTA_AGENT_ID would leak across agents.
-    if (this.agentName === 'LettaBot') {
-      return this.agentData().agentId || process.env.LETTA_AGENT_ID || null;
-    }
-    return this.agentData().agentId || null;
+    const data = this.agentData();
+    // Use stored ID, fall back to env var only if the agent wasn't explicitly cleared
+    if (data.agentId) return data.agentId;
+    if (data.agentCleared) return null;
+    return process.env.LETTA_AGENT_ID || null;
   }
 
   set agentId(id: string | null) {
     const agent = this.agentData();
     agent.agentId = id;
+    if (id) delete agent.agentCleared;
     agent.lastUsedAt = new Date().toISOString();
     if (id && !agent.createdAt) {
       agent.createdAt = new Date().toISOString();
@@ -409,6 +409,7 @@ export class Store {
   clearAgent(): void {
     const agent = this.agentData();
     agent.agentId = null;
+    agent.agentCleared = true;
     agent.conversationId = null;
     agent.conversations = undefined;
     agent.baseUrl = undefined;

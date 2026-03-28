@@ -54,8 +54,8 @@ export function getDataDir(): string {
  * On Railway with a volume, this returns {volume}/data
  * Otherwise uses WORKING_DIR env var or /tmp/lettabot
  */
-export function getWorkingDir(): string {
-  // Explicit WORKING_DIR always wins
+export function getWorkingDir(configWorkingDir?: string): string {
+  // Explicit WORKING_DIR env var always wins
   if (process.env.WORKING_DIR) {
     return resolveWorkingDirPath(process.env.WORKING_DIR);
   }
@@ -63,6 +63,11 @@ export function getWorkingDir(): string {
   // On Railway with volume, use volume/data subdirectory
   if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
     return resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'data');
+  }
+
+  // YAML config workingDir
+  if (configWorkingDir) {
+    return resolveWorkingDirPath(configWorkingDir);
   }
   
   // Default for local development
