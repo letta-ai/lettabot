@@ -4,7 +4,7 @@
  * Shared command parsing and help text for all channels.
  */
 
-export const COMMANDS = ['status', 'heartbeat', 'reset', 'cancel', 'help', 'start', 'model', 'models', 'setconv', 'breakglass'] as const;
+export const COMMANDS = ['status', 'heartbeat', 'reset', 'cancel', 'help', 'start', 'model', 'models', 'setconv', 'breakglass', 'recompile'] as const;
 export type Command = typeof COMMANDS[number];
 
 export interface ParsedCommand {
@@ -24,6 +24,7 @@ Commands:
 /models - List ALL available models
 /setconv <id> - Set conversation ID for this chat
 /breakglass [agent] - Emergency conversation reset via API
+/recompile - Recompile in-context messages for the active conversation
 /help - Show this message
 /start - Show this message
 

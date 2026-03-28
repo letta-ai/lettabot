@@ -36,6 +36,7 @@ const KNOWN_TELEGRAM_COMMANDS = new Set([
   'setconv',
   'models',
   'breakglass',
+  'recompile',
   'help',
   'start',
 ]);
@@ -382,6 +383,22 @@ export class TelegramAdapter implements ChannelAdapter {
         await this.sendMessage({
           chatId: String(ctx.chat.id),
           text: result || 'Break-glass complete',
+          replyToMessageId,
+        });
+      }
+    });
+
+    // Handle /recompile
+    this.bot.command('recompile', async (ctx) => {
+      if (this.onCommand) {
+        const result = await this.onCommand('recompile', String(ctx.chat.id));
+        const replyToMessageId =
+          'message' in ctx && ctx.message
+            ? String(ctx.message.message_id)
+            : undefined;
+        await this.sendMessage({
+          chatId: String(ctx.chat.id),
+          text: result || 'Recompile complete',
           replyToMessageId,
         });
       }

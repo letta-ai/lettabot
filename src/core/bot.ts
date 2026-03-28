@@ -961,6 +961,26 @@ export class LettaBot implements AgentSession {
 
         return `\u{1F527} Break-glass complete. Old conversation deleted, new conversation: ${newConvId}`;
       }
+      case 'recompile': {
+        const agentId = this.store.agentId;
+        if (!agentId) return 'No agent configured.';
+
+        const convKey = channelId ? this.resolveConversationKey(channelId, chatId, forcePerChat) : 'shared';
+        const convId = convKey === 'shared'
+          ? this.store.conversationId
+          : this.store.getConversationId(convKey);
+
+        const { recompileConversation } = await import('../tools/letta-api.js');
+        const success = await recompileConversation(agentId, convId);
+
+        if (success) {
+          this.sessionManager.invalidateSession(convKey);
+          return convId
+            ? `Recompiled conversation \`${convId}\`.`
+            : 'Recompiled agent (no active conversation).';
+        }
+        return 'Failed to recompile. Check server logs.';
+      }
       case 'models': {
         const { listModels } = await import('../tools/letta-api.js');
         const allModels = await listModels();

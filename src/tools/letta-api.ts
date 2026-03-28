@@ -1028,3 +1028,39 @@ export async function createConversation(agentId: string): Promise<string | null
     return null;
   }
 }
+
+/**
+ * Recompile a specific conversation's in-context messages, or the whole agent
+ * if no conversationId is provided.
+ */
+export async function recompileConversation(agentId: string, conversationId?: string | null): Promise<boolean> {
+  try {
+    const apiKey = process.env.LETTA_API_KEY || '';
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${apiKey}`,
+      'X-Letta-Source': 'lettabot',
+    };
+
+    const path = conversationId
+      ? `/v1/agents/${agentId}/conversations/${conversationId}/recompile`
+      : `/v1/agents/${agentId}/recompile`;
+
+    const resp = await fetch(`${LETTA_BASE_URL}${path}`, {
+      method: 'POST',
+      headers,
+    });
+
+    if (!resp.ok) {
+      log.error(`Recompile returned ${resp.status}: ${await resp.text()}`);
+      return false;
+    }
+
+    log.info(conversationId
+      ? `Recompiled conversation ${conversationId} for agent ${agentId}`
+      : `Recompiled agent ${agentId} (no conversation specified)`);
+    return true;
+  } catch (e) {
+    log.error(`Failed to recompile (agent=${agentId}, conv=${conversationId}):`, e);
+    return false;
+  }
+}
