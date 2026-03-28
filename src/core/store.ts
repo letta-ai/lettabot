@@ -53,6 +53,15 @@ export class Store {
     this.backupPath = `${this.storePath}.bak`;
     this.agentName = agentName || 'LettaBot';
     this.data = this.load();
+
+    // One-shot bootstrap: if the store has no agent ID yet, seed from env var.
+    // Persisted to disk so refresh() doesn't discard it.
+    // This is NOT a runtime fallback -- clearAgent() will genuinely clear it,
+    // and the env var won't leak across agents in multi-agent mode.
+    if (!this.agentData().agentId && process.env.LETTA_AGENT_ID) {
+      this.agentData().agentId = process.env.LETTA_AGENT_ID;
+      this.save();
+    }
   }
 
   /**
@@ -290,17 +299,12 @@ export class Store {
   }
 
   get agentId(): string | null {
-    const data = this.agentData();
-    // Use stored ID, fall back to env var only if the agent wasn't explicitly cleared
-    if (data.agentId) return data.agentId;
-    if (data.agentCleared) return null;
-    return process.env.LETTA_AGENT_ID || null;
+    return this.agentData().agentId || null;
   }
 
   set agentId(id: string | null) {
     const agent = this.agentData();
     agent.agentId = id;
-    if (id) delete agent.agentCleared;
     agent.lastUsedAt = new Date().toISOString();
     if (id && !agent.createdAt) {
       agent.createdAt = new Date().toISOString();
@@ -409,7 +413,6 @@ export class Store {
   clearAgent(): void {
     const agent = this.agentData();
     agent.agentId = null;
-    agent.agentCleared = true;
     agent.conversationId = null;
     agent.conversations = undefined;
     agent.baseUrl = undefined;
