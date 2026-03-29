@@ -188,7 +188,7 @@ export function formatCoreDraftSummary(draft: CoreConfigDraft, configPath: strin
     [
       'Heartbeat',
       draft.features.heartbeat?.enabled
-        ? `✓ ${draft.features.heartbeat.intervalMin ?? 60}min • ${draft.features.heartbeat.skipRecentPolicy ?? 'fraction'} • preempt ${draft.features.heartbeat.interruptOnUserMessage === false ? 'off' : 'on'}`
+        ? `✓ ${draft.features.heartbeat.intervalMin ?? 60}${draft.features.heartbeat.intervalMaxMin ? `-${draft.features.heartbeat.intervalMaxMin}` : ''}min • ${draft.features.heartbeat.skipRecentPolicy ?? 'fraction'} • preempt ${draft.features.heartbeat.interruptOnUserMessage === false ? 'off' : 'on'}`
         : '✗ Disabled',
     ],
   ];

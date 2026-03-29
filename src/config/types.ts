@@ -89,6 +89,7 @@ export interface AgentConfig {
     heartbeat?: {
       enabled: boolean;
       intervalMin?: number;
+      intervalMaxMin?: number; // When set (and > intervalMin), heartbeats fire at random intervals in [intervalMin, intervalMaxMin]
       skipRecentUserMin?: number; // Skip auto-heartbeats for N minutes after user message (0 disables)
       skipRecentPolicy?: HeartbeatSkipRecentPolicy; // 'fixed' | 'fraction' | 'off'
       skipRecentFraction?: number; // Fraction of intervalMin when policy=fraction (0-1)
@@ -193,6 +194,7 @@ export interface LettaBotConfig {
     heartbeat?: {
       enabled: boolean;
       intervalMin?: number;
+      intervalMaxMin?: number; // When set (and > intervalMin), heartbeats fire at random intervals in [intervalMin, intervalMaxMin]
       skipRecentUserMin?: number; // Skip auto-heartbeats for N minutes after user message (0 disables)
       skipRecentPolicy?: HeartbeatSkipRecentPolicy; // 'fixed' | 'fraction' | 'off'
       skipRecentFraction?: number; // Fraction of intervalMin when policy=fraction (0-1)
@@ -813,6 +815,9 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     const intervalMin = process.env.HEARTBEAT_INTERVAL_MIN
       ? parseInt(process.env.HEARTBEAT_INTERVAL_MIN, 10)
       : undefined;
+    const intervalMaxMin = process.env.HEARTBEAT_INTERVAL_MAX_MIN
+      ? parseInt(process.env.HEARTBEAT_INTERVAL_MAX_MIN, 10)
+      : undefined;
     const skipRecentUserMin = process.env.HEARTBEAT_SKIP_RECENT_USER_MIN
       ? parseInt(process.env.HEARTBEAT_SKIP_RECENT_USER_MIN, 10)
       : undefined;
@@ -835,6 +840,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
     features.heartbeat = {
       enabled: true,
       ...(Number.isFinite(intervalMin) ? { intervalMin } : {}),
+      ...(Number.isFinite(intervalMaxMin) ? { intervalMaxMin } : {}),
       ...(Number.isFinite(skipRecentUserMin) ? { skipRecentUserMin } : {}),
       ...(skipRecentPolicy ? { skipRecentPolicy } : {}),
       ...(Number.isFinite(skipRecentFraction) ? { skipRecentFraction } : {}),

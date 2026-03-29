@@ -524,6 +524,9 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   }
   if (config.features?.heartbeat?.enabled) {
     env.HEARTBEAT_INTERVAL_MIN = String(config.features.heartbeat.intervalMin || 30);
+    if (config.features.heartbeat.intervalMaxMin !== undefined) {
+      env.HEARTBEAT_INTERVAL_MAX_MIN = String(config.features.heartbeat.intervalMaxMin);
+    }
     if (config.features.heartbeat.skipRecentUserMin !== undefined) {
       env.HEARTBEAT_SKIP_RECENT_USER_MIN = String(config.features.heartbeat.skipRecentUserMin);
     }

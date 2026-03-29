@@ -510,6 +510,7 @@ async function main() {
     const heartbeatService = new HeartbeatService(bot, {
       enabled: heartbeatConfig?.enabled ?? false,
       intervalMinutes: heartbeatConfig?.intervalMin ?? 240,
+      intervalMaxMinutes: heartbeatConfig?.intervalMaxMin,
       skipRecentUserMinutes: heartbeatConfig?.skipRecentUserMin ?? globalConfig.heartbeatSkipRecentUserMin,
       skipRecentPolicy: heartbeatConfig?.skipRecentPolicy ?? globalConfig.heartbeatSkipRecentPolicy,
       skipRecentFraction: heartbeatConfig?.skipRecentFraction ?? globalConfig.heartbeatSkipRecentFraction,
@@ -622,6 +623,7 @@ async function main() {
       features: {
         cron: cfg?.features?.cron ?? globalConfig.cronEnabled,
         heartbeatIntervalMin: hbCfg?.enabled ? (hbCfg.intervalMin ?? 240) : undefined,
+        heartbeatIntervalMaxMin: hbCfg?.enabled ? hbCfg.intervalMaxMin : undefined,
       },
     };
   });

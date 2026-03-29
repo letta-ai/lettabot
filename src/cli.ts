@@ -66,7 +66,11 @@ async function configure() {
     ['Slack', config.channels.slack?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Discord', config.channels.discord?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Cron', config.features?.cron ? '✓ Enabled' : '✗ Disabled'],
-    ['Heartbeat', config.features?.heartbeat?.enabled ? `✓ ${config.features.heartbeat.intervalMin}min` : '✗ Disabled'],
+    ['Heartbeat', config.features?.heartbeat?.enabled
+      ? config.features.heartbeat.intervalMaxMin
+        ? `✓ ${config.features.heartbeat.intervalMin}-${config.features.heartbeat.intervalMaxMin}min (random)`
+        : `✓ ${config.features.heartbeat.intervalMin}min`
+      : '✗ Disabled'],
     ['BYOK Providers', config.providers?.length ? config.providers.map(p => p.name).join(', ') : 'None'],
   ];
   
@@ -288,6 +292,7 @@ Environment:
   SLACK_BOT_TOKEN         Slack bot token (xoxb-...)
   SLACK_APP_TOKEN         Slack app token (xapp-...)
   HEARTBEAT_INTERVAL_MIN  Heartbeat interval in minutes
+  HEARTBEAT_INTERVAL_MAX_MIN  Max interval for random heartbeats (enables random mode)
   HEARTBEAT_SKIP_RECENT_USER_MIN  Skip auto-heartbeats after user messages (0 disables)
   HEARTBEAT_SKIP_RECENT_POLICY  Heartbeat skip policy (fixed, fraction, off)
   HEARTBEAT_SKIP_RECENT_FRACTION  Fraction of interval to skip when policy=fraction

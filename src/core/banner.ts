@@ -38,6 +38,7 @@ interface BannerAgent {
   features?: {
     cron?: boolean;
     heartbeatIntervalMin?: number;
+    heartbeatIntervalMaxMin?: number;
   };
 }
 
@@ -88,7 +89,11 @@ export function printStartupBanner(agents: BannerAgent[]): void {
   for (const agent of agents) {
     if (agent.features?.cron) features.push('cron');
     if (agent.features?.heartbeatIntervalMin) {
-      features.push(`heartbeat (${agent.features.heartbeatIntervalMin}m)`);
+      const maxMin = agent.features.heartbeatIntervalMaxMin;
+      const label = maxMin && maxMin > agent.features.heartbeatIntervalMin
+        ? `heartbeat (${agent.features.heartbeatIntervalMin}-${maxMin}m random)`
+        : `heartbeat (${agent.features.heartbeatIntervalMin}m)`;
+      features.push(label);
     }
   }
   if (features.length > 0) {

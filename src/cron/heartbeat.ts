@@ -47,6 +47,7 @@ function logEvent(event: string, data: Record<string, unknown>, logger: Logger =
 export interface HeartbeatConfig {
   enabled: boolean;
   intervalMinutes: number;
+  intervalMaxMinutes?: number; // When set (and > intervalMinutes), heartbeats fire randomly in [intervalMinutes, intervalMaxMinutes]
   skipRecentUserMinutes?: number; // Default 5. Set to 0 to disable skip logic.
   skipRecentPolicy?: 'fixed' | 'fraction' | 'off';
   skipRecentFraction?: number; // Used when policy=fraction. Expected range: 0-1.
@@ -80,6 +81,7 @@ export class HeartbeatService {
   private bot: AgentSession;
   private config: HeartbeatConfig;
   private intervalId: NodeJS.Timeout | null = null;
+  private timeoutId: NodeJS.Timeout | null = null;
   
   constructor(bot: AgentSession, config: HeartbeatConfig) {
     this.bot = bot;
@@ -186,6 +188,40 @@ export class HeartbeatService {
   }
   
   /**
+   * Whether random interval mode is active.
+   */
+  private get isRandomMode(): boolean {
+    const max = this.config.intervalMaxMinutes;
+    return max !== undefined && max > this.config.intervalMinutes;
+  }
+
+  /**
+   * Pick a random delay (ms) between intervalMinutes and intervalMaxMinutes.
+   */
+  private randomDelayMs(): number {
+    const min = this.config.intervalMinutes;
+    const max = this.config.intervalMaxMinutes ?? min;
+    const minutes = min + Math.random() * (max - min);
+    return Math.round(minutes * 60 * 1000);
+  }
+
+  /**
+   * Schedule the next random heartbeat.
+   */
+  private scheduleNextRandom(): void {
+    const delayMs = this.randomDelayMs();
+    const delayMin = Math.round(delayMs / 60000);
+    this.log.info(`Next random heartbeat in ~${delayMin} minutes`);
+    this.timeoutId = setTimeout(async () => {
+      await this.runHeartbeat();
+      if (this.timeoutId !== null) {
+        // Still running (not stopped) — chain the next one
+        this.scheduleNextRandom();
+      }
+    }, delayMs);
+  }
+
+  /**
    * Start the heartbeat timer
    */
   start(): void {
@@ -193,25 +229,39 @@ export class HeartbeatService {
       this.log.info('Disabled');
       return;
     }
-    
-    if (this.intervalId) {
+
+    if (this.intervalId || this.timeoutId) {
       this.log.info('Already running');
       return;
     }
-    
-    const intervalMs = this.config.intervalMinutes * 60 * 1000;
-    
-    this.log.info(`Starting in SILENT MODE (every ${this.config.intervalMinutes} minutes)`);
-    this.log.info(`First heartbeat in ${this.config.intervalMinutes} minutes`);
-    
-    // Wait full interval before first heartbeat (don't fire on startup)
-    this.intervalId = setInterval(() => this.runHeartbeat(), intervalMs);
-    
-    logEvent('heartbeat_started', {
-      intervalMinutes: this.config.intervalMinutes,
-      mode: 'silent',
-      note: 'Agent must use lettabot-message CLI to contact user',
-    }, this.log);
+
+    if (this.isRandomMode) {
+      this.log.info(`Starting in SILENT MODE (random ${this.config.intervalMinutes}-${this.config.intervalMaxMinutes} minutes)`);
+      this.scheduleNextRandom();
+
+      logEvent('heartbeat_started', {
+        intervalMinutes: this.config.intervalMinutes,
+        intervalMaxMinutes: this.config.intervalMaxMinutes,
+        scheduling: 'random',
+        mode: 'silent',
+        note: 'Agent must use lettabot-message CLI to contact user',
+      }, this.log);
+    } else {
+      const intervalMs = this.config.intervalMinutes * 60 * 1000;
+
+      this.log.info(`Starting in SILENT MODE (every ${this.config.intervalMinutes} minutes)`);
+      this.log.info(`First heartbeat in ${this.config.intervalMinutes} minutes`);
+
+      // Wait full interval before first heartbeat (don't fire on startup)
+      this.intervalId = setInterval(() => this.runHeartbeat(), intervalMs);
+
+      logEvent('heartbeat_started', {
+        intervalMinutes: this.config.intervalMinutes,
+        scheduling: 'fixed',
+        mode: 'silent',
+        note: 'Agent must use lettabot-message CLI to contact user',
+      }, this.log);
+    }
   }
   
   /**
@@ -221,8 +271,12 @@ export class HeartbeatService {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
-      this.log.info('Stopped');
     }
+    if (this.timeoutId) {
+      clearTimeout(this.timeoutId);
+      this.timeoutId = null;
+    }
+    this.log.info('Stopped');
   }
   
   /**
