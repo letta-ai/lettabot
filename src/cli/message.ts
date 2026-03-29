@@ -283,6 +283,36 @@ async function sendBluesky(text: string): Promise<void> {
   console.log(`✓ Sent to bluesky (uri: ${result.uri || 'unknown'})`);
 }
 
+async function sendMatrix(roomId: string, text: string): Promise<void> {
+  const homeserverUrl = process.env.MATRIX_HOMESERVER_URL;
+  const accessToken = process.env.MATRIX_ACCESS_TOKEN;
+  if (!homeserverUrl || !accessToken) {
+    throw new Error('MATRIX_HOMESERVER_URL and MATRIX_ACCESS_TOKEN must be set');
+  }
+
+  const txnId = `m${Date.now()}`;
+  const url = `${homeserverUrl}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${txnId}`;
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      msgtype: 'm.text',
+      body: text,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Matrix API error ${response.status}: ${body}`);
+  }
+
+  const result = await response.json() as { event_id?: string };
+  console.log(`✓ Sent to matrix:${roomId} (event_id: ${result.event_id || 'unknown'})`);
+}
+
 async function sendToChannel(channel: string, chatId: string, text: string): Promise<void> {
   switch (channel.toLowerCase()) {
     case 'telegram':
@@ -297,8 +327,10 @@ async function sendToChannel(channel: string, chatId: string, text: string): Pro
       return sendDiscord(chatId, text);
     case 'bluesky':
       return sendBluesky(text);
+    case 'matrix':
+      return sendMatrix(chatId, text);
     default:
-      throw new Error(`Unknown channel: ${channel}. Supported: telegram, slack, signal, whatsapp, discord, bluesky`);
+      throw new Error(`Unknown channel: ${channel}. Supported: telegram, slack, signal, whatsapp, discord, bluesky, matrix`);
   }
 }
 
@@ -357,7 +389,7 @@ async function sendCommand(args: string[]): Promise<void> {
 
   if (!channel) {
     console.error('Error: --channel is required (no default available)');
-    console.error('Specify: --channel telegram|slack|signal|discord|whatsapp|bluesky');
+    console.error('Specify: --channel telegram|slack|signal|discord|whatsapp|bluesky|matrix');
     process.exit(1);
   }
 
@@ -396,7 +428,7 @@ Send options:
   --file, -f <path>       File path (optional, for file messages)
   --image                 Treat file as image (vs document)
   --voice                 Treat file as voice note (sends as native voice memo)
-  --channel, -c <name>    Channel: telegram, slack, whatsapp, discord, bluesky (default: last used)
+  --channel, -c <name>    Channel: telegram, slack, whatsapp, discord, bluesky, matrix (default: last used)
   --chat, --to <id>       Chat/conversation ID (default: last messaged; not required for bluesky)
 
 Examples:
@@ -427,6 +459,8 @@ Environment variables:
   BLUESKY_HANDLE          Required for Bluesky posts
   BLUESKY_APP_PASSWORD    Required for Bluesky posts
   BLUESKY_SERVICE_URL     Optional override (default https://bsky.social)
+  MATRIX_HOMESERVER_URL   Required for Matrix
+  MATRIX_ACCESS_TOKEN     Required for Matrix
   LETTABOT_API_URL        API server URL (default: http://localhost:8080)
   SIGNAL_CLI_REST_API_URL Signal daemon URL (default: http://127.0.0.1:8090)
 

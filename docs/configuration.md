@@ -84,6 +84,16 @@ channels:
     dmPolicy: pairing
     # streaming: true
 
+  matrix:
+    enabled: true
+    homeserverUrl: "https://matrix.org"
+    accessToken: "syt_..."
+    userId: "@bot:matrix.org"
+    deviceId: "ABC123"
+    dmPolicy: pairing
+    # streaming: true
+    # e2ee: false
+
   whatsapp:
     enabled: true
     selfChat: true               # IMPORTANT: true for personal numbers

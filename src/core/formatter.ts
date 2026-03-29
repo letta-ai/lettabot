@@ -98,7 +98,7 @@ function formatSender(msg: InboundMessage): string {
     case 'discord':
       // Add @ prefix for Discord usernames/IDs
       return name || (msg.userHandle ? `@${msg.userHandle}` : `@${msg.userId}`);
-    
+
     case 'whatsapp':
     case 'signal': {
       // For phone-based channels, always include the phone number so the agent
@@ -112,10 +112,13 @@ function formatSender(msg: InboundMessage): string {
       }
       return name || msg.userId;
     }
-    
+
     case 'telegram':
       return name || (msg.userHandle ? `@${msg.userHandle}` : msg.userId);
-    
+
+    case 'matrix':
+      return name || (msg.userHandle ? msg.userHandle : msg.userId);
+
     default:
       return name || msg.userId;
   }

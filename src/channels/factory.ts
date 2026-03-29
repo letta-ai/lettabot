@@ -1,5 +1,6 @@
 import { BlueskyAdapter } from './bluesky.js';
 import { DiscordAdapter } from './discord.js';
+import { MatrixAdapter } from './matrix.js';
 import { SignalAdapter } from './signal.js';
 import { SlackAdapter } from './slack.js';
 import { TelegramMTProtoAdapter } from './telegram-mtproto.js';
@@ -123,6 +124,31 @@ const SHARED_CHANNEL_BUILDERS: SharedChannelBuilder[] = [
         groups: discord.groups,
         agentName: agentConfig.name,
         ignoreBotReactions: discord.ignoreBotReactions,
+      });
+    },
+  },
+  {
+    isEnabled: (agentConfig) => !!agentConfig.channels.matrix?.accessToken,
+    build: (agentConfig, options) => {
+      const matrix = agentConfig.channels.matrix;
+      if (!matrix?.homeserverUrl || !matrix.accessToken || !matrix.userId) {
+        throw new Error(`Matrix is enabled for agent "${agentConfig.name}" but credentials are missing`);
+      }
+      return new MatrixAdapter({
+        homeserverUrl: matrix.homeserverUrl,
+        accessToken: matrix.accessToken,
+        userId: matrix.userId,
+        deviceId: matrix.deviceId,
+        dmPolicy: matrix.dmPolicy || 'pairing',
+        allowedUsers: nonEmpty(matrix.allowedUsers),
+        streaming: matrix.streaming,
+        attachmentsDir: options.attachmentsDir,
+        attachmentsMaxBytes: options.attachmentsMaxBytes,
+        mentionPatterns: matrix.mentionPatterns,
+        groups: matrix.groups,
+        agentName: agentConfig.name,
+        e2ee: matrix.e2ee,
+        storePath: matrix.storePath,
       });
     },
   },

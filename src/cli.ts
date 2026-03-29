@@ -65,6 +65,7 @@ async function configure() {
     ['Telegram', config.channels.telegram?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Slack', config.channels.slack?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Discord', config.channels.discord?.enabled ? '✓ Enabled' : '✗ Disabled'],
+    ['Matrix', config.channels.matrix?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Cron', config.features?.cron ? '✓ Enabled' : '✗ Disabled'],
     ['Heartbeat', config.features?.heartbeat?.enabled
       ? config.features.heartbeat.intervalMaxMin
@@ -291,6 +292,10 @@ Environment:
   DISCORD_DM_POLICY       DM access policy (pairing, allowlist, open)
   SLACK_BOT_TOKEN         Slack bot token (xoxb-...)
   SLACK_APP_TOKEN         Slack app token (xapp-...)
+  MATRIX_HOMESERVER_URL   Matrix homeserver URL
+  MATRIX_ACCESS_TOKEN     Matrix bot access token
+  MATRIX_USER_ID          Matrix bot user ID (@bot:server)
+  MATRIX_DM_POLICY        DM access policy (pairing, allowlist, open)
   HEARTBEAT_INTERVAL_MIN  Heartbeat interval in minutes
   HEARTBEAT_INTERVAL_MAX_MIN  Max interval for random heartbeats (enables random mode)
   HEARTBEAT_SKIP_RECENT_USER_MIN  Skip auto-heartbeats after user messages (0 disables)

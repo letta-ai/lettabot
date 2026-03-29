@@ -476,6 +476,16 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   if (config.channels.discord?.listeningGroups?.length) {
     env.DISCORD_LISTENING_GROUPS = config.channels.discord.listeningGroups.join(',');
   }
+  if (config.channels.matrix?.enabled !== false && config.channels.matrix?.accessToken) {
+    if (config.channels.matrix.homeserverUrl) env.MATRIX_HOMESERVER_URL = config.channels.matrix.homeserverUrl;
+    env.MATRIX_ACCESS_TOKEN = config.channels.matrix.accessToken;
+    if (config.channels.matrix.userId) env.MATRIX_USER_ID = config.channels.matrix.userId;
+    if (config.channels.matrix.deviceId) env.MATRIX_DEVICE_ID = config.channels.matrix.deviceId;
+    if (config.channels.matrix.dmPolicy) env.MATRIX_DM_POLICY = config.channels.matrix.dmPolicy;
+    if (config.channels.matrix.allowedUsers?.length) {
+      env.MATRIX_ALLOWED_USERS = config.channels.matrix.allowedUsers.join(',');
+    }
+  }
   if (config.channels.bluesky?.enabled) {
     if (config.channels.bluesky.wantedDids?.length) {
       env.BLUESKY_WANTED_DIDS = config.channels.bluesky.wantedDids.join(',');

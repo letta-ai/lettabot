@@ -96,6 +96,7 @@
     "@slack/bolt": "^4.6.0",
     "@whiskeysockets/baileys": "6.7.21",
     "discord.js": "^14.25.1",
+    "matrix-bot-sdk": "^0.7.1",
     "prebuilt-tdlib": "^0.1008060.0",
     "slackify-markdown": "^5.0.0",
     "tdl": "^8.0.2"
