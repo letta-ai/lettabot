@@ -58,6 +58,20 @@ agents:
       #   groups:
       #     "*": { mode: listen }
       #     "1234567890123456789": { mode: open }  # Server or channel ID
+      # matrix:
+      #   enabled: true
+      #   homeserverUrl: https://matrix.org
+      #   userId: '@bot:matrix.org'
+      #   accessToken: syt_...
+      #   deviceId: LETTABOT
+      #   dmPolicy: pairing             # pairing | allowlist | open
+      #   # allowedUsers:
+      #   #   - '@user1:matrix.org'
+      #   #   - '@user2:matrix.org'
+      #   # groups:
+      #   #   "*": { mode: listen }
+      #   #   "!roomid:matrix.org": { mode: open }
+      #   #   "!anotherid:matrix.org": { mode: mention-only }
       # whatsapp:
       #   enabled: true
       #   selfChat: false
