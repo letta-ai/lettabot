@@ -20,6 +20,7 @@ export const CHANNELS = [
   { id: 'whatsapp', displayName: 'WhatsApp', hint: 'QR code pairing' },
   { id: 'signal', displayName: 'Signal', hint: 'signal-cli daemon' },
   { id: 'bluesky', displayName: 'Bluesky', hint: 'Jetstream feed (read-only)' },
+  { id: 'matrix', displayName: 'Matrix', hint: 'Homeserver + access token' },
 ] as const;
 
 export type ChannelId = typeof CHANNELS[number]['id'];
@@ -60,6 +61,9 @@ const GROUP_ID_HINTS: Record<ChannelId, string> = {
     'Group IDs appear in bot logs on first group message.',
   bluesky:
     'Bluesky does not support groups. This setting is not used.',
+  matrix:
+    'Room IDs look like !abc123:matrix.org.\n' +
+    'Find them in room settings or bot logs on first message.',
 };
 
 // ============================================================================
@@ -718,6 +722,63 @@ export async function setupBluesky(existing?: BlueskyConfig): Promise<BlueskyCon
   };
 }
 
+export async function setupMatrix(existing?: any): Promise<any> {
+  const homeserverUrl = await p.text({
+    message: 'Matrix homeserver URL',
+    placeholder: 'https://matrix.org',
+    initialValue: existing?.homeserverUrl || 'https://matrix.org',
+    validate: (v) => !v.trim() ? 'Homeserver URL is required' : undefined,
+  });
+  if (p.isCancel(homeserverUrl)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+
+  const userId = await p.text({
+    message: 'Bot user ID',
+    placeholder: '@bot:matrix.org',
+    initialValue: existing?.userId || '',
+    validate: (v) => !v.trim() ? 'User ID is required' : undefined,
+  });
+  if (p.isCancel(userId)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+
+  const accessToken = await p.text({
+    message: 'Access token',
+    placeholder: 'syt_...',
+    initialValue: existing?.accessToken || '',
+    validate: (v) => !v.trim() ? 'Access token is required' : undefined,
+  });
+  if (p.isCancel(accessToken)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+
+  const dmPolicy = await p.select({
+    message: 'DM access policy',
+    initialValue: existing?.dmPolicy || 'pairing',
+    options: [
+      { value: 'pairing', label: 'Pairing', hint: 'Users must be approved (default)' },
+      { value: 'allowlist', label: 'Allowlist', hint: 'Only listed users can interact' },
+      { value: 'open', label: 'Open', hint: 'Anyone can message' },
+    ],
+  });
+  if (p.isCancel(dmPolicy)) {
+    p.cancel('Cancelled');
+    process.exit(0);
+  }
+
+  return {
+    enabled: true,
+    homeserverUrl: (homeserverUrl as string).trim(),
+    userId: (userId as string).trim(),
+    accessToken: (accessToken as string).trim(),
+    dmPolicy,
+  };
+}
+
 /** Get the setup function for a channel */
 export function getSetupFunction(id: ChannelId): (existing?: any) => Promise<any> {
   const setupFunctions: Record<ChannelId, (existing?: any) => Promise<any>> = {
@@ -727,6 +788,7 @@ export function getSetupFunction(id: ChannelId): (existing?: any) => Promise<any
     whatsapp: setupWhatsApp,
     signal: setupSignal,
     bluesky: setupBluesky,
+    matrix: setupMatrix,
   };
   return setupFunctions[id];
 }

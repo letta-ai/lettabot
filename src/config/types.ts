@@ -459,6 +459,15 @@ export interface BlueskyNotificationsConfig {
   backfill?: boolean;       // Process unread notifications on startup (default: false)
 }
 
+export interface MatrixConfig {
+  enabled: boolean;
+  homeserverUrl?: string;   // e.g., https://matrix.org
+  userId?: string;          // e.g., @bot:matrix.org
+  accessToken?: string;     // Bot access token (syt_...)
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
+  allowedUsers?: string[];
+}
+
 /**
  * Telegram MTProto (user account) configuration.
  * Uses TDLib for user account mode instead of Bot API.
