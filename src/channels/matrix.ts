@@ -90,7 +90,7 @@ type MatrixClient = {
   sendEvent(roomId: string, eventType: string, content: Record<string, unknown>): Promise<string>;
   setTyping(roomId: string, isTyping: boolean, timeoutMs?: number): Promise<void>;
   uploadContent(data: Buffer, opts?: { name?: string; type?: string }): Promise<string>;
-  getJoinedRoomMembers(roomId: string): Promise<{ joined: Record<string, unknown> }>;
+  getJoinedRoomMembers(roomId: string): Promise<string[]>;
   on(event: string, handler: (...args: unknown[]) => void): void;
 };
 
@@ -122,8 +122,8 @@ export class MatrixAdapter implements ChannelAdapter {
       return this.roomMemberCache.get(roomId)! <= 2;
     }
     try {
-      const result = await this.client!.getJoinedRoomMembers(roomId);
-      const count = Object.keys(result.joined).length;
+      const members = await this.client!.getJoinedRoomMembers(roomId);
+      const count = members.length;
       this.roomMemberCache.set(roomId, count);
       return count <= 2;
     } catch (err) {
@@ -135,10 +135,7 @@ export class MatrixAdapter implements ChannelAdapter {
   async start(): Promise<void> {
     if (this.running) return;
 
-    // Lazy import — matrix-bot-sdk may not be installed in all deployments.
-    // We use a Function constructor to avoid static analysis of the import path.
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-    const sdk = await (new Function('m', 'return import(m)'))('matrix-bot-sdk') as {
+    const sdk = await import('matrix-bot-sdk') as unknown as {
       SimpleFsStorageProvider: new (path: string) => unknown;
       MatrixClient: new (url: string, token: string, storage: unknown) => MatrixClient & { on(e: string, h: (...a: unknown[]) => void): void };
       AutojoinRoomsMixin: { setupOnClient(client: unknown): void };

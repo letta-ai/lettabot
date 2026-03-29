@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readFile: vi.fn().mockResolvedValue(Buffer.from('fake-file-data')) };
+});
+
+vi.mock('./shared/access-control.js', () => ({
+  checkDmAccess: vi.fn().mockReturnValue('allowed'),
+}));
+
 vi.mock('matrix-bot-sdk', () => {
   const mockClient = {
     start: vi.fn().mockResolvedValue(undefined),
@@ -13,8 +22,13 @@ vi.mock('matrix-bot-sdk', () => {
     on: vi.fn(),
   };
 
+  // Use a class so `new MatrixClient(...)` works
+  class MockMatrixClient {
+    constructor() { return mockClient; }
+  }
+
   return {
-    MatrixClient: vi.fn(() => mockClient),
+    MatrixClient: MockMatrixClient,
     SimpleFsStorageProvider: vi.fn(),
     AutojoinRoomsMixin: { setupOnClient: vi.fn() },
     __mockClient: mockClient,
@@ -55,10 +69,18 @@ function skipIfNoAdapter() {
 }
 
 /** Finds the handler registered via client.on(eventName, handler). */
-function getOnHandler(eventName: string): ((...args: any[]) => void) | undefined {
+function getOnHandler(eventName: string): ((...args: any[]) => Promise<void>) | undefined {
   const call = (mc.on.mock.calls as Array<[string, (...args: any[]) => void]>)
     .find(([name]) => name === eventName);
-  return call?.[1];
+  if (!call) return undefined;
+  const rawHandler = call[1];
+  // The adapter wraps handleRoomMessage in a fire-and-forget .catch().
+  // We need to give the async handler time to complete.
+  return async (...args: any[]) => {
+    rawHandler(...args);
+    // Allow microtasks to flush (the handler is async internally)
+    await new Promise(resolve => setTimeout(resolve, 50));
+  };
 }
 
 const BASE_CONFIG = {
@@ -208,9 +230,8 @@ describe('MatrixAdapter editMessage', () => {
 
     await adapter.editMessage('!room:example.com', '$original:example.com', 'updated text');
 
-    expect(mc.sendEvent).toHaveBeenCalledWith(
+    expect(mc.sendMessage).toHaveBeenCalledWith(
       '!room:example.com',
-      'm.room.message',
       expect.objectContaining({
         'm.relates_to': expect.objectContaining({
           rel_type: 'm.replace',
@@ -261,7 +282,7 @@ describe('MatrixAdapter typing indicators', () => {
 
     await adapter.stopTypingIndicator?.('!room:example.com');
 
-    expect(mc.setTyping).toHaveBeenCalledWith('!room:example.com', false, expect.anything());
+    expect(mc.setTyping).toHaveBeenCalledWith('!room:example.com', false);
   });
 });
 
@@ -304,17 +325,21 @@ describe('MatrixAdapter getDmPolicy', () => {
 });
 
 describe('MatrixAdapter message handling', () => {
+  // Use open DM policy so access control doesn't block test messages
+  const OPEN_CONFIG = { ...BASE_CONFIG, dmPolicy: 'open' as const };
+
   it('ignores messages from self', async () => {
     if (skipIfNoAdapter()) return;
-    const adapter = new MatrixAdapter(BASE_CONFIG);
+    const adapter = new MatrixAdapter(OPEN_CONFIG);
     const onMessage = vi.fn();
     adapter.onMessage = onMessage;
     await adapter.start();
 
     const handler = getOnHandler('room.message');
     if (handler) {
-      await handler('!room:example.com', '@bot:example.com', {
+      await handler('!room:example.com', {
         type: 'm.room.message',
+        sender: '@bot:example.com',
         content: { msgtype: 'm.text', body: 'hello from self' },
         event_id: '$self:example.com',
         origin_server_ts: Date.now(),
@@ -325,16 +350,17 @@ describe('MatrixAdapter message handling', () => {
 
   it('routes commands to onCommand handler', async () => {
     if (skipIfNoAdapter()) return;
-    const adapter = new MatrixAdapter(BASE_CONFIG);
+    const adapter = new MatrixAdapter(OPEN_CONFIG);
     const onCommand = vi.fn().mockResolvedValue(null);
     adapter.onCommand = onCommand;
     await adapter.start();
 
     const handler = getOnHandler('room.message');
     if (handler) {
-      await handler('!room:example.com', '@user:example.com', {
+      await handler('!room:example.com', {
         type: 'm.room.message',
-        content: { msgtype: 'm.text', body: '/help' },
+        sender: '@user:example.com',
+        content: { msgtype: 'm.text', body: '/status' },
         event_id: '$cmd:example.com',
         origin_server_ts: Date.now(),
       });
@@ -344,15 +370,16 @@ describe('MatrixAdapter message handling', () => {
 
   it('routes regular messages to onMessage handler', async () => {
     if (skipIfNoAdapter()) return;
-    const adapter = new MatrixAdapter(BASE_CONFIG);
+    const adapter = new MatrixAdapter(OPEN_CONFIG);
     const onMessage = vi.fn();
     adapter.onMessage = onMessage;
     await adapter.start();
 
     const handler = getOnHandler('room.message');
     if (handler) {
-      await handler('!room:example.com', '@user:example.com', {
+      await handler('!room:example.com', {
         type: 'm.room.message',
+        sender: '@user:example.com',
         content: { msgtype: 'm.text', body: 'hello bot' },
         event_id: '$msg:example.com',
         origin_server_ts: Date.now(),

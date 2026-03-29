@@ -649,7 +649,7 @@ export function applyOnboardEnvProjection(config: OnboardConfig, env: Record<str
     delete env.SIGNAL_ALLOWED_USERS;
   }
 
-  if (config.matrix.enabled && config.matrix.accessToken) {
+  if (config.matrix?.enabled && config.matrix.accessToken) {
     env.MATRIX_ACCESS_TOKEN = config.matrix.accessToken;
     if (config.matrix.homeserverUrl) env.MATRIX_HOMESERVER_URL = config.matrix.homeserverUrl;
     else delete env.MATRIX_HOMESERVER_URL;
