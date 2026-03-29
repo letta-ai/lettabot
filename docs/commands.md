@@ -88,4 +88,4 @@ Note: Available formatting varies by channel. WhatsApp and Signal have limited m
 
 ## Cross-Channel Commands
 
-Commands work the same across all channels (Telegram, Slack, Discord, WhatsApp, Signal). The agent maintains a single conversation across all channels.
+Commands work the same across all channels (Telegram, Slack, Discord, Matrix, WhatsApp, Signal). The agent maintains a single conversation across all channels.

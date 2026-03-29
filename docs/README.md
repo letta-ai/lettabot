@@ -1,6 +1,6 @@
 # LettaBot Documentation
 
-LettaBot is a multi-channel AI assistant powered by [Letta](https://letta.com) that provides persistent memory and local tool execution across Telegram, Slack, Discord, WhatsApp, and Signal.
+LettaBot is a multi-channel AI assistant powered by [Letta](https://letta.com) that provides persistent memory and local tool execution across Telegram, Slack, Discord, Matrix, WhatsApp, and Signal.
 
 ## Guides
 
@@ -23,6 +23,7 @@ LettaBot is a multi-channel AI assistant powered by [Letta](https://letta.com) t
 - [Telegram Setup](./telegram-setup.md) - BotFather token setup
 - [Slack Setup](./slack-setup.md) - Socket Mode configuration
 - [Discord Setup](./discord-setup.md) - Bot application setup
+- [Matrix Setup](./matrix-setup.md) - Matrix homeserver token setup
 - [WhatsApp Setup](./whatsapp-setup.md) - Baileys/QR code setup
 - [Signal Setup](./signal-setup.md) - signal-cli daemon setup
 
