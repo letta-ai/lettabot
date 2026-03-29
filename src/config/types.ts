@@ -74,6 +74,7 @@ export interface AgentConfig {
     signal?: SignalConfig;
     discord?: DiscordConfig;
     bluesky?: BlueskyConfig;
+    matrix?: MatrixConfig;
   };
   /** Conversation routing */
   conversations?: {
@@ -177,6 +178,7 @@ export interface LettaBotConfig {
     signal?: SignalConfig;
     discord?: DiscordConfig;
     bluesky?: BlueskyConfig;
+    matrix?: MatrixConfig;
   };
 
   // Conversation routing
@@ -413,6 +415,24 @@ export interface DiscordConfig {
   listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
   groups?: Record<string, GroupConfig>;  // Per-guild/channel settings, "*" for defaults
   ignoreBotReactions?: boolean;   // Ignore all bot reactions (default: true). Set false for multi-bot setups.
+}
+
+export interface MatrixConfig {
+  enabled: boolean;
+  homeserverUrl?: string;        // e.g., https://matrix.org
+  accessToken?: string;          // Matrix bot access token
+  userId?: string;               // e.g., @bot:matrix.org
+  deviceId?: string;             // Device ID for E2E encryption
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
+  allowedUsers?: string[];       // Matrix user IDs (@user:server)
+  streaming?: boolean;           // Stream responses via progressive message edits (default: false)
+  mentionPatterns?: string[];    // Regex patterns for mention detection
+  groups?: Record<string, GroupConfig>;  // Per-room settings, "*" for defaults
+  groupDebounceSec?: number;     // Debounce interval in seconds (default: 5, 0 = immediate)
+  instantGroups?: string[];      // Room IDs that bypass batching
+  listeningGroups?: string[];    // @deprecated Use groups.<id>.mode = "listen"
+  e2ee?: boolean;                // Enable end-to-end encryption support
+  storePath?: string;            // Path for bot state storage (default: ./data/matrix-store)
 }
 
 export interface BlueskyConfig {
@@ -661,6 +681,13 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
         normalized.bluesky = bluesky;
       }
     }
+    if (channels.matrix) {
+      const matrix = { ...channels.matrix, enabled: channels.matrix.enabled ?? true };
+      if (matrix.accessToken && matrix.homeserverUrl && matrix.userId) {
+        normalizeLegacyGroupFields(matrix, `${sourcePath}.matrix`);
+        normalized.matrix = matrix;
+      }
+    }
 
     const channelCredentials: Array<{ name: string; raw: unknown; included: boolean; required: string }> = [
       { name: 'telegram', raw: channels.telegram, included: !!normalized.telegram, required: 'token' },
@@ -668,6 +695,7 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       { name: 'slack', raw: channels.slack, included: !!normalized.slack, required: 'botToken, appToken' },
       { name: 'signal', raw: channels.signal, included: !!normalized.signal, required: 'phone' },
       { name: 'discord', raw: channels.discord, included: !!normalized.discord, required: 'token' },
+      { name: 'matrix', raw: channels.matrix, included: !!normalized.matrix, required: 'homeserverUrl, accessToken, userId' },
     ];
 
     const invalidChannels = channelCredentials
@@ -773,6 +801,17 @@ export function normalizeAgents(config: LettaBotConfig): AgentConfig[] {
       token: process.env.DISCORD_BOT_TOKEN,
       dmPolicy: (process.env.DISCORD_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
       allowedUsers: parseList(process.env.DISCORD_ALLOWED_USERS),
+    };
+  }
+  if (!channels.matrix && process.env.MATRIX_ACCESS_TOKEN) {
+    channels.matrix = {
+      enabled: true,
+      homeserverUrl: process.env.MATRIX_HOMESERVER_URL || 'https://matrix.org',
+      accessToken: process.env.MATRIX_ACCESS_TOKEN,
+      userId: process.env.MATRIX_USER_ID,
+      deviceId: process.env.MATRIX_DEVICE_ID,
+      dmPolicy: (process.env.MATRIX_DM_POLICY as 'pairing' | 'allowlist' | 'open') || 'pairing',
+      allowedUsers: parseList(process.env.MATRIX_ALLOWED_USERS),
     };
   }
   if (!channels.bluesky && process.env.BLUESKY_WANTED_DIDS) {
