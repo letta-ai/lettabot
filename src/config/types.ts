@@ -74,6 +74,7 @@ export interface AgentConfig {
     signal?: SignalConfig;
     discord?: DiscordConfig;
     bluesky?: BlueskyConfig;
+    matrix?: MatrixConfig;
   };
   /** Conversation routing */
   conversations?: {
@@ -177,6 +178,7 @@ export interface LettaBotConfig {
     signal?: SignalConfig;
     discord?: DiscordConfig;
     bluesky?: BlueskyConfig;
+    matrix?: MatrixConfig;
   };
 
   // Conversation routing
@@ -437,6 +439,15 @@ export interface BlueskyNotificationsConfig {
   priority?: boolean;       // Priority only
   reasons?: string[];       // Filter reasons (e.g., ['mention','reply'])
   backfill?: boolean;       // Process unread notifications on startup (default: false)
+}
+
+export interface MatrixConfig {
+  enabled: boolean;
+  homeserverUrl?: string;   // e.g., https://matrix.org
+  userId?: string;          // e.g., @bot:matrix.org
+  accessToken?: string;     // Bot access token (syt_...)
+  dmPolicy?: 'pairing' | 'allowlist' | 'open';
+  allowedUsers?: string[];
 }
 
 /**
