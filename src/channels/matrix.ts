@@ -72,22 +72,197 @@ function mxcToHttp(homeserverUrl: string, mxcUrl: string): string {
 }
 
 /**
- * Convert basic Markdown to Matrix-compatible HTML.
+ * Convert Markdown to Matrix-compatible HTML.
+ *
+ * Handles: code blocks, inline code, bold, italic, strikethrough, links,
+ * headers (h1-h6), blockquotes, horizontal rules, unordered and ordered
+ * lists, and basic pipe tables.
  */
 function markdownToHtml(text: string): string {
-  // Process code blocks before inline code to avoid double-escaping
-  let html = text.replace(/```([^`]*?)```/gs, (_, code) => {
+  // --- Phase 1: Extract fenced code blocks to protect from further processing ---
+  const codeBlocks: string[] = [];
+  let html = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
     const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    return `<pre><code>${escaped}</code></pre>`;
+    const langAttr = lang ? ` class="language-${lang}"` : '';
+    const placeholder = `\x00CODEBLOCK${codeBlocks.length}\x00`;
+    codeBlocks.push(`<pre><code${langAttr}>${escaped}</code></pre>`);
+    return placeholder;
   });
+
+  // --- Phase 2: Process block-level elements line by line ---
+  const lines = html.split('\n');
+  const result: string[] = [];
+  let inList: 'ul' | 'ol' | null = null;
+  let inBlockquote = false;
+  let inTable = false;
+  let tableRows: string[] = [];
+
+  const flushTable = () => {
+    if (tableRows.length === 0) return;
+    const headerRow = tableRows[0];
+    const dataRows = tableRows.slice(1).filter(r => !r.match(/^\s*\|[\s:|-]+\|\s*$/));
+    let tableHtml = '<table><thead><tr>';
+    const headerCells = headerRow.split('|').map(c => c.trim()).filter(c => c);
+    for (const cell of headerCells) tableHtml += `<th>${cell}</th>`;
+    tableHtml += '</tr></thead>';
+    if (dataRows.length > 0) {
+      tableHtml += '<tbody>';
+      for (const row of dataRows) {
+        const cells = row.split('|').map(c => c.trim()).filter(c => c);
+        tableHtml += '<tr>';
+        for (const cell of cells) tableHtml += `<td>${cell}</td>`;
+        tableHtml += '</tr>';
+      }
+      tableHtml += '</tbody>';
+    }
+    tableHtml += '</table>';
+    result.push(tableHtml);
+    tableRows = [];
+    inTable = false;
+  };
+
+  const flushList = () => {
+    if (inList) {
+      result.push(inList === 'ul' ? '</ul>' : '</ol>');
+      inList = null;
+    }
+  };
+
+  const flushBlockquote = () => {
+    if (inBlockquote) {
+      result.push('</blockquote>');
+      inBlockquote = false;
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine;
+
+    // Code block placeholder — pass through as-is
+    if (line.match(/\x00CODEBLOCK\d+\x00/)) {
+      flushList();
+      flushBlockquote();
+      flushTable();
+      result.push(line);
+      continue;
+    }
+
+    // Table rows (starts and ends with |)
+    if (line.match(/^\s*\|.*\|\s*$/)) {
+      flushList();
+      flushBlockquote();
+      inTable = true;
+      tableRows.push(line);
+      continue;
+    } else if (inTable) {
+      flushTable();
+    }
+
+    // Horizontal rule
+    if (line.match(/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/)) {
+      flushList();
+      flushBlockquote();
+      result.push('<hr>');
+      continue;
+    }
+
+    // Headers
+    const headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    if (headerMatch) {
+      flushList();
+      flushBlockquote();
+      const level = headerMatch[1].length;
+      result.push(`<h${level}>${headerMatch[2]}</h${level}>`);
+      continue;
+    }
+
+    // Blockquotes
+    if (line.match(/^>\s?/)) {
+      flushList();
+      if (!inBlockquote) {
+        result.push('<blockquote>');
+        inBlockquote = true;
+      }
+      result.push(line.replace(/^>\s?/, '') + '<br>');
+      continue;
+    } else if (inBlockquote) {
+      flushBlockquote();
+    }
+
+    // Unordered list items
+    if (line.match(/^\s*[-*+]\s+/)) {
+      flushBlockquote();
+      if (inList !== 'ul') {
+        flushList();
+        result.push('<ul>');
+        inList = 'ul';
+      }
+      result.push(`<li>${line.replace(/^\s*[-*+]\s+/, '')}</li>`);
+      continue;
+    }
+
+    // Ordered list items
+    const olMatch = line.match(/^\s*(\d+)[.)]\s+/);
+    if (olMatch) {
+      flushBlockquote();
+      if (inList !== 'ol') {
+        flushList();
+        result.push('<ol>');
+        inList = 'ol';
+      }
+      result.push(`<li>${line.replace(/^\s*\d+[.)]\s+/, '')}</li>`);
+      continue;
+    }
+
+    // Regular line — flush any open block elements
+    if (inList && line.trim() === '') {
+      flushList();
+      result.push('<br>');
+      continue;
+    }
+    flushList();
+
+    // Empty line
+    if (line.trim() === '') {
+      result.push('<br>');
+      continue;
+    }
+
+    result.push(line + '<br>');
+  }
+
+  flushList();
+  flushBlockquote();
+  flushTable();
+
+  html = result.join('\n');
+
+  // --- Phase 3: Inline formatting ---
+  // Inline code (before bold/italic to avoid conflicts)
   html = html.replace(/`([^`]+)`/g, (_, code) => {
     const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     return `<code>${escaped}</code>`;
   });
+
+  // Bold (** or __)
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
+
+  // Italic (* or _) — avoid matching inside words or math expressions
   html = html.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
+  html = html.replace(/(?<!_)_([^_]+?)_(?!_)/g, '<em>$1</em>');
+
+  // Strikethrough
+  html = html.replace(/~~(.+?)~~/g, '<del>$1</del>');
+
+  // Links
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-  html = html.replace(/\n/g, '<br>');
+
+  // --- Phase 4: Restore code blocks ---
+  for (let i = 0; i < codeBlocks.length; i++) {
+    html = html.replace(`\x00CODEBLOCK${i}\x00`, codeBlocks[i]);
+  }
+
   return html;
 }
 
@@ -613,10 +788,15 @@ export class MatrixAdapter implements ChannelAdapter {
 
     log.info(`Sending message to ${msg.chatId} (${chunks.length} chunk(s), ${msg.text.length} chars)`);
     for (const chunk of chunks) {
-      const htmlBody = markdownToHtml(chunk);
+      // If caller already provided HTML (e.g., reasoning display), use it directly
+      const htmlBody = msg.parseMode === 'HTML' ? chunk : markdownToHtml(chunk);
+      // Strip HTML tags for the plain text fallback body
+      const plainBody = msg.parseMode === 'HTML'
+        ? chunk.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+        : chunk;
       const eventId = await this.client.sendMessage(msg.chatId, {
         msgtype: 'm.text',
-        body: chunk,
+        body: plainBody,
         format: 'org.matrix.custom.html',
         formatted_body: htmlBody,
       });

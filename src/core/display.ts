@@ -249,6 +249,23 @@ export function formatReasoningDisplay(
       parseMode: 'HTML',
     };
   }
+  if (channelId === 'matrix') {
+    // Matrix: native HTML blockquote. Element renders <details> for collapsible
+    // sections, but plain <blockquote> is the most compatible across clients.
+    const escaped = truncated
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    const html = escaped
+      .replace(/(?<![\\\w])\*\*(?=\S)([\s\S]*?\S)\*\*(?!\w)/g, '<b>$1</b>')
+      .replace(/(?<![\\\w])\*(?=\S)([^*\n]*?\S)\*(?!\w)/g, '<i>$1</i>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\n/g, '<br>');
+    return {
+      text: `<blockquote><b>Thinking</b><br>${html}</blockquote>`,
+      parseMode: 'HTML',
+    };
+  }
   // Discord, Slack, etc: markdown blockquote
   const lines = truncated.split('\n');
   const quoted = lines.map(line => `> ${line}`).join('\n');
