@@ -18,7 +18,7 @@ import { dirname } from 'node:path';
 import { getCronLogPath, getCronStorePath, getLegacyCronStorePath } from '../utils/paths.js';
 import { loadLastTarget } from '../cli/shared.js';
 
-const VALID_CHANNELS = ['telegram', 'telegram-mtproto', 'slack', 'discord', 'whatsapp', 'signal'];
+const VALID_CHANNELS = ['telegram', 'telegram-mtproto', 'slack', 'discord', 'whatsapp', 'signal', 'matrix', 'bluesky'];
 
 // Parse ISO datetime string
 function parseISODateTime(input: string): Date {

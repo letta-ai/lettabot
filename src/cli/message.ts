@@ -428,7 +428,7 @@ Send options:
   --file, -f <path>       File path (optional, for file messages)
   --image                 Treat file as image (vs document)
   --voice                 Treat file as voice note (sends as native voice memo)
-  --channel, -c <name>    Channel: telegram, slack, whatsapp, discord, bluesky, matrix (default: last used)
+  --channel, -c <name>    Channel: telegram, slack, signal, whatsapp, discord, bluesky, matrix (default: last used)
   --chat, --to <id>       Chat/conversation ID (default: last messaged; not required for bluesky)
 
 Examples:
