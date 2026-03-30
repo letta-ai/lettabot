@@ -674,6 +674,7 @@ export class MatrixAdapter implements ChannelAdapter {
         msgtype === 'm.video' ? 'video' : 'file';
 
       const httpUrl = mxcUrl ? mxcToHttp(this.config.homeserverUrl, mxcUrl) : undefined;
+      const authHeaders = { 'Authorization': `Bearer ${this.config.accessToken}` };
 
       const attachment: InboundAttachment = {
         id: eventId,
@@ -681,25 +682,30 @@ export class MatrixAdapter implements ChannelAdapter {
         mimeType,
         size,
         kind,
-        url: httpUrl,
+        // Don't expose httpUrl — it requires Matrix session auth that the agent doesn't have.
+        // The agent uses localPath instead (downloaded below).
       };
 
-      if (this.config.attachmentsDir && httpUrl) {
-        if (this.config.attachmentsMaxBytes !== 0) {
-          if (!this.config.attachmentsMaxBytes || !size || size <= this.config.attachmentsMaxBytes) {
-            const target = buildAttachmentPath(this.config.attachmentsDir, 'matrix', roomId, fileName);
-            try {
-              await downloadToFile(httpUrl, target, {
-                timeoutMs: MATRIX_ATTACHMENT_DOWNLOAD_TIMEOUT_MS,
-                headers: { 'Authorization': `Bearer ${this.config.accessToken}` },
-              });
-              attachment.localPath = target;
-              log.info(`Attachment saved to ${target}`);
-            } catch (err) {
-              log.warn('Failed to download attachment:', err);
-            }
-          } else {
-            log.warn(`Attachment ${fileName} exceeds size limit, skipping download.`);
+      if (httpUrl) {
+        const skipForSize = this.config.attachmentsMaxBytes !== undefined
+          && this.config.attachmentsMaxBytes !== 0
+          && size !== undefined
+          && size > this.config.attachmentsMaxBytes;
+
+        if (skipForSize) {
+          log.warn(`Attachment ${fileName} exceeds size limit, skipping download.`);
+        } else {
+          const attachDir = this.config.attachmentsDir || '/tmp/lettabot-matrix';
+          const target = buildAttachmentPath(attachDir, 'matrix', roomId, fileName);
+          try {
+            await downloadToFile(httpUrl, target, {
+              timeoutMs: MATRIX_ATTACHMENT_DOWNLOAD_TIMEOUT_MS,
+              headers: authHeaders,
+            });
+            attachment.localPath = target;
+            log.info(`Attachment saved to ${target}`);
+          } catch (err) {
+            log.warn('Failed to download attachment:', err);
           }
         }
       }
