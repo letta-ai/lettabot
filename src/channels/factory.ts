@@ -210,7 +210,9 @@ export function createChannelsForAgent(
 
   for (const builder of SHARED_CHANNEL_BUILDERS) {
     if (builder.isEnabled(agentConfig)) {
-      adapters.push(builder.build(agentConfig, sharedOptions));
+      const adapter = builder.build(agentConfig, sharedOptions);
+      log.info(`Created channel adapter: ${adapter.name} (${adapter.id})`);
+      adapters.push(adapter);
     }
   }
 

@@ -221,7 +221,12 @@ export class MatrixAdapter implements ChannelAdapter {
     }) as (...args: unknown[]) => void);
 
     log.info(`Connecting to Matrix homeserver at ${this.config.homeserverUrl}...`);
-    await matrixClient.start();
+    try {
+      await matrixClient.start();
+    } catch (err) {
+      log.error('matrix-bot-sdk start() failed:', err);
+      throw err;
+    }
     this.running = true;
     log.info(`Matrix adapter started as ${this.config.userId}`);
     log.info(`DM policy: ${this.config.dmPolicy}`);
