@@ -140,8 +140,8 @@ function markdownToHtml(text: string): string {
     }
   };
 
-  for (const rawLine of lines) {
-    const line = rawLine;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
 
     // Code block placeholder — pass through as-is
     if (line.match(/\x00CODEBLOCK\d+\x00/)) {
@@ -219,8 +219,14 @@ function markdownToHtml(text: string): string {
       continue;
     }
 
-    // Regular line — flush any open block elements
+    // Blank line inside a list — peek ahead to see if the list continues
     if (inList && line.trim() === '') {
+      const next = lines.slice(i + 1).find(l => l.trim() !== '');
+      const listContinues = next !== undefined && (
+        (inList === 'ol' && /^\s*\d+[.)]\s+/.test(next)) ||
+        (inList === 'ul' && /^\s*[-*+]\s+/.test(next))
+      );
+      if (listContinues) continue; // skip blank line, keep list open
       flushList();
       result.push('<br>');
       continue;
