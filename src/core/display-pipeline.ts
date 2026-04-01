@@ -216,13 +216,16 @@ export async function* createDisplayPipeline(
       filteredCount++;
       continue;
     } else if (foregroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(foregroundRunId)) {
-      // Event from a different run. Rebind on assistant events only
-      // (background Tasks don't produce assistant events in the foreground stream).
-      if (msg.type === 'assistant') {
+      // Event from a different run. The Letta agent creates a new run ID per
+      // step in its tool loop, so within a single turn the foreground run
+      // changes on every tool call. Rebind on any substantive event type to
+      // avoid filtering legitimate intermediate tool calls. Background Tasks
+      // use separate sessions and cannot produce events in this stream.
+      if (isLockType) {
         const newRunId = eventRunIds[0];
         pipeLog.info(`Foreground run rebind: ${foregroundRunId} -> ${newRunId}`);
         foregroundRunId = newRunId;
-        foregroundSource = 'assistant';
+        foregroundSource = msg.type;
       } else {
         filteredCount++;
         continue;
