@@ -216,13 +216,16 @@ export async function* createDisplayPipeline(
       filteredCount++;
       continue;
     } else if (foregroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(foregroundRunId)) {
-      // Event from a different run. Rebind on assistant events only
-      // (background Tasks don't produce assistant events in the foreground stream).
-      if (msg.type === 'assistant') {
+      // Event from a different run. The server assigns a new run ID for each
+      // step in the tool loop, so the foreground run changes on every tool call
+      // within a single turn. Rebind on assistant, tool_call, and tool_result
+      // (but NOT reasoning or result -- reasoning is too common in stale events,
+      // and result events should never rebind).
+      if (msg.type === 'assistant' || msg.type === 'tool_call' || msg.type === 'tool_result') {
         const newRunId = eventRunIds[0];
         pipeLog.info(`Foreground run rebind: ${foregroundRunId} -> ${newRunId}`);
         foregroundRunId = newRunId;
-        foregroundSource = 'assistant';
+        foregroundSource = msg.type;
       } else {
         filteredCount++;
         continue;
