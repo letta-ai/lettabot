@@ -275,6 +275,7 @@ describe('DiscordAdapter command gating', () => {
   it('allows slash commands inside threads in thread-only mode', async () => {
     const adapter = new DiscordAdapter({
       token: 'token',
+      allowedUsers: ['user-1'],
       groups: {
         'channel-1': { mode: 'open', threadMode: 'thread-only' },
       },
@@ -304,6 +305,7 @@ describe('DiscordAdapter command gating', () => {
   it('redirects mentioned top-level commands into an auto-created thread', async () => {
     const adapter = new DiscordAdapter({
       token: 'token',
+      allowedUsers: ['user-1'],
       groups: {
         'channel-1': { mode: 'open', threadMode: 'thread-only', autoCreateThreadOnMention: true },
       },

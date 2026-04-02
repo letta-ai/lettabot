@@ -203,6 +203,13 @@ export class TelegramAdapter implements ChannelAdapter {
       if (chatType === 'group' || chatType === 'supergroup') {
         const dmPolicy = this.config.dmPolicy || 'pairing';
         if (dmPolicy === 'open' || await isGroupApproved('telegram', String(ctx.chat!.id))) {
+          // Commands in groups require user-level authorization (paired or allowlisted).
+          // Chat access (mode: open) should not imply command access.
+          const msgText = ctx.message && 'text' in ctx.message ? ctx.message.text : undefined;
+          if (msgText?.startsWith('/')) {
+            const allowed = await isUserAllowed('telegram', String(userId), this.config.allowedUsers?.map(String));
+            if (!allowed) return; // silently drop unauthorized commands
+          }
           await next();
         }
         // Silently drop messages from unapproved groups

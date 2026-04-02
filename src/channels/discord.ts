@@ -8,7 +8,7 @@
 import type { ChannelAdapter } from './types.js';
 import type { InboundAttachment, InboundMessage, InboundReaction, OutboundFile, OutboundMessage } from '../core/types.js';
 import type { DmPolicy } from '../pairing/types.js';
-import { upsertPairingRequest } from '../pairing/store.js';
+import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { checkDmAccess } from './shared/access-control.js';
 import { resolveEmoji } from './shared/emoji.js';
 import { splitMessageText } from './shared/message-splitter.js';
@@ -291,6 +291,13 @@ Ask the bot owner to approve with:
           command === 'disapprove' ||
           command === 'model' ||
           command === 'setconv';
+
+        // Commands require user-level authorization (paired or allowlisted).
+        // Chat access (mode: open, guild membership) should not imply command access.
+        if (isHelpCommand || isManagedCommand) {
+          const commandAllowed = await isUserAllowed('discord', userId, this.config.allowedUsers);
+          if (!commandAllowed) return;
+        }
 
         // Unknown commands (or managed commands without onCommand) fall through to agent processing.
         if (isHelpCommand || (isManagedCommand && this.onCommand)) {
