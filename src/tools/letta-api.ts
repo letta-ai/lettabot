@@ -279,6 +279,12 @@ export async function getAgentModel(agentId: string): Promise<string | null> {
 export async function updateAgentModel(agentId: string, model: string): Promise<boolean> {
   try {
     const client = getClient();
+
+    if (isLettaApiUrl(getBaseUrl())) {
+      await client.agents.update(agentId, { model });
+      return true;
+    }
+
     const agent = await client.agents.retrieve(agentId);
     const update: {
       model: string;

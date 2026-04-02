@@ -165,9 +165,44 @@ describe('updateAgentModel', () => {
     const ok = await updateAgentModel('agent-1', 'anthropic/claude-sonnet-4-5-20250929');
 
     expect(ok).toBe(true);
+    expect(mockAgentsRetrieve).not.toHaveBeenCalled();
     expect(mockAgentsUpdate).toHaveBeenCalledWith('agent-1', {
       model: 'anthropic/claude-sonnet-4-5-20250929',
     });
+  });
+
+  it('skips preserving self-hosted endpoints when switching to a different provider', async () => {
+    process.env.LETTA_BASE_URL = 'http://localhost:8283';
+    mockAgentsRetrieve.mockResolvedValue({
+      llm_config: {
+        context_window: 128000,
+        model: 'kimi-k2.5:cloud',
+        model_endpoint_type: 'openai',
+        model_endpoint: 'http://host.docker.internal:11434/v1',
+        provider_name: 'ollama',
+        handle: 'ollama/kimi-k2.5:cloud',
+      },
+      embedding_config: {
+        embedding_dim: 4096,
+        embedding_endpoint_type: 'openai',
+        embedding_model: 'qwen3-embedding:8b-q8_0',
+        embedding_endpoint: 'http://host.docker.internal:11434/v1',
+      },
+    });
+
+    const ok = await updateAgentModel('agent-1', 'anthropic/claude-sonnet-4-5-20250929');
+
+    expect(ok).toBe(true);
+    expect(mockAgentsRetrieve).toHaveBeenCalledWith('agent-1');
+    expect(mockAgentsUpdate).toHaveBeenCalledWith('agent-1', {
+      model: 'anthropic/claude-sonnet-4-5-20250929',
+      embedding_config: expect.objectContaining({
+        embedding_endpoint: 'http://host.docker.internal:11434/v1',
+      }),
+    });
+    expect(mockAgentsUpdate).not.toHaveBeenCalledWith('agent-1', expect.objectContaining({
+      llm_config: expect.anything(),
+    }));
   });
 });
 
