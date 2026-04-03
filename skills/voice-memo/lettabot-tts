@@ -58,13 +58,17 @@ preflight
 # Ensure output directory exists
 mkdir -p "$OUTBOUND_DIR"
 
+# Derive extension from format so filenames and MIME types stay consistent.
+# Falls back to 'ogg' when OPENAI_TTS_FORMAT is unset (the script default).
+_ext="${OPENAI_TTS_FORMAT:-ogg}"
+
 # Use collision-safe random filenames when output path is not explicitly provided.
 if [ -n "${2:-}" ]; then
   OUTPUT="$2"
 else
-  # Clean stale voice files older than 1 hour
-  find "$OUTBOUND_DIR" -name 'voice-*.ogg' -mmin +60 -delete 2>/dev/null || true
-  OUTPUT=$(mktemp "${OUTBOUND_DIR}/voice-XXXXXXXXXX.ogg")
+  # Clean stale voice files older than 1 hour (all extensions)
+  find "$OUTBOUND_DIR" -name 'voice-*' -mmin +60 -delete 2>/dev/null || true
+  OUTPUT=$(mktemp "${OUTBOUND_DIR}/voice-XXXXXXXXXX.${_ext}")
 fi
 
 # ---------------------------------------------------------------------------
@@ -179,7 +183,7 @@ esac
 # Set LETTABOT_TTS_PAD_SECONDS (e.g. "0.5") to enable. Requires ffmpeg.
 # ---------------------------------------------------------------------------
 if [ -n "${LETTABOT_TTS_PAD_SECONDS:-}" ]; then
-  PAD_TMP=$(mktemp "${OUTPUT%.ogg}_pad_XXXXXX.ogg")
+  PAD_TMP=$(mktemp "${OUTPUT%.*}_pad_XXXXXX.${_ext}")
   if ffmpeg -y -i "$OUTPUT" -af "apad=pad_dur=${LETTABOT_TTS_PAD_SECONDS}" \
        -c:a libopus -b:a 64k "$PAD_TMP" 2>/dev/null; then
     mv "$PAD_TMP" "$OUTPUT"

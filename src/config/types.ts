@@ -259,6 +259,10 @@ export interface TtsConfig {
   apiKey?: string;                      // Falls back to ELEVENLABS_API_KEY or OPENAI_API_KEY env var
   voiceId?: string;                     // ElevenLabs voice ID or OpenAI voice name
   model?: string;                       // Model ID (provider-specific defaults)
+  // OpenAI-compatible TTS options (openai provider only)
+  baseUrl?: string;                     // Base URL for OpenAI-compatible TTS server (default: https://api.openai.com)
+  format?: string;                      // Response format: omitted by default (server chooses). Set to 'opus', 'mp3', 'wav', etc.
+  padSeconds?: number;                  // Seconds of silence to append via ffmpeg to prevent audio cutoff (e.g. 0.5). Requires ffmpeg.
 }
 
 export interface TranscriptionConfig {

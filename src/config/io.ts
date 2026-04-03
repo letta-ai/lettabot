@@ -617,6 +617,15 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
       env.OPENAI_TTS_MODEL = config.tts.model;
     }
   }
+  if (config.tts?.baseUrl) {
+    env.OPENAI_TTS_BASE_URL = config.tts.baseUrl;
+  }
+  if (config.tts?.format) {
+    env.OPENAI_TTS_FORMAT = config.tts.format;
+  }
+  if (config.tts?.padSeconds !== undefined) {
+    env.LETTABOT_TTS_PAD_SECONDS = String(config.tts.padSeconds);
+  }
 
   // API server (server.api is canonical, top-level api is deprecated fallback)
   const apiConfig = config.server.api ?? config.api;
