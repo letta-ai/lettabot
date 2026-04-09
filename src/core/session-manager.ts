@@ -283,7 +283,7 @@ export class SessionManager {
       installSkillsToAgent(this.store.agentId, this.config.skills);
       sessionAgentId = this.store.agentId;
       prependSkillDirsToPath(sessionAgentId); // must be before resumeSession spawns subprocess
-      session = resumeSession('default', opts);
+      session = resumeSession(this.store.agentId, opts);
     } else if (convId) {
       process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
       if (this.store.agentId) {
@@ -320,6 +320,17 @@ export class SessionManager {
     try {
       await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
       this.log.info(`Session subprocess ready (key=${key})`);
+
+      // Defense-in-depth: verify the CLI subprocess resolved to the expected agent.
+      // If it resolved to a different agent (e.g., via LRU fallback or auto-creation
+      // during an API outage), refuse the session rather than silently using the wrong agent.
+      if (sessionAgentId && session.agentId && session.agentId !== sessionAgentId) {
+        session.close();
+        throw new Error(
+          `Agent ID mismatch: expected ${sessionAgentId} but session resolved to ${session.agentId}. ` +
+          `The CLI subprocess may have created or selected a different agent.`,
+        );
+      }
     } catch (error) {
       // Close immediately so failed initialization cannot leak a subprocess.
       session.close();
@@ -493,12 +504,15 @@ export class SessionManager {
    * Agent ID and first-run setup are handled eagerly in ensureSessionForKey().
    */
   persistSessionState(session: Session, convKey?: string): void {
-    // Agent ID already persisted in ensureSessionForKey() on creation.
-    // Here we only update if the server returned a different one (shouldn't happen).
+    // Never overwrite the stored agent ID from a session result. The agent ID
+    // is set exclusively from config (lettabot.yaml / LETTA_AGENT_ID). If the
+    // session resolved to a different agent, it's a bug -- log it loudly but
+    // do NOT persist the wrong ID.
     if (session.agentId && session.agentId !== this.store.agentId) {
-      const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
-      this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
-      this.log.info('Agent ID updated:', session.agentId);
+      this.log.error(
+        `Session resolved to agent ${session.agentId} but store has ${this.store.agentId}. ` +
+        `Refusing to overwrite -- this likely indicates a CLI subprocess resolved to the wrong agent.`,
+      );
     } else if (session.conversationId && session.conversationId !== 'default' && convKey !== 'default') {
       // In per-channel mode, persist per-key. In shared mode, use legacy field.
       // Skip saving "default" -- it's an API alias, not a real conversation ID.
