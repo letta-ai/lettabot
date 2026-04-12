@@ -5,20 +5,64 @@
  */
 
 import { Letta } from '@letta-ai/letta-client';
+import { isLettaApiUrl } from '../utils/server.js';
 
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Letta-api');
-const LETTA_BASE_URL = process.env.LETTA_BASE_URL || 'https://api.letta.com';
+
+type AgentState = Awaited<ReturnType<Letta['agents']['retrieve']>>;
+type AgentLlmConfig = NonNullable<AgentState['llm_config']>;
+type AgentEmbeddingConfig = NonNullable<AgentState['embedding_config']>;
+
+function getBaseUrl(): string {
+  return process.env.LETTA_BASE_URL || 'https://api.letta.com';
+}
 
 function getClient(): Letta {
   const apiKey = process.env.LETTA_API_KEY;
   // Local servers may not require an API key
   return new Letta({ 
     apiKey: apiKey || '', 
-    baseURL: LETTA_BASE_URL,
+    baseURL: getBaseUrl(),
     defaultHeaders: { "X-Letta-Source": "lettabot" },
   });
+}
+
+function parseModelHandle(handle: string): { provider: string | null; modelName: string } {
+  const slash = handle.indexOf('/');
+  if (slash === -1) return { provider: null, modelName: handle };
+  return {
+    provider: handle.slice(0, slash),
+    modelName: handle.slice(slash + 1),
+  };
+}
+
+function shouldPreserveSelfHostedLlmConfig(agent: AgentState, nextHandle: string): boolean {
+  if (isLettaApiUrl(getBaseUrl())) return false;
+  const current = agent.llm_config;
+  if (!current?.model_endpoint) return false;
+
+  const { provider } = parseModelHandle(nextHandle);
+  if (!provider) return false;
+
+  const currentProvider = current.provider_name
+    ?? (current.handle?.includes('/') ? current.handle.split('/', 1)[0] : null);
+  return currentProvider === provider;
+}
+
+function buildPreservedLlmConfig(current: AgentLlmConfig, nextHandle: string): AgentLlmConfig {
+  const { provider, modelName } = parseModelHandle(nextHandle);
+  return {
+    ...current,
+    handle: nextHandle,
+    model: modelName,
+    provider_name: provider ?? current.provider_name,
+  };
+}
+
+function shouldPreserveSelfHostedEmbeddingConfig(agent: AgentState): boolean {
+  return !isLettaApiUrl(getBaseUrl()) && !!agent.embedding_config?.embedding_endpoint;
 }
 
 async function listAgentApprovalRunIds(agentId: string, limit = 10): Promise<string[]> {
@@ -235,7 +279,28 @@ export async function getAgentModel(agentId: string): Promise<string | null> {
 export async function updateAgentModel(agentId: string, model: string): Promise<boolean> {
   try {
     const client = getClient();
-    await client.agents.update(agentId, { model });
+
+    if (isLettaApiUrl(getBaseUrl())) {
+      await client.agents.update(agentId, { model });
+      return true;
+    }
+
+    const agent = await client.agents.retrieve(agentId);
+    const update: {
+      model: string;
+      llm_config?: AgentLlmConfig;
+      embedding_config?: AgentEmbeddingConfig;
+    } = { model };
+
+    if (shouldPreserveSelfHostedLlmConfig(agent, model) && agent.llm_config) {
+      update.llm_config = buildPreservedLlmConfig(agent.llm_config, model);
+    }
+
+    if (shouldPreserveSelfHostedEmbeddingConfig(agent) && agent.embedding_config) {
+      update.embedding_config = { ...agent.embedding_config };
+    }
+
+    await client.agents.update(agentId, update);
     return true;
   } catch (e) {
     log.error('Failed to update agent model:', e);
