@@ -135,7 +135,7 @@ describe('POST /api/v1/chat', () => {
     expect(router.sendToAgent).toHaveBeenCalledWith(
       undefined,
       'Hello',
-      { type: 'webhook', outputMode: 'silent' },
+      { type: 'webhook', outputMode: 'responsive' },
     );
   });
 
@@ -148,7 +148,7 @@ describe('POST /api/v1/chat', () => {
     expect(router.sendToAgent).toHaveBeenCalledWith(
       'LettaBot',
       'Hi',
-      { type: 'webhook', outputMode: 'silent' },
+      { type: 'webhook', outputMode: 'responsive' },
     );
   });
 

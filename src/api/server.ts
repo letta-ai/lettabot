@@ -29,7 +29,14 @@ const VALID_CHANNELS: ChannelId[] = ['telegram', 'slack', 'discord', 'whatsapp',
 const MAX_BODY_SIZE = 10 * 1024; // 10KB
 const MAX_TEXT_LENGTH = 10000; // 10k chars
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
-const WEBHOOK_CONTEXT = { type: 'webhook' as const, outputMode: 'silent' as const };
+// Sync endpoints (/api/v1/chat, /api/v1/chat stream): the HTTP response IS
+// the delivery mechanism, so the agent's output is genuinely responsive.
+// Keeping this silent makes the "response discarded" WARN fire on every
+// sync call even though the caller actually received the text.
+const WEBHOOK_SYNC_CONTEXT = { type: 'webhook' as const, outputMode: 'responsive' as const };
+// Async endpoint (/api/v1/chat/async): returns 202 immediately, nothing is
+// waiting for the agent's text output, so silent is correct.
+const WEBHOOK_ASYNC_CONTEXT = { type: 'webhook' as const, outputMode: 'silent' as const };
 const PORTAL_HTML = fs.readFileSync(new URL('./portal.html', import.meta.url), 'utf-8');
 
 type ResolvedChatRequest = {
@@ -376,7 +383,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           req.on('close', () => { clientDisconnected = true; });
 
           try {
-            for await (const msg of deliverer.streamToAgent(resolved.agentName, resolved.message, WEBHOOK_CONTEXT)) {
+            for await (const msg of deliverer.streamToAgent(resolved.agentName, resolved.message, WEBHOOK_SYNC_CONTEXT)) {
               if (clientDisconnected) break;
               res.write(`data: ${JSON.stringify(msg)}\n\n`);
               if (msg.type === 'result') break;
@@ -389,7 +396,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           res.end();
         } else {
           // Sync: wait for full response
-          const response = await deliverer.sendToAgent(resolved.agentName, resolved.message, WEBHOOK_CONTEXT);
+          const response = await deliverer.sendToAgent(resolved.agentName, resolved.message, WEBHOOK_SYNC_CONTEXT);
 
           const chatRes: ChatResponse = {
             success: true,
@@ -430,7 +437,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         res.end(JSON.stringify(asyncRes));
 
         // Process in background (detached promise)
-        deliverer.sendToAgent(resolved.agentName, resolved.message, WEBHOOK_CONTEXT).catch((error: any) => {
+        deliverer.sendToAgent(resolved.agentName, resolved.message, WEBHOOK_ASYNC_CONTEXT).catch((error: any) => {
           log.error(`Async chat background error for agent "${resolved.resolvedName}":`, error);
         });
       } catch (error: any) {
