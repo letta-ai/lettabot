@@ -8,6 +8,12 @@
 import { existsSync, mkdirSync, promises as fs } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+// Parse --config <path> early so resolveConfigPath() picks it up via LETTABOT_CONFIG
+const configIdx = process.argv.indexOf('--config');
+if (configIdx !== -1 && process.argv[configIdx + 1]) {
+  process.env.LETTABOT_CONFIG = resolve(process.argv[configIdx + 1]);
+}
+
 // API server imports
 import { createApiServer } from './api/server.js';
 import { loadOrGenerateApiKey } from './api/auth.js';

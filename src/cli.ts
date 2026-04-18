@@ -43,6 +43,12 @@ const args = process.argv.slice(2);
 const command = args[0];
 const subCommand = args[1];
 
+// Parse --config <path> early so it propagates to main.js subprocess
+const configIdx = args.indexOf('--config');
+if (configIdx !== -1 && args[configIdx + 1]) {
+  process.env.LETTABOT_CONFIG = resolve(args[configIdx + 1]);
+}
+
 // Check if value is a placeholder
 const isPlaceholder = (val?: string) => !val || /^(your_|sk-\.\.\.|placeholder|example)/i.test(val);
 
