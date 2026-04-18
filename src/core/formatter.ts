@@ -216,6 +216,19 @@ function buildMetadataLines(msg: InboundMessage, options: EnvelopeOptions): stri
   // Sender
   if (options.includeSender !== false) {
     lines.push(`- **Sender**: ${formatSender(msg)}`);
+    // Include stable platform identifier for identity verification
+    // (display names are mutable and not unique; userId is immutable per platform)
+    const senderDisplay = formatSender(msg);
+    const senderId = msg.userId;
+    // Only add Sender ID if it's not already visible in the sender display
+    // Phone-based channels (WhatsApp, Signal) already embed the userId in the sender line
+    const isPhoneChannel = msg.channel === 'whatsapp' || msg.channel === 'signal';
+    const idAlreadyShown = isPhoneChannel ||
+      senderDisplay.includes(senderId) ||
+      senderDisplay.includes(formatPhoneNumber(senderId));
+    if (!idAlreadyShown && senderId) {
+      lines.push(`- **Sender ID**: ${senderId}`);
+    }
   }
 
   // Timestamp

@@ -86,6 +86,66 @@ describe('formatMessageEnvelope', () => {
       expect(result).toContain('**Sender**: John Doe');
     });
 
+    it('includes Sender ID for Telegram when different from display name', () => {
+      const msg = createMessage({ userName: 'Alice', userId: '123456789' });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('**Sender**: Alice');
+      expect(result).toContain('**Sender ID**: 123456789');
+    });
+
+    it('includes Sender ID for Discord in group chats', () => {
+      const msg = createMessage({
+        channel: 'discord',
+        userName: 'Alice',
+        userId: '987654321098765432',
+        isGroup: true,
+        groupName: 'general',
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('**Sender**: Alice');
+      expect(result).toContain('**Sender ID**: 987654321098765432');
+    });
+
+    it('includes Sender ID for Slack', () => {
+      const msg = createMessage({
+        channel: 'slack',
+        userName: 'Bob',
+        userId: 'U12345ABC',
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('**Sender**: Bob');
+      expect(result).toContain('**Sender ID**: U12345ABC');
+    });
+
+    it('omits Sender ID for WhatsApp (phone already in sender display)', () => {
+      const msg = createMessage({
+        channel: 'whatsapp',
+        userName: 'John',
+        userId: '+15551234567',
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('**Sender**: John (+1 (555) 123-4567)');
+      expect(result).not.toContain('**Sender ID**');
+    });
+
+    it('omits Sender ID for Signal (phone already in sender display)', () => {
+      const msg = createMessage({
+        channel: 'signal',
+        userName: 'Jane',
+        userId: '+15559876543',
+      });
+      const result = formatMessageEnvelope(msg);
+      expect(result).toContain('**Sender**: Jane (+1 (555) 987-6543)');
+      expect(result).not.toContain('**Sender ID**');
+    });
+
+    it('omits Sender ID when includeSender is false', () => {
+      const msg = createMessage({ userName: 'Alice', userId: '123456789' });
+      const result = formatMessageEnvelope(msg, { includeSender: false });
+      expect(result).not.toContain('**Sender**');
+      expect(result).not.toContain('**Sender ID**');
+    });
+
     it('includes phone number alongside name for WhatsApp', () => {
       const msg = createMessage({
         channel: 'whatsapp',
