@@ -61,6 +61,15 @@ async function configure() {
   const { resolveConfigPath } = await import('./config/index.js');
   const config = getConfig();
   
+  // Resolve channels from agents[0] (multi-agent) or top-level (legacy)
+  const primaryChannels = config.agents?.[0]?.channels;
+  const channels = {
+    ...config.channels,
+    ...(primaryChannels?.telegram ? { telegram: { ...primaryChannels.telegram, ...config.channels?.telegram } } : {}),
+    ...(primaryChannels?.slack ? { slack: { ...primaryChannels.slack, ...config.channels?.slack } } : {}),
+    ...(primaryChannels?.discord ? { discord: { ...primaryChannels.discord, ...config.channels?.discord } } : {}),
+  };
+  
   p.intro('🤖 LettaBot Configuration');
 
   // Show current config from YAML
@@ -68,9 +77,9 @@ async function configure() {
     ['Server Mode', serverModeLabel(config.server.mode)],
     ['API Key', config.server.apiKey ? '✓ Set' : '✗ Not set'],
     ['Agent Name', config.agent.name],
-    ['Telegram', config.channels.telegram?.enabled ? '✓ Enabled' : '✗ Disabled'],
-    ['Slack', config.channels.slack?.enabled ? '✓ Enabled' : '✗ Disabled'],
-    ['Discord', config.channels.discord?.enabled ? '✓ Enabled' : '✗ Disabled'],
+    ['Telegram', channels.telegram?.enabled ? '✓ Enabled' : '✗ Disabled'],
+    ['Slack', channels.slack?.enabled ? '✓ Enabled' : '✗ Disabled'],
+    ['Discord', channels.discord?.enabled ? '✓ Enabled' : '✗ Disabled'],
     ['Cron', config.features?.cron ? '✓ Enabled' : '✗ Disabled'],
     ['Heartbeat', config.features?.heartbeat?.enabled ? `✓ ${config.features.heartbeat.intervalMin}min` : '✗ Disabled'],
     ['BYOK Providers', config.providers?.length ? config.providers.map(p => p.name).join(', ') : 'None'],

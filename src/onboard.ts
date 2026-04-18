@@ -1659,6 +1659,28 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   const configPath = resolveConfigPath();
   const hasExistingConfig = existsSync(configPath);
   
+  // Resolve channels from either top-level config or agents[0] (multi-agent format)
+  const agentChannels = existingConfig.agents?.[0]?.channels;
+  const ec = {
+    ...existingConfig,
+    channels: {
+      ...existingConfig.channels,
+      // Merge agent-level channels as fallback for fields not set at top level
+      ...(agentChannels?.telegram ? { telegram: { ...agentChannels.telegram, ...existingConfig.channels?.telegram } } : {}),
+      ...(agentChannels?.slack ? { slack: { ...agentChannels.slack, ...existingConfig.channels?.slack } } : {}),
+      ...(agentChannels?.discord ? { discord: { ...agentChannels.discord, ...existingConfig.channels?.discord } } : {}),
+      ...(agentChannels?.whatsapp ? { whatsapp: { ...agentChannels.whatsapp, ...existingConfig.channels?.whatsapp } } : {}),
+      ...(agentChannels?.signal ? { signal: { ...agentChannels.signal, ...existingConfig.channels?.signal } } : {}),
+    },
+    agent: {
+      ...existingConfig.agent,
+      ...(existingConfig.agents?.[0] ? {
+        name: existingConfig.agents[0].name || existingConfig.agent.name,
+        id: existingConfig.agents[0].id || existingConfig.agent.id,
+      } : {}),
+    },
+  };
+  
   // Non-interactive mode: read all config from env vars
   if (nonInteractive) {
     console.log('🤖 LettaBot Non-Interactive Setup\n');
@@ -1787,8 +1809,8 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     p.log.info(`Loading existing config from ${configPath}`);
   }
   
-  // Pre-populate from existing config
-  const baseUrl = existingConfig.server.baseUrl || process.env.LETTA_BASE_URL || 'https://api.letta.com';
+  // Pre-populate from existing config (merged channels from both top-level and agents[])
+  const baseUrl = ec.server.baseUrl || process.env.LETTA_BASE_URL || 'https://api.letta.com';
   const isLocal = !isLettaApiUrl(baseUrl);
   p.note(`${baseUrl}\n${isLocal ? 'Docker server' : 'Letta API'}`, 'Server');
   
@@ -1814,70 +1836,70 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   }
   
   // Initialize config from existing env
-  // Pre-populate from existing YAML config
+  // Pre-populate from existing YAML config (ec merges top-level + agents[0] channels)
   const config: OnboardConfig = {
     authMethod: hasExistingConfig ? 'keep' : 'skip',
-    apiKey: existingConfig.server.apiKey,
-    baseUrl: existingConfig.server.baseUrl,
+    apiKey: ec.server.apiKey,
+    baseUrl: ec.server.baseUrl,
     telegram: { 
-      enabled: existingConfig.channels.telegram?.enabled || false,
-      token: existingConfig.channels.telegram?.token,
-      dmPolicy: existingConfig.channels.telegram?.dmPolicy,
-      allowedUsers: existingConfig.channels.telegram?.allowedUsers?.map(String),
+      enabled: ec.channels.telegram?.enabled || false,
+      token: ec.channels.telegram?.token,
+      dmPolicy: ec.channels.telegram?.dmPolicy,
+      allowedUsers: ec.channels.telegram?.allowedUsers?.map(String),
     },
     slack: { 
-      enabled: existingConfig.channels.slack?.enabled || false,
-      appToken: existingConfig.channels.slack?.appToken,
-      botToken: existingConfig.channels.slack?.botToken,
-      allowedUsers: existingConfig.channels.slack?.allowedUsers,
+      enabled: ec.channels.slack?.enabled || false,
+      appToken: ec.channels.slack?.appToken,
+      botToken: ec.channels.slack?.botToken,
+      allowedUsers: ec.channels.slack?.allowedUsers,
     },
     discord: {
-      enabled: existingConfig.channels.discord?.enabled || false,
-      token: existingConfig.channels.discord?.token,
-      dmPolicy: existingConfig.channels.discord?.dmPolicy,
-      allowedUsers: existingConfig.channels.discord?.allowedUsers,
+      enabled: ec.channels.discord?.enabled || false,
+      token: ec.channels.discord?.token,
+      dmPolicy: ec.channels.discord?.dmPolicy,
+      allowedUsers: ec.channels.discord?.allowedUsers,
     },
     whatsapp: { 
-      enabled: existingConfig.channels.whatsapp?.enabled || false,
-      selfChat: existingConfig.channels.whatsapp?.selfChat ?? true, // Default true
-      dmPolicy: existingConfig.channels.whatsapp?.dmPolicy,
+      enabled: ec.channels.whatsapp?.enabled || false,
+      selfChat: ec.channels.whatsapp?.selfChat ?? true, // Default true
+      dmPolicy: ec.channels.whatsapp?.dmPolicy,
     },
     signal: { 
-      enabled: existingConfig.channels.signal?.enabled || false,
-      phone: existingConfig.channels.signal?.phone,
-      selfChat: existingConfig.channels.signal?.selfChat ?? true, // Default true
-      dmPolicy: existingConfig.channels.signal?.dmPolicy,
+      enabled: ec.channels.signal?.enabled || false,
+      phone: ec.channels.signal?.phone,
+      selfChat: ec.channels.signal?.selfChat ?? true, // Default true
+      dmPolicy: ec.channels.signal?.dmPolicy,
     },
     google: (() => {
-      const existingAccounts = existingConfig.integrations?.google?.accounts
-        ? existingConfig.integrations.google.accounts.map(a => ({
+      const existingAccounts = ec.integrations?.google?.accounts
+        ? ec.integrations.google.accounts.map(a => ({
             account: a.account,
             services: a.services || [],
           }))
-        : (existingConfig.integrations?.google?.account ? [{
-            account: existingConfig.integrations.google.account,
-            services: existingConfig.integrations.google.services || [],
+        : (ec.integrations?.google?.account ? [{
+            account: ec.integrations.google.account,
+            services: ec.integrations.google.services || [],
           }] : []);
       return {
-        enabled: (existingConfig.integrations?.google?.enabled || false) || existingAccounts.length > 0,
+        enabled: (ec.integrations?.google?.enabled || false) || existingAccounts.length > 0,
         accounts: existingAccounts,
       };
     })(),
     heartbeat: { 
-      enabled: existingConfig.features?.heartbeat?.enabled || false,
-      interval: existingConfig.features?.heartbeat?.intervalMin?.toString(),
+      enabled: ec.features?.heartbeat?.enabled || false,
+      interval: ec.features?.heartbeat?.intervalMin?.toString(),
     },
-    cron: existingConfig.features?.cron || false,
+    cron: ec.features?.cron || false,
     transcription: {
-      enabled: !!existingConfig.transcription?.apiKey || !!process.env.OPENAI_API_KEY || !!process.env.MISTRAL_API_KEY,
-      provider: existingConfig.transcription?.provider || 'openai',
-      apiKey: existingConfig.transcription?.apiKey,
-      model: existingConfig.transcription?.model,
+      enabled: !!ec.transcription?.apiKey || !!process.env.OPENAI_API_KEY || !!process.env.MISTRAL_API_KEY,
+      provider: ec.transcription?.provider || 'openai',
+      apiKey: ec.transcription?.apiKey,
+      model: ec.transcription?.model,
     },
     agentChoice: hasExistingConfig ? 'env' : 'skip',
-    agentName: existingConfig.agent.name,
-    agentId: existingConfig.agent.id,
-    providers: existingConfig.providers?.map(p => ({ id: p.id, name: p.name, apiKey: p.apiKey })),
+    agentName: ec.agent.name,
+    agentId: ec.agent.id,
+    providers: ec.providers?.map(p => ({ id: p.id, name: p.name, apiKey: p.apiKey })),
   };
   
   // Run through all steps

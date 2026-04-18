@@ -51,10 +51,22 @@ function getChannelDetails(id: ChannelId, channelConfig: any): string | undefine
 }
 
 function getChannelStatus(): ChannelStatus[] {
-  const config = loadAppConfigOrExit();
+  const rawConfig = loadAppConfigOrExit();
+  
+  // Merge channels from both top-level and agents[0] (multi-agent format)
+  const agentChannels = rawConfig.agents?.[0]?.channels;
+  const channels = {
+    ...rawConfig.channels,
+    ...(agentChannels?.telegram ? { telegram: { ...agentChannels.telegram, ...rawConfig.channels?.telegram } } : {}),
+    ...(agentChannels?.slack ? { slack: { ...agentChannels.slack, ...rawConfig.channels?.slack } } : {}),
+    ...(agentChannels?.discord ? { discord: { ...agentChannels.discord, ...rawConfig.channels?.discord } } : {}),
+    ...(agentChannels?.whatsapp ? { whatsapp: { ...agentChannels.whatsapp, ...rawConfig.channels?.whatsapp } } : {}),
+    ...(agentChannels?.signal ? { signal: { ...agentChannels.signal, ...rawConfig.channels?.signal } } : {}),
+    ...(agentChannels?.bluesky ? { bluesky: { ...agentChannels.bluesky, ...rawConfig.channels?.bluesky } } : {}),
+  };
   
   return CHANNELS.map(ch => {
-    const channelConfig = config.channels[ch.id as keyof typeof config.channels];
+    const channelConfig = channels[ch.id as keyof typeof channels];
     return {
       id: ch.id,
       displayName: ch.displayName,
