@@ -15,7 +15,7 @@ const LETTA_HOME = process.env.RAILWAY_VOLUME_MOUNT_PATH
   ? join(process.env.RAILWAY_VOLUME_MOUNT_PATH, '.letta')
   : join(HOME, '.letta');
 export const WORKING_DIR = getWorkingDir();
-export const PROJECT_SKILLS_DIR = resolve(process.cwd(), '.skills');
+export const PROJECT_SKILLS_DIR = join(WORKING_DIR, '.skills');
 export const WORKING_SKILLS_DIR = join(WORKING_DIR, '.skills'); // skills enabled via CLI
 export const GLOBAL_SKILLS_DIR = join(LETTA_HOME, 'skills');
 export const SKILLS_SH_DIR = join(HOME, '.agents', 'skills'); // skills.sh global installs
