@@ -981,6 +981,36 @@ export class LettaBot implements AgentSession {
         lines.push('', 'Use `/model <handle>` to switch.');
         return lines.join('\n');
       }
+      case 'setconv': {
+        const newConvId = args?.trim();
+        if (!newConvId) {
+          return 'Usage: `/setconv <conversation-id>`\nExample: `/setconv conv-abc123`';
+        }
+
+        // Basic format validation — conversation IDs should be non-empty and reasonable
+        if (newConvId.length < 3) {
+          return 'Invalid conversation ID. Usage: `/setconv <conversation-id>`';
+        }
+
+        const convKey = channelId ? this.resolveConversationKey(channelId, chatId, forcePerChat) : 'shared';
+
+        if (convKey === 'default') {
+          return 'Conversations are disabled -- cannot set conversation.';
+        }
+
+        // Invalidate the old session so next message creates a fresh one
+        this.sessionManager.invalidateSession(convKey);
+
+        // Set the new conversation ID
+        if (convKey === 'shared') {
+          this.store.conversationId = newConvId;
+        } else {
+          this.store.setConversationId(convKey, newConvId);
+        }
+
+        this.log.info(`/setconv - conversation set to "${newConvId}" for key="${convKey}"`);
+        return `Conversation set to: \`${newConvId}\` (key: ${convKey})\nNext message will use this conversation.`;
+      }
       default:
         return null;
     }
