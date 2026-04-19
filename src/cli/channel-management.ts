@@ -50,20 +50,35 @@ function getChannelDetails(id: ChannelId, channelConfig: any): string | undefine
   }
 }
 
+/**
+ * Resolve merged channels from a config object.
+ * In multi-agent format (agents[] present), merges agents[0].channels with
+ * top-level channels (agent-level takes precedence for overlapping fields).
+ * In single-agent format, returns top-level channels directly.
+ */
+export function resolveChannels(config: any): Record<string, any> {
+  const agentChannels = config.agents?.[0]?.channels;
+  return {
+    ...config.channels,
+    ...(agentChannels?.telegram ? { telegram: { ...agentChannels.telegram, ...config.channels?.telegram } } : {}),
+    ...(agentChannels?.slack ? { slack: { ...agentChannels.slack, ...config.channels?.slack } } : {}),
+    ...(agentChannels?.discord ? { discord: { ...agentChannels.discord, ...config.channels?.discord } } : {}),
+    ...(agentChannels?.whatsapp ? { whatsapp: { ...agentChannels.whatsapp, ...config.channels?.whatsapp } } : {}),
+    ...(agentChannels?.signal ? { signal: { ...agentChannels.signal, ...config.channels?.signal } } : {}),
+    ...(agentChannels?.bluesky ? { bluesky: { ...agentChannels.bluesky, ...config.channels?.bluesky } } : {}),
+  };
+}
+
+/**
+ * Check if config uses multi-agent format (agents[] with entries).
+ */
+export function isMultiAgentConfig(config: any): boolean {
+  return !!(config.agents && Array.isArray(config.agents) && config.agents.length > 0);
+}
+
 function getChannelStatus(): ChannelStatus[] {
   const rawConfig = loadAppConfigOrExit();
-  
-  // Merge channels from both top-level and agents[0] (multi-agent format)
-  const agentChannels = rawConfig.agents?.[0]?.channels;
-  const channels = {
-    ...rawConfig.channels,
-    ...(agentChannels?.telegram ? { telegram: { ...agentChannels.telegram, ...rawConfig.channels?.telegram } } : {}),
-    ...(agentChannels?.slack ? { slack: { ...agentChannels.slack, ...rawConfig.channels?.slack } } : {}),
-    ...(agentChannels?.discord ? { discord: { ...agentChannels.discord, ...rawConfig.channels?.discord } } : {}),
-    ...(agentChannels?.whatsapp ? { whatsapp: { ...agentChannels.whatsapp, ...rawConfig.channels?.whatsapp } } : {}),
-    ...(agentChannels?.signal ? { signal: { ...agentChannels.signal, ...rawConfig.channels?.signal } } : {}),
-    ...(agentChannels?.bluesky ? { bluesky: { ...agentChannels.bluesky, ...rawConfig.channels?.bluesky } } : {}),
-  };
+  const channels = resolveChannels(rawConfig);
   
   return CHANNELS.map(ch => {
     const channelConfig = channels[ch.id as keyof typeof channels];
@@ -220,14 +235,24 @@ export async function addChannel(channelId?: string): Promise<void> {
   }
   
   const config = loadAppConfigOrExit();
-  const existingConfig = config.channels[channelId as keyof typeof config.channels];
+  
+  // In multi-agent format, read/write from agents[0].channels
+  const multiAgent = isMultiAgentConfig(config);
+  const channelSource = multiAgent
+    ? (config.agents![0].channels ?? {})
+    : config.channels;
+  const existingConfig = channelSource[channelId as keyof typeof channelSource];
   
   // Get and run the setup function
   const setup = getSetupFunction(channelId as ChannelId);
   const newConfig = await setup(existingConfig);
   
-  // Save
-  (config.channels as any)[channelId] = newConfig;
+  // Save — write to the correct location based on config format
+  if (multiAgent) {
+    (config.agents![0].channels as any)[channelId] = newConfig;
+  } else {
+    (config.channels as any)[channelId] = newConfig;
+  }
   saveConfig(config);
   p.log.success(`Configuration saved to ${resolveConfigPath()}`);
 }
@@ -248,7 +273,13 @@ export async function removeChannel(channelId?: string): Promise<void> {
   }
   
   const config = loadAppConfigOrExit();
-  const channelConfig = config.channels[channelId as keyof typeof config.channels];
+  
+  // In multi-agent format, read/write from agents[0].channels
+  const multiAgent = isMultiAgentConfig(config);
+  const channelSource = multiAgent
+    ? (config.agents![0].channels ?? {})
+    : config.channels;
+  const channelConfig = channelSource[channelId as keyof typeof channelSource];
   
   if (!channelConfig?.enabled) {
     console.log(`${channelId} is already disabled.`);
@@ -266,7 +297,12 @@ export async function removeChannel(channelId?: string): Promise<void> {
     return;
   }
   
-  (config.channels as any)[channelId] = { enabled: false };
+  // Write to the correct location based on config format
+  if (multiAgent) {
+    (config.agents![0].channels as any)[channelId] = { enabled: false };
+  } else {
+    (config.channels as any)[channelId] = { enabled: false };
+  }
   saveConfig(config);
   p.log.success(`${meta.displayName} disabled`);
 }
