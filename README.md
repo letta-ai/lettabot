@@ -13,6 +13,8 @@
 > - **Heartbeats and scheduled tasks** → [letta cron](https://docs.letta.com/letta-code/scheduling) — built into remote environments
 >
 > Existing LettaBot deployments will continue to function, but for any new project, use Channels + Remote Environments. Migration is typically straightforward (~20 minutes).
+>
+> **Need migration help?** Ask in the `#ezra` channel on the [Letta Discord](https://discord.gg/letta).
 
 ---
 
