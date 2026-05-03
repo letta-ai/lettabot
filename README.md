@@ -1,3 +1,23 @@
+<div align="center">
+
+# LettaBot is deprecated
+
+</div>
+
+> [!WARNING]
+> **LettaBot is no longer actively maintained.** All new development is happening in [Letta Code](https://docs.letta.com/letta-code) via [Channels](https://docs.letta.com/letta-code/channels) and [Remote Environments](https://docs.letta.com/letta-code/remote).
+>
+> **Where to go instead:**
+> - **Telegram / Slack messaging** → [Channels](https://docs.letta.com/letta-code/channels) — same agent, same memory, integrated into Letta Code directly
+> - **Always-on agent on a VPS or server** → [Remote Environments](https://docs.letta.com/letta-code/remote) — `letta server` uses outbound WebSocket, no ports to open, no reverse proxy needed
+> - **Heartbeats and scheduled tasks** → [letta cron](https://docs.letta.com/letta-code/scheduling) — built into remote environments
+>
+> Existing LettaBot deployments will continue to function, but for any new project, use Channels + Remote Environments. Migration is typically straightforward (~20 minutes).
+>
+> **Need migration help?** Ask in the `#ezra` channel on the [Letta Discord](https://discord.gg/letta).
+
+---
+
 # LettaBot
 
 Your personal AI assistant that remembers everything across **Telegram, Slack, Discord, WhatsApp, and Signal** — plus Bluesky Jetstream feed ingestion. Powered by the [Letta Code SDK](https://github.com/letta-ai/letta-code-sdk).
