@@ -11,7 +11,7 @@
  * actively participate in?"
  */
 
-import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, type GroupMode, type GroupModeConfig } from './group-mode.js';
+import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveAllowedTopics, type GroupMode, type GroupModeConfig } from './group-mode.js';
 
 export interface TelegramGroupGatingParams {
   /** Message text */
@@ -31,6 +31,9 @@ export interface TelegramGroupGatingParams {
 
   /** Per-group configuration */
   groupsConfig?: Record<string, GroupModeConfig>;
+
+  /** Telegram forum topic ID (message_thread_id), if any */
+  threadId?: string;
 
   /** Regex patterns for additional mention detection */
   mentionPatterns?: string[];
@@ -91,6 +94,18 @@ export function applyTelegramGroupGating(params: TelegramGroupGatingParams): Tel
       mode: 'open',
       reason: 'user-not-allowed',
     };
+  }
+
+  // Step 1c: Topic allowlist (Telegram forum topics)
+  const allowedTopics = resolveAllowedTopics(groupsConfig, [chatId]);
+  if (allowedTopics && allowedTopics.length > 0) {
+    if (!params.threadId || !allowedTopics.includes(params.threadId)) {
+      return {
+        shouldProcess: false,
+        mode: 'open',
+        reason: 'topic-not-in-allowlist',
+      };
+    }
   }
 
   // Step 2: Resolve mode (default: open)
